@@ -1,3 +1,3 @@
 # URL Shortener Microservice Using Node and Express
 
-Project Link: https://boilerplate-project-urlshortener.dhananjayt97.repl.co
+Project Link: https://urlshortener-using-node-and-express.dhananjayt97.repl.co/
