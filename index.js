@@ -10,6 +10,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 
+// process.cwd() is the current working directory
 app.use("/public", express.static(`${process.cwd()}/public`));
 
 const urlArray = [];
@@ -17,11 +18,6 @@ let count = 1;
 
 app.get("/", function (req, res) {
   res.sendFile(process.cwd() + "/views/index.html");
-});
-
-// Your first API endpoint
-app.get("/api/hello", function (req, res) {
-  res.json({ greeting: "hello API" });
 });
 
 //to validateUrl
@@ -35,25 +31,30 @@ const isValidUrl = (urlString) => {
       "(\\#[-a-z\\d_]*)?$",
     "i"
   ); // validate fragment locator
-  return !!urlPattern.test(urlString);
+  return urlPattern.test(urlString);
 };
 
+// get short url and redirect to original url
 app.get("/api/shorturl/:short", (req, res) => {
   const shortUrl = req.params.short;
   // finding original url by shortUrl
   let originalUrl;
 
   for (let urlObj of urlArray) {
-    if (urlObj.short == shortUrl) originalUrl = urlObj.originalUrl;
+    if (urlObj.short == shortUrl) {
+      originalUrl = urlObj.originalUrl;
+    }
   }
   if (originalUrl) {
     res.redirect(originalUrl);
   }
 });
 
+// store url and return short url
 app.post("/api/shorturl", (req, res) => {
   const url = req.body.url;
-  console.log("entered url - " + url);
+  // console.log("entered url - " + url);
+
   //validate url
   if (isValidUrl(url)) {
     //valid
@@ -62,11 +63,11 @@ app.post("/api/shorturl", (req, res) => {
       originalUrl: url,
     });
 
-    const jsonRes = {
+    const jsonObj = {
       original_url: url,
       short_url: count,
     };
-    res.json(jsonRes);
+    res.json(jsonObj);
     count = count + 1;
   } else {
     // not valid url
