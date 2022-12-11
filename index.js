@@ -37,17 +37,15 @@ const isValidUrl = (urlString) => {
 // get short url and redirect to original url
 app.get("/api/shorturl/:short", (req, res) => {
   const shortUrl = req.params.short;
-  // finding original url by shortUrl
-  let originalUrl;
 
+  // finding original url by shortUrl
   for (let urlObj of urlArray) {
     if (urlObj.short == shortUrl) {
-      originalUrl = urlObj.originalUrl;
+      res.redirect(urlObj.originalUrl);
+      return;
     }
   }
-  if (originalUrl) {
-    res.redirect(originalUrl);
-  }
+  res.json({ error: "No url found!" });
 });
 
 // store url and return short url
@@ -63,18 +61,15 @@ app.post("/api/shorturl", (req, res) => {
       originalUrl: url,
     });
 
-    const jsonObj = {
+    res.json({
       original_url: url,
       short_url: count,
-    };
-    res.json(jsonObj);
-    count = count + 1;
+    });
+    count++;
   } else {
     // not valid url
     res.json({ error: "invalid url" });
   }
-
-  // console.log(urlArray);
 });
 
 app.listen(port, function () {
