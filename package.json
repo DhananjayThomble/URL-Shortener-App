@@ -1,20 +1,31 @@
 {
   "name": "shorturl",
-  "version": "0.0.3",
-  "description": "API project for freeCodeCamp",
+  "version": "0.1.4",
+  "description": "URL Shortener using Node and Express",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice.git"
+  },
+  "keywords": [
+    "urlshort",
+    "shorturl",
+    "urlshortener"
+  ],
+  "author": "Dhananjay Thomble",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice/issues"
+  },
+  "homepage": "https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice#readme",
   "dependencies": {
-    "body-parser": "^1.19.0",
-    "cors": "^2.8.5",
-    "dotenv": "^8.2.0",
-    "express": "^4.17.1"
+    "body-parser": "^1.20.1",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "nanoid": "^4.0.0"
   },
-  "license": "MIT",
-  "devDependencies": {
-    "nodemon": "^2.0.4"
-  }
+  "type":"module"
 }
