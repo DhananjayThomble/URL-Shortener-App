@@ -1,9 +1,8 @@
 <!DOCTYPE html>
-
 <html>
   <head>
     <title>URL Shortener Microservice</title>
-    <link href="/public/style.css" rel="stylesheet" type="text/css" />
+    <link href="./public/style.css" rel="stylesheet" type="text/css" />
   </head>
 
   <body>
@@ -12,16 +11,16 @@
       <section>
         <form action="api/shorturl" method="POST">
           <fieldset>
-            <legend>URL Shortener</legend>
-            <label for="url_input">URL:</label>
+            <legend>Paste the URL to be shortened</legend>
+        
             <input
               id="url_input"
               type="url"
               name="url"
-              placeholder="https://www.google.co.in/"
+              placeholder="Enter The Link Here..."
               required
             />
-            <input type="submit" value="POST URL" />
+            <input type="submit" value="POST URL" id="btn"/>
           </fieldset>
         </form>
       </section>
