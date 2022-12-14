@@ -44,3 +44,21 @@ input[type='text'] {
   width: 220px;
   text-align: center;
 }
+/* stick to the bottom of screen */
+footer {
+  position: fixed;
+  bottom: 0;
+  width: 100%;
+  background-color: #eee;
+  padding: 10px 0;
+}
+
+#result{
+  margin-top: 20px;
+  padding: 20px;
+  background-color: #eee;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  max-width: 600px;
+  margin: 0 auto;
+}
