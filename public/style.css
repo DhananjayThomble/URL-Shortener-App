@@ -2,63 +2,88 @@ body {
   font-family: Arial, sans-serif;
   font-size: 16px;
   color: #222;
-  background-color: #fff;
+  background-color: #F9F9F9;
   text-align: center;
   line-height: 1.4em;
-}
-
-main {
-  padding: 0;
-  margin-top: 40px;
-}
-
-h3 {
-  margin-top: 30px;
+  background-color: ;
 }
 
 
-
-.user-stories li {
-  margin-bottom: 1em;
+h1{
+  font-size: 40px;
+  font-weight: bolder;
+  margin-top: 100px;
+  color:tomato;
+  font-style: italic;
 }
 
-a {
-  color: #2574a9;
+section{
+  width: 700px;
+  height: 300px;
+  background-color: white;
+  position: relative;
+  left: 330px;
+  box-shadow: rgba(0, 0, 0, 0.35) 0px 5px 15px;
 }
 
-form {
-  margin: 10px auto;
-  padding: 20px;
-  max-width: 600px;
+section fieldset{
+  border: none;
 }
 
-label {
-  margin-right: 10px;
+section legend{
+  font-size: 30px;
+  font-weight: bolder;
+  color: #202020;
+  padding: 30px 0px;
+  word-spacing: 2px;
+  padding-top: 50px;
 }
 
-input {
-  padding: 5px;
+
+section input{
+  width: 400px;
+  height: 50px;
+  font-size: 18px;
+  padding: 0px 20px;
+  border: 1px solid tomato;
+  
 }
 
-input[type='text'] {
-  width: 220px;
-  text-align: center;
-}
-/* stick to the bottom of screen */
-footer {
-  position: fixed;
-  bottom: 0;
-  width: 100%;
-  background-color: #eee;
-  padding: 10px 0;
+section input:focus{
+  outline: 1px solid tomato;
 }
 
-#result{
-  margin-top: 20px;
-  padding: 20px;
-  background-color: #eee;
-  border: 1px solid #ccc;
-  border-radius: 5px;
-  max-width: 600px;
-  margin: 0 auto;
+section #btn{
+  width: 100px;
+  height: 54px;
+  font-size: 14px;
+  font-weight: bolder;
+  background-color: tomato;
+  color: white;
+  position: relative;
+  right: 10px;
+  bottom: 1px;
+}
+
+section #btn:hover{
+  cursor: pointer;
+  background-color: royalblue;
+  border: 1px solid royalblue;
+ 
+}
+
+footer p{
+  font-size: 20px;
+  position: relative;
+  top: -130px;
+}
+
+footer a{
+  text-decoration: none;
+  color: tomato;
+  text-decoration: underline;
+}
+
+footer a:hover{
+  color: royalblue;
 }
