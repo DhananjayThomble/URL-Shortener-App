@@ -1,6 +1,6 @@
 # URL Shortener Microservice Using Node and Express
 
-Project Link: https://urlshortener-using-node-and-express.dhananjayt97.repl.co/
+Project Link: https://app.dhananjaythomble.me
 
 This is a NodeJS application that creates a URL shortener microservice. The application uses the Express framework to create a server and handle HTTP requests. The app uses the nanoid module to generate a random URL identifier for each URL that is submitted to the service. 
 
