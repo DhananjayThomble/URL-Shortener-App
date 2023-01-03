@@ -7,13 +7,14 @@ import { nanoid } from "nanoid"; // for generating random id
 import express from "express";
 import bodyParser from "body-parser";
 import mongoose from "mongoose";
-
+import cors from "cors";
 const port = process.env.PORT || 3000;
 
 app.use(bodyParser.urlencoded({ extended: false }));
 
 // process.cwd() is the current working directory
 app.use("/public", express.static(`${process.cwd()}/public`));
+app.use(cors()); // for cross origin resource sharing
 
 // const urlArray = []; // array to store url and short url
 
@@ -92,6 +93,7 @@ app.get("/api/shorturl/:short", (req, res) => {
 });
 
 // store url and return short url
+
 app.post("/api/shorturl", (req, res) => {
   const url = req.body.url;
   // console.log("entered url - " + url);
@@ -114,6 +116,28 @@ app.post("/api/shorturl", (req, res) => {
 
     res.json({
       original_url: url,
+      short_url: id,
+    });
+  } else {
+    // not valid url
+    res.json({ error: "invalid url" });
+  }
+});
+// for chrome extension
+app.use("/get/short", bodyParser.json());
+app.post("/get/short", (req, res) => {
+  const url = req.body.url;
+  if (isValidUrl(url)) {
+    //valid url
+    const id = nanoid(10); // generate 10 character id // for collision probability: https://zelark.github.io/nano-id-cc/
+    // storing data in db
+    const myUrl = new URLmodel({
+      shortUrl: id,
+      originalUrl: url,
+    });
+    myUrl.save(); //saving data
+
+    res.json({
       short_url: id,
     });
   } else {
