@@ -138,7 +138,7 @@ app.post("/get/short", (req, res) => {
     myUrl.save(); //saving data
 
     res.json({
-      short_url: id,
+      short_url: "https://app.dhananjaythomble.me/api/shorturl/"+id,
     });
   } else {
     // not valid url
