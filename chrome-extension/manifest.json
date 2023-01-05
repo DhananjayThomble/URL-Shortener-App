@@ -6,5 +6,8 @@
   "action": {
     "default_popup": "extension.html",
     "default_icon": "icon.png"
-  }
+  },
+  "permissions": [
+    "activeTab"
+  ]
 }

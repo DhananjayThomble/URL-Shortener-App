@@ -29,3 +29,10 @@ form.addEventListener("submit", async (e) => {
     copyBtn.innerHTML = "Copied to clipboard";
   });
 });
+
+// get current tab url
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  const url = tabs[0].url;
+  const form = document.querySelector("form");
+  form.url.value = url;
+});
