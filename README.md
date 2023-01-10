@@ -2,26 +2,48 @@
 
 Project Link: https://app.dhananjaythomble.me
 
-This is a NodeJS application that creates a URL shortener microservice. The application uses the Express framework to create a server and handle HTTP requests. The app uses the nanoid module to generate a random URL identifier for each URL that is submitted to the service. 
+This repository contains an example implementation of a simple URL shortening service using Express.js, MongoDB and the mongoose driver, and the nanoid library.
 
-The app then stores the original URL and its corresponding short URL in an array and responds to the client with the original and short URL. The app also has a route to redirect short URLs to their corresponding original URLs. When a client makes a request to the short URL, the app checks the array for the short URL and redirects the client to the original URL if it exists.
+## Features
+- Generates a short URL for a given long URL.
+- Redirects the user to the original URL when the short URL is visited.
+- Validate the given url is valid or not before shortening it.
+- Store short and original url in MongoDB.
+- Website and Chrome extension to provide better user experience.
 
+## Requirements
+- Node.js
+- npm or yarn
+- MongoDB
 
-## Getting Started
+## Installation
+1) Clone the repository:
+```
+    git clone https://github.com/[username]/url-shortening-service.git
+```
+2) Install the dependencies:
+```
+npm install
+```
+3) Create a .env file in the root of the project and set environment variables for your MongoDB server and PORT Number for the application to run on.
 
-1. Install the required dependencies by running `npm install`
-2. Start the server by running `npm start`
+4) Start the server:
+```
+npm start
+```
 
 ## Usage
 
-To shorten a URL, send a POST request to the `/api/shorturl` endpoint with the URL to be shortened in the request body. The server will respond with a JSON object containing the original URL and the shortened URL.
+- To generate a short URL, send a POST request to the __/api/shorturl__ route with a JSON payload containing the url property.
+- To redirect to the original URL, send a GET request to the __/api/shorturl/:short__ route, where :short is the generated short URL.
+- The website and chrome extension are designed to work with this service. The chrome extension allows users to shorten URLs by simply clicking on the extension button, and the website allows users to input a URL and generate a short URL.
 
-To access a shortened URL, send a GET request to the `/api/shorturl/:short` endpoint, where `:short` is the shortened URL. The server will redirect the request to the original URL.
+## Note
+- You can use postman or Insomnia to test the application.
+- Make sure that the MongoDB server is running before starting the application.
 
-## Contributing
+- The application is set to run on port 3000 by default, but you can configure this by setting the PORT environment variable.
 
-1. Fork the repository
-2. Create a new branch for your changes
-3. Commit your changes and push to the branch
-4. Create a pull request
+- The cors middleware is used to allow cross-origin resource sharing (CORS) so that the server can accept requests from different origins (to be used in the case of chrome extension).
+
 
