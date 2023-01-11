@@ -4,7 +4,7 @@ form.addEventListener("submit", async (e) => {
   const url = form.url.value;
   const data = { url };
 
-  const response = await fetch("https://app.dhananjaythomble.me/get/short", {
+  const response = await fetch("https://app.dhananjaythomble.me/api", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
