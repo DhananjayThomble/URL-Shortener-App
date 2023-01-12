@@ -1,9 +1,9 @@
 import express from "express";
-const router = express.Router();
 import { nanoid } from "nanoid";
 import UrlModel from "../models/urlModel.js";
 import isValidUrl from "../utils.js";
 
+const router = express.Router();
 router.get("/", function (req, res) {
   res.sendFile(process.cwd() + "/views/index.html");
 });
