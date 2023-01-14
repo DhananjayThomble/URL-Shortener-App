@@ -12,7 +12,6 @@ jobs:
           host: ${{secrets.HOST}}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}	
-          passphrase: ${{ secrets.passphrase }}	
           port: ${{secrets.PORT}}	
           script: |
             cd /root/nodeapp/NodeJS-URL-Shortener-Microservice
