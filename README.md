@@ -2,8 +2,6 @@
 
 Project Link: https://app.dhananjaythomble.me
 
-GitHub Action:  [![.github/workflows/main.yml](https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice/actions/workflows/main.yml/badge.svg)](https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice/actions/workflows/main.yml)
-
 This repository contains an example implementation of a simple URL shortening service using Express.js, MongoDB and the mongoose driver, and the nanoid library.
 
 ## Features
