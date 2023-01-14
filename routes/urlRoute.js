@@ -8,7 +8,7 @@ router.get("/", function (req, res) {
   res.sendFile(process.cwd() + "/views/index.html");
 });
 
-router.get("/:short", (req, res) => {
+router.get("/url/:short", (req, res) => {
   const shortUrl = req.params.short;
   //    getting data from db
   UrlModel.find({ shortUrl: shortUrl }, function (err, data) {
@@ -40,6 +40,7 @@ router.post("/", (req, res) => {
     res.json({
       original_url: url,
       short_url: id,
+      final_url: `https://app.dhananjaythomble.me/url/${id}`,
     });
   } else {
     // not valid url

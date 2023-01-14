@@ -5,15 +5,15 @@ import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors"; // allow post req from cross-origin
 import mongoose from "mongoose";
+import apiUrlRoutes from "./routes/apiUrlRoute.js";
+import urlRoutes from "./routes/urlRoute.js";
+import authRoutes from "./routes/authRoute.js";
 import rateLimit from "express-rate-limit"; // limit req from clients
 import session from "express-session";
 import passport from "passport";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-import apiUrlRoutes from "./routes/apiUrlRoute.js";
-import urlRoutes from "./routes/urlRoute.js";
-import authRoutes from "./routes/authRoute.js";
 
 app.use(bodyParser.urlencoded({ extended: false }));
 // process.cwd() is the current working directory
@@ -54,7 +54,7 @@ const limiter = rateLimit({
 
 app.use(limiter);
 app.use("/api", cors(), apiUrlRoutes);
-// app.use("/", urlRoutes);
+app.use("/", urlRoutes);
 app.use("/auth", authRoutes);
 
 app.listen(PORT, function () {
