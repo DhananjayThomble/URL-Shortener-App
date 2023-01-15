@@ -5,15 +5,19 @@ import passport from "../authentication/passport.js";
 const router = express.Router();
 
 router.get("/signup", (req, res) => {
-  res.sendFile(process.cwd() + "/views/signup.html");
+  res.render("signup");
 });
 
 router.get("/login", (req, res) => {
-  res.sendFile(process.cwd() + "/views/login.html");
+  res.render("login");
 });
 
 router.post("/signup", (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, re_password } = req.body;
+  if (password !== re_password) {
+    res.send("Passwords must be same");
+    return;
+  }
   const user = new User({ email, password });
   user.save((err) => {
     if (err) {
@@ -43,5 +47,14 @@ router.post(
     failureRedirect: "/auth/login",
   })
 );
+
+router.get("/logout", (req, res, next) => {
+  req.logout(function (err) {
+    if (err) {
+      return next(err);
+    }
+    res.redirect("/");
+  });
+});
 
 export default router;

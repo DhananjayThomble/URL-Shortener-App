@@ -1,0 +1,50 @@
+<%- include("common") %>
+<link href="/public/style2.css" rel="stylesheet" type="text/css"/>
+<body>
+<!-- Header start -->
+<%- include("header", {isLoggedIn: false}) %>
+<!-- Header end -->
+
+<!-- login page -->
+<div class="container-fluid" id="cont1">
+    <div class="row row_style">
+        <div class="col-lg-6">
+            <div class="panel panel-info panel1">
+                <div class="panel-heading ">
+                    <div style="text-align: center;">
+                        <h3>Login</h3>
+                    </div>
+                </div>
+
+                <div class="panel-body bg-info">
+
+                    <form action="/auth/login" method="POST">
+                        <div class="form-group">
+                            <label for="exampleInputPassword1"> Email: </label>
+                            <input type="email" class="form-control" placeholder="Email" name="email" required="true"
+                                   pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,3}$"
+                                   oninvalid="setCustomValidity('Please enter the valid email')"
+                                   oninput="setCustomValidity('')">
+                        </div>
+                        <div class="form-group">
+                            <label for="exampleInputPassword1"> Password: </label>
+                            <input type="password" class="form-control" placeholder="Password" name="password"
+                                   required="true" pattern=".{6,}"
+                                   oninvalid="setCustomValidity('Please check your password')"
+                                   oninput="setCustomValidity('')">
+                        </div>
+                        <button type="submit" name="submit" class="btn btn-info btn-block "> LOGIN</button>
+                        <br><br>
+
+                    </form>
+                    <br/>
+                </div>
+                <div class="panel-footer">
+                    <p>Don't have an account? <a href="/auth/signup"> click here to Sign Up. </a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<%- include("footer") %>

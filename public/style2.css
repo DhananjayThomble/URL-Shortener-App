@@ -1,93 +1,3 @@
-body {
-  font-family: Arial, sans-serif;
-  font-size: 16px;
-  color: #222;
-  text-align: center;
-  line-height: 1.4em;
-}
-
-
-h1{
-  font-size: 40px;
-  font-weight: bolder;
-  margin-top: 100px;
-  color:tomato;
-  font-style: italic;
-}
-
-section{
-  width: 700px;
-  height: 300px;
-  background-color: white;
-  position: relative;
-  left: 330px;
-  box-shadow: rgba(0, 0, 0, 0.35) 0px 5px 15px;
-    margin-top: 100px;
-}
-
-section fieldset{
-  border: none;
-}
-
-section legend{
-  font-size: 30px;
-  font-weight: bolder;
-  color: #202020;
-  padding: 30px 0px;
-  word-spacing: 2px;
-  padding-top: 50px;
-}
-
-
-section input{
-  width: 400px;
-  height: 50px;
-  font-size: 18px;
-  padding: 0px 20px;
-  border: 1px solid tomato;
-  
-}
-
-section input:focus{
-  outline: 1px solid tomato;
-}
-
-section #btn{
-  width: 100px;
-  height: 54px;
-  font-size: 14px;
-  font-weight: bolder;
-  background-color: tomato;
-  color: white;
-  position: relative;
-  right: 10px;
-  bottom: 1px;
-}
-
-section #btn:hover{
-  cursor: pointer;
-  background-color: royalblue;
-  border: 1px solid royalblue;
- 
-}
-
-/*footer p{*/
-/*  font-size: 20px;*/
-/*  position: relative;*/
-/*  top: -100px;*/
-/*}*/
-
-/*footer a{*/
-/*  text-decoration: none;*/
-/*  color: tomato;*/
-/*  text-decoration: underline;*/
-/*}*/
-
-/*footer a:hover{*/
-/*  color: royalblue;*/
-/*}*/
-
-/*--------------------------------------------------------------------------*/
 @import url('https://fonts.googleapis.com/css2?family=Lobster&display=swap');
 @media only screen and (max-width: 600px) {
     .panel {
@@ -138,6 +48,13 @@ section #btn:hover{
     float: right;
 }
 
+.plusIcon {
+    color: green;
+    position: absolute;
+    bottom: 0px;
+    right: 0px;
+}
+
 #submit {
     border-color: rgba(0, 136, 122);
     color: rgba(0, 136, 122);
@@ -147,12 +64,108 @@ section #btn:hover{
 @import url('https://fonts.googleapis.com/css2?family=Qahiri&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@500&family=Qahiri&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond&family=Dancing+Script:wght@500;600&family=Jomhuria&family=Qahiri&display=swap');
+#afterHeader {
+    padding-top: 100px;
+}
+
+#titlePlan {
+    color: deepskyblue;
+    font-size: 2.5 rem;
+}
+
+.noUnderline:hover {
+    text-decoration: none;
+}
+
+.btnNewPlan:hover {
+    background-color: rgb(0, 143, 179);
+    color: white;
+}
+
+.btnNewPlan {
+    background-color: rgb(153, 235, 255);
+    color: black;
+    border-color: rgb(0, 143, 179);
+}
+
+.btn1:hover {
+    background-color: #F7CD2E;
+    color: white;
+}
+
+.btn1 {
+    background-color: #EDBF69;
+    color: black;
+    border-color: #F7CD2E;
+}
+
+#panelNewPlan {
+    background-color: rgb(153, 235, 255);
+    color: black;
+}
+
+#panelBackground {
+    background-color: rgb(204, 245, 255);
+}
+
+
+/*  */
+
+#banner_image {
+    padding-bottom: 50px;
+    text-align: center;
+    color: #f8f8f8;
+    background: url(../img/12.jpeg) no-repeat center center;
+    background-size: cover;
+}
+
+#banner_content {
+    position: relative;
+    padding-top: 6%;
+    padding-bottom: 6%;
+    margin-top: 12%;
+    margin-bottom: 12%;
+    background-color: rgba(0, 0, 0, 0.7);
+    max-width: 660px;
+    font-family: 'Lobster', cursive;
+}
+
+.fancyHeading {
+    font-family: 'Lobster', cursive;
+}
+
+.panel1 {
+    border-color: skyblue;
+    padding: 5px;
+}
+
+.panel:hover {
+    border-color: rgb(0, 225, 255);
+}
+
+.panel button {
+    font-family: 'Cormorant Garamond', serif;
+}
+
+.panel a:hover {
+    color: blue;
+}
 
 #cont1 {
     display: flex;
     justify-content: center;
     align-items: center;
 }
+
+.btn {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: large;
+}
+
+.row_style {
+    margin-top: 86px;
+}
+
 .container-fluid {
     padding: 3% 15%;
 }
@@ -211,3 +224,22 @@ body {
 
 
 /*----------------------------- End Footer --------------------------------------- */
+
+
+/* ------------------------------------------------View Plan --------------------------------*/
+
+#myButton {
+    position: absolute;
+    top: 25px;
+    right: 5px;
+    margin-right: 50px;
+}
+
+#stickToRight {
+    /* position: absolute; */
+    right: 0px;
+    margin-bottom: 50px;
+}
+
+
+/* ------------------------------------------------View Plan --------------------------------*/

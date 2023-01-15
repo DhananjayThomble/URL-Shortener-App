@@ -52,10 +52,11 @@ const limiter = rateLimit({
   standardHeaders: true,
 });
 
-app.use(limiter);
+// app.use(limiter);
 app.use("/api", cors(), apiUrlRoutes);
 app.use("/", urlRoutes);
 app.use("/auth", authRoutes);
+app.set("view engine", "ejs");
 
 app.listen(PORT, function () {
   console.log(`Listening on port ${PORT}`);

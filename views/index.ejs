@@ -1,0 +1,36 @@
+<%- include("common") %>
+<link href="/public/style.css" rel="stylesheet" type="text/css"/>
+<body>
+<% if(isLoggedIn === "true" ) { %>
+<%- include("header", {isLoggedIn: "true" }) %>
+<% } else { %>
+<%- include("header", {isLoggedIn: "false" }) %>
+<%}%>
+<main>
+    <section>
+        <form action="/" method="POST">
+            <fieldset>
+                <legend>Paste the URL to be shortened</legend>
+
+                <input
+                        id="url_input"
+                        type="url"
+                        name="url"
+                        placeholder="Enter The Link Here..."
+                        required
+                />
+                <input type="submit" value="POST URL" id="btn"/>
+            </fieldset>
+        </form>
+    </section>
+</main>
+<footer>
+    <div class="container">
+        <div style="text-align: center;">
+            <p>By <a href="https://dhananjaythomble.me/">Dhananjay Thomble</a></p>
+        </div>
+    </div>
+</footer>
+</body>
+</html>
+<!--  <%- include("footer") %>-->

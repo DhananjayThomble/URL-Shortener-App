@@ -5,7 +5,14 @@ import isValidUrl from "../utils.js";
 
 const router = express.Router();
 router.get("/", function (req, res) {
-  res.sendFile(process.cwd() + "/views/index.html");
+  // res.sendFile(process.cwd() + "/views/index.html");
+  // console.log(req.user);    // display all data of authenticated user
+  // console.log(req.isAuthenticated());
+  if (req.isAuthenticated()) {
+    res.render("index", { isLoggedIn: "true" });
+    return;
+  }
+  res.render("index", { isLoggedIn: "false" });
 });
 
 router.get("/url/:short", (req, res) => {
