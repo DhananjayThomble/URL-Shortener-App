@@ -4,6 +4,14 @@ import UrlModel from "../models/urlModel.js";
 import isValidUrl from "../utils.js";
 
 const router = express.Router();
+
+function isAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+  res.redirect("/auth/login");
+}
+
 router.get("/", function (req, res) {
   // res.sendFile(process.cwd() + "/views/index.html");
   // console.log(req.user);    // display all data of authenticated user
@@ -28,7 +36,7 @@ router.get("/url/:short", (req, res) => {
   });
 });
 
-router.post("/", (req, res) => {
+router.post("/", isAuthenticated, (req, res) => {
   const url = req.body.url;
   // console.log("entered url - " + url);
 

@@ -23,27 +23,25 @@ router.post("/signup", (req, res) => {
     if (err) {
       // handle error
       console.log(err);
+      res.redirect("/auth/signup");
     } else {
       req.login(user, (err) => {
         if (err) {
           console.log(err);
+          res.redirect("/auth/signup");
           // handle error
         } else {
-          res.json({ msg: "Success" });
+          res.redirect("/");
         }
       });
     }
   });
 });
 
-router.get("/test", (req, res) => {
-  res.json({ msg: "Yup!" });
-});
-
 router.post(
   "/login",
   passport.authenticate("local", {
-    successRedirect: "/auth/test",
+    successRedirect: "/",
     failureRedirect: "/auth/login",
   })
 );

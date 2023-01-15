@@ -52,7 +52,7 @@ const limiter = rateLimit({
   standardHeaders: true,
 });
 
-// app.use(limiter);
+app.use(limiter);
 app.use("/api", cors(), apiUrlRoutes);
 app.use("/", urlRoutes);
 app.use("/auth", authRoutes);
