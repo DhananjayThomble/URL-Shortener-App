@@ -36,7 +36,7 @@ npm start
 
 - To generate a short URL, send a POST request to the __/api/shorturl__ route with a JSON payload containing the url property.
 - To redirect to the original URL, send a GET request to the __/api/shorturl/:short__ route, where :short is the generated short URL.
-- The website and chrome extension are designed to work with this service. The chrome extension allows users to shorten URLs by simply clicking on the extension button, and the website allows users to input a URL and generate a short URL.
+- The website and Chrome extension are designed to work with this service. The Chrome extension allows users to shorten URLs by simply clicking on the extension button, and the website allows users to input a URL and generate a short URL.
 
 ## Note
 - You can use postman or Insomnia to test the application.
@@ -44,6 +44,6 @@ npm start
 
 - The application is set to run on port 3000 by default, but you can configure this by setting the PORT environment variable.
 
-- The cors middleware is used to allow cross-origin resource sharing (CORS) so that the server can accept requests from different origins (to be used in the case of chrome extension).
+- The cors middleware is used to allow cross-origin resource sharing (CORS) so that the server can accept requests from different origins (to be used in the case of Chrome extension).
 
 

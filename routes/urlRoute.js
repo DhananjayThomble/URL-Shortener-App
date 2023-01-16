@@ -2,25 +2,18 @@ import express from "express";
 import { nanoid } from "nanoid";
 import UrlModel from "../models/urlModel.js";
 import isValidUrl from "../utils.js";
+import { isAuthenticated } from "../utils.js";
 
 const router = express.Router();
-
-function isAuthenticated(req, res, next) {
-  if (req.isAuthenticated()) {
-    return next();
-  }
-  res.redirect("/auth/login");
-}
 
 router.get("/", function (req, res) {
   // res.sendFile(process.cwd() + "/views/index.html");
   // console.log(req.user);    // display all data of authenticated user
   // console.log(req.isAuthenticated());
   if (req.isAuthenticated()) {
-    res.render("index", { isLoggedIn: "true" });
-    return;
+    process.env.IS_LOGGED_IN = true;
   }
-  res.render("index", { isLoggedIn: "false" });
+  res.render("index");
 });
 
 router.get("/url/:short", (req, res) => {

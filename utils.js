@@ -21,4 +21,11 @@ const isValidUrl = (urlString) => {
   }
 };
 
+export function isAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+  res.redirect("/auth/login");
+}
+
 export default isValidUrl;

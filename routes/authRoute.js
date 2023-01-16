@@ -51,8 +51,13 @@ router.get("/logout", (req, res, next) => {
     if (err) {
       return next(err);
     }
+    process.env.IS_LOGGED_IN = false;
     res.redirect("/");
   });
+});
+
+router.get("/changePassword", (req, res) => {
+  res.render("change_password");
 });
 
 export default router;

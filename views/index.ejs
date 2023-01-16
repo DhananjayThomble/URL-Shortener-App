@@ -1,11 +1,7 @@
 <%- include("common") %>
 <link href="/public/style.css" rel="stylesheet" type="text/css"/>
 <body>
-<% if(isLoggedIn === "true" ) { %>
-<%- include("header", {isLoggedIn: "true" }) %>
-<% } else { %>
-<%- include("header", {isLoggedIn: "false" }) %>
-<%}%>
+<%- include("header") %>
 <main>
     <section>
         <form action="/" method="POST">
@@ -33,4 +29,3 @@
 </footer>
 </body>
 </html>
-<!--  <%- include("footer") %>-->

@@ -21,7 +21,7 @@
                     <form action="/auth/login" method="POST">
                         <div class="form-group">
                             <label for="exampleInputPassword1"> Email: </label>
-                            <input type="email" class="form-control" placeholder="Email" name="email" required="true"
+                            <input type="email" class="form-control" placeholder="Email" name="email" required
                                    pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,3}$"
                                    oninvalid="setCustomValidity('Please enter the valid email')"
                                    oninput="setCustomValidity('')"
@@ -31,7 +31,7 @@
                         <div class="form-group">
                             <label for="exampleInputPassword1"> Password: </label>
                             <input type="password" class="form-control" placeholder="Password" name="password"
-                                   required="true" pattern=".{6,}"
+                                   required pattern=".{6,}"
                                    oninvalid="setCustomValidity('Please check your password')"
                                    oninput="setCustomValidity('')"
                                    value="123456"
