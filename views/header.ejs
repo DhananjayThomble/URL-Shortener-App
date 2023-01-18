@@ -13,6 +13,7 @@
             <ul class="nav navbar-nav navbar-right">
 
                 <% if( process.env.IS_LOGGED_IN === "true") { %>
+                    <li><a href="/history"><span class="glyphicon glyphicon-time"></span> History </a></li>
                     <li><a href="#"><span class="glyphicon glyphicon-info-sign"></span> About Us</a></li>
                     <li><a href="/auth/changePassword"><span class="glyphicon glyphicon-cog"></span> Change Password</a></li>
                     <li><a href="/auth/logout"><span class="glyphicon glyphicon-log-out"></span> Logout</a></li>
