@@ -5,11 +5,13 @@ import passport from "../authentication/passport.js";
 const router = express.Router();
 
 router.get("/signup", (req, res) => {
-  res.render("signup");
+  const isLoggedIn = req.isAuthenticated();
+  res.render("signup", { isLoggedIn: isLoggedIn });
 });
 
 router.get("/login", (req, res) => {
-  res.render("login");
+  const isLoggedIn = req.isAuthenticated();
+  res.render("login", { isLoggedIn: isLoggedIn });
 });
 
 router.post("/signup", (req, res) => {
@@ -57,7 +59,8 @@ router.get("/logout", (req, res, next) => {
 });
 
 router.get("/changePassword", (req, res) => {
-  res.render("change_password");
+  const isLoggedIn = req.isAuthenticated();
+  res.render("change_password", { isLoggedIn: isLoggedIn });
 });
 
 export default router;

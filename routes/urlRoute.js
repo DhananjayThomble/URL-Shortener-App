@@ -1,6 +1,5 @@
 import express from "express";
 import { nanoid } from "nanoid";
-import UrlModel from "../models/urlModel.js";
 import isValidUrl from "../utils.js";
 import { isAuthenticated } from "../utils.js";
 import UrlModel2 from "../models/UrlModel2.js";
@@ -8,13 +7,9 @@ import UrlModel2 from "../models/UrlModel2.js";
 const router = express.Router();
 
 router.get("/", function (req, res) {
-  // res.sendFile(process.cwd() + "/views/index.html");
   // console.log(req.user);    // display all data of authenticated user
-  // console.log(req.isAuthenticated());
-  if (req.isAuthenticated()) {
-    process.env.IS_LOGGED_IN = true;  //- store 'login in' status of user, to be used in navbar
-  }
-  res.render("index");
+  const isLoggedIn = req.isAuthenticated();
+  res.render("index", { isLoggedIn: isLoggedIn });
 });
 
 router.get("/url/:short", (req, res) => {
@@ -32,19 +27,22 @@ router.get("/url/:short", (req, res) => {
 });
 
 router.get("/history", isAuthenticated, (req, res) => {
+  const isLoggedIn = req.isAuthenticated();
   UrlModel2.findOne({ userId: req.user._id }, (err, urlObj) => {
-    if(err){
+    if (err) {
       console.error(err);
       return;
     }
     if (urlObj) {
-      res.render("history", { urlArray: urlObj.urlArray });
+      res.render("history", {
+        urlArray: urlObj.urlArray,
+        isLoggedIn: isLoggedIn,
+      });
     } else {
-      res.render("history", { urlArray: [] });
+      res.render("history", { urlArray: [], isLoggedIn: isLoggedIn });
     }
   });
 });
-
 
 router.post("/", isAuthenticated, (req, res) => {
   const url = req.body.url;

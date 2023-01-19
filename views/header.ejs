@@ -12,7 +12,7 @@
         <div class="collapse navbar-collapse" id="myNavbar">
             <ul class="nav navbar-nav navbar-right">
 
-                <% if( process.env.IS_LOGGED_IN === "true") { %>
+                <% if( isLoggedIn ) { %>
                     <li><a href="/history"><span class="glyphicon glyphicon-time"></span> History </a></li>
                     <li><a href="#"><span class="glyphicon glyphicon-info-sign"></span> About Us</a></li>
                     <li><a href="/auth/changePassword"><span class="glyphicon glyphicon-cog"></span> Change Password</a></li>
