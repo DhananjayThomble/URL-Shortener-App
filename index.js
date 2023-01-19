@@ -3,14 +3,14 @@ import { config } from "dotenv";
 config();
 import express from "express";
 import bodyParser from "body-parser";
-import cors from "cors"; // allow post req from cross-origin
+import cors from "cors"; // allows req from cross-origin
 import mongoose from "mongoose";
 import apiUrlRoutes from "./routes/apiUrlRoute.js";
 import urlRoutes from "./routes/urlRoute.js";
 import authRoutes from "./routes/authRoute.js";
 import rateLimit from "express-rate-limit"; // limit req from clients
-import session from "express-session";
-import passport from "passport";
+import session from "express-session";  //- manage session for logged in user
+import passport from "passport";  //  for authentication
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,7 +52,7 @@ const limiter = rateLimit({
   standardHeaders: true,
 });
 
-app.use(limiter);
+app.use(limiter); // limit number of req for each client
 app.use("/api", cors(), apiUrlRoutes);
 app.use("/", urlRoutes);
 app.use("/auth", authRoutes);
