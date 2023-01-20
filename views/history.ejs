@@ -1,21 +1,23 @@
 <%- include("common") %>
-<link href="/public/style.css" rel="stylesheet" type="text/css"/>
 <body>
 <%- include("header") %>
-
-<div class="container-fluid">
-
-    <div class="list-group">
-        <% for(let i = 0; i < urlArray.length; i++){
-            let url = urlArray[i];
-        %>
-        <a href="https://app.dhananjaythomble.me/url/<%= url.shortUrl %>" class="list-group-item">
-            <h4 class="list-group-item-heading">https://app.dhananjaythomble.me/url/<%= url.shortUrl %></h4>
-            <p class="list-group-item-text"><%= url.originalUrl %></p>
-        </a>
-        <% } %>
+<!-- show histories of generated urls -->
+<div class="container">
+    <div class="row">
+        <div class="col-xs-12">
+            <div class="list-group">
+                <% for(let i = 0; i < urlArray.length; i++){
+                    let url = urlArray[i];
+                %>
+                <a href="https://app.dhananjaythomble.me/url/<%= url.shortUrl %>" class="list-group-item">
+                    <h5 class="list-group-item-heading">https://app.dhananjaythomble.me/url/<%= url.shortUrl %></h5>
+                    <!--                        longer text will be appended to new line with this style. (for mobile) -->
+                    <p class="list-group-item-text" style="word-wrap: break-word"><%= url.originalUrl %></p>
+                </a>
+                <% } %>
+            </div>
+        </div>
     </div>
-
 </div>
 
 <%- include("footer") %>

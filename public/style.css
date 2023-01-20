@@ -1,99 +1,9 @@
-body {
-  font-family: Arial, sans-serif;
-  font-size: 16px;
-  color: #222;
-  text-align: center;
-  line-height: 1.4em;
-}
-
-
-h1{
-  font-size: 40px;
-  font-weight: bolder;
-  margin-top: 100px;
-  color:tomato;
-  font-style: italic;
-}
-
-section{
-  width: 700px;
-  height: 300px;
-  background-color: white;
-  position: relative;
-  left: 330px;
-  box-shadow: rgba(0, 0, 0, 0.35) 0px 5px 15px;
-    margin-top: 100px;
-}
-
-section fieldset{
-  border: none;
-}
-
-section legend{
-  font-size: 30px;
-  font-weight: bolder;
-  color: #202020;
-  padding: 30px 0px;
-  word-spacing: 2px;
-  padding-top: 50px;
-}
-
-
-section input{
-  width: 400px;
-  height: 50px;
-  font-size: 18px;
-  padding: 0px 20px;
-  border: 1px solid tomato;
-  
-}
-
-section input:focus{
-  outline: 1px solid tomato;
-}
-
-section #btn{
-  width: 100px;
-  height: 54px;
-  font-size: 14px;
-  font-weight: bolder;
-  background-color: tomato;
-  color: white;
-  position: relative;
-  right: 10px;
-  bottom: 1px;
-}
-
-section #btn:hover{
-  cursor: pointer;
-  background-color: royalblue;
-  border: 1px solid royalblue;
- 
-}
-
-/*footer p{*/
-/*  font-size: 20px;*/
-/*  position: relative;*/
-/*  top: -100px;*/
-/*}*/
-
-/*footer a{*/
-/*  text-decoration: none;*/
-/*  color: tomato;*/
-/*  text-decoration: underline;*/
-/*}*/
-
-/*footer a:hover{*/
-/*  color: royalblue;*/
-/*}*/
-
-/*--------------------------------------------------------------------------*/
-@import url('https://fonts.googleapis.com/css2?family=Lobster&display=swap');
 @media only screen and (max-width: 600px) {
     .panel {
         width: 300px;
         /* padding: 5px; */
     }
+
     #giveMarginTop {
         padding-top: 50px;
     }
@@ -104,55 +14,51 @@ section #btn:hover{
         width: 450px;
         /* padding: 10px; */
     }
+
     .panel-body {
         /* padding: 15%; */
     }
+
     #lgPanel {
         padding: 20px;
         width: 550px;
     }
+
     .panelViewPlan {
         width: auto;
     }
 }
 
-#lgPanel {
-    min-width: 300px;
+.noUnderline:hover {
+    text-decoration: none;
 }
 
-#plansPanel {
-    /* margin-top: 50px; */
-    width: initial;
-    padding: initial;
+.panel1 {
+    border-color: skyblue;
+    padding: 5px;
 }
 
-#noPanelBody {
-    padding: initial;
+/* add shadow effect */
+.panel1:hover {
+    box-shadow: 0 0 10px rgb(0, 225, 255);
 }
 
-.right {
-    float: right;
-}
 
-.text-right {
-    float: right;
+.panel a:hover {
+    color: blue;
 }
-
-#submit {
-    border-color: rgba(0, 136, 122);
-    color: rgba(0, 136, 122);
-}
-
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond&family=Dancing+Script:wght@500&family=Jomhuria&family=Qahiri&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Qahiri&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@500&family=Qahiri&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond&family=Dancing+Script:wght@500;600&family=Jomhuria&family=Qahiri&display=swap');
 
 #cont1 {
     display: flex;
     justify-content: center;
     align-items: center;
 }
+
+.btn {
+    font-size: large;
+}
+
+
 .container-fluid {
     padding: 3% 15%;
 }
@@ -161,53 +67,51 @@ section #btn:hover{
     margin-top: 80px;
 }
 
-
-/*navbar-brand  */
-
 .navbar-brand {
-    font-size: 2.5 rem;
     font-weight: bold;
-    font-family: 'Cormorant Garamond', serif;
 }
 
 .nav-link {
-    font-size: 2.5 rem;
+    font-size: 2.5rem;
     font-weight: bold;
-}
-
-@media(max-width:768px) {
-    #banner_content {
-        padding-bottom: 15%;
-    }
-    footer {
-        text-align: left;
-    }
 }
 
 
 /*----------------------------- Footer --------------------------------------- */
 
-footer {
-    background-color: #101010;
-    color: #9d9d9d;
-    position: absolute;
+.footer {
+    position: fixed;
+    left: 0;
     bottom: 0;
     width: 100%;
-    /* Set the fixed height of the footer here */
-    height: 60px;
-    line-height: 30px;
-    /* Vertically center the text there */
+    color: white;
+    text-align: center;
 }
 
-html {
+footer p {
+    font-size: 20px;
     position: relative;
-    min-height: 100%;
+    color: #222;
 }
 
-body {
-    /* Margin bottom by footer height */
-    margin-bottom: 60px;
+footer p.name {
+    font-size: 20px;
+    font-weight: bold;
 }
 
 
 /*----------------------------- End Footer --------------------------------------- */
+
+
+section {
+    margin-top: 100px;
+}
+
+legend {
+    font-size: 30px;
+    font-weight: bolder;
+    color: #202020;
+    padding: 30px 0px;
+    word-spacing: 2px;
+}
+

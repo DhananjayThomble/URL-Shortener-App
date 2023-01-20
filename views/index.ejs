@@ -1,24 +1,33 @@
 <%- include("common") %>
-<link href="/public/style.css" rel="stylesheet" type="text/css"/>
 <body>
 <%- include("header") %>
-<main>
+<div class="container">
     <section>
-        <form action="/" method="POST">
+        <form action="/" method="POST" class="form-horizontal">
             <fieldset>
-                <legend>Paste the URL to be shortened</legend>
+                <legend class="text-center">Paste the URL to be shortened</legend>
 
-                <input
-                        id="url_input"
-                        type="url"
-                        name="url"
-                        placeholder="Enter The Link Here..."
-                        required
-                />
-                <input type="submit" value="POST URL" id="btn"/>
+                <div class="form-group">
+                    <div class="col-sm-12">
+                        <input
+                                id="url_input"
+                                type="url"
+                                name="url"
+                                placeholder="Enter The Link Here..."
+                                class="form-control"
+                                required
+                        />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="col-sm-12 text-center">
+                        <input type="submit" value="POST URL" id="btn" class="btn btn-danger"/>
+                    </div>
+                </div>
             </fieldset>
         </form>
     </section>
-</main>
+</div>
+
 
 <%- include("footer") %>
