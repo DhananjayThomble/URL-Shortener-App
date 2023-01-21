@@ -5,6 +5,8 @@ import About from "./components/About";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
 import Logout from "./components/Logout";
+import Footer from "./components/Footer";
+import "./App.css";
 
 function App() {
   return (
@@ -19,6 +21,7 @@ function App() {
           <Route path={"/logout"} element={<Logout />} />
           <Route path="*" element={"Error"} />
         </Routes>
+        <Footer />
       </BrowserRouter>
     </div>
   );
