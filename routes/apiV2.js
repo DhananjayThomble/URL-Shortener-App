@@ -1,11 +1,12 @@
 import express from "express";
 import { nanoid } from "nanoid";
 import isValidUrl from "../utils.js";
-import { isAuthenticated } from "../utils.js";
 import UrlModel2 from "../models/UrlModel2.js";
+import { isApiAuthenticated } from "./apiAuth.js";
 
 const router = express.Router();
 
+//  * redirect to original url. route: ip/api/v2/url/:code
 router.get("/url/:short", async (req, res) => {
   const shortUrl = req.params.short;
 
@@ -16,11 +17,12 @@ router.get("/url/:short", async (req, res) => {
     res.redirect(url.urlArray[0].originalUrl);
   } catch (error) {
     console.error(error);
-    res.status(500).send("Server Error");
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-router.get("/history", isAuthenticated, async (req, res) => {
+//  * get all generated urls by current user. route: ip/api/v2/history
+router.get("/history", isApiAuthenticated, async (req, res) => {
   try {
     const urlObj = await UrlModel2.findOne({ userId: req.user._id });
     if (urlObj) {
@@ -30,11 +32,12 @@ router.get("/history", isAuthenticated, async (req, res) => {
     }
   } catch (error) {
     console.error(error);
-    res.status(500).send("Server Error");
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-router.post("/", isAuthenticated, async (req, res) => {
+//  * generate short url. route: ip/api/v2/url
+router.post("/url", isApiAuthenticated, async (req, res) => {
   const url = req.body.url;
 
   if (!isValidUrl(url)) {
@@ -43,6 +46,7 @@ router.post("/", isAuthenticated, async (req, res) => {
   }
 
   const id = nanoid(10);
+  // get user id from token
   const userId = req.user._id;
   // isUserRegistered ? append the url object to existing array of that user : create new collection for 1 time only
   try {
@@ -68,7 +72,7 @@ router.post("/", isAuthenticated, async (req, res) => {
       .json({ shortUrl: `https://app.dhananjaythomble.me/url/${id}` });
   } catch (error) {
     console.error(error);
-    res.status(500).send("Server Error");
+    res.status(500).json({ message: "Server error" });
   }
 });
 

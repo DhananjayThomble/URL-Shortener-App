@@ -53,7 +53,6 @@ router.get("/logout", (req, res, next) => {
     if (err) {
       return next(err);
     }
-    process.env.IS_LOGGED_IN = false;
     res.redirect("/");
   });
 });
