@@ -13,6 +13,8 @@ import session from "express-session"; //- manage session for logged in user
 import passport from "passport"; //  for authentication
 import apiV2 from "./routes/apiV2.js";
 import apiAuth from "./routes/apiAuth.js"; // for api v2 authentication
+import swaggerUi from "swagger-ui-express"; // for api documentation
+import Yaml from "yamljs";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +33,9 @@ app.use(
 );
 app.use(passport.initialize());
 app.use(passport.session());
+// -----------------API DOCS------------------------
+const swaggerDocument = Yaml.load("./swagger.yml");
+app.use("/docs-api", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 //-----------------------------------DB-------------------------------
 mongoose.set("strictQuery", false);
 

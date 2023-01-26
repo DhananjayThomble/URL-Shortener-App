@@ -29,6 +29,9 @@ export function isApiAuthenticated(req, res, next) {
 // ------------------ AUTHENTICATION ------------------
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
+  // check email and password is present
+  if (!email || !password)
+    return res.status(400).json({ error: "Email and password is required" });
   const user = await User.findOne({ email });
   // if user not found, 401 status for unauthorized
   if (!user) return res.status(401).json({ error: "Invalid email" });
@@ -42,7 +45,7 @@ router.post("/login", async (req, res) => {
     });
     // send token in response
     const { _id, name, email } = user;
-    return res.json({ token, user: { _id, name, email } });
+    return res.status(200).json({ token, user: { _id, name, email } });
   });
 });
 
@@ -62,11 +65,11 @@ router.post("/signup", async (req, res) => {
   const user = new User(req.body);
   try {
     await user.save();
-    return res.json({ ok: true });
+    return res.status(200).json({ ok: true });
   } catch (err) {
     console.log("CREATE USER FAILED", err);
     return res
-      .status(400)
+      .status(500)
       .json({ error: "Error saving user in database. Try later" });
   }
 });

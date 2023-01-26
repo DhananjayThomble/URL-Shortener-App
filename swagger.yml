@@ -1,0 +1,129 @@
+openapi: 3.0.0
+info:
+  title: URL Shortener
+  description: Node.js URL Shortener API Documentation
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3000/api/v2
+    description: Local server, API version 2
+
+paths:
+  /auth/login:
+    post:
+      summary: Login
+      description: Login to the API
+
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email: # <!--- form field name
+                  type: string
+                password:
+                  type: string
+
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: The JWT token.
+                  user:
+                    type: object
+                    description: The user object.
+                    properties:
+                      _id:
+                        type: string
+                        description: The user ID.
+                      name:
+                        type: string
+                        description: The user name.
+                      email:
+                        type: string
+                        description: The user email.
+
+        '400':
+          description: Email and password is required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+
+  /auth/signup:
+    post:
+      summary: Signup
+      description: Sign Up to the API
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+
+      responses:
+        '200':
+          description: Signup successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        '500':
+          description: Error creating user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
