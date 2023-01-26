@@ -40,18 +40,6 @@ function Home() {
 
   return (
     <>
-      <ToastContainer
-        position="top-center"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-      />
       <div className={"mt-4 p-4 bg-primary text-white rounded jumbotron"}>
         <Container>
           <h1>Welcome to URL Shortener</h1>
