@@ -35,7 +35,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 // -----------------API DOCS------------------------
 const swaggerDocument = Yaml.load("./swagger.yml");
-app.use("/docs-api", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use("/docs-api", swaggerUi.serve, cors(), swaggerUi.setup(swaggerDocument));
 //-----------------------------------DB-------------------------------
 mongoose.set("strictQuery", false);
 
