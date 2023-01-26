@@ -2,6 +2,8 @@
 
 Project Link: https://app.dhananjaythomble.me
 
+For API Documentation and Testing: https://app.dhananjaythomble.me/docs-api
+
 This repository contains an example implementation of a simple URL shortening service using Express.js, MongoDB and the mongoose driver, and the nanoid library.
 
 ## Features
