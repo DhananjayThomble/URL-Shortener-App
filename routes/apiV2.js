@@ -14,10 +14,18 @@ router.get("/url/:short", async (req, res) => {
     const url = await UrlModel2.findOne({
       "urlArray.shortUrl": shortUrl,
     }).select({ "urlArray.$": 1 });
-    res.redirect(url.urlArray[0].originalUrl);
+
+    // check if url is present in db
+    if (!url) {
+      res.status(404).json({ error: "Url not found" });
+      return;
+    }
+
+    // http status for redirect: 302
+    res.status(302).redirect(url.urlArray[0].originalUrl);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -32,7 +40,7 @@ router.get("/history", isApiAuthenticated, async (req, res) => {
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -72,7 +80,7 @@ router.post("/url", isApiAuthenticated, async (req, res) => {
       .json({ shortUrl: `https://app.dhananjaythomble.me/url/${id}` });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
