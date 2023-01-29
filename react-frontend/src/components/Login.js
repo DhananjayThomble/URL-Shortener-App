@@ -4,17 +4,19 @@ import Form from "react-bootstrap/Form";
 import Container from "react-bootstrap/Container";
 import React, { useState, useEffect } from "react";
 import { toast, ToastContainer } from "react-toastify";
+import axios from "axios";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const URL = "http://localhost:3000/api/v2/";
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
       setIsAuthenticated(true);
+      window.location = "/";
     }
   }, []);
 
@@ -24,22 +26,33 @@ function Login() {
     if (isAuthenticated) {
       window.location = "/";
     }
-    const response = await fetch("http://localhost:3000/api/v2/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    const content = await response.json();
-    if (content.error) {
-      setError(content.error);
-      toast.error(error);
-    } else {
-      // console.log(content);
-      toast.success("Login Successful");
-      localStorage.setItem("token", content.token);
+    await fetchLogin();
+  };
+
+  const fetchLogin = async () => {
+    try {
+      const response = await axios.post(`${URL}auth/login`, {
+        email,
+        password,
+      });
+      const { token } = response.data;
+      //    set token in local storage
+      localStorage.setItem("token", token);
       setIsAuthenticated(true);
+      window.location = "/";
+    } catch ({
+      response: {
+        status,
+        data: { error },
+      },
+    }) {
+      if (status === 400) {
+        toast.error(error);
+      } else if (status === 401) {
+        toast.error(error);
+      } else {
+        toast.error("Something went wrong");
+      }
     }
   };
 
