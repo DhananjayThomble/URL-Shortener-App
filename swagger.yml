@@ -5,11 +5,12 @@ info:
   version: 1.0.0
 
 servers:
+  - url: https://app.dhananjaythomble.me/api/v2
+    description: My Production server
+
   - url: http://localhost:3000/api/v2
     description: Local server, API version 2
 
-  - url: https://app.dhananjaythomble.me/api/v2
-    description: My Production server
 
 components:
   securitySchemes:
