@@ -1,6 +1,7 @@
 import express from "express";
 import User from "../models/UserModel.js";
 import jwt from "jsonwebtoken";
+import * as EmailValidator from "email-validator";
 
 const router = express.Router();
 
@@ -32,10 +33,20 @@ router.post("/login", async (req, res) => {
   // check email and password is present
   if (!email || !password)
     return res.status(400).json({ error: "Email and password is required" });
+
+  if (!EmailValidator.validate(email)) {
+    return res.status(400).json({ error: "Email is not valid" });
+  }
+  if (password.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "Password should be min 6 characters long" });
+  }
+
   const user = await User.findOne({ email });
   // if user not found, 401 status for unauthorized
   if (!user) return res.status(401).json({ error: "Invalid email" });
-  // check using passport
+  // check password using passport
   user.comparePassword(password, (err, isMatch) => {
     if (!isMatch) return res.status(401).json({ error: "Invalid password" });
 
@@ -51,11 +62,20 @@ router.post("/login", async (req, res) => {
 
 router.post("/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name) return res.status(400).json({ error: "Name is required" });
+
+  if (!name || name.length < 3)
+    return res
+      .status(400)
+      .json({ error: "Name is required and should be min 3 characters long" });
   if (!password || password.length < 6)
     return res.status(400).json({
       error: "Password is required and should be min 6 characters long",
     });
+  if (!email || !EmailValidator.validate(email)) {
+    return res
+      .status(400)
+      .json({ error: "Email is required and should be valid" });
+  }
 
   // check if user already exists
   let userExist = await User.findOne({ email }).exec();
