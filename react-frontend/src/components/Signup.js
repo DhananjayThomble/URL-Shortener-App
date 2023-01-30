@@ -11,14 +11,18 @@ function Signup() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
-  const [error, setError] = useState("");
-  const URL = "http://localhost:3000/api/v2/";
+  const URL = "https://app.dhananjaythomble.me/api/v2/";
+
   const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!validateForm()) return;
+
     toast.info("Signing up...");
     await fetchSignup();
   };
 
-  const checkPassword = () => {
+  function checkPassword() {
     if (password !== confirmPassword) {
       toast.error("Passwords do not match");
       return false;
@@ -26,7 +30,26 @@ function Signup() {
       toast.error("Password must be at least 6 characters long");
       return false;
     }
-  };
+    return true;
+  }
+
+  function validateForm() {
+    if (
+      email === "" ||
+      password === "" ||
+      confirmPassword === "" ||
+      name === ""
+    ) {
+      toast.error("All fields are required");
+      return false;
+    }
+
+    if (!checkPassword()) {
+      return false;
+    }
+    return true;
+  }
+
   const fetchSignup = async () => {
     try {
       const response = await axios.post(`${URL}auth/signup`, {
@@ -78,7 +101,7 @@ function Signup() {
             <h4>Sign Up</h4>
           </Card.Header>
           <Card.Body>
-            <Form>
+            <Form onSubmit={handleSubmit}>
               <Form.Group className={"md-3"} controlId={"formName"}>
                 <Form.Label>Name</Form.Label>
                 <Form.Control
@@ -114,22 +137,17 @@ function Signup() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                 />
               </Form.Group>
-            </Form>
 
-            <Button
-              className={"w-100"}
-              variant="info"
-              type="submit"
-              onClick={handleSubmit}
-            >
-              Sign Up
-            </Button>
+              <Button className={"w-100"} variant="info" type="submit">
+                Sign Up
+              </Button>
+            </Form>
           </Card.Body>
           <Card.Footer className="text-muted">
             Already Have an Account?{" "}
             <a href={"/login"} style={{ textDecoration: "none" }}>
               Click Here to Login
-            </a>{" "}
+            </a>
           </Card.Footer>
         </Card>
       </div>
