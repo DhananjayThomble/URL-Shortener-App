@@ -9,25 +9,29 @@ import axios from "axios";
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const URL = "http://localhost:3000/api/v2/";
+  const URL = "https://app.dhananjaythomble.me/api/v2/";
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
-      setIsAuthenticated(true);
       window.location = "/";
     }
   }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // is isAuthenticated ? redirect to home page : login
-    if (isAuthenticated) {
-      window.location = "/";
-    }
+    if (!validateForm()) return false;
+
     await fetchLogin();
   };
+
+  function validateForm() {
+    if (email === "" || password === "") {
+      toast.error("All fields are required");
+      return false;
+    }
+    return true;
+  }
 
   const fetchLogin = async () => {
     try {
@@ -38,7 +42,6 @@ function Login() {
       const { token } = response.data;
       //    set token in local storage
       localStorage.setItem("token", token);
-      setIsAuthenticated(true);
       window.location = "/";
     } catch ({
       response: {
@@ -80,7 +83,7 @@ function Login() {
             <h4>Login</h4>{" "}
           </Card.Header>
           <Card.Body>
-            <Form>
+            <Form onSubmit={handleSubmit}>
               <Form.Group className="mb-3" controlId="formBasicEmail">
                 <Form.Label>Email address</Form.Label>
                 <Form.Control
@@ -102,22 +105,16 @@ function Login() {
                   aria-required={true}
                 />
               </Form.Group>
+              <Button className={"w-100"} variant="info" type="submit">
+                Login
+              </Button>
             </Form>
-
-            <Button
-              className={"w-100"}
-              variant="info"
-              type="submit"
-              onClick={handleSubmit}
-            >
-              Login
-            </Button>
           </Card.Body>
           <Card.Footer className="text-muted">
             Don't Have an Account?{" "}
             <a href={"/signup"} style={{ textDecoration: "none" }}>
               Click Here to Signup
-            </a>{" "}
+            </a>
           </Card.Footer>
         </Card>
       </div>
