@@ -77,7 +77,7 @@ router.post("/url", isApiAuthenticated, async (req, res) => {
     // send response
     res
       .status(200)
-      .json({ shortUrl: `https://app.dhananjaythomble.me/url/${id}` });
+      .json({ shortUrl: `https://app.dhananjaythomble.me/api/v2/url/${id}` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });

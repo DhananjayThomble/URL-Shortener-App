@@ -168,13 +168,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  url:
-                    type: object
-                    description: The URL object.
-                    properties:
-                      url:
-                        type: string
-                        description: The shortened URL.
+                  shortUrl:
+                    type: string
+                    description: The shortened URL.
 
         '400':
           description: Bad request
