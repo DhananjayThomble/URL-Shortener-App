@@ -118,7 +118,12 @@ function Login() {
           </Card.Body>
           <Card.Footer className="text-muted">
             Don't Have an Account?{" "}
-            <a href={"/signup"} style={{ textDecoration: "none" }}>
+            <a
+              style={{ textDecoration: "none" }}
+              onClick={() => {
+                navigate("/signup");
+              }}
+            >
               Click Here to Signup
             </a>
           </Card.Footer>
