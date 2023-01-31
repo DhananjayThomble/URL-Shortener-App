@@ -4,3 +4,5 @@ node_modules/
 resources/
 todo
 .idea
+# Local Netlify folder
+.netlify

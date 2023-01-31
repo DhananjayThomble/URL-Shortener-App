@@ -5,18 +5,20 @@ import Container from "react-bootstrap/Container";
 import React, { useState, useEffect } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const URL = "https://app.dhananjaythomble.me/api/v2/";
+  const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
       toast.info("You are already logged in");
       setTimeout(() => {
-        window.location = "/";
+        navigate("/");
       }, 3000);
     }
   }, []);
@@ -46,7 +48,7 @@ function Login() {
       const { token } = response.data;
       //    set token in local storage
       localStorage.setItem("token", token);
-      window.location = "/";
+      navigate("/");
     } catch ({
       response: {
         status,

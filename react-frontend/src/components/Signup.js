@@ -5,6 +5,7 @@ import Container from "react-bootstrap/Container";
 import React, { useState } from "react";
 import { ToastContainer, toast } from "react-toastify";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 function Signup() {
   const [email, setEmail] = useState("");
@@ -12,6 +13,7 @@ function Signup() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
   const URL = "https://app.dhananjaythomble.me/api/v2/";
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -60,7 +62,9 @@ function Signup() {
       console.log(response);
       if (response.data.ok) {
         toast.success("Signup successful");
-        window.location = "/login";
+        setTimeout(() => {
+          navigate("/login");
+        }, 2000);
       }
     } catch ({
       response: {

@@ -3,11 +3,13 @@ import { Container, Row, Col, Form, Button } from "react-bootstrap";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.min.css";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 function Home() {
   const [originalUrl, setOriginalUrl] = useState("");
   const [shortUrl, setShortUrl] = useState("");
   const URL = "https://app.dhananjaythomble.me/api/v2/url";
+  const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -17,7 +19,8 @@ function Home() {
 
       toast.warning("You are not logged in");
       setTimeout(() => {
-        window.location = "/login";
+        //  redirect to login page
+        navigate("/login");
       }, 4000);
     }
   }, []);
