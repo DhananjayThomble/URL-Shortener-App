@@ -6,7 +6,7 @@ import { LinkContainer } from "react-router-bootstrap";
 function MyNavbar() {
   return (
     // dark navbar with react-bootstrap and react-router-bootstrap
-    <Navbar bg="dark" variant="dark" expand="lg">
+    <Navbar bg="dark" variant="dark" expand="lg" collapseOnSelect={true}>
       <Container>
         <LinkContainer to="/">
           <Navbar.Brand>URL Shortener</Navbar.Brand>
