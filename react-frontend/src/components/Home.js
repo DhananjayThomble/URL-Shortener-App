@@ -1,41 +1,77 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Container, Row, Col, Form, Button } from "react-bootstrap";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.min.css";
+import axios from "axios";
 
 function Home() {
-  const [url, setUrl] = useState("");
+  const [originalUrl, setOriginalUrl] = useState("");
+  const [shortUrl, setShortUrl] = useState("");
+  const URL = "https://app.dhananjaythomble.me/api/v2/url";
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      //  disable #urlInput
+      document.getElementById("urlInput").disabled = true;
+
+      toast.warning("You are not logged in");
+      setTimeout(() => {
+        window.location = "/login";
+      }, 4000);
+    }
+  }, []);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) return false;
     // show toast
     toast("URL will be shortened soon!");
-    console.log("url value is ", url);
 
-    fetch("https://app.dhananjaythomble.me/api", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ url: url }),
-    })
-      .then((response) => response.json())
-      .then((data) => {
-        // if (data.status === 200) {
-        //   setUrl("");
-        //   console.log(data);
-        // } else {
-        //   alert(data.message);
-        //   console.log(data);
-        // }
-        if (data) {
-          setUrl(data.short_url);
-          console.log(data.short_url);
+    await fetchUrl();
+  };
+
+  function validateForm() {
+    if (originalUrl === "") {
+      toast.error("All fields are required");
+      return false;
+    }
+    return true;
+  }
+
+  const fetchUrl = async () => {
+    try {
+      const response = await axios.post(
+        URL,
+        {
+          url: originalUrl,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
         }
-      })
-      .catch((error) => {
-        alert(error);
-      });
+      );
+      const { shortUrl } = response.data;
+      setShortUrl(shortUrl);
+      toast.success("URL shortened successfully!");
+    } catch ({
+      // handle error here
+      response: {
+        status,
+        data: { error },
+      },
+    }) {
+      if (status === 400) {
+        toast.error(error);
+      } else if (status === 401) {
+        toast.error(error);
+      } else if (status === 500) {
+        toast.error(error);
+      } else {
+        toast.error("Something went wrong");
+      }
+    }
   };
 
   return (
@@ -69,12 +105,21 @@ function Home() {
                 <Form.Label>Enter URL</Form.Label>
 
                 <Form.Control
+                  id={"urlInput"}
                   type="url"
                   placeholder="https://example.com"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  value={originalUrl}
+                  onChange={(e) => setOriginalUrl(e.target.value)}
                 />
               </Form.Group>
+
+              {shortUrl && (
+                <Form.Group>
+                  <Form.Label>Shortened URL</Form.Label>
+                  <Form.Control value={shortUrl} readOnly />
+                </Form.Group>
+              )}
+
               {/*  make this button in center of the form input and make width 50%*/}
               <Button
                 className={"w-100"}

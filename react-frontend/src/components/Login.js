@@ -14,13 +14,17 @@ function Login() {
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
-      window.location = "/";
+      toast.info("You are already logged in");
+      setTimeout(() => {
+        window.location = "/";
+      }, 3000);
     }
   }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!validateForm()) return false;
+
+    if (!validateForm()) return;
 
     await fetchLogin();
   };
