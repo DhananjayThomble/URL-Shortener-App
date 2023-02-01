@@ -38,6 +38,9 @@ paths:
                   type: string
                 password:
                   type: string
+              example:
+                email: "jay3@gmail.com"
+                password: "123456"
 
       responses:
         '200':
@@ -214,7 +217,7 @@ paths:
         - in: path
           name: id
           required: true
-          description: The shortened URL ID
+          description: The shortened URL ID. this will not work here. It will work in the browser.
           schema:
             type: string
 
@@ -295,3 +298,66 @@ paths:
                   error:
                     type: string
                     description: The error message.
+
+  /delete/{id}:
+    delete:
+      summary: Delete a short URL
+      description: Delete a short URL by its ID
+
+      security:
+        - BearerAuth: [ ]
+
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: The shortened URL ID
+          example: SmiDxIMREO
+          schema:
+            type: string
+
+      responses:
+        '200':
+          description: Short URL deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+        '401':
+            description: Unauthorized
+            content:
+              application/json:
+                schema:
+                    type: object
+                    properties:
+                      error:
+                        type: string
+                        description: The error message.
+
+        '404':
+            description: Short URL not found
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    error:
+                      type: string
+                      description: The error message.
+
+        '500':
+            description: Error deleting short URL
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    error:
+                      type: string
+                      description: The error message.
+
