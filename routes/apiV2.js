@@ -87,19 +87,20 @@ router.post("/url", isApiAuthenticated, async (req, res) => {
 //  * delete a url. route: ip/api/v2/url/:id
 router.delete("/delete/:id", isApiAuthenticated, async (req, res) => {
   const id = req.params.id;
+  // console.log("url id: ", id, "user id: ", req.user._id);
   try {
-    //  also find shortUrl in urlArray
-    const urlObj = await UrlModel2.findOne({ userId: req.user._id });
+    const urlObj = await UrlModel2.findOne({
+      userId: req.user._id,
+      urlArray: { $elemMatch: { shortUrl: id } },
+    });
     if (urlObj) {
-      //  check if url is present in urlArray
-      const url = urlObj.urlArray.find((url) => url.shortUrl === id);
-      if (!url) {
-        res.status(404).json({ error: "Url not found" });
-        return;
-      }
       urlObj.urlArray = urlObj.urlArray.filter((url) => url.shortUrl !== id);
-      await urlObj.save();
-      res.status(200).json({ ok: "ok" });
+      const status = await urlObj.save();
+      if (status) {
+        res.status(200).json({ ok: true });
+      } else {
+        res.status(500).json({ error: "Server error" });
+      }
     } else {
       res.status(404).json({ error: "Url not found" });
     }

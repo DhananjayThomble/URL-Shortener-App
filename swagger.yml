@@ -14,12 +14,10 @@ servers:
 
 components:
   securitySchemes:
-    BasicAuth:
-      type: http
-      scheme: basic
     BearerAuth:
       type: http
       scheme: bearer
+      description: to get the token, use the login API
 
 paths:
   /auth/login:
@@ -30,7 +28,7 @@ paths:
       requestBody:
         required: true
         content:
-          application/x-www-form-urlencoded:
+          application/json:
             schema:
               type: object
               properties:
