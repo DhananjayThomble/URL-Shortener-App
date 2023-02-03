@@ -2,7 +2,7 @@ import Button from "react-bootstrap/Button";
 import Card from "react-bootstrap/Card";
 import Form from "react-bootstrap/Form";
 import Container from "react-bootstrap/Container";
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -19,13 +19,13 @@ function Login() {
       toast.info("You are already logged in");
       setTimeout(() => {
         navigate("/");
-      }, 3000);
+      }, 4000);
     }
-  }, []);
+  }, [navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
+    toast.info("Logging in...");
     if (!validateForm()) return;
 
     await fetchLogin();
@@ -45,9 +45,14 @@ function Login() {
         email,
         password,
       });
-      const { token } = response.data;
-      //    set token in local storage
+      const {
+        token,
+        user: { name },
+      } = response.data;
+
+      //    set token and logged-in user's name in local storage
       localStorage.setItem("token", token);
+      localStorage.setItem("name", name);
       navigate("/");
     } catch ({
       response: {

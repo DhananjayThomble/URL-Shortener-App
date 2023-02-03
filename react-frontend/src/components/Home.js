@@ -8,22 +8,21 @@ import { useNavigate } from "react-router-dom";
 function Home() {
   const [originalUrl, setOriginalUrl] = useState("");
   const [shortUrl, setShortUrl] = useState("");
+  const [name, setName] = useState(localStorage.getItem("name") || "Guest");
   const URL = "https://app.dhananjaythomble.me/api/v2/url";
   const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
+    setName(localStorage.getItem("name") || "Guest");
     if (!token) {
-      //  disable #urlInput
-      document.getElementById("urlInput").disabled = true;
-
       toast.warning("You are not logged in");
       setTimeout(() => {
         //  redirect to login page
         navigate("/login");
-      }, 4000);
+      }, 3000);
     }
-  }, []);
+  }, [navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -81,7 +80,7 @@ function Home() {
     <>
       <div className={"mt-4 p-4 bg-primary text-white rounded jumbotron"}>
         <Container>
-          <h1>Welcome to URL Shortener</h1>
+          <h1>Welcome {name} </h1>
           <p>
             A simple and easy to use tool to shorten your long links and make
             them easy to share.

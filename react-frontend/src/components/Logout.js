@@ -1,10 +1,13 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { toast, ToastContainer } from "react-toastify";
 
 function Logout(props) {
   //  delete the token from local storage
-  localStorage.removeItem("token");
-  toast.success("You are logged out");
+  useEffect(() => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("name");
+    toast.success("You are logged out");
+  }, []);
 
   return (
     <>
