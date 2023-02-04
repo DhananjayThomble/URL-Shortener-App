@@ -33,6 +33,10 @@ function MyNavbar() {
             <LinkContainer to="/logout">
               <Nav.Link>Logout</Nav.Link>
             </LinkContainer>
+
+            <LinkContainer to={"/history"}>
+              <Nav.Link>History</Nav.Link>
+            </LinkContainer>
           </Nav>
         </Navbar.Collapse>
       </Container>

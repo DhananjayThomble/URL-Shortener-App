@@ -6,6 +6,7 @@ import Login from "./components/Login";
 import Signup from "./components/Signup";
 import Logout from "./components/Logout";
 import Footer from "./components/Footer";
+import History from "./components/History";
 import "./App.css";
 
 function App() {
@@ -20,8 +21,9 @@ function App() {
           <Route path={"/signup"} element={<Signup />} />
           <Route path={"/logout"} element={<Logout />} />
           <Route path="*" element={<Home />} />
+          <Route path={"/history"} element={<History />} />
         </Routes>
-        <Footer />
+        {/*<Footer />*/}
       </BrowserRouter>
     </div>
   );
