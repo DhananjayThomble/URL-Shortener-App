@@ -6,6 +6,8 @@ For API Documentation and Testing: https://app.dhananjaythomble.me/docs-api
 
 React App (Under Development) : https://dturl.netlify.app/
 
+[![Netlify Status](https://api.netlify.com/api/v1/badges/80999b21-48a6-4c22-8c83-6a0e55f79f5d/deploy-status)](https://app.netlify.com/sites/dturl/deploys)
+
 This repository contains an example implementation of a simple URL shortening service using Express.js, MongoDB and the mongoose driver, and the nanoid library.
 
 ## Features
