@@ -59,6 +59,7 @@ function History() {
               <HistoryCard
                 shortUrl={data.shortUrl}
                 originalUrl={data.originalUrl}
+                visitCount={data.visitCount || 0}
               />
             </Col>
           </Row>

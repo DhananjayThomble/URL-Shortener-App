@@ -3,10 +3,12 @@ import Card from "react-bootstrap/Card";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
+import { FaRegChartBar } from "react-icons/fa";
 
-function HistoryCard({ shortUrl, originalUrl }) {
+function HistoryCard({ shortUrl, originalUrl, visitCount }) {
   const [urlId, setUrlId] = useState("");
   const [showCard, setShowCard] = useState(true);
+  const [visitCountState, setVisitCountState] = useState(visitCount);
 
   useEffect(() => {
     setUrlId(shortUrl);
@@ -35,7 +37,13 @@ function HistoryCard({ shortUrl, originalUrl }) {
   if (showCard) {
     return (
       <Card border="secondary">
-        <Card.Header as="h5">Featured</Card.Header>
+        <Card.Header as="h5">
+          Featured
+          <div className={"float-end"}>
+            <FaRegChartBar />
+            <span style={{ color: "#EDC126" }}> {visitCountState}</span>
+          </div>
+        </Card.Header>
         <Card.Body>
           <Card.Title
             as={"h6"}
@@ -49,6 +57,8 @@ function HistoryCard({ shortUrl, originalUrl }) {
                 `https://app.dhananjaythomble.me/api/v2/url/${shortUrl}`,
                 "_blank"
               );
+              //  increase visit count
+              setVisitCountState(visitCountState + 1);
             }}
           >
             Visit The Site
