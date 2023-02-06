@@ -20,6 +20,9 @@ router.get("/url/:short", async (req, res) => {
       res.status(404).json({ error: "Url not found" });
       return;
     }
+    // count the URL visit
+    const visitCount = url.urlArray[0].visitCount || 0;
+    await countUrlVisit(shortUrl, visitCount);
 
     // http status for redirect: 302
     res.status(302).redirect(url.urlArray[0].originalUrl);
@@ -63,6 +66,7 @@ router.post("/url", isApiAuthenticated, async (req, res) => {
       urlObj.urlArray.push({
         shortUrl: id,
         originalUrl: url,
+        visitCount: 0,
       });
       await urlObj.save();
     } else {
@@ -71,6 +75,7 @@ router.post("/url", isApiAuthenticated, async (req, res) => {
       myModel.urlArray.push({
         shortUrl: id,
         originalUrl: url,
+        visitCount: 0,
       });
       await myModel.save();
     }
@@ -109,5 +114,21 @@ router.delete("/delete/:id", isApiAuthenticated, async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+async function countUrlVisit(urlID, visitCount) {
+  // increment the visit count
+  try {
+    //    find the url object containing the urlID and increment the visit count
+    const urlObj = await UrlModel2.findOneAndUpdate(
+      { "urlArray.shortUrl": urlID },
+      { $set: { "urlArray.$.visitCount": visitCount + 1 } }
+    );
+    if (!urlObj) {
+      console.error("url not found");
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
 
 export default router;
