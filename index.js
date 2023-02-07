@@ -25,7 +25,7 @@ app.use("/public", express.static(`${process.cwd()}/public`));
 app.use(bodyParser.json());
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "secret",
+    secret: process.env.SESSION_SECRET,
     cookie: {},
     resave: false,
     saveUninitialized: true,
