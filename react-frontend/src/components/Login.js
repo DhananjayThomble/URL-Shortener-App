@@ -6,6 +6,7 @@ import React, { useEffect, useState } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { FaUserAlt, FaKey, FaRegPaperPlane } from "react-icons/fa";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -96,7 +97,9 @@ function Login() {
           <Card.Body>
             <Form onSubmit={handleSubmit}>
               <Form.Group className="mb-3" controlId="formBasicEmail">
-                <Form.Label>Email address</Form.Label>
+                <Form.Label>
+                  <FaUserAlt /> Email address
+                </Form.Label>
                 <Form.Control
                   type="email"
                   placeholder="Enter email"
@@ -108,7 +111,9 @@ function Login() {
                 </Form.Text>
               </Form.Group>
               <Form.Group className="mb-3" controlId="formBasicPassword">
-                <Form.Label>Password</Form.Label>
+                <Form.Label>
+                  <FaKey /> Password
+                </Form.Label>
                 <Form.Control
                   type="password"
                   placeholder="Password"
@@ -117,7 +122,7 @@ function Login() {
                 />
               </Form.Group>
               <Button className={"w-100"} variant="info" type="submit">
-                Login
+                <FaRegPaperPlane /> Login
               </Button>
             </Form>
           </Card.Body>

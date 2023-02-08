@@ -6,6 +6,12 @@ import React, { useState } from "react";
 import { ToastContainer, toast } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import {
+  FaUserAlt,
+  FaKey,
+  FaUserCircle,
+  FaRegPaperPlane,
+} from "react-icons/fa";
 
 function Signup() {
   const [email, setEmail] = useState("");
@@ -107,7 +113,9 @@ function Signup() {
           <Card.Body>
             <Form onSubmit={handleSubmit}>
               <Form.Group className={"md-3"} controlId={"formName"}>
-                <Form.Label>Name</Form.Label>
+                <Form.Label>
+                  <FaUserCircle /> Name
+                </Form.Label>
                 <Form.Control
                   type={"text"}
                   placeholder={"Enter Your Name"}
@@ -115,7 +123,9 @@ function Signup() {
                 />
               </Form.Group>
               <Form.Group className="mb-3" controlId="formBasicEmail">
-                <Form.Label>Email address</Form.Label>
+                <Form.Label>
+                  <FaUserAlt /> Email address
+                </Form.Label>
                 <Form.Control
                   type="email"
                   placeholder="Enter email"
@@ -126,7 +136,9 @@ function Signup() {
                 </Form.Text>
               </Form.Group>
               <Form.Group className="mb-3" controlId="formBasicPassword">
-                <Form.Label>Password</Form.Label>
+                <Form.Label>
+                  <FaKey /> Password
+                </Form.Label>
                 <Form.Control
                   type="password"
                   placeholder="Password"
@@ -134,7 +146,9 @@ function Signup() {
                 />
               </Form.Group>
               <Form.Group className="mb-3" controlId="formBasicPasswordConfirm">
-                <Form.Label>Confirm Password</Form.Label>
+                <Form.Label>
+                  <FaKey /> Confirm Password
+                </Form.Label>
                 <Form.Control
                   type="password"
                   placeholder="Confirm Password"
@@ -143,7 +157,7 @@ function Signup() {
               </Form.Group>
 
               <Button className={"w-100"} variant="info" type="submit">
-                Sign Up
+                <FaRegPaperPlane /> Sign Up
               </Button>
             </Form>
           </Card.Body>

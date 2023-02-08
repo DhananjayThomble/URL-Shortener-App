@@ -3,7 +3,7 @@ import Card from "react-bootstrap/Card";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
-import { FaRegChartBar } from "react-icons/fa";
+import { FaRegChartBar, FaExternalLinkAlt, FaTrashAlt } from "react-icons/fa";
 
 function HistoryCard({ shortUrl, originalUrl, visitCount }) {
   const [urlId, setUrlId] = useState("");
@@ -61,10 +61,10 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
               setVisitCountState(visitCountState + 1);
             }}
           >
-            Visit The Site
+            <FaExternalLinkAlt /> The Site
           </Button>
           <Button className={"m-2"} variant={"danger"} onClick={deleteUrl}>
-            Delete
+            <FaTrashAlt /> Delete
           </Button>
         </Card.Body>
       </Card>

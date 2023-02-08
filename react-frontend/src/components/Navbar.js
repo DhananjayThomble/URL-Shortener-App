@@ -2,6 +2,14 @@ import Container from "react-bootstrap/Container";
 import Nav from "react-bootstrap/Nav";
 import Navbar from "react-bootstrap/Navbar";
 import { LinkContainer } from "react-router-bootstrap";
+import {
+  FaHistory,
+  FaHome,
+  FaInfoCircle,
+  FaSignOutAlt,
+  FaSignInAlt,
+  FaUserPlus,
+} from "react-icons/fa";
 
 function MyNavbar() {
   return (
@@ -15,27 +23,39 @@ function MyNavbar() {
         <Navbar.Collapse id="basic-navbar-nav">
           <Nav className="me-auto">
             <LinkContainer to="/">
-              <Nav.Link>Home</Nav.Link>
+              <Nav.Link>
+                <FaHome /> Home
+              </Nav.Link>
             </LinkContainer>
 
             <LinkContainer to="/about">
-              <Nav.Link>About</Nav.Link>
+              <Nav.Link>
+                <FaInfoCircle /> About
+              </Nav.Link>
             </LinkContainer>
 
             <LinkContainer to="/login">
-              <Nav.Link>Login</Nav.Link>
+              <Nav.Link>
+                <FaSignInAlt /> Login
+              </Nav.Link>
             </LinkContainer>
 
             <LinkContainer to="/signup">
-              <Nav.Link>Signup</Nav.Link>
+              <Nav.Link>
+                <FaUserPlus /> Sign Up
+              </Nav.Link>
             </LinkContainer>
 
             <LinkContainer to="/logout">
-              <Nav.Link>Logout</Nav.Link>
+              <Nav.Link>
+                <FaSignOutAlt /> Logout
+              </Nav.Link>
             </LinkContainer>
 
             <LinkContainer to={"/history"}>
-              <Nav.Link>History</Nav.Link>
+              <Nav.Link>
+                <FaHistory /> History
+              </Nav.Link>
             </LinkContainer>
           </Nav>
         </Navbar.Collapse>

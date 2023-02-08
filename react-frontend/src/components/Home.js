@@ -4,6 +4,7 @@ import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.min.css";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { FaLink } from "react-icons/fa";
 
 function Home() {
   const [originalUrl, setOriginalUrl] = useState("");
@@ -129,7 +130,7 @@ function Home() {
                 variant="outline-success"
                 type="submit"
               >
-                Shorten
+                <FaLink /> Shorten
               </Button>
             </Form>
           </Col>
