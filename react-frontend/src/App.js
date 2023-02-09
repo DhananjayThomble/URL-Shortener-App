@@ -12,7 +12,7 @@ import UserContext from "./context/UserContext";
 import { useState } from "react";
 
 function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(localStorage.getItem("token") || null);
 
   return (
     <div>

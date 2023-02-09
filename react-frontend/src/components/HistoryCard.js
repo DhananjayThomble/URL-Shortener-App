@@ -61,7 +61,7 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
               setVisitCountState(visitCountState + 1);
             }}
           >
-            <FaExternalLinkAlt /> The Site
+            <FaExternalLinkAlt /> Visit The Site
           </Button>
           <Button className={"m-2"} variant={"danger"} onClick={deleteUrl}>
             <FaTrashAlt /> Delete
