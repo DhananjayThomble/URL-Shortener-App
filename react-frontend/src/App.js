@@ -8,22 +8,28 @@ import Logout from "./components/Logout";
 import Footer from "./components/Footer";
 import History from "./components/History";
 import "./App.css";
+import UserContext from "./context/UserContext";
+import { useState } from "react";
 
 function App() {
+  const [user, setUser] = useState(null);
+
   return (
     <div>
       <BrowserRouter>
-        <MyNavbar />
-        <Routes>
-          <Route index path="/" element={<Home />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/login" element={<Login />} />
-          <Route path={"/signup"} element={<Signup />} />
-          <Route path={"/logout"} element={<Logout />} />
-          <Route path="*" element={<Home />} />
-          <Route path={"/history"} element={<History />} />
-        </Routes>
-        {/*<Footer />*/}
+        <UserContext.Provider value={{ user, setUser }}>
+          <MyNavbar />
+          <Routes>
+            <Route index path="/" element={<Home />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/login" element={<Login />} />
+            <Route path={"/signup"} element={<Signup />} />
+            <Route path={"/logout"} element={<Logout />} />
+            <Route path="*" element={<Home />} />
+            <Route path={"/history"} element={<History />} />
+          </Routes>
+          {/*<Footer />*/}
+        </UserContext.Provider>
       </BrowserRouter>
     </div>
   );

@@ -2,17 +2,19 @@ import Button from "react-bootstrap/Button";
 import Card from "react-bootstrap/Card";
 import Form from "react-bootstrap/Form";
 import Container from "react-bootstrap/Container";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useContext } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { FaUserAlt, FaKey, FaRegPaperPlane } from "react-icons/fa";
+import UserContext from "../context/UserContext";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const URL = "https://app.dhananjaythomble.me/api/v2/";
   const navigate = useNavigate();
+  const context = useContext(UserContext);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -54,6 +56,7 @@ function Login() {
       //    set token and logged-in user's name in local storage
       localStorage.setItem("token", token);
       localStorage.setItem("name", name);
+      context.setUser({ token: token });
       navigate("/");
     } catch ({
       response: {
