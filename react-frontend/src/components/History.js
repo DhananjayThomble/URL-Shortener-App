@@ -39,7 +39,7 @@ function History() {
   };
 
   return (
-    <Container className={"pt-4"}>
+    <Container className={"pb-5"}>
       <ToastContainer
         position="top-center"
         autoClose={3000}
@@ -52,19 +52,19 @@ function History() {
         pauseOnHover
         theme="light"
       />
-      {history.map((data) => {
-        return (
-          <Row className={"my-1"}>
-            <Col>
+      <Row className={"my-1"}>
+        {history.map((data) => {
+          return (
+            <Col md={6} className={"p-1"}>
               <HistoryCard
                 shortUrl={data.shortUrl}
                 originalUrl={data.originalUrl}
                 visitCount={data.visitCount || 0}
               />
             </Col>
-          </Row>
-        );
-      })}
+          );
+        })}
+      </Row>
     </Container>
   );
 }

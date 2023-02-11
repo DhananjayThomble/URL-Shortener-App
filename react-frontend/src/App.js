@@ -28,7 +28,7 @@ function App() {
             <Route path="*" element={<Home />} />
             <Route path={"/history"} element={<History />} />
           </Routes>
-          {/*<Footer />*/}
+          <Footer />
         </UserContext.Provider>
       </BrowserRouter>
     </div>
