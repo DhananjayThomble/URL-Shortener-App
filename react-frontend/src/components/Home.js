@@ -10,26 +10,25 @@ function Home() {
   const [originalUrl, setOriginalUrl] = useState("");
   const [shortUrl, setShortUrl] = useState("");
   const [name, setName] = useState(localStorage.getItem("name") || "Guest");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const URL = "https://app.dhananjaythomble.me/api/v2/url";
-  const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     setName(localStorage.getItem("name") || "Guest");
     if (!token) {
-      toast.warning("You are not logged in");
-      setTimeout(() => {
-        //  redirect to login page
-        navigate("/login");
-      }, 3000);
+      setIsAuthenticated(false);
+      toast.warning("Please Login to use the App");
+    } else {
+      setIsAuthenticated(true);
     }
-  }, [navigate]);
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) return false;
     // show toast
-    toast("URL will be shortened soon!");
+    if (isAuthenticated) toast("URL will be shortened soon!");
 
     await fetchUrl();
   };
@@ -68,7 +67,7 @@ function Home() {
       if (status === 400) {
         toast.error(error);
       } else if (status === 401) {
-        toast.error(error);
+        toast.error("Please Login First!");
       } else if (status === 500) {
         toast.error(error);
       } else {
