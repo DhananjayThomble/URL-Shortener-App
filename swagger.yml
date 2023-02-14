@@ -359,3 +359,45 @@ paths:
                       type: string
                       description: The error message.
 
+
+  /export:
+    get:
+      summary: Export to Excel
+      description: Export The Generated URLs into Excel sheet
+
+      security:
+        - BearerAuth: []
+
+      responses:
+        '200':
+          description: Exported Successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        '500':
+          description: Error Exporting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.

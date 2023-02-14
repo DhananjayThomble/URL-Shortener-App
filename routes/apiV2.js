@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import isValidUrl from "../utils.js";
 import UrlModel2 from "../models/UrlModel2.js";
 import { isApiAuthenticated } from "./apiAuth.js";
+import ExcelJS from "exceljs";
 
 const router = express.Router();
 
@@ -108,6 +109,23 @@ router.delete("/delete/:id", isApiAuthenticated, async (req, res) => {
       }
     } else {
       res.status(404).json({ error: "Url not found" });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// export url data to excel file
+router.get("/export", isApiAuthenticated, async (req, res) => {
+  //
+  try {
+    const urlObj = await UrlModel2.findOne({ userId: req.user._id });
+    if (urlObj) {
+      // data found
+      // console.log(urlObj.urlArray);
+    } else {
+      //    data not found
     }
   } catch (error) {
     console.error(error);
