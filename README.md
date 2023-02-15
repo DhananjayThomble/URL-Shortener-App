@@ -14,6 +14,9 @@ user information and shortened URLs.
 - API authentication using JSON Web Tokens (JWT).
 - API rate limiting using Express Rate Limit.
 - Cross-Origin Resource Sharing (CORS) enabled.
+- API documentation using Swagger.
+- Export Generated URLs to Excel file.
+
 
 ## Tech Stack
 
