@@ -327,35 +327,88 @@ paths:
                     description: OK message.
 
         '401':
-            description: Unauthorized
-            content:
-              application/json:
-                schema:
-                    type: object
-                    properties:
-                      error:
-                        type: string
-                        description: The error message.
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
 
         '404':
-            description: Short URL not found
-            content:
-              application/json:
-                schema:
-                  type: object
-                  properties:
-                    error:
-                      type: string
-                      description: The error message.
+          description: Short URL not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
 
         '500':
-            description: Error deleting short URL
-            content:
-              application/json:
-                schema:
-                  type: object
-                  properties:
-                    error:
-                      type: string
-                      description: The error message.
+          description: Error deleting short URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
 
+
+  /export:
+    get:
+      summary: Export to Excel
+      description: Export The Generated URLs into Excel sheet
+
+      security:
+        - BearerAuth: [ ]
+
+      responses:
+        '200':
+          description: Exported Successfully
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+        '404':
+          description: No URLs Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        '500':
+          description: Error Exporting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
