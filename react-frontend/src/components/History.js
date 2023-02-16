@@ -6,6 +6,7 @@ import HistoryCard from "./HistoryCard";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { toast, ToastContainer } from "react-toastify";
+import ExportToExcel from "./ExportToExcel";
 
 function History() {
   const [history, setHistory] = useState([]);
@@ -64,6 +65,9 @@ function History() {
             </Col>
           );
         })}
+      </Row>
+      <Row>
+        <ExportToExcel />
       </Row>
     </Container>
   );
