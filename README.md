@@ -59,8 +59,7 @@ user information and shortened URLs.
 
 ## Deployment
 
-- The Node.js backend is hosted on a DigitalOcean Droplet running Ubuntu and managed using PM2. The URL for the backend
-  is: https://app.dhananjaythomble.me
+- The Node.js backend is hosted on a DigitalOcean Droplet running Ubuntu and managed using PM2.
 
 - The React frontend is hosted on Netlify. The URL for the frontend is: https://dturl.netlify.app
     
