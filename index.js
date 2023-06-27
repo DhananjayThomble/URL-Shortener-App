@@ -1,7 +1,7 @@
 import { config } from "dotenv";
 
 config();
-		import express from "express";
+import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors"; // allows req from cross-origin
 import mongoose from "mongoose";
@@ -24,10 +24,10 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use("/public", express.static(`${process.cwd()}/public`));
 app.use(bodyParser.json());
 app.use(
-  					session({
+  session({
     secret: process.env.SESSION_SECRET,
     cookie: {},
-    		resave: false,
+    resave: false,
     saveUninitialized: true,
   })
 );
