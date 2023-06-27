@@ -29,3 +29,39 @@ The frontend is built using React and Bootstrap. It provides the following funct
 -   Deleting shortened URLs
 -   Navigation using react-router-dom
 -   Integration with the backend API with Axios
+
+## GitHub Actions:
+
+[//]: # (formating code whenever a push is made to the master branch)
+
+```yml
+name: Auto Format Code with Prettier
+# This action automatically formats code with Prettier when a push is made to the main branch.
+
+on:
+    push:
+        branches: [main]
+
+jobs:
+    format:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v2
+            - uses: actions/setup-node@v1
+              with:
+                  node-version: "14.x"
+            - run: npm install
+            - run: npm run format
+            - run: git diff --exit-code // check if there are any changes, --exit-code returns 1 if there are changes
+
+# if there are changes, commit and push them
+            - name: Commit files
+              run: |
+                  git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git config --local user.name "github-actions[bot]"
+                  git add .
+                  git commit -m "Auto formatting with Prettier"
+                  git push
+
+```
+
