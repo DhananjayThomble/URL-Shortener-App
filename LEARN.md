@@ -52,8 +52,7 @@ jobs:
                   node-version: "14.x"
             - run: npm install
             - run: npm run format
-            - run: git diff --exit-code // check if there are any changes, --exit-code returns 1 if there are changes
-
+              
 # if there are changes, commit and push them
             - name: Commit files
               run: |
