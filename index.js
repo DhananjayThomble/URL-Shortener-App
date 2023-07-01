@@ -33,6 +33,10 @@ app.use(
 );
 app.use(passport.initialize());
 app.use(passport.session());
+
+app.set("trust proxy", 2);
+// app.get("/ip", (request, response) => response.send(request.ip));
+
 // -----------------API DOCS------------------------
 const swaggerDocument = Yaml.load("./swagger.yml");
 app.use("/docs-api", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
@@ -58,6 +62,9 @@ const limiter = rateLimit({
   max: 30, // limit each IP to 30 requests per windowMs
   message: "Too many requests, please try again later",
   standardHeaders: true,
+  keyGenerator: function (req) {
+    return req.headers["x-forwarded-for"] || req.ip; // for nginx proxy server
+  },
 });
 
 app.use(limiter); // limit number of req for each client
