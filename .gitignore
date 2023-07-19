@@ -2,7 +2,7 @@
 .env
 node_modules/
 resources/
-todo
+extras/todo
 .idea
 # Local Netlify folder
 .netlify

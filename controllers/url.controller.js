@@ -1,18 +1,27 @@
-import express from "express";
-import { nanoid } from "nanoid";
-import isValidUrl from "../utils.js";
 import UrlModel2 from "../models/UrlModel2.js";
-import { isApiAuthenticated } from "./apiAuth.js";
+
+import { nanoid } from "nanoid";
+
 import ExcelJS from "exceljs";
-import { SHORT_URL_PREFIX } from "../Constants.js";
 
-const router = express.Router();
+import { check, validationResult } from "express-validator";
 
-//  * redirect to original url. route: ip/api/v2/url/:code
-router.get("/url/:short", async (req, res) => {
-  const shortUrl = req.params.short;
+import { SHORT_URL_PREFIX } from "../extras/Constants.js";
 
+//-----------------------------------redirectToOriginalUrl-----------------------------------
+export const validateUrl = [check("url").isURL().withMessage("Invalid URL")];
+
+export const redirectToOriginalUrl = async (req, res) => {
   try {
+    // validation
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const shortUrl = req.params.short;
+    console.log("shortUrl", shortUrl);
+
     const url = await UrlModel2.findOne({
       "urlArray.shortUrl": shortUrl,
     }).select({ "urlArray.$": 1 });
@@ -32,37 +41,40 @@ router.get("/url/:short", async (req, res) => {
     console.error(error);
     res.status(500).json({ error: "Server error" });
   }
-});
+};
 
-//  * get all generated urls by current user. route: ip/api/v2/history
-router.get("/history", isApiAuthenticated, async (req, res) => {
+async function countUrlVisit(urlID, visitCount) {
+  // increment the visit count
   try {
-    const urlObj = await UrlModel2.findOne({ userId: req.user._id });
-    if (urlObj) {
-      res.status(200).json({ urlArray: urlObj.urlArray });
-    } else {
-      res.status(200).json({ urlArray: [] });
+    //    find the url object containing the urlID and increment the visit count
+    const urlObj = await UrlModel2.findOneAndUpdate(
+      { "urlArray.shortUrl": urlID },
+      { $set: { "urlArray.$.visitCount": visitCount + 1 } }
+    );
+    if (!urlObj) {
+      console.error("url not found");
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Server error" });
   }
-});
+}
 
-//  * generate short url. route: ip/api/v2/url
-router.post("/url", isApiAuthenticated, async (req, res) => {
-  const url = req.body.url;
-
-  if (!isValidUrl(url)) {
-    res.status(400).json({ error: "invalid url" });
-    return;
-  }
-
-  const id = nanoid(10);
-  // get user id from token
-  const userId = req.user._id;
-  // isUserRegistered ? append the url object to existing array of that user : create new collection for 1 time only
+//-----------------------------------generateShortUrl-----------------------------------
+export const generateShortUrl = async (req, res) => {
   try {
+    // validation
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const url = req.body.url;
+    const id = nanoid(10);
+    // get user id from token
+
+    const userId = req.user._id;
+    // isUserRegistered ? append the url object to existing array of that user : create new collection for 1 time only
+
     const urlObj = await UrlModel2.findOne({ userId: userId });
     if (urlObj) {
       urlObj.urlArray.push({
@@ -84,15 +96,31 @@ router.post("/url", isApiAuthenticated, async (req, res) => {
     // send response
     res
       .status(200)
+      // TODO: change this
       .json({ shortUrl: `https://app.dhananjaythomble.me/api/v2/url/${id}` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
   }
-});
+};
 
-//  * delete a url. route: ip/api/v2/url/:id
-router.delete("/delete/:id", isApiAuthenticated, async (req, res) => {
+//------------------------------------------getHistory------------------------------------------
+export const getHistory = async (req, res) => {
+  try {
+    const urlObj = await UrlModel2.findOne({ userId: req.user._id });
+    if (urlObj) {
+      res.status(200).json({ urlArray: urlObj.urlArray });
+    } else {
+      res.status(200).json({ urlArray: [] });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+//------------------------------------------deleteUrl------------------------------------------
+export const deleteUrl = async (req, res) => {
   const id = req.params.id;
   // console.log("url id: ", id, "user id: ", req.user._id);
   try {
@@ -115,11 +143,10 @@ router.delete("/delete/:id", isApiAuthenticated, async (req, res) => {
     console.error(error);
     res.status(500).json({ error: "Server error" });
   }
-});
+};
 
-// export url data to excel file
-router.get("/export", isApiAuthenticated, async (req, res) => {
-  //
+//------------------------------------------export Generated URLs for user------------------------------------------
+export const exportGeneratedUrls = async (req, res) => {
   try {
     const urlObj = await UrlModel2.findOne({ userId: req.user._id });
     if (urlObj) {
@@ -172,22 +199,4 @@ router.get("/export", isApiAuthenticated, async (req, res) => {
     console.error(error);
     res.status(500).json({ error: "Server error" });
   }
-});
-
-async function countUrlVisit(urlID, visitCount) {
-  // increment the visit count
-  try {
-    //    find the url object containing the urlID and increment the visit count
-    const urlObj = await UrlModel2.findOneAndUpdate(
-      { "urlArray.shortUrl": urlID },
-      { $set: { "urlArray.$.visitCount": visitCount + 1 } }
-    );
-    if (!urlObj) {
-      console.error("url not found");
-    }
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-export default router;
+};
