@@ -22,7 +22,7 @@ function History() {
   const fetchData = async () => {
     try {
       const result = await axios.get(
-        "https://app.dhananjaythomble.me/api/v2/history",
+        "https://app.dhananjaythomble.me/api/history",
         {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }

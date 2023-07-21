@@ -17,7 +17,7 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
   const deleteUrl = async () => {
     try {
       const result = await axios.delete(
-        `https://app.dhananjaythomble.me/api/v2/delete/${urlId}`,
+        `https://app.dhananjaythomble.me/api/delete/${urlId}`,
         {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }
@@ -47,14 +47,14 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
         <Card.Body>
           <Card.Title
             as={"h6"}
-          >{`https://app.dhananjaythomble.me/api/v2/url/${shortUrl}`}</Card.Title>
+          >{`https://app.dhananjaythomble.me/api/url/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
           <Button
             variant="secondary"
             onClick={() => {
               //    open in new tab
               window.open(
-                `https://app.dhananjaythomble.me/api/v2/url/${shortUrl}`,
+                `https://app.dhananjaythomble.me/api/url/${shortUrl}`,
                 "_blank"
               );
               //  increase visit count

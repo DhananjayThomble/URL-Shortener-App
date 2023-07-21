@@ -11,7 +11,7 @@ function Home() {
   const [shortUrl, setShortUrl] = useState("");
   const [name, setName] = useState(localStorage.getItem("name") || "Guest");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const URL = "https://app.dhananjaythomble.me/api/v2/url";
+  const URL = "https://app.dhananjaythomble.me/api/url";
 
   useEffect(() => {
     const token = localStorage.getItem("token");

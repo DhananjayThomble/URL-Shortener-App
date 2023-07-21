@@ -18,7 +18,7 @@ function Signup() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
-  const URL = "https://app.dhananjaythomble.me/api/v2/";
+  const URL = "https://app.dhananjaythomble.me/";
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {

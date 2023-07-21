@@ -12,7 +12,7 @@ import UserContext from "../context/UserContext";
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const URL = "https://app.dhananjaythomble.me/api/v2/";
+  const URL = "https://app.dhananjaythomble.me/";
   const navigate = useNavigate();
   const context = useContext(UserContext);
 
