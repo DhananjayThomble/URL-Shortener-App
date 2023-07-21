@@ -65,7 +65,7 @@ user information and shortened URLs.
     
 - [![Netlify Status](https://api.netlify.com/api/v1/badges/80999b21-48a6-4c22-8c83-6a0e55f79f5d/deploy-status)](https://app.netlify.com/sites/dturl/deploys)
 - The API documentation is generated using Swagger. The URL for the API documentation
-  is: https://app.dhananjaythomble.me/docs-api
+  is: https://app.dhananjaythomble.me/doc
 
 ## Prerequisites
 
@@ -78,11 +78,11 @@ user information and shortened URLs.
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice.git
+    git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
     ```
 2. Install the dependencies:
     ```bash
-    cd NodeJS-URL-Shortener-Microservice
+    cd URL-Shortener-App
     npm install
     ```
 3. Create a .env file in the root directory and add the following environment variables:
@@ -97,7 +97,7 @@ user information and shortened URLs.
     npm start
     ```
 5. Open http://localhost:3000 in your browser to view the application.
-6. Goto http://localhost:3000/docs-api to view the API documentation.
+6. Goto http://localhost:3000/doc to view the API documentation.
 
 ## Contributing
 
