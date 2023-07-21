@@ -37,7 +37,7 @@ app.set("trust proxy", 2);
 
 // -----------------API DOCS------------------------
 const swaggerDocument = Yaml.load("./swagger.yml");
-app.use("/docs-api", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use("/doc", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 //-----------------------------------DB-------------------------------
 await mongoConnect();
@@ -56,6 +56,11 @@ const limiter = rateLimit({
 app.use(limiter); // limit number of req for each client
 app.use("/api", cors(), urlRoute);
 app.use("/auth", cors(), authRoute);
+
+// goto /doc to see api documentation
+app.get("/", (req, res) => {
+  res.send(`Please goto <a href="/doc">/doc</a> to see api documentation`);
+});
 
 app.listen(PORT, function () {
   console.log(`Listening on port ${PORT}`);
