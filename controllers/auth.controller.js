@@ -62,11 +62,6 @@ export const signup = async (req, res) => {
       return res.status(400).json({
         error: "Password is required and should be min 6 characters long",
       });
-    if (!email || !EmailValidator.validate(email)) {
-      return res
-        .status(400)
-        .json({ error: "Email is required and should be valid" });
-    }
 
     // check if user already exists
     let userExist = await User.findOne({ email }).exec();
