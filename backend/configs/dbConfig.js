@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
-import {configDotenv} from "dotenv";
+import { configDotenv } from "dotenv";
 configDotenv();
-
 
 mongoose.set("strictQuery", false);
 
