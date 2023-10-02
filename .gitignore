@@ -6,3 +6,13 @@ extras/todo
 .idea
 # Local Netlify folder
 .netlify
+package-lock.json
+yarn.lock
+npm-debug.log
+yarn-error.log
+build/
+dist/
+.db
+.vscode/
+.idea/
+.DS_Store
