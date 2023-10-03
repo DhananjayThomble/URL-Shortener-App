@@ -9,7 +9,7 @@ function Footer(props) {
       className="text-center bg-secondary fixed-bottom
                     text-white text-uppercase p-2"
     >
-      URL Shortener App by <b> Dhananjay </b>
+      URL Shortener App
     </Container>
   );
 }

@@ -47,14 +47,14 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
         <Card.Body>
           <Card.Title
             as={"h6"}
-          >{`https://app.dhananjaythomble.me/api/url/${shortUrl}`}</Card.Title>
+          >{`${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
           <Button
             variant="secondary"
             onClick={() => {
               //    open in new tab
               window.open(
-                `https://app.dhananjaythomble.me/api/url/${shortUrl}`,
+                `${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`,
                 "_blank"
               );
               //  increase visit count
