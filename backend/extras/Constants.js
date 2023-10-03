@@ -1,1 +1,5 @@
-export const SHORT_URL_PREFIX = "https://app.dhananjaythomble.me/api/url/";
+import {config} from "dotenv";
+
+config();
+
+export const SHORT_URL_PREFIX = process.env.SHORT_URL_PREFIX;
