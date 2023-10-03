@@ -12,7 +12,7 @@ import UserContext from "../context/UserContext";
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const URL = "https://app.dhananjaythomble.me/";
+  const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
   const navigate = useNavigate();
   const context = useContext(UserContext);
 
@@ -44,7 +44,7 @@ function Login() {
 
   const fetchLogin = async () => {
     try {
-      const response = await axios.post(`${URL}auth/login`, {
+      const response = await axios.post(`${URL}/auth/login`, {
         email,
         password,
       });
@@ -131,14 +131,7 @@ function Login() {
           </Card.Body>
           <Card.Footer className="text-muted">
             Don't Have an Account?{" "}
-            <a
-              style={{ textDecoration: "none" }}
-              onClick={() => {
-                navigate("/signup");
-              }}
-            >
-              Click Here to Signup
-            </a>
+            <a href="/signup">Click Here to Signup</a>
           </Card.Footer>
         </Card>
       </div>

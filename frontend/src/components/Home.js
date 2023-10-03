@@ -3,7 +3,6 @@ import { Container, Row, Col, Form, Button } from "react-bootstrap";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.min.css";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
 import { FaLink } from "react-icons/fa";
 
 function Home() {
@@ -11,7 +10,7 @@ function Home() {
   const [shortUrl, setShortUrl] = useState("");
   const [name, setName] = useState(localStorage.getItem("name") || "Guest");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const URL = "https://app.dhananjaythomble.me/api/url";
+  const URL = `${process.env.REACT_APP_API_ENDPOINT}/api/url`;
 
   useEffect(() => {
     const token = localStorage.getItem("token");

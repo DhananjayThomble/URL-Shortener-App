@@ -22,7 +22,7 @@ function History() {
   const fetchData = async () => {
     try {
       const result = await axios.get(
-        "https://app.dhananjaythomble.me/api/history",
+        `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
         {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }
