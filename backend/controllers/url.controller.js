@@ -97,7 +97,7 @@ export const generateShortUrl = async (req, res) => {
     res
       .status(200)
       // TODO: change this
-      .json({ shortUrl: `https://app.dhananjaythomble.me/api/url/${id}` });
+      .json({ shortUrl: `${SHORT_URL_PREFIX}${id}` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
