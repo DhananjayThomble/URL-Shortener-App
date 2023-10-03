@@ -9,6 +9,7 @@ import {
   FaSignOutAlt,
   FaSignInAlt,
   FaUserPlus,
+  FaLayerGroup
 } from "react-icons/fa";
 import { useContext } from "react";
 import UserContext from "../context/UserContext";
@@ -48,6 +49,12 @@ function MyNavbar() {
                 <LinkContainer to={"/history"}>
                   <Nav.Link>
                     <FaHistory /> History
+                  </Nav.Link>
+                </LinkContainer>
+
+                <LinkContainer to={"/contributers"}>
+                  <Nav.Link>
+                    <FaLayerGroup /> Contributers
                   </Nav.Link>
                 </LinkContainer>
               </>

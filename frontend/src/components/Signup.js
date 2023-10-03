@@ -18,7 +18,7 @@ function Signup() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
-  const URL = "https://app.dhananjaythomble.me/";
+  const URL =  `${process.env.REACT_APP_API_ENDPOINT}`;
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -60,7 +60,8 @@ function Signup() {
 
   const fetchSignup = async () => {
     try {
-      const response = await axios.post(`${URL}auth/signup`, {
+      console.log(URL);
+      const response = await axios.post(`${URL}/auth/signup`, {
         email,
         password,
         name,
@@ -71,22 +72,15 @@ function Signup() {
         setTimeout(() => {
           navigate("/login");
         }, 2000);
-      }
-    } catch ({
-      response: {
-        status,
-        data: { error },
-      },
-    }) {
-      if (status === 400) {
-        toast.error(error);
-      } else if (status === 401) {
-        toast.error(error);
       } else {
-        toast.error("Something went wrong");
+        toast.error("Signup failed");
       }
+    } catch (error) {
+      console.error("Error during signup:", error);
+      toast.error("Something went wrong");
     }
   };
+
 
   return (
     <Container

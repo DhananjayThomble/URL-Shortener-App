@@ -17,7 +17,7 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
   const deleteUrl = async () => {
     try {
       const result = await axios.delete(
-        `https://app.dhananjaythomble.me/api/delete/${urlId}`,
+        `${process.env.REACT_APP_API_ENDPOINT}/api/delete/${urlId}`,
         {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }

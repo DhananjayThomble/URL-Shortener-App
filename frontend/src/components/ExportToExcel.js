@@ -12,7 +12,7 @@ const ExportToExcel = () => {
     toast.info("Exporting to Excel...");
     try {
       // Make a request to the backend to fetch the Excel file
-      const URL = "https://app.dhananjaythomble.me/api/export";
+      const URL = `${process.env.REACT_APP_API_ENDPOINT}/api/export`;
       const response = await axios.get(URL, {
         responseType: "blob",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },

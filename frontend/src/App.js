@@ -10,6 +10,7 @@ import History from "./components/History";
 import "./App.css";
 import UserContext from "./context/UserContext";
 import { useState } from "react";
+import Contributers from "./components/Contributers";
 
 function App() {
   const [user, setUser] = useState(localStorage.getItem("token") || null);
@@ -27,6 +28,7 @@ function App() {
             <Route path={"/logout"} element={<Logout />} />
             <Route path="*" element={<Home />} />
             <Route path={"/history"} element={<History />} />
+            <Route path={"/contributers"} element={<Contributers />} />
           </Routes>
           <Footer />
         </UserContext.Provider>
