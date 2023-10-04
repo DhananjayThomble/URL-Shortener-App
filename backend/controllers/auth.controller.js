@@ -1,7 +1,8 @@
 import User from "../models/UserModel.js";
-
 import jwt from "jsonwebtoken";
-
+import {sendEmail} from "../utils/mailSend.js"
+import fs from "fs"
+import ejs from "ejs"
 import { check, validationResult } from "express-validator";
 
 //-----------------------------------------------------Login--------------------------------------------------------------
@@ -10,6 +11,36 @@ export const validateLogin = [
   check("email").isEmail().withMessage("Email is required"),
   check("password").isLength({ min: 6 }).withMessage("Password is required"),
 ];
+
+
+// for sending the email
+
+const sendWelcomeEmail = async (name, email, userID) => {
+  try {
+    const verifyEmailTemplate = fs.readFileSync(
+      "./views/welcome_email_template.ejs",
+      "utf-8",
+    );
+
+    const dataToRender = {
+      name: name,
+    };
+
+    const htmlTemplate = ejs.render(verifyEmailTemplate, dataToRender);
+
+    const options = {
+      from:"SnapURL@dturl.live",
+      subject: "Welcome to SnapURL !!!",
+      recipient: email,
+      html: htmlTemplate,
+    };
+
+    await sendEmail(options);
+  } catch (err) {
+    console.error(err);
+  }
+};
+
 
 export const login = async (req, res) => {
   try {
@@ -75,6 +106,10 @@ export const signup = async (req, res) => {
   const user = new User(req.body);
   try {
     await user.save();
+    console.log("user saved");
+    
+    // sending the mail
+    sendWelcomeEmail(user.name,user.email)
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.log("CREATE USER FAILED", err);
