@@ -3,16 +3,9 @@ import jwt from "jsonwebtoken";
 import {sendEmail} from "../utils/mailSend.js"
 import fs from "fs"
 import ejs from "ejs"
-import { check, validationResult } from "express-validator";
+
 
 //-----------------------------------------------------Login--------------------------------------------------------------
-
-export const validateLogin = [
-  check("email").isEmail().withMessage("Email is required"),
-  check("password").isLength({ min: 6 }).withMessage("Password is required"),
-];
-
-
 // for sending the email
 
 const sendWelcomeEmail = async (name, email, userID) => {
@@ -44,20 +37,15 @@ const sendWelcomeEmail = async (name, email, userID) => {
 
 export const login = async (req, res) => {
   try {
-    // validation
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
     // if user not found, 401 status for unauthorized
-    if (!user) return res.status(401).json({ error: "Invalid email" });
+    if (!user) return res.status(401).json({ error: "Email does not exist" });
 
     // check password using passport
     user.comparePassword(password, (err, isMatch) => {
-      if (!isMatch) return res.status(401).json({ error: "Invalid password" });
+      if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
 
       // password matched, create a token
       const token = jwt.sign({ _id: user._id }, process.env.JWT_SECRET, {
@@ -75,12 +63,6 @@ export const login = async (req, res) => {
 };
 
 //-----------------------------------------------------Signup--------------------------------------------------------------
-export const validateSignup = [
-  check("name").isLength({ min: 3 }).withMessage("Name is required"),
-  check("email").isEmail().withMessage("Email is required"),
-  check("password").isLength({ min: 6 }).withMessage("Password is required"),
-];
-
 export const signup = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -95,8 +77,8 @@ export const signup = async (req, res) => {
       });
 
     // check if user already exists
-    let userExist = await User.findOne({ email }).exec();
-    if (userExist) return res.status(400).json({ error: "Email is taken" });
+    // let userExist = await User.findOne({ email }).exec();
+    // if (userExist) return res.status(400).json({ error: "Email is taken" });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Server error" });
