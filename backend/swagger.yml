@@ -17,7 +17,31 @@ components:
       type: http
       scheme: bearer
       description: to get the token, use the login API
-
+  schemas:
+    Login:
+      type: object
+      properties:
+        email:
+          type: string
+          example: abc@gmail.com
+        password:
+          type: string
+          example: 123456
+    SignUp:
+      type: object
+      properties:
+        name:
+          type: string
+          example: John Deo
+        email:
+          type: string
+          example: abc@gmail.com
+        password:
+          type: string
+          example: 123456
+    Url:
+      type: string
+      example: https://editor.swagger.io/
 tags:
   - name: Authentication
     description: Everything about Authentication API's
