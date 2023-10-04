@@ -25,8 +25,10 @@
   "homepage": "https://github.com/DhananjayThomble/NodeJS-URL-Shortener-Microservice#readme",
   "dependencies": {
     "bcrypt": "^5.1.0",
+    "bcryptjs": "^2.4.3",
     "body-parser": "^1.20.1",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "dotenv": "^16.0.3",
     "ejs": "^3.1.9",
     "exceljs": "^4.3.0",
