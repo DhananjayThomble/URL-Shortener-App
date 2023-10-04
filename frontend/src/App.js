@@ -11,6 +11,7 @@ import "./App.css";
 import UserContext from "./context/UserContext";
 import { useState } from "react";
 import Contributers from "./components/Contributers";
+import ResetPassword from "./components/ResetPassword";
 
 function App() {
   const [user, setUser] = useState(localStorage.getItem("token") || null);
@@ -29,6 +30,7 @@ function App() {
             <Route path="*" element={<Home />} />
             <Route path={"/history"} element={<History />} />
             <Route path={"/contributers"} element={<Contributers />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
           <Footer />
         </UserContext.Provider>

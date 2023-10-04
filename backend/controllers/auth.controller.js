@@ -1,6 +1,10 @@
 import User from "../models/UserModel.js";
+import crypto from "crypto";
+import TokenModel from "../models/Tokenmodel.js";
 import jwt from "jsonwebtoken";
 import {sendEmail} from "../utils/mailSend.js"
+import dotenv from "dotenv"
+dotenv.config()
 import fs from "fs"
 import ejs from "ejs"
 
@@ -76,9 +80,7 @@ export const signup = async (req, res) => {
         error: "Password is required and should be min 6 characters long",
       });
 
-    // check if user already exists
-    // let userExist = await User.findOne({ email }).exec();
-    // if (userExist) return res.status(400).json({ error: "Email is taken" });
+   
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Server error" });
@@ -98,5 +100,77 @@ export const signup = async (req, res) => {
     return res
       .status(500)
       .json({ error: "Error saving user in database. Try later" });
+  }
+};
+
+
+// Generate a password reset token
+const generatePasswordResetToken = async (email) => {
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  const token = crypto.randomBytes(32).toString("hex"); // Generate a random token
+  const expiration = Date.now() + 3600000; // Token expires in 1 hour
+
+  const resetToken = new TokenModel({
+    userId: user._id,
+    token,
+    expiration,
+  });
+
+  await resetToken.save();
+
+  // Send the password reset email with a link like:
+  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+  const emailOptions = {
+    from: "SnapURL@dturl.live",
+    subject: "Password Reset for SnapURL",
+    recipient: email,
+    html: `Click <a href="${resetLink}">here</a> to reset your password.`,
+  };
+
+  await sendEmail(emailOptions);
+};
+
+// Add a new endpoint for handling password reset requests
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    await generatePasswordResetToken(email);
+    return res.status(200).json({ message: "Password reset email sent" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+
+// Add an endpoint for resetting the password
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    // Find the token in the database
+    const resetToken = await TokenModel.findOne({ token });
+
+    if (!resetToken || resetToken.expiration < Date.now()) {
+      return res.status(400).json({ error: "Invalid or expired token" });
+    }
+
+    // Update the user's password
+    const user = await User.findById(resetToken.userId);
+    user.password = password;
+    await user.save();
+
+    // Delete the used token
+    await resetToken.remove();
+
+    return res.status(200).json({ message: "Password reset successful" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
   }
 };
