@@ -1,5 +1,5 @@
-import User from "../models/UserModel.js";
-import TokenModel from "../models/Tokenmodel.js";
+import User from "../../models/UserModel.js";
+import TokenModel from "../../models/Tokenmodel.js";
 import dotenv from "dotenv";
 dotenv.config();
 

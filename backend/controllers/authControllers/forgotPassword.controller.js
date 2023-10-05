@@ -1,7 +1,7 @@
-import User from "../models/UserModel.js";
+import User from "../../models/UserModel.js";
 import crypto from "crypto";
-import TokenModel from "../models/Tokenmodel.js";
-import { sendEmail } from "../utils/mailSend.js";
+import TokenModel from "../../models/Tokenmodel.js";
+import { sendEmail } from "../../utils/mailSend.js";
 import dotenv from "dotenv";
 dotenv.config();
 

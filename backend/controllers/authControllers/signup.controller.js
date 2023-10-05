@@ -1,5 +1,5 @@
-import User from "../models/UserModel.js";
-import { sendVerificationEmail, sendWelcomeEmail } from "../utils/mailSend.js";
+import User from "../../models/UserModel.js";
+import { sendVerificationEmail, sendWelcomeEmail } from "../../utils/mailSend.js";
 import dotenv from "dotenv";
 dotenv.config();
 
