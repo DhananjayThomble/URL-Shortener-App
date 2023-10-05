@@ -1,5 +1,10 @@
 import nodemailer from "nodemailer"
+import User from "../models/UserModel.js"
+import TokenModel from "../models/Tokenmodel.js";
 import dotenv from "dotenv"
+import crypto from "crypto";
+import fs from "fs";
+import ejs from "ejs";
 dotenv.config()
 
 const transporter = nodemailer.createTransport({
@@ -42,4 +47,68 @@ export const sendEmail = async (options) => {
       reject(error);
     }
   });
+};
+
+
+// <--------------------Sending email to the user ----------------------------------->
+
+export const sendWelcomeEmail = async (name, email, userID) => {
+  try {
+    const verifyEmailTemplate = fs.readFileSync(
+      "./views/welcome_email_template.ejs",
+      "utf-8"
+    );
+
+    const dataToRender = {
+      name: name,
+    };
+
+    const htmlTemplate = ejs.render(verifyEmailTemplate, dataToRender);
+
+    const options = {
+      from: "SnapURL@dturl.live",
+      subject: "Welcome to SnapURL !!!",
+      recipient: email,
+      html: htmlTemplate,
+    };
+
+    await sendEmail(options);
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+// Function to send the verification email
+export const sendVerificationEmail = async (email) => {
+  try {
+    console.log(email);
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const token = crypto.randomBytes(32).toString("hex"); // Generate a random token
+    const expiration = Date.now() + 24 * 60 * 60 * 1000; // Token expires in 24 hours
+
+    const verificationToken = new TokenModel({
+      userId: user._id,
+      token,
+      expiration,
+    });
+
+    await verificationToken.save();
+
+    const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`;
+    const emailOptions = {
+      from: "SnapURL@dturl.live",
+      subject: "Email Verification for SnapURL",
+      recipient: email,
+      html: `Click <a href="${verificationLink}">here</a> to verify your email address.`,
+    };
+
+    await sendEmail(emailOptions);
+  } catch (error) {
+    console.error("Error sending verification email:", error);
+  }
 };
