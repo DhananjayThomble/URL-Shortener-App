@@ -21,7 +21,7 @@ function ResetPassword() {
   const handleResetPassword = async () => {
     try {
       // Make a POST request to your backend API to reset the password
-      const response = await fetch(`${process.env.REACT_APP_API_ENDPOINT}/auth/resetpassword`, {
+      const response = await fetch(`${process.env.REACT_APP_API_ENDPOINT}/auth/reset-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
