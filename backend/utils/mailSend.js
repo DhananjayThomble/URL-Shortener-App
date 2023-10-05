@@ -99,7 +99,7 @@ export const sendVerificationEmail = async (email) => {
 
     await verificationToken.save();
 
-    const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`;
+    const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`;  // TODO:Replace this with frontend route
     const emailOptions = {
       from: "SnapURL@dturl.live",
       subject: "Email Verification for SnapURL",
