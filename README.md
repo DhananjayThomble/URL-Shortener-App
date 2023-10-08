@@ -65,12 +65,11 @@ user information and shortened URLs.
 
 - The Node.js backend is hosted on a DigitalOcean Droplet running Ubuntu and managed using PM2.
 
-- The React frontend is hosted on Netlify. The URL for the frontend is: https://dturl.netlify.app
+- The React frontend is hosted on Netlify. The URL for the frontend is: https://app.dturl.live
     
 - [![Netlify Status](https://api.netlify.com/api/v1/badges/80999b21-48a6-4c22-8c83-6a0e55f79f5d/deploy-status)](https://app.netlify.com/sites/dturl/deploys)
 - The API documentation is generated using Swagger. The URL for the API documentation
-  is: https://app.dhananjaythomble.me/doc
-
+  is: https://dturl.live/doc
 ## Prerequisites
 
 - Node.js and npm installed on your local machine
