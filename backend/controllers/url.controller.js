@@ -149,7 +149,7 @@ export const deleteUrl = async (req, res) => {
 export const exportGeneratedUrls = async (req, res) => {
   try {
     const urlObj = await UrlModel2.findOne({ userId: req.user._id });
-    if (urlObj) {
+    if (urlObj && urlObj.urlArray.length) { // also check if array has item
       // data found
       // console.log(urlObj.urlArray);
       //    create new workbook
