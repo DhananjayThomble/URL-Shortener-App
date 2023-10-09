@@ -1,8 +1,9 @@
-import mongoose from "mongoose";
+import mongoose, { mongo } from "mongoose";
 
 const urlSchema2 = new mongoose.Schema({
   userId: {
-    type: String,
+    type : mongoose.Schema.Types.ObjectId,
+    ref : "User"
   },
 
   urlArray: [
