@@ -2,12 +2,20 @@ import mongoose from "mongoose";
 
 const urlSchema2 = new mongoose.Schema({
   userId: {
-    type: String,
+    type : mongoose.Schema.Types.ObjectId,
+    ref : "User"
   },
 
-  urlArray: {
-    type: Array,
-  },
+  urlArray: [
+    {
+      shortUrl : { type : String },
+      originalUrl : { type : String },
+      visitCount : { 
+        type : Number,
+        default : 0
+      }
+    }
+  ]
 });
 
 const UrlModel2 = new mongoose.model("url_collection", urlSchema2);
