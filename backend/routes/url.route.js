@@ -1,13 +1,13 @@
 import Router from "express";
 
 import {
-  validateUrl,
   redirectToOriginalUrl,
   deleteUrl,
   getHistory,
   generateShortUrl,
   exportGeneratedUrls,
 } from "../controllers/url.controller.js";
+import { validateUrl } from "../validators/urlValidator.js";
 
 import { isApiAuthenticated } from "../middlewares/authMiddleware.js";
 
