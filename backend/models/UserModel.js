@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 
-const saltRounds = 10; // affect the performance and password security level
+const saltRounds = 10; // Affects the performance and password security level
 
 const UserSchema = new mongoose.Schema({
   email: {
@@ -19,13 +19,17 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+
+  isEmailVerified: {
+    type: Boolean,
+    default: false, // Initially, the email is not verified
+  },
 });
 
-// Hash pass before saving
+// Hash the password before saving
 UserSchema.pre("save", function (next) {
-  // console.log("schema: ", this);
   const user = this;
-  if (!user.isModified("password")) return next(); //todo: look at this
+  if (!user.isModified("password")) return next();
 
   bcrypt.genSalt(saltRounds, function (err, salt) {
     if (err) return next(err);
@@ -39,12 +43,11 @@ UserSchema.pre("save", function (next) {
   });
 });
 
-//  compare the pass
-UserSchema.methods.comparePassword = function (password, result) {
-  bcrypt.compare(password, this.password, (err, isMatched) => {
-    if (err) return result(err);
-
-    result(null, isMatched);
+// Compare the password
+UserSchema.methods.comparePassword = function (password, callback) {
+  bcrypt.compare(password, this.password, (err, isMatch) => {
+    if (err) return callback(err);
+    callback(null, isMatch);
   });
 };
 

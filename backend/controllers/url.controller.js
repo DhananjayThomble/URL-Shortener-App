@@ -1,41 +1,40 @@
 import UrlModel2 from "../models/UrlModel2.js";
-
 import { nanoid } from "nanoid";
-
 import ExcelJS from "exceljs";
-
 import { check, validationResult } from "express-validator";
-
 import { SHORT_URL_PREFIX } from "../extras/Constants.js";
 
 //-----------------------------------redirectToOriginalUrl-----------------------------------
+// Middleware for URL validation
 export const validateUrl = [check("url").isURL().withMessage("Invalid URL")];
 
+// Redirect to the original URL associated with a short URL
 export const redirectToOriginalUrl = async (req, res) => {
   try {
-    // validation
+    // Validate input
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
 
     const shortUrl = req.params.short;
-    console.log("shortUrl", shortUrl);
 
+    // Find the URL object with the short URL in the database
     const url = await UrlModel2.findOne({
       "urlArray.shortUrl": shortUrl,
     }).select({ "urlArray.$": 1 });
 
-    // check if url is present in db
+    // Check if the URL is present in the database
     if (!url) {
       res.status(404).json({ error: "Url not found" });
       return;
     }
-    // count the URL visit
+
+    // Increment the URL visit count
     const visitCount = url.urlArray[0].visitCount || 0;
     await countUrlVisit(shortUrl, visitCount);
 
-    // http status for redirect: 302
+    // Perform a 302 redirect to the original URL
     res.status(302).redirect(url.urlArray[0].originalUrl);
   } catch (error) {
     console.error(error);
@@ -43,16 +42,16 @@ export const redirectToOriginalUrl = async (req, res) => {
   }
 };
 
+// Increment the visit count for a URL
 async function countUrlVisit(urlID, visitCount) {
-  // increment the visit count
   try {
-    //    find the url object containing the urlID and increment the visit count
+    // Find the URL object containing the URL ID and increment the visit count
     const urlObj = await UrlModel2.findOneAndUpdate(
       { "urlArray.shortUrl": urlID },
       { $set: { "urlArray.$.visitCount": visitCount + 1 } }
     );
     if (!urlObj) {
-      console.error("url not found");
+      console.error("URL not found");
     }
   } catch (error) {
     console.error(error);
@@ -60,9 +59,10 @@ async function countUrlVisit(urlID, visitCount) {
 }
 
 //-----------------------------------generateShortUrl-----------------------------------
+// Generate a short URL for a given long URL
 export const generateShortUrl = async (req, res) => {
   try {
-    // validation
+    // Validate input
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -70,13 +70,14 @@ export const generateShortUrl = async (req, res) => {
 
     const url = req.body.url;
     const id = nanoid(10);
-    // get user id from token
 
+    // Get the user ID from the request
     const userId = req.user._id;
-    // isUserRegistered ? append the url object to existing array of that user : create new collection for 1 time only
 
+    // Check if the user already has an associated URL object in the database
     const urlObj = await UrlModel2.findOne({ userId: userId });
     if (urlObj) {
+      // Append the new URL to the existing array
       urlObj.urlArray.push({
         shortUrl: id,
         originalUrl: url,
@@ -84,6 +85,7 @@ export const generateShortUrl = async (req, res) => {
       });
       await urlObj.save();
     } else {
+      // Create a new collection for the user
       const myModel = new UrlModel2();
       myModel.userId = userId;
       myModel.urlArray.push({
@@ -93,11 +95,9 @@ export const generateShortUrl = async (req, res) => {
       });
       await myModel.save();
     }
-    // send response
-    res
-      .status(200)
-      // TODO: change this
-      .json({ shortUrl: `${SHORT_URL_PREFIX}${id}` });
+
+    // Send response with the generated short URL
+    res.status(200).json({ shortUrl: `${SHORT_URL_PREFIX}${id}` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
@@ -105,6 +105,7 @@ export const generateShortUrl = async (req, res) => {
 };
 
 //------------------------------------------getHistory------------------------------------------
+// Get the URL history for a user
 export const getHistory = async (req, res) => {
   try {
     const urlObj = await UrlModel2.findOne({ userId: req.user._id });
@@ -120,15 +121,16 @@ export const getHistory = async (req, res) => {
 };
 
 //------------------------------------------deleteUrl------------------------------------------
+// Delete a URL associated with a user
 export const deleteUrl = async (req, res) => {
   const id = req.params.id;
-  // console.log("url id: ", id, "user id: ", req.user._id);
   try {
     const urlObj = await UrlModel2.findOne({
       userId: req.user._id,
       urlArray: { $elemMatch: { shortUrl: id } },
     });
     if (urlObj) {
+      // Remove the URL from the user's URL array
       urlObj.urlArray = urlObj.urlArray.filter((url) => url.shortUrl !== id);
       const status = await urlObj.save();
       if (status) {
@@ -146,29 +148,31 @@ export const deleteUrl = async (req, res) => {
 };
 
 //------------------------------------------export Generated URLs for user------------------------------------------
+// Export the generated URLs for a user as an Excel spreadsheet
 export const exportGeneratedUrls = async (req, res) => {
   try {
     const urlObj = await UrlModel2.findOne({ userId: req.user._id });
-    if (urlObj) {
-      // data found
-      // console.log(urlObj.urlArray);
-      //    create new workbook
+    if (urlObj && urlObj.urlArray.length) {
+      // also check if array has item
+
+      // Create a new workbook
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "DT URL Shortener";
       workbook.created = new Date();
 
       const worksheet = workbook.addWorksheet("Generated_URLs");
 
-      // Add the headers to the worksheet
+      // Add headers to the worksheet
       worksheet.columns = [
         { header: "Short URL", key: "shortUrl", width: 50 },
         { header: "Original URL", key: "originalUrl", width: 50 },
         { header: "Visits", key: "visits", width: 10 },
       ];
-      // make header bold
+
+      // Make header row bold
       worksheet.getRow(1).font = { bold: true };
 
-      // add data to sheet
+      // Add data to the sheet
       urlObj.urlArray.forEach((url) => {
         worksheet.addRow({
           shortUrl: SHORT_URL_PREFIX + url.shortUrl,
@@ -185,14 +189,14 @@ export const exportGeneratedUrls = async (req, res) => {
 
       // Send the Excel file to the client
       const buffer = await workbook.xlsx.writeBuffer();
-      // set file name
+      // Set the file name
       res.setHeader(
         "Content-Disposition",
         "attachment; filename=Generated_URLs.xlsx"
       );
       res.status(200).send(buffer);
     } else {
-      //    data not found
+      // Data not found
       res.status(404).json({ error: "No Generated URL found" });
     }
   } catch (error) {

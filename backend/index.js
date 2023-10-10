@@ -54,8 +54,15 @@ const limiter = rateLimit({
 });
 
 app.use(limiter); // limit number of req for each client
+
+// -------------------------------- API ROUTES -------------------------------
+import { redirectToOriginalUrl } from "./controllers/url.controller.js";
+
 app.use("/api", cors(), urlRoute);
 app.use("/auth", cors(), authRoute);
+
+// for accessing short url
+app.get("/u/:short", redirectToOriginalUrl);
 
 // goto /doc to see api documentation
 app.get("/", (req, res) => {
