@@ -10,13 +10,20 @@ import {
 import { validateUrl } from "../validators/urlValidator.js";
 
 import { isApiAuthenticated } from "../middlewares/authMiddleware.js";
+import { validationErrorHandler } from "../middlewares/ValidatorErrorHandler.js";
 
 const router = Router();
 
 // old route for backward compatibility
 router.get("/url/:short", redirectToOriginalUrl);
 
-router.post("/url", isApiAuthenticated, validateUrl, generateShortUrl);
+router.post(
+  "/url",
+  isApiAuthenticated,
+  validateUrl,
+  validationErrorHandler,
+  generateShortUrl
+);
 
 router.get("/history", isApiAuthenticated, getHistory);
 
