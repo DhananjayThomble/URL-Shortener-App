@@ -26,7 +26,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         const row = document.createElement("tr");
 
         const shortUrlCell = document.createElement("td");
-        shortUrlCell.textContent = entry.shortUrl;
+        shortUrlCell.textContent = `https://dturl.live/u/${entry.shortUrl}`;
 
         const originalUrlCell = document.createElement("td");
         originalUrlCell.textContent = entry.originalUrl;
