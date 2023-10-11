@@ -101,8 +101,8 @@ function Signup() {
       />
       <div className="w-100" style={{ maxWidth: "400px" }}>
         <Card>
-          <Card.Header>
-            <h4>Sign Up</h4>
+          <Card.Header style={{backgroundColor: "#4B3F6B"}}>
+            <h4 style={{backgroundColor: "#4B3F6B"}}>Sign Up</h4>
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
@@ -150,7 +150,7 @@ function Signup() {
                 />
               </Form.Group>
 
-              <Button className={"w-100"} variant="info" type="submit">
+              <Button  variant="info" type="submit" style={{backgroundColor: "#4B3F6B"}}>
                 <FaRegPaperPlane /> Sign Up
               </Button>
             </Form>
@@ -158,7 +158,7 @@ function Signup() {
           <Card.Footer className="text-muted">
             Already Have an Account?{" "}
             <a
-              style={{ textDecoration: "none" }}
+              style={{ textDecoration: "none", color:'#4B3F6B' }}
               onClick={() => {
                 navigate("/login");
               }}
@@ -173,3 +173,7 @@ function Signup() {
 }
 
 export default Signup;
+
+
+
+
