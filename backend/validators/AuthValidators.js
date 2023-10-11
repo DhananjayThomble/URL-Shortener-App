@@ -68,3 +68,9 @@ export const validateSignup = [
     //     }),
 ];
 
+
+// validator for the forgot password
+export const forgetPasswordValidator=[
+    body("email").notEmpty().withMessage("Email is required").isEmail().withMessage("Invalid Email Address")
+]
+
