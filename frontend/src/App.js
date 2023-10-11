@@ -33,7 +33,7 @@ function App() {
             <Route path={"/contributers"} element={<Contributers />} />
             <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
-          {/* <Footer /> */}
+          <Footer />
         </UserContext.Provider>
       </BrowserRouter>
     </div>
