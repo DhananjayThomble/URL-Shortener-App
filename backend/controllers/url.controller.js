@@ -1,22 +1,11 @@
 import UrlModel2 from "../models/UrlModel2.js";
 import { nanoid } from "nanoid";
 import ExcelJS from "exceljs";
-import { check, validationResult } from "express-validator";
 import { SHORT_URL_PREFIX } from "../extras/Constants.js";
-
-//-----------------------------------redirectToOriginalUrl-----------------------------------
-// Middleware for URL validation
-export const validateUrl = [check("url").isURL().withMessage("Invalid URL")];
 
 // Redirect to the original URL associated with a short URL
 export const redirectToOriginalUrl = async (req, res) => {
   try {
-    // Validate input
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const shortUrl = req.params.short;
 
     // Find the URL object with the short URL in the database
@@ -62,12 +51,6 @@ async function countUrlVisit(urlID, visitCount) {
 // Generate a short URL for a given long URL
 export const generateShortUrl = async (req, res) => {
   try {
-    // Validate input
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const url = req.body.url;
     const id = nanoid(10);
 
