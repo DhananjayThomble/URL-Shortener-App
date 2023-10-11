@@ -12,7 +12,7 @@ function LandingPage() {
    <div>
     <ThemeProvider theme={theme}>
     <HomePage />
-    {/* <FooterSegment /> */}
+    <FooterSegment />
     </ThemeProvider>
 
    </div>
