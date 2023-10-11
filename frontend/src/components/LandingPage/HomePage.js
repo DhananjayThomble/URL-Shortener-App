@@ -11,10 +11,10 @@ const HomePage = () => {
       <Hero />
      
 
-      {/* <Box sx={{ mx: "auto", px: 6 }}>
+      <Box sx={{ mx: "auto", px: 6 }}>
         <LinkParent />
         </Box>
-        <div style={{margin:"4rem"}}></div> */}
+        <div style={{margin:"4rem"}}></div>
     </Container>
   );
 };
