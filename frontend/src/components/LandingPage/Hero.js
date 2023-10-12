@@ -35,7 +35,7 @@ const Hero = () => {
                 fontSize: "2.35rem",
               }}
             >
-              More than just shorter links
+              Shorten, Share, Succeed
             </Typography>
             <Typography
               variant="body2"
@@ -46,8 +46,7 @@ const Hero = () => {
                 fontSize: "0.92rem",
               }}
             >
-              Build your brand's recognition and get detailed insights on how
-              your links are performing
+             Welcome to SnapURL <br></br> Simplify Your Links, Maximize Your Impact
             </Typography>
           </Box>
           <Button
@@ -90,7 +89,7 @@ const Hero = () => {
                 lineHeight: 0.9,
               }}
             >
-              More than just shorter links
+               Shorten, Share, Succeed
             </Typography>
             <Typography
               variant="body1"
@@ -99,8 +98,7 @@ const Hero = () => {
                 color: "neutral.grayishViolet",
               }}
             >
-              Build your brand's recognition and get detailed insights on how
-              your links are performing
+              Welcome to SnapURL <br></br> Simplify Your Links, Maximize Your Impact
             </Typography>
           </Box>
           <Button
