@@ -132,7 +132,7 @@ function Login() {
           </Card.Body>
           <Card.Footer className="text-muted" style={{}}>
             Don't Have an Account?{" "}
-            <a href="/signup" style={{ textDecoration: 'none', color: '#4B3F6B'}}>Click Here to Signup</a>
+            <a href="/signup" style={{ textDecoration: 'none', color: '#4B3F6B'}}><span>Click Here to Signup</span></a>
 
           </Card.Footer>
         </Card>
