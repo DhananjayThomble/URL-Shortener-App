@@ -93,9 +93,9 @@ function Login() {
       />
       <div className="w-100" style={{ maxWidth: "400px" }}>
         <Card>
-          <Card.Header>
+          <Card.Header style={{backgroundColor: "#4B3F6B"}}>
             {" "}
-            <h4>Login</h4>{" "}
+            <h4 style={{backgroundColor: "#4B3F6B"}}>Login</h4>{" "}
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
@@ -124,14 +124,16 @@ function Login() {
                   aria-required={true}
                 />
               </Form.Group>
-              <Button className={"w-100"} variant="info" type="submit">
-                <FaRegPaperPlane /> Login
+              <Button className={"w-100"} variant="info" type="submit" style={{backgroundColor: "#4B3F6B"}}>
+                <FaRegPaperPlane /> 
+                Login
               </Button>
             </Form>
           </Card.Body>
-          <Card.Footer className="text-muted">
+          <Card.Footer className="text-muted" style={{}}>
             Don't Have an Account?{" "}
-            <a href="/signup">Click Here to Signup</a>
+            <a href="/signup" style={{ textDecoration: 'none', color: '#4B3F6B'}}><span>Click Here to Signup</span></a>
+
           </Card.Footer>
         </Card>
       </div>
