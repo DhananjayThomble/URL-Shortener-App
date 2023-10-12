@@ -72,3 +72,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, function () {
   console.log(`Listening on port ${PORT}`);
 });
+
+export { app };

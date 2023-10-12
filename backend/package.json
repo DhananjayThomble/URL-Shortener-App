@@ -4,10 +4,10 @@
   "description": "URL Shortener using Node and Express",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon index.js",
     "dev": "nodemon index.js",
-    "format": "prettier --write \"**/*.{js,jsx}\""
+    "format": "prettier --write \"**/*.{js,jsx}\"",
+    "test": "mocha --timeout 10000"
   },
   "repository": {
     "type": "git",
@@ -47,5 +47,11 @@
     "swagger-ui-express": "^4.6.0",
     "yamljs": "^0.3.0"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "chai": "^4.3.10",
+    "chai-http": "^4.4.0",
+    "mocha": "^10.2.0",
+    "supertest": "^6.3.3"
+  }
 }

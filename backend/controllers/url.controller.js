@@ -81,6 +81,7 @@ export const generateShortUrl = async (req, res) => {
 
     // Send response with the generated short URL
     res.status(200).json({ shortUrl: `${SHORT_URL_PREFIX}${id}` });
+    // res.status(200).send("For testing");
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
