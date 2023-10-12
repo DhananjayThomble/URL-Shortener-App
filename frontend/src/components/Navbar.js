@@ -58,7 +58,7 @@ function Navbar() {
   };
 
   return (
-    <AppBar position="static">
+    <AppBar style={{backgroundColor: "#4B3F6B"}} position="static">
       <Container maxWidth="xl">
         <Toolbar disableGutters>
           <InsertLinkIcon sx={{ display: { xs: 'none', md: 'flex' }, mr: 1 }} />
