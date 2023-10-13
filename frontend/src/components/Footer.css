@@ -57,6 +57,15 @@
 .left {
     margin-left: -20rem;
 } 
+a{
+  text-decoration: none;
+}
+
+span:hover{
+  color: blue !important;
+  font-weight: 500;
+  text-decoration: underline;
+}
 
 
 @media only screen and (max-width: 600px){
@@ -86,6 +95,7 @@
 .footer{
     height: 17rem;
 }
+
 }
 
 

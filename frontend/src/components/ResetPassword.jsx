@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { useLocation } from "react-router-dom"; // Import useLocation hook
+import { Container, Card, Typography, TextField, Button,Box } from "@mui/material";
+import { useLocation } from "react-router-dom";
 
 function ResetPassword() {
-  const location = useLocation(); // Use the useLocation hook to access the URL
-
-  const queryParams = new URLSearchParams(location.search); // Extract query parameters
-  const token = queryParams.get("token"); 
+  const location = useLocation();
+  const queryParams = new URLSearchParams(location.search);
+  const token = queryParams.get("token");
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -13,7 +13,6 @@ function ResetPassword() {
 
   useEffect(() => {
     if (!token) {
-      
       setMessage("Invalid or missing token.");
     }
   }, [token]);
@@ -21,13 +20,16 @@ function ResetPassword() {
   const handleResetPassword = async () => {
     try {
       // Make a POST request to your backend API to reset the password
-      const response = await fetch(`${process.env.REACT_APP_API_ENDPOINT}/auth/reset-password`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ token, password }),
-      });
+      const response = await fetch(
+        `${process.env.REACT_APP_API_ENDPOINT}/auth/reset-password`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ token, password }),
+        }
+      );
 
       if (response.status === 200) {
         setMessage("Password reset successful.");
@@ -43,23 +45,64 @@ function ResetPassword() {
   };
 
   return (
-    <div>
-      <h1>Reset Password</h1>
-      <p>{message}</p>
-      <input
-        type="password"
-        placeholder="New Password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <input
-        type="password"
-        placeholder="Confirm Password"
-        value={confirmPassword}
-        onChange={(e) => setConfirmPassword(e.target.value)}
-      />
-      <button onClick={handleResetPassword}>Reset Password</button>
-    </div>
+    <Container
+      maxWidth="sm"
+      style={{
+        minHeight: "90vh",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center", 
+        alignItems: "center", 
+      }}
+    >
+      <Card>
+        <Box m={2}>
+          <div style={{ padding: "16px" }}>
+          
+            <Typography variant="h4" component="h2" gutterBottom>
+              Reset Password
+            </Typography>
+            <form>
+              <Box mb={2}>
+                <TextField
+                  label="New Password"
+                  type="password"
+                  fullWidth
+                  variant="outlined"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </Box>
+              <Box mb={2}>
+               
+                <TextField
+                  label="Confirm Password"
+                  type="password"
+                  fullWidth
+                  variant="outlined"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </Box >
+          
+
+              <Button
+                style={{backgroundColor:"#4B3F6B"}}
+                variant="contained"
+                // color="primary"
+                fullWidth
+                onClick={handleResetPassword}
+              >
+                Reset Password
+              </Button>
+            </form>
+            <Typography variant="body1" style={{ marginTop: "16px" }}>
+              {message}
+            </Typography>
+          </div>
+        </Box>
+      </Card>
+    </Container>
   );
 }
 
