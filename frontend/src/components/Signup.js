@@ -158,7 +158,7 @@ function Signup() {
           <Card.Footer className="text-muted">
             Already Have an Account?{" "}
             <a
-              style={{ textDecoration: "none", color:'#4B3F6B' }}
+              style={{ textDecoration: "none", color:'#4B3F6B', cursor:'pointer' }}
               onClick={() => {
                 navigate("/login");
               }}
