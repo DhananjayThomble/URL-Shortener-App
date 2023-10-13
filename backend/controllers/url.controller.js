@@ -1,5 +1,6 @@
 import UrlModel2 from "../models/UrlModel2.js";
 import { nanoid } from "nanoid";
+import { generate } from "random-words";
 import ExcelJS from "exceljs";
 import { SHORT_URL_PREFIX } from "../extras/Constants.js";
 
@@ -47,24 +48,61 @@ async function countUrlVisit(urlID, visitCount) {
   }
 }
 
-//-----------------------------------generateShortUrl-----------------------------------
-// Generate a short URL for a given long URL
-export const generateShortUrl = async (req, res) => {
-  try {
-    const url = req.body.url;
-    const id = nanoid(10);
+//-----------------------------------generateCustomUrl-----------------------------------
+// Generate a custom URL for a given long URL
+export const generateCustomUrl = async (req,res,next)=>{
+  try{
+    const { customUser,url } = req.body;
 
-    // Get the user ID from the request
     const userId = req.user._id;
 
     // Check if the user already has an associated URL object in the database
     const urlObj = await UrlModel2.findOne({ userId: userId });
+    req.userId = urlObj;
+
+    if(urlObj){
+      for(let i of urlObj.urlArray){
+        //preventing user from registering same back-halve on same Domain
+        if(i.customUrl.split('/')[0] === getDomain(url) && i.customUrl.split('/')[2] == customUser){
+          return res.status(400).json({ error : "Custom Word Already Registered for this URL" });
+        }
+      }
+    }
+    //registring user provided back-halve
+    if(customUser){
+      let cleanCustom = customUser.split(' ').join('').toLowerCase();
+      if(cleanCustom){
+        req.custom = getDomain(url) + "/u/" + cleanCustom;
+        return next();
+      }
+    }
+    //generating random word back-halve
+    req.custom =  getDomain(url) + "/u/" + generate({ minLength : 3 , maxLength : 11 });
+    next();
+  }catch(error){
+    console.log(error);
+    res.status(500).json({ error : "Server Error" })
+  }
+};
+
+//-----------------------------------generateShortUrl-----------------------------------
+// Generate a short URL for a given long URL
+export const generateShortUrl = async (req, res) => {
+  try {
+    const { url } = req.body;
+    const id = nanoid(10);
+
+    // Get the user ID from the request
+    const userId = req.user._id;
+    const urlObj = req.userId;
+    const customId = req.custom;
+
     if (urlObj) {
       // Append the new URL to the existing array
       urlObj.urlArray.push({
         shortUrl: id,
         originalUrl: url,
-        visitCount: 0,
+        customUrl : customId
       });
       await urlObj.save();
     } else {
@@ -74,15 +112,21 @@ export const generateShortUrl = async (req, res) => {
       myModel.urlArray.push({
         shortUrl: id,
         originalUrl: url,
-        visitCount: 0,
+        customUrl : customId
       });
       await myModel.save();
     }
 
+
     // Send response with the generated short URL
-    res.status(200).json({ shortUrl: `${SHORT_URL_PREFIX}${id}` });
+    res.status(200).json({ shortUrl: `${SHORT_URL_PREFIX}${id}`,
+                           custom: `http://localhost:4001/${customId}`
+  });
   } catch (error) {
     console.error(error);
+    if(error.code===11000){
+      return res.status(400).json({ error : "Custom Word Already Taken" })
+    }
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -187,3 +231,10 @@ export const exportGeneratedUrls = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
+
+const getDomain = (url)=>{
+  const urls = new URL(url);
+  const domain = urls.host;
+  const url_part = domain.split('.');
+  return url_part[1]+".com";
+}
