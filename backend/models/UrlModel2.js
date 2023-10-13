@@ -13,6 +13,10 @@ const urlSchema2 = new mongoose.Schema({
       visitCount : { 
         type : Number,
         default : 0
+      },
+      customUrl : {
+        type : String,
+        unique : true
       }
     }
   ]
