@@ -8,6 +8,8 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { FaUserAlt, FaKey, FaRegPaperPlane } from "react-icons/fa";
 import UserContext from "../context/UserContext";
+import "../App.css";
+import "./Footer.css"
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -132,7 +134,9 @@ function Login() {
           </Card.Body>
           <Card.Footer className="text-muted" style={{}}>
             Don't Have an Account?{" "}
-            <a href="/signup" style={{ textDecoration: 'none', color: '#4B3F6B'}}><span>Click Here to Signup</span></a>
+          <a href="/reset-password">  <span style={{ marginLeft:"30px",color: '#4B3F6B'}} >Forgot password</span> </a> <br /> 
+            
+            <a href="/signup" style={{ textDecoration: 'none', color: '#4B3F6B', marginLeft:"100px"}}><span>Click Here to Signup</span></a>
 
           </Card.Footer>
         </Card>
