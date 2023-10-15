@@ -50,9 +50,9 @@ async function countUrlVisit(urlID, visitCount) {
 
 //-----------------------------------generateCustomUrl-----------------------------------
 // Generate a custom URL for a given long URL
-export const generateCustomUrl = async (req,res,next)=>{
-  try{
-    const { customUser,url } = req.body;
+export const generateCustomUrl = async (req, res, next) => {
+  try {
+    const { customUser, url } = req.body;
 
     const userId = req.user._id;
 
@@ -60,25 +60,31 @@ export const generateCustomUrl = async (req,res,next)=>{
     const urlObj = await UrlModel2.findOne({ userId: userId });
     req.userId = urlObj;
 
-    if(customUser){
-      const cleanCustom = customUser.split(' ').join('');
-      if(urlObj){
-        for(let i of urlObj.urlArray){
-          if(i.customUrl === cleanCustom.toLowerCase()){
-            return res.status(400).json({error : `Sorry, the custom word you chose has already been registered. Please try a different one!`});
-          }
-        }
+    if (customUser) {
+      const cleanCustom = customUser.split(" ").join("");
+
+      // Check if the customUrl already exists in the database,
+      // only getting required fields rather than the whole document, to improve performance
+      const existingUrl = await UrlModel2.findOne({
+        "urlArray.customUrl": cleanCustom.toLowerCase(),
+      });
+
+      // If the customUrl already exists, return an error
+      if (existingUrl) {
+        return res.status(400).json({
+          error: `Sorry, the custom word you chose has already been registered. Please try a different one!`,
+        });
       }
-      req.custom = cleanCustom;
+
+      req.custom = cleanCustom.toLowerCase();
       return next();
     }
 
-    req.custom = generate({ minLength : 3 , maxLength : 11 });
+    req.custom = generate({ minLength: 3, maxLength: 11 });
     next();
-
-  }catch(error){
+  } catch (error) {
     console.log(error);
-    res.status(500).json({ error : "Server Error" })
+    res.status(500).json({ error: "Server Error" });
   }
 };
 
@@ -93,13 +99,14 @@ export const generateShortUrl = async (req, res) => {
     const userId = req.user._id;
     const urlObj = req.userId;
     const customId = req.custom;
+    // console.log(`customId : ${customId}`);
 
     if (urlObj) {
       // Append the new URL to the existing array
       urlObj.urlArray.push({
         shortUrl: id,
         originalUrl: url,
-        customUrl : customId
+        customUrl: customId,
       });
       await urlObj.save();
     } else {
@@ -109,20 +116,24 @@ export const generateShortUrl = async (req, res) => {
       myModel.urlArray.push({
         shortUrl: id,
         originalUrl: url,
-        customUrl : customId
+        customUrl: customId,
       });
       await myModel.save();
     }
 
-
     // Send response with the generated short URL
-    res.status(200).json({ shortUrl: `${SHORT_URL_PREFIX}${id}`,
-                           customUrl: `http://localhost:4001/${getDomain(url)}/u/${customId}`
-  });
+    // value of SHORT_URL_PREFIX is http://localhost:4001/u/ and for production : https://dturl.live/u/
+    res.status(200).json({
+      shortUrl: `${SHORT_URL_PREFIX}${id}`,
+      customUrl: `${SHORT_URL_PREFIX}${customId}`,
+    });
   } catch (error) {
     console.error(error);
-    if(error.code===11000){
-      return res.status(400).json({ error : "Sorry, the custom word you chose has already been registered. Please try a different one!" })
+    if (error.code === 11000) {
+      return res.status(400).json({
+        error:
+          "Sorry, the custom word you chose has already been registered. Please try a different one!",
+      });
     }
     res.status(500).json({ error: "Server error" });
   }
@@ -229,9 +240,9 @@ export const exportGeneratedUrls = async (req, res) => {
   }
 };
 
-const getDomain = (url)=>{
+const getDomain = (url) => {
   const urls = new URL(url);
   const domain = urls.host;
-  const url_part = domain.split('.');
-  return url_part[url_part.length-2] + ".com"
-}
+  const url_part = domain.split(".");
+  return url_part[url_part.length - 2] + ".com";
+};
