@@ -6,6 +6,7 @@ import {
   getHistory,
   generateShortUrl,
   exportGeneratedUrls,
+  generateCustomUrl,
 } from "../controllers/url.controller.js";
 import { validateUrl } from "../validators/urlValidator.js";
 
@@ -22,6 +23,7 @@ router.post(
   isApiAuthenticated,
   validateUrl,
   validationErrorHandler,
+  generateCustomUrl,
   generateShortUrl
 );
 
