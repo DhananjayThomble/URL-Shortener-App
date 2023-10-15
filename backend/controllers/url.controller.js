@@ -60,25 +60,22 @@ export const generateCustomUrl = async (req,res,next)=>{
     const urlObj = await UrlModel2.findOne({ userId: userId });
     req.userId = urlObj;
 
-    if(urlObj){
-      for(let i of urlObj.urlArray){
-        //preventing user from registering same back-halve on same Domain
-        if(i.customUrl.split('/')[0] === getDomain(url) && i.customUrl.split('/')[2] == customUser){
-          return res.status(400).json({ error : "Custom Word Already Registered for this URL" });
+    if(customUser){
+      const cleanCustom = customUser.split(' ').join('');
+      if(urlObj){
+        for(let i of urlObj.urlArray){
+          if(i.customUrl === cleanCustom.toLowerCase()){
+            return res.status(400).json({error : `Sorry, the custom word you chose has already been registered. Please try a different one!`});
+          }
         }
       }
+      req.custom = cleanCustom;
+      return next();
     }
-    //registring user provided back-halve
-    if(customUser){
-      let cleanCustom = customUser.split(' ').join('').toLowerCase();
-      if(cleanCustom){
-        req.custom = getDomain(url) + "/u/" + cleanCustom;
-        return next();
-      }
-    }
-    //generating random word back-halve
-    req.custom =  getDomain(url) + "/u/" + generate({ minLength : 3 , maxLength : 11 });
+
+    req.custom = generate({ minLength : 3 , maxLength : 11 });
     next();
+
   }catch(error){
     console.log(error);
     res.status(500).json({ error : "Server Error" })
@@ -120,12 +117,12 @@ export const generateShortUrl = async (req, res) => {
 
     // Send response with the generated short URL
     res.status(200).json({ shortUrl: `${SHORT_URL_PREFIX}${id}`,
-                           customUrl: `http://localhost:4001/${customId}`
+                           customUrl: `http://localhost:4001/${getDomain(url)}/u/${customId}`
   });
   } catch (error) {
     console.error(error);
     if(error.code===11000){
-      return res.status(400).json({ error : "Custom Word Already Taken" })
+      return res.status(400).json({ error : "Sorry, the custom word you chose has already been registered. Please try a different one!" })
     }
     res.status(500).json({ error: "Server error" });
   }
@@ -236,5 +233,5 @@ const getDomain = (url)=>{
   const urls = new URL(url);
   const domain = urls.host;
   const url_part = domain.split('.');
-  return url_part[1]+".com";
+  return url_part[url_part.length-2] + ".com"
 }
