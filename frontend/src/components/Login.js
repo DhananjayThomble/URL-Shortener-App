@@ -3,13 +3,13 @@ import Card from "react-bootstrap/Card";
 import Form from "react-bootstrap/Form";
 import Container from "react-bootstrap/Container";
 import React, { useEffect, useState, useContext } from "react";
-import { toast, ToastContainer } from "react-toastify";
+import { toast } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { FaUserAlt, FaKey, FaRegPaperPlane } from "react-icons/fa";
 import UserContext from "../context/UserContext";
 import "../App.css";
-import "./Footer.css"
+import "./Footer.css";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -17,11 +17,12 @@ function Login() {
   const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
   const navigate = useNavigate();
   const context = useContext(UserContext);
+  let toastId = null;
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
-      toast.info("You are already logged in");
+      toast.warning("You are already logged in");
       setTimeout(() => {
         navigate("/");
       }, 4000);
@@ -30,7 +31,8 @@ function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    toast.info("Logging in...");
+    toastId = null;
+    toastId = toast.loading("Logging in...");
     if (!validateForm()) return;
 
     await fetchLogin();
@@ -38,7 +40,12 @@ function Login() {
 
   function validateForm() {
     if (email === "" || password === "") {
-      toast.error("All fields are required");
+      toast.update(toastId, {
+        render: "Please fill all the fields",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
       return false;
     }
     return true;
@@ -59,6 +66,12 @@ function Login() {
       localStorage.setItem("token", token);
       localStorage.setItem("name", name);
       context.setUser({ token: token });
+      toast.update(toastId, {
+        render: `Welcome ${name}`,
+        type: "success",
+        isLoading: false,
+        autoClose: 2000,
+      });
       navigate("/");
     } catch ({
       response: {
@@ -66,6 +79,12 @@ function Login() {
         data: { error },
       },
     }) {
+      toast.update(toastId, {
+        render: "Login failed",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
       if (status === 400) {
         toast.error(error);
       } else if (status === 401) {
@@ -81,23 +100,11 @@ function Login() {
       className="d-flex align-items-center justify-content-center"
       style={{ minHeight: "90vh" }}
     >
-      <ToastContainer
-        position="top-center"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-      />
       <div className="w-100" style={{ maxWidth: "400px" }}>
         <Card>
-          <Card.Header style={{backgroundColor: "#4B3F6B"}}>
+          <Card.Header style={{ backgroundColor: "#4B3F6B" }}>
             {" "}
-            <h4 style={{backgroundColor: "#4B3F6B"}}>Login</h4>{" "}
+            <h4 style={{ backgroundColor: "#4B3F6B" }}>Login</h4>{" "}
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
@@ -126,18 +133,36 @@ function Login() {
                   aria-required={true}
                 />
               </Form.Group>
-              <Button className={"w-100"} variant="info" type="submit" style={{backgroundColor: "#4B3F6B"}}>
-                <FaRegPaperPlane /> 
+              <Button
+                className={"w-100"}
+                variant="info"
+                type="submit"
+                style={{ backgroundColor: "#4B3F6B" }}
+              >
+                <FaRegPaperPlane />
                 Login
               </Button>
             </Form>
           </Card.Body>
           <Card.Footer className="text-muted" style={{}}>
             Don't Have an Account?{" "}
-          <a href="/reset-password">  <span style={{ marginLeft:"30px",color: '#4B3F6B'}} >Forgot password</span> </a> <br /> 
-            
-            <a href="/signup" style={{ textDecoration: 'none', color: '#4B3F6B', marginLeft:"100px"}}><span>Click Here to Signup</span></a>
-
+            <a href="/reset-password">
+              {" "}
+              <span style={{ marginLeft: "30px", color: "#4B3F6B" }}>
+                Forgot password
+              </span>{" "}
+            </a>{" "}
+            <br />
+            <a
+              href="/signup"
+              style={{
+                textDecoration: "none",
+                color: "#4B3F6B",
+                marginLeft: "100px",
+              }}
+            >
+              <span>Click Here to Signup</span>
+            </a>
           </Card.Footer>
         </Card>
       </div>

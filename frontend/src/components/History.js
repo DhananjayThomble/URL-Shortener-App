@@ -5,11 +5,12 @@ import Col from "react-bootstrap/Col";
 import HistoryCard from "./HistoryCard";
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { toast, ToastContainer } from "react-toastify";
+import { toast } from "react-toastify";
 import ExportToExcel from "./ExportToExcel";
 
 function History() {
   const [history, setHistory] = useState([]);
+  let toastId = null;
 
   useEffect(() => {
     if (localStorage.getItem("token") === null) {
@@ -21,6 +22,8 @@ function History() {
 
   const fetchData = async () => {
     try {
+      toastId = null;
+      toastId = toast.loading("Fetching History...");
       const result = await axios.get(
         `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
         {
@@ -30,29 +33,34 @@ function History() {
       setHistory(result.data.urlArray);
       // console.log(history);
       if (result.data.urlArray.length === 0) {
-        toast.info("No History Found");
+        toast.update(toastId, {
+          render: "No History Found",
+          type: "info",
+          isLoading: false,
+          autoClose: 2000,
+        });
       }
     } catch (error) {
       if (error.response.status === 401) {
-        toast.error("Please Login First");
+        toast.update(toastId, {
+          render: "Please Login First",
+          type: "error",
+          isLoading: false,
+          autoClose: 2000,
+        });
       }
+
+      toast.update(toastId, {
+        render: "Something went wrong",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
     }
   };
 
   return (
     <Container className={"pb-5"}>
-      <ToastContainer
-        position="top-center"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-      />
       <Row className={"my-1"}>
         {history.map((data) => {
           return (

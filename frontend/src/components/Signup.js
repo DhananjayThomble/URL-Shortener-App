@@ -3,7 +3,7 @@ import Card from "react-bootstrap/Card";
 import Form from "react-bootstrap/Form";
 import Container from "react-bootstrap/Container";
 import React, { useState } from "react";
-import { ToastContainer, toast } from "react-toastify";
+import { toast } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import {
@@ -18,24 +18,35 @@ function Signup() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
-  const URL =  `${process.env.REACT_APP_API_ENDPOINT}`;
+  const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
   const navigate = useNavigate();
+  let toastId = null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    toastId = null;
+    toastId = toast.loading("Signing up...");
     if (!validateForm()) return;
-
-    toast.info("Signing up...");
     await fetchSignup();
   };
 
   function checkPassword() {
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
+      toast.update(toastId, {
+        render: "Passwords do not match",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
       return false;
     } else if (password.length < 6) {
-      toast.error("Password must be at least 6 characters long");
+      toast.update(toastId, {
+        render: "Password must be at least 6 characters",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
       return false;
     }
     return true;
@@ -48,7 +59,12 @@ function Signup() {
       confirmPassword === "" ||
       name === ""
     ) {
-      toast.error("All fields are required");
+      toast.update(toastId, {
+        render: "Please fill all the fields",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
       return false;
     }
 
@@ -60,49 +76,49 @@ function Signup() {
 
   const fetchSignup = async () => {
     try {
-      console.log(URL);
+      // console.log(URL);
       const response = await axios.post(`${URL}/auth/signup`, {
         email,
         password,
         name,
       });
-      console.log(response);
+      // console.log(response);
       if (response.data.ok) {
-        toast.success("Signup successful");
-        setTimeout(() => {
-          navigate("/login");
-        }, 2000);
+        toast.update(toastId, {
+          render: "Signup successful",
+          type: "success",
+          isLoading: false,
+          autoClose: 2000,
+        });
+        navigate("/login");
       } else {
-        toast.error("Signup failed");
+        toast.update(toastId, {
+          render: "Signup failed",
+          type: "error",
+          isLoading: false,
+          autoClose: 2000,
+        });
       }
     } catch (error) {
       console.error("Error during signup:", error);
-      toast.error("Something went wrong");
+      toast.update(toastId, {
+        render: "Signup failed",
+        type: "error",
+        isLoading: false,
+        autoClose: 2000,
+      });
     }
   };
-
 
   return (
     <Container
       className="d-flex align-items-center justify-content-center"
       style={{ minHeight: "90vh" }}
     >
-      <ToastContainer
-        position="top-center"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-      />
       <div className="w-100" style={{ maxWidth: "400px" }}>
         <Card>
-          <Card.Header style={{backgroundColor: "#4B3F6B"}}>
-            <h4 style={{backgroundColor: "#4B3F6B"}}>Sign Up</h4>
+          <Card.Header style={{ backgroundColor: "#4B3F6B" }}>
+            <h4 style={{ backgroundColor: "#4B3F6B" }}>Sign Up</h4>
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
@@ -150,7 +166,11 @@ function Signup() {
                 />
               </Form.Group>
 
-              <Button  variant="info" type="submit" style={{backgroundColor: "#4B3F6B"}}>
+              <Button
+                variant="info"
+                type="submit"
+                style={{ backgroundColor: "#4B3F6B" }}
+              >
                 <FaRegPaperPlane /> Sign Up
               </Button>
             </Form>
@@ -158,7 +178,11 @@ function Signup() {
           <Card.Footer className="text-muted">
             Already Have an Account?{" "}
             <a
-              style={{ textDecoration: "none", color:'#4B3F6B', cursor:'pointer' }}
+              style={{
+                textDecoration: "none",
+                color: "#4B3F6B",
+                cursor: "pointer",
+              }}
               onClick={() => {
                 navigate("/login");
               }}
@@ -173,7 +197,3 @@ function Signup() {
 }
 
 export default Signup;
-
-
-
-

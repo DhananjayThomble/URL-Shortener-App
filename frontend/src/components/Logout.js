@@ -1,8 +1,11 @@
 import React, { useEffect, useContext } from "react";
-import { toast, ToastContainer } from "react-toastify";
+import { toast } from "react-toastify";
 import UserContext from "../context/UserContext";
+import { useNavigate } from "react-router-dom";
 
-function Logout(props) {
+function Logout() {
+  const navigate = useNavigate();
+
   //  delete the token from local storage
   useEffect(() => {
     localStorage.removeItem("token");
@@ -12,24 +15,8 @@ function Logout(props) {
   const context = useContext(UserContext);
   context.setUser(null);
   toast.success("You are logged out");
-
-  return (
-    <>
-      <ToastContainer
-        position="top-center"
-        autoClose={1000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-      />
-      <h1> See you Again! </h1>
-    </>
-  );
+  navigate("/");
+  return <div></div>;
 }
 
 export default Logout;

@@ -13,6 +13,9 @@ import { useState } from "react";
 import Contributers from "./components/Contributers";
 import ResetPassword from "./components/ResetPassword";
 // import LandingPage from "./components/LandingPage/LandingPage";
+// for react-toastify
+import "react-toastify/dist/ReactToastify.css";
+import { ToastContainer } from "react-toastify";
 
 function App() {
   const [user, setUser] = useState(localStorage.getItem("token") || null);
@@ -22,6 +25,7 @@ function App() {
       <BrowserRouter>
         <UserContext.Provider value={{ user, setUser }}>
           <MyNavbar />
+          <ToastContainer />
           <Routes>
             <Route index path="/" element={<LandingPage />} />
             <Route path="/about" element={<About />} />
