@@ -1,27 +1,58 @@
-import React from "react";
+import React, { useState } from "react";
 import { Form, FormikProvider, useFormik } from "formik";
 import { Button, Stack, TextField } from "@mui/material";
 import { LinkSchema } from "./Schema";
 import mobileBackgroundShorten from "../Images/ShortenMobile.svg";
 import desktopBackgroundShorten from "../Images/ShortenDesktop.svg";
+import axios from "axios";
 
 const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
+  const [shortUrl, setShortUrl] = useState(""); // State for storing the short URL
+  const [originalUrl, setOriginalUrl] = useState("");
+
   const formik = useFormik({
     initialValues: {
       link: "",
     },
     validationSchema: LinkSchema,
-    onSubmit: (values, actions) => {
+    onSubmit: async (values, actions) => {
       const { link } = values;
-      onFormValueChange(link);
+      setOriginalUrl(link);
+      // console.log("Original URL:", link);
 
-      // STUB: popup successful msg on screen
-      onSnackbarSuccess({
-        children: "Your shortlink is ready",
-        severity: "success",
-      });
+      // call axios post request
+      const ApiEndpoint = `${process.env.REACT_APP_API_ENDPOINT}/api/url`;
 
-      actions.resetForm();
+      try {
+        const response = await axios.post(
+          ApiEndpoint,
+          {
+            url: link,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+          }
+        );
+
+        const { shortUrl } = response.data;
+        setShortUrl(shortUrl); // Set the short URL in the state
+        // console.log(`Short URL: ${shortUrl} and Original URL: ${link}`);
+        onFormValueChange({ originalUrl: link, shortUrl });
+
+        onSnackbarSuccess({
+          children: "Your shortlink is ready",
+          severity: "success",
+        });
+        actions.resetForm();
+        // console.log("Short URL:", shortUrl);
+      } catch (error) {
+        onSnackbarSuccess({
+          children: error,
+          severity: "error",
+        });
+      }
     },
   });
 
@@ -61,9 +92,9 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
             fullWidth
             type="url"
             placeholder="Shorten a link here..."
-            {...getFieldProps("link")} // hooks up onBlur and onChange for link textfield
-            error={Boolean(touched.link && errors.link)} // activate yup validation when field is out of focus
-            helperText={touched.link && errors.link} // display error message
+            {...getFieldProps("link")}
+            error={Boolean(touched.link && errors.link)}
+            helperText={touched.link && errors.link}
             sx={{
               bgcolor: "#fff",
               borderRadius: 1,
@@ -77,7 +108,7 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
             type="submit"
             variant="cyanBg"
             sx={{
-              mt: { xs: 2, md: 0 }, // remove the margin top on larger screens
+              mt: { xs: 2, md: 0 },
               p: 2,
               fontSize: "1.15rem",
               fontWeight: 600,

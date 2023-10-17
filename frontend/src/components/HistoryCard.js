@@ -34,11 +34,17 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
     }
   };
 
+  // extracting domain name from url
+  const getDomainName = (url) => {
+    const domainName = url.replace(/(^\w+:|^)\/\//, "").split("/")[0];
+    return domainName;
+  };
+
   if (showCard) {
     return (
       <Card border="secondary">
         <Card.Header as="h5">
-          Featured
+          {getDomainName(originalUrl)}
           <div className={"float-end"}>
             <FaRegChartBar />
             <span style={{ color: "#EDC126" }}> {visitCountState}</span>

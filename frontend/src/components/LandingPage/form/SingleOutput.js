@@ -26,7 +26,7 @@ const SingleOutput = (props) => {
   const [copySuccess, setCopySuccess] = useState(false);
 
   const handleClick = () => {
-    navigator.clipboard.writeText(props.full_short_link);
+    navigator.clipboard.writeText(props.shortUrl);
     setCopySuccess(true);
 
     setTimeout(() => {
@@ -48,13 +48,13 @@ const SingleOutput = (props) => {
       <List sx={mobileStyle}>
         <ListItem divider>
           <ListItemText
-            primary={props.original_link}
+            primary={props.originalUrl}
             sx={{ color: "neutral.veryDarkViolet" }}
           />
         </ListItem>
         <ListItem>
           <ListItemText
-            primary={props.full_short_link}
+            primary={props.shortUrl}
             sx={{ color: "primary.main" }}
           />
         </ListItem>
@@ -68,7 +68,7 @@ const SingleOutput = (props) => {
           component="p"
           sx={{ color: "neutral.veryDarkViolet", fontSize: "1rem" }}
         >
-          {props.original_link}
+          {props.originalUrl}
         </Typography>
 
         <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
@@ -81,7 +81,7 @@ const SingleOutput = (props) => {
               whiteSpace: "nowrap",
             }}
           >
-            {props.full_short_link}
+            {props.shortUrl}
           </Typography>
           {generateButton()}
         </Stack>

@@ -14,7 +14,7 @@ function Logout() {
 
   const context = useContext(UserContext);
   context.setUser(null);
-  toast.success("You are logged out");
+  // toast.success("You are logged out");
   navigate("/");
   return <div></div>;
 }

@@ -6,9 +6,9 @@ const LinkList = ({ responseList }) => {
     <div>
       {responseList &&
         responseList.map((item) => {
-          const { code } = item;
+          const { shortUrl } = item;
 
-          return <SingleOutput key={code} {...item} />;
+          return <SingleOutput key={shortUrl} {...item} />;
         })}
     </div>
   );

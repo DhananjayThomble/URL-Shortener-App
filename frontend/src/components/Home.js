@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Container, Row, Col, Form, Button } from "react-bootstrap";
-import { ToastContainer, toast } from "react-toastify";
-import "react-toastify/dist/ReactToastify.min.css";
+import { toast } from "react-toastify";
 import axios from "axios";
 import { FaLink } from "react-icons/fa";
 
@@ -85,18 +84,6 @@ function Home() {
             them easy to share.
           </p>
         </Container>
-        <ToastContainer
-          position="top-center"
-          autoClose={3000}
-          hideProgressBar={false}
-          newestOnTop={false}
-          closeOnClick
-          rtl={false}
-          pauseOnFocusLoss
-          draggable
-          pauseOnHover
-          theme="light"
-        />
       </div>
       <Container>
         <Row>

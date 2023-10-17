@@ -13,6 +13,55 @@ function History() {
   let toastId = null;
 
   useEffect(() => {
+    const fetchData = async () => {
+      try {
+        toastId = null;
+        toastId = toast.loading("Fetching History...");
+        const result = await axios.get(
+          `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+          }
+        );
+        setHistory(result.data.urlArray);
+        // console.log(history);
+        console.log(`history api is called`);
+        if (result.data.urlArray.length === 0) {
+          toast.update(toastId, {
+            render: "No History Found",
+            type: "info",
+            isLoading: false,
+            autoClose: 2000,
+          });
+        }
+
+        toast.update(toastId, {
+          render: "History Fetched",
+          type: "success",
+          isLoading: false,
+          autoClose: 2000,
+        });
+      } catch (error) {
+        if (error.response.status === 401) {
+          toast.update(toastId, {
+            render: "Please Login First",
+            type: "error",
+            isLoading: false,
+            autoClose: 2000,
+          });
+        }
+
+        toast.update(toastId, {
+          render: "Something went wrong",
+          type: "error",
+          isLoading: false,
+          autoClose: 2000,
+        });
+      }
+    };
+
     if (localStorage.getItem("token") === null) {
       toast.warning("Please Login First");
     } else {
@@ -20,52 +69,14 @@ function History() {
     }
   }, []);
 
-  const fetchData = async () => {
-    try {
-      toastId = null;
-      toastId = toast.loading("Fetching History...");
-      const result = await axios.get(
-        `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }
-      );
-      setHistory(result.data.urlArray);
-      // console.log(history);
-      if (result.data.urlArray.length === 0) {
-        toast.update(toastId, {
-          render: "No History Found",
-          type: "info",
-          isLoading: false,
-          autoClose: 2000,
-        });
-      }
-    } catch (error) {
-      if (error.response.status === 401) {
-        toast.update(toastId, {
-          render: "Please Login First",
-          type: "error",
-          isLoading: false,
-          autoClose: 2000,
-        });
-      }
-
-      toast.update(toastId, {
-        render: "Something went wrong",
-        type: "error",
-        isLoading: false,
-        autoClose: 2000,
-      });
-    }
-  };
-
   return (
     <Container className={"pb-5"}>
       <Row className={"my-1"}>
         {history.map((data) => {
           return (
-            <Col md={6} className={"p-1"}>
+            <Col md={6} className={"p-1"} key={data._id}>
               <HistoryCard
+                key={data._id}
                 shortUrl={data.shortUrl}
                 originalUrl={data.originalUrl}
                 visitCount={data.visitCount || 0}
