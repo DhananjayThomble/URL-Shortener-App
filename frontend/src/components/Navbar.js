@@ -8,7 +8,6 @@ import Menu from "@mui/material/Menu";
 import MenuIcon from "@mui/icons-material/Menu";
 import Container from "@mui/material/Container";
 import Avatar from "@mui/material/Avatar";
-import Button from "@mui/material/Button";
 import Tooltip from "@mui/material/Tooltip";
 import MenuItem from "@mui/material/MenuItem";
 import InsertLinkIcon from "@mui/icons-material/InsertLink";
@@ -18,6 +17,7 @@ import LoginIcon from "@mui/icons-material/Login";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import { useContext } from "react";
 import UserContext from "../context/UserContext";
+import { Link } from "react-router-dom";
 
 const pages = [
   { name: "Home", icon: <HomeIcon /> },
@@ -39,9 +39,15 @@ const settings = ["Logout"];
 
 function Navbar() {
   const context = useContext(UserContext);
+  const [user, setUser] = React.useState(null);
 
   const [anchorElNav, setAnchorElNav] = React.useState(null);
   const [anchorElUser, setAnchorElUser] = React.useState(null);
+
+  React.useEffect(() => {
+    // console.log(`Navbar: ${context.user}`);
+    setUser(context.user);
+  }, [context.user]);
 
   const handleOpenNavMenu = (event) => {
     setAnchorElNav(event.currentTarget);
@@ -63,23 +69,26 @@ function Navbar() {
       <Container maxWidth="xl">
         <Toolbar disableGutters>
           <InsertLinkIcon sx={{ display: { xs: "none", md: "flex" }, mr: 1 }} />
-          <Typography
-            variant="h6"
-            noWrap
-            component="a"
-            href="#app-bar-with-responsive-menu"
-            sx={{
-              mr: 2,
-              display: { xs: "none", md: "flex" },
-              fontFamily: "monospace",
-              fontWeight: 700,
-              letterSpacing: ".1rem",
-              color: "inherit",
-              textDecoration: "none",
-            }}
+          <Link
+            style={{ color: "white", textDecoration: "none" }}
+            to={"/" + "Home"}
           >
-            SnapURL
-          </Typography>
+            <Typography
+              variant="h6"
+              noWrap
+              sx={{
+                mr: 2,
+                display: { xs: "none", md: "flex" },
+                fontFamily: "monospace",
+                fontWeight: 700,
+                letterSpacing: ".1rem",
+                color: "inherit",
+                textDecoration: "none",
+              }}
+            >
+              SnapURL
+            </Typography>
+          </Link>
           <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
             <IconButton
               size="large"
@@ -109,59 +118,88 @@ function Navbar() {
                 display: { xs: "block", md: "none" },
               }}
             >
-              {pages.map((page) => (
-                <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                  {page.icon}
-                  <Typography textAlign="center">{page.name}</Typography>
-                </MenuItem>
-              ))}
+              {user === null
+                ? pages.map((page) => (
+                    <MenuItem key={page.name} onClick={handleCloseNavMenu}>
+                      {page.icon}
+                      <Link
+                        style={{ color: "black", textDecoration: "none" }}
+                        to={"/" + page.name}
+                      >
+                        <Typography textAlign="center">{page.name}</Typography>
+                      </Link>
+                    </MenuItem>
+                  ))
+                : pagesAfterLogin.map((page) => (
+                    <MenuItem key={page.name} onClick={handleCloseNavMenu}>
+                      {page.icon}
+                      <Link
+                        style={{ color: "black", textDecoration: "none" }}
+                        to={"/" + page.name}
+                      >
+                        <Typography textAlign="center">{page.name}</Typography>
+                      </Link>
+                    </MenuItem>
+                  ))}
             </Menu>
           </Box>
-          <InsertLinkIcon sx={{ display: { xs: "flex", md: "none" }, mr: 1 }} />
-          <Typography
-            variant="h5"
-            noWrap
-            component="a"
-            href="#app-bar-with-responsive-menu"
-            sx={{
-              mr: 2,
-              display: { xs: "flex", md: "none" },
-              flexGrow: 1,
-              fontFamily: "monospace",
-              fontWeight: 700,
-              letterSpacing: ".3rem",
-              color: "inherit",
-              textDecoration: "none",
-            }}
-          >
-            LOGO
-          </Typography>
+
+          <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
+            <Link
+              style={{ color: "white", textDecoration: "none" }}
+              to={"/" + "Home"}
+            >
+              <Typography
+                variant="h5"
+                noWrap
+                sx={{
+                  mr: 2,
+                  display: { xs: "flex", md: "none" },
+                  flexGrow: 1,
+                  fontFamily: "monospace",
+                  fontWeight: 700,
+                  letterSpacing: ".3rem",
+                  color: "inherit",
+                  textDecoration: "none",
+                }}
+              >
+                <InsertLinkIcon
+                  sx={{ display: { xs: "flex", md: "none" }, mr: 1, mt: 0.5 }}
+                />
+                SnapURL
+              </Typography>
+            </Link>
+          </Box>
           <Box sx={{ flexGrow: 1, display: { xs: "none", md: "flex" } }}>
-            {context.user === null
+            {user === null
               ? pages.map((page) => (
                   <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                    {page.icon}{" "}
-                    <a
+                    <Link
                       style={{ color: "white", textDecoration: "none" }}
-                      href={"/" + page.name}
+                      to={"/" + page.name}
                     >
-                      <Typography textAlign="center">{page.name}</Typography>{" "}
-                    </a>
+                      <Typography textAlign="center">
+                        {page.icon}
+                        {page.name}
+                      </Typography>{" "}
+                    </Link>
                   </MenuItem>
                 ))
               : pagesAfterLogin.map((page) => (
                   <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                    {page.icon}{" "}
-                    <a
+                    <Link
                       style={{ color: "white", textDecoration: "none" }}
-                      href={"/" + page.name}
+                      to={"/" + page.name}
                     >
-                      <Typography textAlign="center">{page.name}</Typography>{" "}
-                    </a>
+                      <Typography textAlign="center">
+                        {page.icon}
+                        {page.name}
+                      </Typography>{" "}
+                    </Link>
                   </MenuItem>
                 ))}
           </Box>
-          {context.user !== null && (
+          {user !== null && (
             <Box sx={{ flexGrow: 0 }}>
               <Tooltip title="Open settings">
                 <IconButton onClick={handleOpenUserMenu} sx={{ p: 0 }}>
