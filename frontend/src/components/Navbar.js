@@ -30,6 +30,7 @@ const pages = [
 const pagesAfterLogin = [
   { name: "Home", icon: <HomeIcon /> },
   { name: "About", icon: <InfoIcon /> },
+  { name: "Contributers", icon: <PersonAddIcon /> },
   { name: "History", icon: <LoginIcon /> },
   { name: "Logout", icon: <PersonAddIcon /> },
 ];
