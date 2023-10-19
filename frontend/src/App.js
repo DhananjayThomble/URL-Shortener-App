@@ -16,6 +16,7 @@ import ResetPassword from "./components/ResetPassword";
 // for react-toastify
 import "react-toastify/dist/ReactToastify.css";
 import { ToastContainer } from "react-toastify";
+import SharePage from "./components/Sharepage";
 
 function App() {
   const [user, setUser] = useState(localStorage.getItem("token") || null);
@@ -36,6 +37,7 @@ function App() {
             <Route path={"/history"} element={<History />} />
             <Route path={"/contributers"} element={<Contributers />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path={"/Sharepage"} element={<SharePage />} />
           </Routes>
           {/* <Footer /> */}
         </UserContext.Provider>
