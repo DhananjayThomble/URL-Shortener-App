@@ -26,7 +26,7 @@ function Contributers() {
       {isPending && <div className="loading"></div>} 
       <div className="contributer-container">
         {data && data.map((item)=>(
-          <a href={item.html_url} target='_blank'>
+          <a href={item.html_url} target='_blank' rel="noopener noreferrer">
             <div className="profile" key={item.id}>
               <img src={item.avatar_url} alt="" />  
               <h1>{item.login}</h1>
