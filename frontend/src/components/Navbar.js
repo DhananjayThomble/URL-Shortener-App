@@ -24,7 +24,6 @@ const pages = [
   { name: "About", icon: <InfoIcon /> },
   { name: "Login", icon: <LoginIcon /> },
   { name: "Signup", icon: <PersonAddIcon /> },
-  { name: "Contributers", icon: <PersonAddIcon /> }
 ];
 
 const pagesAfterLogin = [
