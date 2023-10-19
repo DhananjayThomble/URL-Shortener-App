@@ -17,7 +17,7 @@ import LoginIcon from "@mui/icons-material/Login";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import { useContext } from "react";
 import UserContext from "../context/UserContext";
-import { Link } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 
 const pages = [
   { name: "Home", icon: <HomeIcon /> },
@@ -69,10 +69,7 @@ function Navbar() {
       <Container maxWidth="xl">
         <Toolbar disableGutters>
           <InsertLinkIcon sx={{ display: { xs: "none", md: "flex" }, mr: 1 }} />
-          <Link
-            style={{ color: "white", textDecoration: "none" }}
-            to={"/" + "Home"}
-          >
+          <Link style={{ color: "white", textDecoration: "none" }} to="/Home">
             <Typography
               variant="h6"
               noWrap
@@ -122,23 +119,41 @@ function Navbar() {
                 ? pages.map((page) => (
                     <MenuItem key={page.name} onClick={handleCloseNavMenu}>
                       {page.icon}
-                      <Link
-                        style={{ color: "black", textDecoration: "none" }}
+                      <NavLink
+                        style={({ isActive }) => {
+                          return isActive
+                            ? {
+                                color: "white",
+                                background: "#51087E",
+                                padding: "4px",
+                                borderRadius: "5px",
+                              }
+                            : { color: "white" };
+                        }}
                         to={"/" + page.name}
                       >
                         <Typography textAlign="center">{page.name}</Typography>
-                      </Link>
+                      </NavLink>
                     </MenuItem>
                   ))
                 : pagesAfterLogin.map((page) => (
                     <MenuItem key={page.name} onClick={handleCloseNavMenu}>
                       {page.icon}
-                      <Link
-                        style={{ color: "black", textDecoration: "none" }}
+                      <NavLink
+                        style={({ isActive }) => {
+                          return isActive
+                            ? {
+                                color: "white",
+                                background: "#51087E",
+                                padding: "4px",
+                                borderRadius: "5px",
+                              }
+                            : { color: "white" };
+                        }}
                         to={"/" + page.name}
                       >
                         <Typography textAlign="center">{page.name}</Typography>
-                      </Link>
+                      </NavLink>
                     </MenuItem>
                   ))}
             </Menu>
@@ -147,7 +162,7 @@ function Navbar() {
           <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
             <Link
               style={{ color: "white", textDecoration: "none" }}
-              to={"/" + "Home"}
+              to={"/Home"}
             >
               <Typography
                 variant="h5"
@@ -174,28 +189,46 @@ function Navbar() {
             {user === null
               ? pages.map((page) => (
                   <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                    <Link
-                      style={{ color: "white", textDecoration: "none" }}
+                    <NavLink
+                      style={({ isActive }) => {
+                        return isActive
+                          ? {
+                              color: "white",
+                              background: "#51087E",
+                              padding: "4px",
+                              borderRadius: "5px",
+                            }
+                          : { color: "white" };
+                      }}
                       to={"/" + page.name}
                     >
                       <Typography textAlign="center">
                         {page.icon}
                         {page.name}
                       </Typography>{" "}
-                    </Link>
+                    </NavLink>
                   </MenuItem>
                 ))
               : pagesAfterLogin.map((page) => (
                   <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                    <Link
-                      style={{ color: "white", textDecoration: "none" }}
+                    <NavLink
+                      style={({ isActive }) => {
+                        return isActive
+                          ? {
+                              color: "white",
+                              background: "#51087E",
+                              padding: "4px",
+                              borderRadius: "5px",
+                            }
+                          : { color: "white" };
+                      }}
                       to={"/" + page.name}
                     >
                       <Typography textAlign="center">
                         {page.icon}
                         {page.name}
                       </Typography>{" "}
-                    </Link>
+                    </NavLink>
                   </MenuItem>
                 ))}
           </Box>
