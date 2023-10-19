@@ -129,7 +129,7 @@ function Navbar() {
                                 padding: "4px",
                                 borderRadius: "5px",
                               }
-                            : { color: "white" };
+                            : { color: "black" };
                         }}
                         to={"/" + page.name}
                       >
