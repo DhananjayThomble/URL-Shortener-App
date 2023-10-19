@@ -69,10 +69,7 @@ function Navbar() {
       <Container maxWidth="xl">
         <Toolbar disableGutters>
           <InsertLinkIcon sx={{ display: { xs: "none", md: "flex" }, mr: 1 }} />
-          <Link
-            style={{ color: "white", textDecoration: "none" }}
-            to={"/" + "Home"}
-          >
+          <Link style={{ color: "white", textDecoration: "none" }} to="/Home">
             <Typography
               variant="h6"
               noWrap
@@ -165,7 +162,7 @@ function Navbar() {
           <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
             <Link
               style={{ color: "white", textDecoration: "none" }}
-              to={"/" + "Home"}
+              to={"/Home"}
             >
               <Typography
                 variant="h5"
