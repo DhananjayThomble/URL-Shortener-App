@@ -7,7 +7,6 @@ const LinkList = ({ responseList }) => {
       {responseList &&
         responseList.map((item) => {
           const { shortUrl } = item;
-
           return <SingleOutput key={shortUrl} {...item} />;
         })}
     </div>

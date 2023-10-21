@@ -45,7 +45,7 @@ const LinkParent = () => {
           onClose={handleCloseSnackbar}
           autoHideDuration={10000}
         >
-          <Alert {...snackbar} onClose={handleCloseSnackbar} />
+          <Alert {...snackbar} onClose={handleCloseSnackbar} /> 
         </Snackbar>
       )}
     </div>
