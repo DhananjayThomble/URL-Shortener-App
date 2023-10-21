@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 const urlSchema = new mongoose.Schema({
   shortUrl: String,
   originalUrl: String,
+  category: String,
 });
 
 // Creating model
