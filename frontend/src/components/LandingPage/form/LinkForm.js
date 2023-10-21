@@ -18,6 +18,7 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
     onSubmit: async (values, actions) => {
       const { link } = values;
       setOriginalUrl(link);
+      // console.log("Original URL:", link);
 
       // call axios post request
       const ApiEndpoint = `${process.env.REACT_APP_API_ENDPOINT}/api/url`;
@@ -37,6 +38,7 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
 
         const { shortUrl } = response.data;
         setShortUrl(shortUrl); // Set the short URL in the state
+        setOriginalUrl(link);
         // console.log(`Short URL: ${shortUrl} and Original URL: ${link}`);
         onFormValueChange({ originalUrl: link, shortUrl });
 
@@ -47,9 +49,8 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
         actions.resetForm();
         // console.log("Short URL:", shortUrl);
       } catch (error) {
-        
         onSnackbarSuccess({
-          children: error,
+          children: "Something went wrong. Please try again later.",
           severity: "error",
         });
       }

@@ -55,25 +55,25 @@ function Home() {
       const { shortUrl } = response.data;
       setShortUrl(shortUrl);
       toast.success("URL shortened successfully!");
-    } catch ({
-      // handle error here
-      response: {
-        status,
-        data: { error },
-      },
-    }) {
+    } 
+  
+  catch (error) {
+    if (error.response) {
+      const { status, data } = error.response;
       if (status === 400) {
-        toast.error(error);
+        toast.error(data.error);
       } else if (status === 401) {
-        toast.error("Please Login First!");
+        toast.error("Heyy, you have to login first!");
       } else if (status === 500) {
-        toast.error(error);
+        toast.error(data.error);
       } else {
         toast.error("Something went wrong");
       }
+    } else {
+      toast.error("Network error. Please try again.");
     }
-  };
-
+  }
+  }
   return (
     <>
       <div className={"mt-4 p-4 bg-primary text-white rounded jumbotron"}>

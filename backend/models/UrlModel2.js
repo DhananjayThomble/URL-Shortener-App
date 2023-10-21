@@ -10,6 +10,7 @@ const urlSchema2 = new mongoose.Schema({
     {
       shortUrl : { type : String },
       originalUrl : { type : String },
+      category: { type : String },
       visitCount : { 
         type : Number,
         default : 0

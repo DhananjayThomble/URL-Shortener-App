@@ -4,11 +4,19 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { FaRegChartBar, FaExternalLinkAlt, FaTrashAlt } from "react-icons/fa";
+import { Dropdown, Form } from "react-bootstrap";
 
-function HistoryCard({ shortUrl, originalUrl, visitCount }) {
+function HistoryCard({
+  shortUrl,
+  originalUrl,
+  visitCount,
+  category,
+  categoryArray,
+}) {
   const [urlId, setUrlId] = useState("");
   const [showCard, setShowCard] = useState(true);
   const [visitCountState, setVisitCountState] = useState(visitCount);
+  const [categoryState, setCategoryState] = useState(category);
 
   useEffect(() => {
     setUrlId(shortUrl);
@@ -40,6 +48,29 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
     return domainName;
   };
 
+  const updateCategory = async (e) => {
+    try {
+      const result = await axios.put(
+        `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/`,
+        {
+          shortUrl: shortUrl,
+          category: e.target.innerText,
+        },
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        }
+      );
+      console.log(result);
+      if (result.status === 200) {
+        setCategoryState(e.target.innerText);
+        toast.success("Category Updated Successfully");
+      }
+    } catch (error) {
+      console.log(error);
+      toast.error(error.data.response.error);
+    }
+  };
+
   if (showCard) {
     return (
       <Card border="secondary">
@@ -55,23 +86,39 @@ function HistoryCard({ shortUrl, originalUrl, visitCount }) {
             as={"h6"}
           >{`${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              //    open in new tab
-              window.open(
-                `${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`,
-                "_blank"
-              );
-              //  increase visit count
-              setVisitCountState(visitCountState + 1);
-            }}
-          >
-            <FaExternalLinkAlt /> Visit The Site
-          </Button>
-          <Button className={"m-2"} variant={"danger"} onClick={deleteUrl}>
-            <FaTrashAlt /> Delete
-          </Button>
+          <div className="d-flex gap-2">
+            <Dropdown>
+              <Dropdown.Toggle variant="success" id="dropdown-basic">
+                {categoryState || "Select Category"}
+              </Dropdown.Toggle>
+              <Dropdown.Menu>
+                {categoryArray.map((item, index) => {
+                  return (
+                    <Dropdown.Item key={index} onClick={updateCategory}>
+                      {item}
+                    </Dropdown.Item>
+                  );
+                })}
+              </Dropdown.Menu>
+            </Dropdown>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                //    open in new tab
+                window.open(
+                  `${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`,
+                  "_blank"
+                );
+                //  increase visit count
+                setVisitCountState(visitCountState + 1);
+              }}
+            >
+              <FaExternalLinkAlt /> Visit The Site
+            </Button>
+            <Button variant={"danger"} onClick={deleteUrl}>
+              <FaTrashAlt /> Delete
+            </Button>
+          </div>
         </Card.Body>
       </Card>
     );
