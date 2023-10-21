@@ -8,6 +8,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import {QRCodeSVG} from "qrcode.react";
 
 const mobileStyle = {
   width: "100%",
@@ -25,6 +26,7 @@ const desktopStyle = {
 const SingleOutput = (props) => {
   const [copySuccess, setCopySuccess] = useState(false);
 
+  console.log("single op: ",props.shortUrl);
   const handleClick = () => {
     navigator.clipboard.writeText(props.shortUrl);
     setCopySuccess(true);
@@ -49,7 +51,7 @@ const SingleOutput = (props) => {
         <ListItem divider>
           <ListItemText
             primary={props.originalUrl}
-            sx={{ color: "neutral.veryDarkViolet" }}
+            sx={{ color: "neutral.veryDarkViolet"}}
           />
         </ListItem>
         <ListItem>
@@ -59,32 +61,41 @@ const SingleOutput = (props) => {
           />
         </ListItem>
         <ListItem sx={{ pt: 0 }}>{generateButton()}</ListItem>
+        <ListItem sx={{justifyContent: "center"}}>
+          <QRCodeSVG value={props.shortUrl} size={100} />
+        </ListItem>
       </List>
 
       {/* Desktop view */}
-      <Stack sx={desktopStyle}>
+      <Stack sx={desktopStyle} >
         <Typography
           variant="body2"
           component="p"
           sx={{ color: "neutral.veryDarkViolet", fontSize: "1rem" }}
+  
         >
           {props.originalUrl}
         </Typography>
 
-        <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
-          <Typography
-            variant="body2"
-            component="p"
-            sx={{
-              color: "primary.main",
-              fontSize: "1rem",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {props.shortUrl}
-          </Typography>
-          {generateButton()}
+          <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+            <Typography
+              variant="body2"
+              component="p"
+              sx={{
+                color: "primary.main",
+                fontSize: "1rem",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {props.shortUrl}
+            </Typography>
+            {generateButton()}
+          </Stack>
+
+        <Stack direction="row" spacing={2} sx={{ alignItems: "center"}}>
+          <QRCodeSVG value={props.shortUrl} size={100} />
         </Stack>
+
       </Stack>
     </Paper>
   );
