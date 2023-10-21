@@ -17,7 +17,7 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
     validationSchema: LinkSchema,
     onSubmit: async (values, actions) => {
       const { link } = values;
-      setOriginalUrl(link);
+
       // console.log("Original URL:", link);
 
       // call axios post request
@@ -49,6 +49,14 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
         actions.resetForm();
         // console.log("Short URL:", shortUrl);
       } catch (error) {
+        // console.log(error);
+        if (error.response.status === 401) {
+          onSnackbarSuccess({
+            children: "Please login to create a shortlink",
+            severity: "error",
+          });
+          return;
+        }
         onSnackbarSuccess({
           children: "Something went wrong. Please try again later.",
           severity: "error",
@@ -92,7 +100,7 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
           <TextField
             fullWidth
             type="url"
-            placeholder="Shorten a link here...."
+            placeholder="Shorten a link here..."
             {...getFieldProps("link")}
             error={Boolean(touched.link && errors.link)}
             helperText={touched.link && errors.link}
