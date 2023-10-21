@@ -1,13 +1,12 @@
 import React from "react";
 import Container from "react-bootstrap/Container";
 import Row from "react-bootstrap/Row";
-import Col from "react-bootstrap/Col";
-import HistoryCard from "./HistoryCard";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import ExportToExcel from "./ExportToExcel";
 import { Button, Dropdown, Form } from "react-bootstrap";
+import Pagination from "./pagination";
 
 function History() {
   const [history, setHistory] = useState([]);
@@ -134,13 +133,10 @@ function History() {
 
   return (
     <Container className={"pb-5"}>
-      <div className="my-3  container d-flex align-items-center justify-content-around">
+      <h3 className="my-3">URLs</h3>
+      <div className="d-md-flex justify-content-between sm:block text-sm">
         <Dropdown>
-          <Dropdown.Toggle
-            variant="success"
-            id="dropdown-basic"
-            className="mt-2"
-          >
+          <Dropdown.Toggle id="dropdown-basic" className="my-2">
             {selectedFilter || "Select Category"}
           </Dropdown.Toggle>
           <Dropdown.Menu>
@@ -157,7 +153,7 @@ function History() {
           </Dropdown.Menu>
         </Dropdown>
         <Form>
-          <div className="d-flex">
+          <div className="d-flex my-2">
             <Form.Control
               type="text"
               aria-describedby="Add New Category"
@@ -178,27 +174,15 @@ function History() {
             </Button>
           </div>
         </Form>
+        <Row className="my-2">
+          <ExportToExcel />
+        </Row>
       </div>
-
-      <Row className={"my-1"}>
-        {history.map((data) => {
-          return (
-            <Col md={6} className={"p-1"} key={data._id}>
-              <HistoryCard
-                key={data._id}
-                shortUrl={data.shortUrl}
-                originalUrl={data.originalUrl}
-                visitCount={data.visitCount || 0}
-                category={data.category}
-                categoryArray={categoryArray}
-              />
-            </Col>
-          );
-        })}
-      </Row>
-      <Row>
-        <ExportToExcel />
-      </Row>
+      <Pagination
+        history={history}
+        cardsPerPage={3}
+        categoryArray={categoryArray}
+      />
     </Container>
   );
 }
