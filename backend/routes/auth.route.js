@@ -19,7 +19,7 @@ router.post("/forgot-password", forgetPasswordValidator, validationErrorHandler,
 router.post("/reset-password", resetPassword);   // For Reseting the password
 router.get("/verify-email", verifyEmail);
 router.get("/current-user" , getCurrentUser)
-router.post("/change-email" , changeEamil)
-router.post("/change-name" , changeName)
+router.patch("/change-email" , changeEamil)
+router.patch("/change-name" , changeName)
 
 export default router;
