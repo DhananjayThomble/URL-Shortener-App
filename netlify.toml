@@ -1,6 +1,6 @@
 [build]
   base = "frontend"           # Specify the directory where your frontend code is located.
-  publish = "frontend/build"  # Define where your built frontend files will be located.
+  publish = "build"  # Define where your built frontend files will be located.
   command = "npm run build"   # Adjust this command based on your frontend build process.
 
 [context.production]
