@@ -1,0 +1,456 @@
+openapi: 3.0.0
+info:
+  title: URL Shortener
+  description: URL Shortener App using MERN stack - API Documentation
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:4001
+    description: Local server
+
+  - url: https://dturl.live
+    description: My Production server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: to get the token, use the login API
+  schemas:
+    Login:
+      type: object
+      properties:
+        email:
+          type: string
+          example: abc@gmail.com
+        password:
+          type: string
+          example: 123456
+    SignUp:
+      type: object
+      properties:
+        name:
+          type: string
+          example: John Deo
+        email:
+          type: string
+          example: abc@gmail.com
+        password:
+          type: string
+          example: 123456
+    Url:
+      type: string
+      example: https://editor.swagger.io/
+tags:
+  - name: Authentication
+    description: Everything about Authentication API's
+  - name: Generate Url
+    description: Generate a short URL
+  - name: Get Url
+    description: Get request for URL
+  - name: Url Functions
+    description: Operations about URL functions
+
+paths:
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login
+      description: Login to the API
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: # <!--- form field name
+                  type: string
+                password:
+                  type: string
+              example:
+                email: "jay3@gmail.com"
+                password: "123456"
+
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: The JWT token.
+                  user:
+                    type: object
+                    description: The user object.
+                    properties:
+                      _id:
+                        type: string
+                        description: The user ID.
+                      name:
+                        type: string
+                        description: The user name.
+                      email:
+                        type: string
+                        description: The user email.
+
+        "400":
+          description: Email and password is required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /auth/signup:
+    post:
+      tags:
+        - Authentication
+      summary: Signup
+      description: Sign Up to the API
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+
+      responses:
+        "200":
+          description: Signup successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error creating user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /api/url:
+    post:
+      tags:
+        - Generate Url
+      summary: Create a new URL
+      description: Create a new Short URL from a original URL
+
+      security:
+        - BearerAuth: []
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: The original URL to shorten.
+
+      responses:
+        "200":
+          description: URL created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shortUrl:
+                    type: string
+                    description: The shortened URL.
+
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error creating URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /api/url/{short}:
+    get:
+      tags:
+        - Get Url
+      summary: Redirect to the original URL
+      description: Redirect to the original URL
+
+      parameters:
+        - in: path
+          name: url
+          required: true
+          description: The shortened URL ID. this will not work here. It will work in the browser.
+          schema:
+            type: string
+
+      responses:
+        "302":
+          description: Redirect to the original URL
+
+        "404":
+          description: Original URL not found for the given ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error redirecting to the original URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /api/history:
+    get:
+      tags:
+        - Url Functions
+      summary: Get the history of shortened URLs
+      description: Get the history of all shortened URLs generated by the current Logged In user
+
+      security:
+        - BearerAuth: []
+
+      responses:
+        "200":
+          description: List of shortened URLs with their original URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  urlArray:
+                    type: array
+                    description: The list of shortened URLs and their corresponding original URLs.
+                    items:
+                      type: object
+                      properties:
+                        shortUrl:
+                          type: string
+                          description: The shortened URL ID.
+                        originalUrl:
+                          type: string
+                          description: The Original URL Address.
+
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error getting history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /api/delete/{id}:
+    delete:
+      tags:
+        - Url Functions
+      summary: Delete a short URL
+      description: Delete a short URL by its ID
+
+      security:
+        - BearerAuth: []
+
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: The shortened URL ID
+          example: SmiDxIMREO
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: Short URL deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "404":
+          description: Short URL not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error deleting short URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /api/export:
+    get:
+      tags:
+        - Url Functions
+      summary: Export to Excel
+      description: Export The Generated URLs into Excel sheet
+
+      security:
+        - BearerAuth: []
+
+      responses:
+        "200":
+          description: Exported Successfully
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: string
+                    description: OK message.
+
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+        "404":
+          description: No URLs Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error Exporting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.

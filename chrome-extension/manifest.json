@@ -1,0 +1,13 @@
+{
+  "name": "Quick URL Shortener",
+  "description": "Quickly shorten URLs without leaving the page you're on.",
+  "version": "1.0",
+  "manifest_version": 3,
+  "action": {
+    "default_popup": "extension.html",
+    "default_icon": "icon.png"
+  },
+  "permissions": [
+    "activeTab"
+  ]
+}
