@@ -10,6 +10,7 @@ import Container from "@mui/material/Container";
 import Avatar from "@mui/material/Avatar";
 import Tooltip from "@mui/material/Tooltip";
 import MenuItem from "@mui/material/MenuItem";
+import OfflineShareIcon from '@mui/icons-material/OfflineShare';
 import InsertLinkIcon from "@mui/icons-material/InsertLink";
 import HomeIcon from "@mui/icons-material/Home";
 import InfoIcon from "@mui/icons-material/Info";
@@ -24,6 +25,7 @@ const pages = [
   { name: "About", icon: <InfoIcon /> },
   { name: "Contributers", icon: <PersonAddIcon /> },
   { name: "Login", icon: <LoginIcon /> },
+  { name: "Linkinbio", icon: <OfflineShareIcon />},
   { name: "Signup", icon: <PersonAddIcon /> },
 ];
 
@@ -31,6 +33,7 @@ const pagesAfterLogin = [
   { name: "Home", icon: <HomeIcon /> },
   { name: "About", icon: <InfoIcon /> },
   { name: "Contributers", icon: <PersonAddIcon /> },
+  { name: "Linkinbio", icon: <OfflineShareIcon />},
   { name: "History", icon: <LoginIcon /> },
   { name: "Logout", icon: <PersonAddIcon /> },
 ];
