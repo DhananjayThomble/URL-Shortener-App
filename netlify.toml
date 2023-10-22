@@ -11,4 +11,4 @@
 
 [ignore]
   gitignore = true            # Ignore changes to the backend directory to prevent builds when backend code changes.
-  files = [".all-contributorsrc", "LICENSE", "README.md, "backend", "chrome-extension"]  # Ignore changes to these files.
+  files = [".all-contributorsrc", "LICENSE", "README.md", "backend", "chrome-extension"]  # Ignore changes to these files.
