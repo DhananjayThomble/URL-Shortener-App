@@ -14,7 +14,7 @@ export const login = async (req, res) => {
       // if user not found, 401 status for unauthorized
       if (!user) return res.status(401).json({ error: "Email does not exist" });
 
-  
+      
       // check password using passport
       user.comparePassword(password, (err, isMatch) => {
         if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });

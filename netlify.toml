@@ -1,0 +1,14 @@
+[build]
+  base = "frontend"           # Specify the directory where your frontend code is located.
+  publish = "build"  # Define where your built frontend files will be located.
+  command = "npm run build"   # Adjust this command based on your frontend build process.
+
+[context.production]
+  command = "npm run build"
+
+[context.deploy-preview]
+  command = "npm run build"
+
+[ignore]
+  gitignore = true            # Ignore changes to the backend directory to prevent builds when backend code changes.
+  files = [".all-contributorsrc", "LICENSE", "README.md", "backend", "chrome-extension"]  # Ignore changes to these files.
