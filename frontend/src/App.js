@@ -10,7 +10,7 @@ import History from "./components/History";
 import "./App.css";
 import UserContext from "./context/UserContext";
 import { useState } from "react";
-import Contributers from "./components/Contributers";
+import Contributors from "./components/Contributors";
 import ResetPassword from "./components/ResetPassword";
 // import LandingPage from "./components/LandingPage/LandingPage";
 // for react-toastify
@@ -35,7 +35,7 @@ function App() {
             <Route path={"/logout"} element={<Logout />} />
             <Route path="*" element={<LandingPage />} />
             <Route path={"/history"} element={<History />} />
-            <Route path={"/contributers"} element={<Contributers />} />
+            <Route path={"/contributors"} element={<Contributors />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path={"/Sharepage"} element={<SharePage />} />
           </Routes>
