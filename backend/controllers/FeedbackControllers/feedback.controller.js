@@ -9,18 +9,19 @@ export const submitFeedback = async (req, res) => {
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
+    //search for userid which is refering to user model to extract email and name from user model
     const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+    // Destructure name and email from user
     const { name, email } = user;
     // Destructure data from the request body
    
     const { message, rating } = req.body;
 
-    // Get user's email and username from their login credentials
+   
     
 
     // Create a new feedback instance with email, username, message, and rating
