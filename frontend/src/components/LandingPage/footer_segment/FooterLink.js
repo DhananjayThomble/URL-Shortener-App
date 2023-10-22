@@ -1,5 +1,6 @@
 import React from "react";
 import { Button } from "@mui/material";
+import propTypes from "prop-types";
 
 const FooterLink = ({ bodyText }) => {
   return (
@@ -24,4 +25,8 @@ export default FooterLink;
 
 FooterLink.defaultProps = {
   bodyText: "FooterLink",
+};
+
+FooterLink.propTypes = {
+  bodyText: propTypes.string,
 };

@@ -1,10 +1,11 @@
 import Button from "react-bootstrap/Button";
 import Card from "react-bootstrap/Card";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { FaRegChartBar, FaExternalLinkAlt, FaTrashAlt } from "react-icons/fa";
 import { Dropdown } from "react-bootstrap";
+import PropTypes from "prop-types";
 
 function HistoryCard({
   shortUrl,
@@ -88,7 +89,7 @@ function HistoryCard({
           >{`${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
         </Card.Body>
-        <div class="card-footer text-body-secondary d-flex gap-2 justify-content-around">
+        <div className="card-footer text-body-secondary d-flex gap-2 justify-content-around">
           <Dropdown>
             <Dropdown.Toggle variant="success" id="dropdown-basic">
               {categoryState || "Select Category"}
@@ -103,7 +104,7 @@ function HistoryCard({
               })}
             </Dropdown.Menu>
           </Dropdown>
-          <div class="vr"></div>
+          <div className="vr"></div>
           <Button
             variant="secondary"
             onClick={() => {
@@ -118,7 +119,7 @@ function HistoryCard({
           >
             <FaExternalLinkAlt /> Visit The Site
           </Button>
-          <div class="vr"></div>
+          <div className="vr"></div>
           <div className="d-flex justify-content-center align-items-center text-xl">
             <FaRegChartBar /> <span className="ps-2">{visitCountState}</span>
           </div>
@@ -129,5 +130,13 @@ function HistoryCard({
     return null;
   }
 }
+
+HistoryCard.propTypes = {
+  shortUrl: PropTypes.string.isRequired,
+  originalUrl: PropTypes.string.isRequired,
+  visitCount: PropTypes.number.isRequired,
+  category: PropTypes.string.isRequired,
+  categoryArray: PropTypes.array.isRequired,
+};
 
 export default HistoryCard;
