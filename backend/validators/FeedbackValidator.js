@@ -1,5 +1,4 @@
-const Feedback=require('../models/Feedback');
-
+import { body } from "express-validator";
 export const validateFeedback = [
     body("message")
         .notEmpty()

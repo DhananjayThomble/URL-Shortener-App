@@ -1,5 +1,5 @@
 import Router from "express";
-
+import { isApiAuthenticated } from "../middlewares/authMiddleware.js";
 import { login } from "../controllers/authControllers/login.controller.js"
 import { signup } from "../controllers/authControllers/signup.controller.js"
 import { forgotPassword } from "../controllers/authControllers/forgotPassword.controller.js"
@@ -15,6 +15,6 @@ router.post("/signup", validateSignup, validationErrorHandler, signup);
 router.post("/forgot-password", forgetPasswordValidator, validationErrorHandler, forgotPassword);  //For Sending the password reset request
 router.post("/reset-password", resetPassword);   // For Reseting the password
 router.get("/verify-email", verifyEmail);
-router.post("/login",validateFeedback,submitFeedback)
-git 
+router.post("/login/feedback", isApiAuthenticated, validateFeedback, validationErrorHandler, submitFeedback);
+
 export default router;

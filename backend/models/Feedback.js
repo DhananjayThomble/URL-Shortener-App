@@ -1,5 +1,12 @@
+
+import mongoose from "mongoose";
 const feedbackSchema = new mongoose.Schema({
-    message: String,
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User", // Reference to the User model
+    required: true,
+  },
+  message: String,
     rating: Number,
   });
 
