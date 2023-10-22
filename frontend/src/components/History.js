@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import Container from "react-bootstrap/Container";
 import Row from "react-bootstrap/Row";
 import { useState, useEffect } from "react";
@@ -13,7 +13,6 @@ function History() {
   const [categoryArray, setCategoryArray] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState(null);
   const [addCategory, setAddCategory] = useState();
-  let toastId = null;
 
   const historyCategory = (history) => {
     const categories = history.reduce((acc, curr) => {
@@ -25,11 +24,13 @@ function History() {
     setCategoryArray(categories);
   };
 
+  const toastId = useRef(null);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
-        toastId = null;
-        toastId = toast.loading("Fetching History...");
+        toastId.current = null;
+        toastId.current = toast.current.loading("Fetching History...");
         const result = await axios.get(
           `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
           {
@@ -86,8 +87,8 @@ function History() {
     selectedFilter &&
       (async () => {
         try {
-          toastId = null;
-          toastId = toast.loading("Fetching History...");
+          toastId.current = null;
+          toastId.current = toast.loading("Fetching History...");
           const result = await axios.get(
             `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
             {
