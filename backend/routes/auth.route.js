@@ -9,6 +9,7 @@ import { validateLogin, validateSignup, forgetPasswordValidator } from '../valid
 import { validationErrorHandler } from '../middlewares/ValidatorErrorHandler.js';
 import { validateFeedback } from "../validators/FeedbackValidator.js";
 import { submitFeedback } from "../controllers/FeedbackControllers/feedback.controller.js";
+import { getreviews } from "../controllers/FeedbackControllers/reviews.controller.js";
 const router = Router();
 router.post("/login", validateLogin, validationErrorHandler, login);
 router.post("/signup", validateSignup, validationErrorHandler, signup);
@@ -16,5 +17,5 @@ router.post("/forgot-password", forgetPasswordValidator, validationErrorHandler,
 router.post("/reset-password", resetPassword);   // For Reseting the password
 router.get("/verify-email", verifyEmail);
 router.post("/login/feedback", isApiAuthenticated, validateFeedback, validationErrorHandler, submitFeedback);
-
+router.get("/reviews", isApiAuthenticated, getreviews );
 export default router;
