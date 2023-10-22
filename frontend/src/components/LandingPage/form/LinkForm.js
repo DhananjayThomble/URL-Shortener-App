@@ -1,15 +1,13 @@
-import React, { useState } from "react";
+import React from "react";
 import { Form, FormikProvider, useFormik } from "formik";
 import { Button, Stack, TextField } from "@mui/material";
 import { LinkSchema } from "./Schema";
 import mobileBackgroundShorten from "../Images/ShortenMobile.svg";
 import desktopBackgroundShorten from "../Images/ShortenDesktop.svg";
 import axios from "axios";
+import PropTypes from "prop-types";
 
 const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
-  const [shortUrl, setShortUrl] = useState(""); // State for storing the short URL
-  const [originalUrl, setOriginalUrl] = useState("");
-
   const formik = useFormik({
     initialValues: {
       link: "",
@@ -37,8 +35,6 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
         );
 
         const { shortUrl } = response.data;
-        setShortUrl(shortUrl); // Set the short URL in the state
-        setOriginalUrl(link);
         // console.log(`Short URL: ${shortUrl} and Original URL: ${link}`);
         onFormValueChange({ originalUrl: link, shortUrl });
 
@@ -133,3 +129,8 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
 };
 
 export default LinkForm;
+
+LinkForm.propTypes = {
+  onFormValueChange: PropTypes.func.isRequired,
+  onSnackbarSuccess: PropTypes.func.isRequired,
+};
