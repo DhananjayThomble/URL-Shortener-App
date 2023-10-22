@@ -1,0 +1,11 @@
+.Link{
+    width: fit-content;
+    color: white;
+    padding: 1vw;
+    margin: 1vw;
+    background-color:rgb(75,63,107);
+}
+
+.Link h3{
+    font-size: large;
+}
