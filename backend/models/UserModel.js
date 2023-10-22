@@ -51,6 +51,14 @@ UserSchema.methods.comparePassword = function (password, callback) {
   });
 };
 
+// Add a reference to the LinkInBioPage model
+UserSchema.virtual("linkInBioPage", {
+  ref: "LinkInBioPage",
+  localField: "_id",
+  foreignField: "userId",
+  justOne: true,
+});
+
 const User = mongoose.model("User", UserSchema);
 
 export default User;

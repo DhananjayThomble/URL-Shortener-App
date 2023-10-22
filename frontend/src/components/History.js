@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import Container from "react-bootstrap/Container";
 import Row from "react-bootstrap/Row";
 import { useState, useEffect } from "react";
@@ -13,7 +13,7 @@ function History() {
   const [categoryArray, setCategoryArray] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState(null);
   const [addCategory, setAddCategory] = useState();
-  let toastId = null;
+  let toastId = useRef(null);
 
   const historyCategory = (history) => {
     const categories = history.reduce((acc, curr) => {
@@ -25,11 +25,14 @@ function History() {
     setCategoryArray(categories);
   };
 
+  // let toastId = useRef(null);
+
   useEffect(() => {
+    // console.log(`history api is called`);
+    // console.log(process.env.REACT_APP_API_ENDPOINT);
     const fetchData = async () => {
       try {
-        toastId = null;
-        toastId = toast.loading("Fetching History...");
+        toastId.current = toast.loading("Fetching History...");
         const result = await axios.get(
           `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
           {
@@ -41,9 +44,9 @@ function History() {
         setHistory(result.data.urlArray);
         historyCategory(result.data.urlArray);
         // console.log(history);
-        console.log(`history api is called`);
+        // console.log(`history api is called`);
         if (result.data.urlArray.length === 0) {
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "No History Found",
             type: "info",
             isLoading: false,
@@ -51,7 +54,7 @@ function History() {
           });
         }
 
-        toast.update(toastId, {
+        toast.update(toastId.current, {
           render: "History Fetched",
           type: "success",
           isLoading: false,
@@ -59,7 +62,7 @@ function History() {
         });
       } catch (error) {
         if (error.response.status === 401) {
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "Please Login First",
             type: "error",
             isLoading: false,
@@ -67,7 +70,7 @@ function History() {
           });
         }
 
-        toast.update(toastId, {
+        toast.update(toastId.current, {
           render: "Something went wrong",
           type: "error",
           isLoading: false,
@@ -86,8 +89,7 @@ function History() {
     selectedFilter &&
       (async () => {
         try {
-          toastId = null;
-          toastId = toast.loading("Fetching History...");
+          toastId.current = toast.loading("Fetching History...");
           const result = await axios.get(
             `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
             {
@@ -97,15 +99,16 @@ function History() {
             }
           );
           setHistory(result.data.urlArray);
+          // console.log(`length of history array is ${result.data.urlArray.length}`);
           if (result.data.urlArray.length === 0) {
-            toast.update(toastId, {
+            toast.update(toastId.current, {
               render: "No History Found",
               type: "info",
               isLoading: false,
               autoClose: 2000,
             });
           }
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "History Fetched",
             type: "success",
             isLoading: false,
@@ -113,7 +116,7 @@ function History() {
           });
         } catch (error) {
           if (error.response.status === 401) {
-            toast.update(toastId, {
+            toast.update(toastId.current, {
               render: "Please Login First",
               type: "error",
               isLoading: false,
@@ -121,7 +124,7 @@ function History() {
             });
           }
 
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "Something went wrong",
             type: "error",
             isLoading: false,
