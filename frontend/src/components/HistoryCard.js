@@ -31,14 +31,14 @@ function HistoryCard({
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }
       );
-      console.log(result);
+      // console.log(result);
       if (result.status === 200) {
         toast.success("URL Deleted Successfully");
         setShowCard(false);
       }
     } catch (error) {
       //
-      console.log(error);
+      console.error(error);
       toast.error(error.data.response.error);
     }
   };
@@ -51,6 +51,7 @@ function HistoryCard({
 
   const updateCategory = async (e) => {
     try {
+      console.log(`update category api is called`);
       const result = await axios.put(
         `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/`,
         {
@@ -61,13 +62,13 @@ function HistoryCard({
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }
       );
-      console.log(result);
+      // console.log(result);
       if (result.status === 200) {
         setCategoryState(e.target.innerText);
         toast.success("Category Updated Successfully");
       }
     } catch (error) {
-      console.log(error);
+      console.error(error);
       toast.error(error.data.response.error);
     }
   };
@@ -135,8 +136,8 @@ HistoryCard.propTypes = {
   shortUrl: PropTypes.string.isRequired,
   originalUrl: PropTypes.string.isRequired,
   visitCount: PropTypes.number.isRequired,
-  category: PropTypes.string.isRequired,
-  categoryArray: PropTypes.array.isRequired,
+  category: PropTypes.string,
+  categoryArray: PropTypes.array,
 };
 
 export default HistoryCard;
