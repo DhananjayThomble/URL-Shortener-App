@@ -1,25 +1,25 @@
 import React from "react";
 import AxiosFetch from "./AxiosFetch";
 import Lottie from "lottie-react";
-import "./Contributers.css";
+import "./Contributors.css";
 
 import Circle from "@mui/icons-material/Circle";
 import cont1 from "../assets/cont1.json";
 
-function Contributers() {
+function Contributors() {
   const { data, isPending, error } = AxiosFetch(
     "https://api.github.com/repos/DhananjayThomble/URL-Shortener-App/contributors"
   );
   return (
-    <div className="contributers">
-      <div className="contributers-main">
+    <div className="contributors">
+      <div className="contributors-main">
         <Lottie
-          className="contributers-animation"
+          className="contributors-animation"
           animationData={cont1}
           loop={true}
         />
         <div className="contributrers-main-text">
-          <h1>Github Contributers,</h1>
+          <h1>Github Contributors,</h1>
           <h2>
             Collaboration in Code: Where Ideas Converge and Innovations Thrive
             🚀
@@ -30,7 +30,7 @@ function Contributers() {
 
       <h1 className="title">
         <Circle className="circle" />
-        The Contributers
+        The Contributors
       </h1>
 
       {error && <div>{error}</div>}
@@ -55,4 +55,4 @@ function Contributers() {
   );
 }
 
-export default Contributers;
+export default Contributors;

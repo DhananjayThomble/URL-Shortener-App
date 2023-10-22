@@ -1,9 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
-.contributers{
+.contributors{
     font-family: "poppins";
 }
 
-.contributers-main{
+.contributors-main{
     display: flex;
     align-items: center;
     padding: 0px 0px;
@@ -11,30 +11,30 @@
     margin: auto;
     justify-content: space-around;
 }
-.contributers-main .contributers-animation{
+.contributors-main .contributors-animation{
     width: 100%;
     min-width: 300px;
     flex: 1;
 }
-.contributers .contributrers-main-text{
+.contributors .contributrers-main-text{
     flex: 1;
 }
-.contributers .contributrers-main-text h1{
+.contributors .contributrers-main-text h1{
     text-align: left;
     font-size: 60px;
     font-weight: 800;
 }
-.contributers .contributrers-main-text h2{
+.contributors .contributrers-main-text h2{
     font-size: 20px;
     font-weight: 500;
 }
-.contributers .contributrers-main-text h3{
+.contributors .contributrers-main-text h3{
     font-size: 15px;
     color: grey;
     font-weight: 400;
 }
 
-.contributers .title{
+.contributors .title{
     font-size: 50px;
     font-weight: 800;
     width: 90vw;
@@ -43,13 +43,13 @@
     align-items: center;
 }
 
-.contributers .title .circle{
+.contributors .title .circle{
     font-size: 30px;
     margin-right: 20px;
     color: rgb(75, 63, 107);
 }
 
-.contributers .contributer-container{
+.contributors .contributer-container{
     width: 90vw;
     margin: auto;
     margin-top: 40px;
@@ -108,36 +108,36 @@
 
 
   @media screen and (max-width:800px) {
-    .contributers-main{
+    .contributors-main{
         /* background-color: #ff5722; */
         flex-direction: column-reverse;
         justify-content: center;
         width: 90vw;
     }
 
-    .contributers-main .contributers-animation{
+    .contributors-main .contributors-animation{
         min-width: 300px;
         width: 50%;
         /* background-color: red; */
     }
-    .contributers-main .contributrers-main-text{
+    .contributors-main .contributrers-main-text{
         padding-top: 40px;
         text-align: center;
     }
-    .contributers-main .contributrers-main-text h1{
+    .contributors-main .contributrers-main-text h1{
         font-size: 30px;
         text-align: center;
     }
-    .contributers .title{
+    .contributors .title{
         font-size: 25px;
         margin-right: 10px;
     }
-    .contributers .title .circle{
+    .contributors .title .circle{
         font-size: 20px;
         margin-right: 10px;
         color: rgb(75, 63, 107);
     }
-    .contributers .contributer-container{
+    .contributors .contributer-container{
         /* background-color: red; */
         width: 100vw;
         max-width: 99vw;
