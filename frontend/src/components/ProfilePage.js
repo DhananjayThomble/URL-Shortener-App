@@ -16,10 +16,10 @@ function ProfilePage() {
     // For this example, we'll use localStorage
     setName(localStorage.getItem('name'));
     setProfilePicture(localStorage.getItem('profilePicture'));
-
+  
     // Retrieve the links array from localStorage
     const storedLinks = JSON.parse(localStorage.getItem('links')) || [];
-
+  
     // Update the links based on the retrieved data
     const updatedLinks = links.map((link) => {
       const storedLink = storedLinks.find((stored) => stored.label === link.label);
@@ -28,9 +28,10 @@ function ProfilePage() {
       }
       return link;
     });
-
+  
     setLinks(updatedLinks);
-  }, []);
+  }, [links]); // Include 'links' as a dependency
+  
 
   const instagramLink = links.find((link) => link.label === 'Instagram').url;
   const linkedinLink = links.find((link) => link.label === 'LinkedIn').url;

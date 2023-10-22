@@ -1,6 +1,5 @@
 import React from 'react';
 import ProfileForm from './ProfileForm';
-import MyNavbar from "./Navbar";
 import "../App.css";
 
 
