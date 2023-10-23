@@ -60,6 +60,6 @@ If you're new to contributing to open-source projects, you can start by checking
 
 ## License
 
-By contributing to [Your URL Shortener App Name], you agree that your contributions will be licensed under the project's [LICENSE](LICENSE).
+By contributing to [URL-Shorter-App](https://app.snapurl.in/) , you agree that your contributions will be licensed under the project's [LICENSE](LICENSE).
 
 Thank you for your contributions! 🚀
