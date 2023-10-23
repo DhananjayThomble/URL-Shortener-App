@@ -23,7 +23,7 @@ import { Link, NavLink } from "react-router-dom";
 const pages = [
   { name: "Home", icon: <HomeIcon /> },
   { name: "About", icon: <InfoIcon /> },
-  { name: "Contributers", icon: <PersonAddIcon /> },
+  { name: "Contributors", icon: <PersonAddIcon /> },
   { name: "Login", icon: <LoginIcon /> },
   { name: "Linkinbio", icon: <OfflineShareIcon />},
   { name: "Signup", icon: <PersonAddIcon /> },
@@ -32,7 +32,7 @@ const pages = [
 const pagesAfterLogin = [
   { name: "Home", icon: <HomeIcon /> },
   { name: "About", icon: <InfoIcon /> },
-  { name: "Contributers", icon: <PersonAddIcon /> },
+  { name: "Contributors", icon: <PersonAddIcon /> },
   { name: "Linkinbio", icon: <OfflineShareIcon />},
   { name: "History", icon: <LoginIcon /> },
   { name: "Logout", icon: <PersonAddIcon /> },
