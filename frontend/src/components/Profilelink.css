@@ -1,11 +1,39 @@
-.Link{
-    width: fit-content;
-    color: white;
-    padding: 1vw;
-    margin: 1vw;
-    background-color:rgb(75,63,107);
+* {
+    margin: none;
+    padding: none;
 }
 
-.Link h3{
-    font-size: large;
+.link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: white;
+    margin: 1rem;
+    width: 20vw;
+    height: 15vh;
+}
+
+.Link-title {
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: black;
+    background-color: white;
+
+}
+
+.Link-url {
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: bold;
+    background-color: aqua;
+    color: black
+}
+
+
+@media only screen and (max-width: 600px) {
+    .link {
+        width: 100vw;
+    }
 }

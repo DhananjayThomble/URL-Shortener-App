@@ -1,5 +1,5 @@
 import React from 'react'
-import { FaUser } from 'react-icons/fa';
+import { FaUser ,FaInstagram ,FaFacebook,FaTwitter } from 'react-icons/fa';
 import "./Profile.css";
 import Profilelink from './Profilelink';
 
@@ -29,22 +29,10 @@ const links = [
        category:"google"
   },
 ]
-const users = [
-  {
-    id: 1,
-    name: 'User1',
-    email: 'xyz@gmail.com',
-  },
-  {
-    id: 1,
-    name: 'User1',
-    email: 'xyz@gmail.com',
-  }
-]
+
 function Profile() {
   return (
     <div className='Profile'>
-     <div className='User-section'>
       <div className='User-sub'>
         <h1>Profile</h1>
         <div className='User-image'>
@@ -59,12 +47,21 @@ function Profile() {
         <div className='User-bio'>
         <p>Lorem ipsum dolor, sit amet consectetur adipisicing elit. Rem consectetur quos perspiciatis animi. Debitis ab ex ipsa fuga earum tempora aliquam tempore eveniet? Quisquam voluptate in, obcaecati nostrum commodi harum!</p>
         </div>
+        <div className='Profile-button'>
+          <button>
+            Contact
+          </button>
+        </div>
+        <div className='icon-row'>
+         <a href="https://facebook.com/"><FaFacebook className='icon'/></a>
+         <a href="https://instagram.com"><FaInstagram className='icon'/></a>
+         <a href="https://twitter.com"><FaTwitter className='icon'/></a>
+        </div>
       </div>
-    </div> 
     <div className='Links-Users'>
     <div className='Links'>
       <div className='Sub-link'>
-      <h1>Links</h1>
+      <h1>User Created Links</h1>
         {
             links.map((link) => {
               const { id, title, url,category } = link
@@ -74,20 +71,6 @@ function Profile() {
             })
         } 
       </div>
-      </div>
-      <div className='Users'>
-      <div className='Sub-link'>
-      <h1>Users</h1>
-        {
-            users.map((user) => {
-              const { id, name, email } = user
-              return (
-              <Profilelink key={id} title={name} url={email} />
-              )
-            })
-        } 
-      </div>
-
       </div>
     </div>
     </div>

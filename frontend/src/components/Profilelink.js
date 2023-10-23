@@ -5,14 +5,13 @@ function Profilelink(props) {
     return (
         <div>
             <Link to={props.url}>
-            <div key={props.id} className='Link'>
+            <div key={props.id} className='link'>
                 <div className='Link-title'>
-                    <h2 id='linkh'>{props.title}</h2>
+                    <h2>{props.title}</h2>
                 </div>
                 <div className='Link-url'>
-                    <h3 id='linku'>{props.url}</h3>
+                    <h2>{props.url}</h2>
                 </div>
-                <h3>{props.category}</h3>
             </div>
             </Link>
         </div>

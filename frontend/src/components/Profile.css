@@ -1,18 +1,8 @@
 .Profile {
     display: flex;
+    color: white;
     margin: 1vw;
     font-family: 'Roboto', sans-serif;
-}
-
-.User-section {
-    display: flex;
-    padding: 2vw;
-    align-items: center;
-    width: 50%;
-    justify-content: center;
-    flex-direction: column;
-    height: 100vh;
-    background-color: rgb(75,63,107);
 }
 .User-sub{
     display: flex;
@@ -20,8 +10,8 @@
     align-items: center;
     flex-direction: column;
     width: 70%;
-    height: 80vh;
-    background-color: white;
+    height: 100vh;
+    background-color: rgb(75,63,107);
 }
 .User-name {
     display: flex;
@@ -43,14 +33,16 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    border: 1px solid black;
-    width: 13vw;
-    height: 13vw;
+    border: 3px solid aqua;
+    width: 14vw;
+    height: 14vw;
+    color: black;
+    background-color: white;
     border-radius: 100%;
 }
 .fadumyuser{
     width: 13vw;
-    height: 13vw;
+    height: 13vh;
 }
 
 .User-bio {
@@ -63,44 +55,81 @@
 }
 .Links-Users{
     display: flex;
-    padding: 2vw;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     width: 50%;
     height: 100vh;
     overflow: scroll;
-    margin-left: 2vw;
+    margin-left: 1rem;
     background-color: rgb(75,63,107);
 }
-.Links{
-    display: flex;
-    padding: 2vw;
-    margin-top:15vw;
-    width: 70%;
-    height: fit-content;
-    background-color: white;
-}
-
-.Users{
-    display: flex;
-    padding: 2vw;
-    width: 70%;
-    margin-top:1vw;
-    height: fit-content;
-    background-color: white;
-}
-
 ::-webkit-scrollbar{
     display: none;
 }
 
+.Profile-button  button{
+    font-size:1.75rem;
+    background-color: aqua;
+    color: black;
+    font-weight:bolder;
+    padding-right:1rem ;
+    border: none;
+    border-radius: 40px;
+    padding-left: 1rem;
+}
+
+.Sub-link h1{
+margin-left: 1rem;
+font-size: xx-large;
+}
+
+.Profile-button  button:hover{
+    background-color: rgb(92, 75, 143);
+    color: aqua;
+}
+
+.icon-row {
+    padding: 30px;
+    display: flex;
+    background-color: rgb(34, 26, 56);
+    justify-content: space-around; /* Equal spacing between icons */
+    margin-top: 2vw;
+  }
+
+  .icon-row a {
+    text-decoration: none; /* Remove underlines for links */
+  }
+  
+  .icon-row .icon {
+    color: white; /* Set the color to white */
+    font-size: 2rem;/* Adjust the size of the icons as needed */
+    margin: 0 10px; /* Add spacing between icons */
+  }
+  .icon-row .icon:hover{
+    color: aqua;
+  }
 
 @media only screen and (max-width: 600px) {
     .Profile {
       flex-wrap: wrap;
     }
-    .Users-Links{
-        background-color: antiquewhite;
+    .Sub-link h1{
+    padding: 1rem;
+    }
+    .User-image{
+        width: 15rem;
+        height: 15rem;
+        margin-bottom: 1rem; ;
+    }
+    .User-sub{
+        width: 100%;
+        height: 100vh;
+    }
+    .Links-Users{
+        margin-top: 1rem;
+        margin-left: 0rem;
+        width: 100%;
+        height: 100vh;
     }
   }
