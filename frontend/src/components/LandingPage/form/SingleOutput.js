@@ -8,7 +8,9 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+
 import { QRCodeSVG } from "qrcode.react";
+
 
 const mobileStyle = {
   width: "100%",
@@ -26,6 +28,7 @@ const desktopStyle = {
 const SingleOutput = (props) => {
   const [copySuccess, setCopySuccess] = useState(false);
 
+
   const handleEditBackHalf = () => {
     const currentBackHalf = window.prompt(`Edit the last part of your shortened link: ${props.shortUrl}`, props.shortUrl.split('/').pop());
 
@@ -34,6 +37,7 @@ const SingleOutput = (props) => {
       alert(`Back Half updated to: ${currentBackHalf}`);
     }
   };
+
 
   const handleClick = () => {
     navigator.clipboard.writeText(props.shortUrl);
@@ -54,6 +58,9 @@ const SingleOutput = (props) => {
 
   return (
     <Paper sx={{ mt: 2 }}>
+
+      {/* mobile view */}
+
       <List sx={mobileStyle}>
         <ListItem divider>
           <ListItemText
@@ -62,6 +69,7 @@ const SingleOutput = (props) => {
           />
         </ListItem>
         <ListItem>
+
           <ListItemText primary={props.shortUrl} sx={{ color: "primary.main" }} />
         </ListItem>
         <ListItem sx={{ pt: 0 }}>{generateButton()}</ListItem>
@@ -74,6 +82,7 @@ const SingleOutput = (props) => {
           <QRCodeSVG value={props.shortUrl} size={100} />
         </ListItem>
       </List>
+
 
       <Stack sx={desktopStyle}>
         <Typography
@@ -104,6 +113,7 @@ const SingleOutput = (props) => {
 
         <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
           <QRCodeSVG value={props.shortUrl} size={100} />
+
         </Stack>
       </Stack>
     </Paper>
@@ -111,3 +121,4 @@ const SingleOutput = (props) => {
 };
 
 export default SingleOutput;
+

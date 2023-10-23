@@ -4,7 +4,6 @@ import { generate } from "random-words";
 import ExcelJS from "exceljs";
 import { SHORT_URL_PREFIX } from "../extras/Constants.js";
 
-
 // Redirect to the original URL associated with a short URL
 export const redirectToOriginalUrl = async (req, res) => {
   try {

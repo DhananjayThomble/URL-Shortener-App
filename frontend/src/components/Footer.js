@@ -4,7 +4,9 @@ import { Container, Typography, IconButton } from "@mui/material";
 import { Facebook, Twitter, Instagram } from "@mui/icons-material";
 import InsertLinkIcon from '@mui/icons-material/InsertLink';
 
+
 function Footer() {
+
   return (
     <Container className="footer">
       <div className="mainfooter">
