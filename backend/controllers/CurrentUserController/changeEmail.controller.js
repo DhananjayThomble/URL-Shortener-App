@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../../models/UserModel.js";
 import dotenv from "dotenv";
+import { isValidEmail } from "../../utils/helperfunc.js";
 dotenv.config();
 
 export const changeEmail = async (req, res) => {
@@ -23,6 +24,9 @@ export const changeEmail = async (req, res) => {
         }
 
         const newEmail = req.body.email;
+        if(!isValidEmail(newEmail)){
+          return res.status(403).json({ error: "Invalid Email Format: Failed to update email" });
+        }
 
         // Update the user's email
         user.email = newEmail;

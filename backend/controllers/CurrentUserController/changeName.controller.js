@@ -23,7 +23,13 @@ export const changeName = async (req, res) => {
 
         const newName = req.body.name;
 
-        // Update the user's email
+        // Validate that name is at least three characters long
+        if (!newName || newName.length < 3)
+        return res.status(400).json({
+          error: "Name is required and should be at least 3 characters long",
+        });
+
+        // Update the user's name
         user.name = newName;
 
         // Save the updated user
