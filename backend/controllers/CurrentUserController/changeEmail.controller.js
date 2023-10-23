@@ -23,11 +23,6 @@ export const changeEmail = async (req, res) => {
           return res.status(401).json({ message: "Unauthorized" });
         }
 
-        const newEmail = req.body.email;
-        if(!isValidEmail(newEmail)){
-          return res.status(403).json({ error: "Invalid Email Format: Failed to update email" });
-        }
-
         // Update the user's email
         user.email = newEmail;
 

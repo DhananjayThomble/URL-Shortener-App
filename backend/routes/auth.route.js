@@ -24,6 +24,8 @@ import { isAdmin } from "../middlewares/isAdmin.js";
 import { changeEmail } from "../controllers/CurrentUserController/changeEmail.controller.js";
 import { getCurrentUser } from "../controllers/CurrentUserController/getCurrentUser.controller.js";
 import { changeName } from "../controllers/CurrentUserController/changeName.controller.js";
+import { validateEmail } from "../validators/AuthValidators.js";
+import { validateName } from "../validators/AuthValidators.js";
 
 
 
@@ -50,8 +52,8 @@ router.delete("/Admin/reviews/:_id", isApiAuthenticated,isAdmin, deleteReview );
 router.delete("/Admin/reviews", isApiAuthenticated, isAdmin, deleteAllFeedback);
 
 router.get("/current-user" , getCurrentUser)
-router.patch("/change-email" , changeEmail)
-router.patch("/change-name" , changeName)
+router.patch("/change-email" , validateEmail, validationErrorHandler, changeEmail)
+router.patch("/change-name" , validateName, validationErrorHandler, changeName)
 
 export default router;
 
