@@ -9,8 +9,8 @@ import Logout from "./components/Logout";
 import History from "./components/History";
 import "./App.css";
 import UserContext from "./context/UserContext";
+import Contributors from "./components/Contributors";
 import React, { useState } from "react";
-import Contributers from "./components/Contributers";
 import Linkinbio from "./components/Linkinbio";
 import ProfilePage from "./components/ProfilePage";
 import ResetPassword from "./components/ResetPassword";
@@ -37,7 +37,7 @@ function App() {
             <Route path={"/logout"} element={<Logout />} />
             <Route path="*" element={<LandingPage />} />
             <Route path={"/history"} element={<History />} />
-            <Route path={"/contributers"} element={<Contributers />} />
+            <Route path={"/contributors"} element={<Contributors />} />
             <Route path={"/linkinbio/*"} element={<Linkinbio />} /> {/* Use /linkinbio/* */}
             <Route path={"/linkinbio/profile"} element={<ProfilePage />} /> {/* Use /linkinbio/* */}
             <Route path="/reset-password" element={<ResetPassword />} />

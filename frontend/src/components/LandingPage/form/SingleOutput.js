@@ -8,7 +8,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import {QRCodeSVG} from "qrcode.react";
+import { QRCodeSVG } from "qrcode.react";
 
 const mobileStyle = {
   width: "100%",
@@ -26,7 +26,15 @@ const desktopStyle = {
 const SingleOutput = (props) => {
   const [copySuccess, setCopySuccess] = useState(false);
 
-  console.log("single op: ",props.shortUrl);
+  const handleEditBackHalf = () => {
+    const currentBackHalf = window.prompt(`Edit the last part of your shortened link: ${props.shortUrl}`, props.shortUrl.split('/').pop());
+
+    if (currentBackHalf !== null) {
+      // Handle the updated back half, e.g., make an API call to update the link
+      alert(`Back Half updated to: ${currentBackHalf}`);
+    }
+  };
+
   const handleClick = () => {
     navigator.clipboard.writeText(props.shortUrl);
     setCopySuccess(true);
@@ -46,64 +54,60 @@ const SingleOutput = (props) => {
 
   return (
     <Paper sx={{ mt: 2 }}>
-      {/* mobile view */}
       <List sx={mobileStyle}>
         <ListItem divider>
           <ListItemText
             primary={props.originalUrl}
-            sx={{ color: "neutral.veryDarkViolet"}}
+            sx={{ color: "neutral.veryDarkViolet" }}
           />
         </ListItem>
         <ListItem>
-          <ListItemText
-            primary={props.shortUrl}
-            sx={{ color: "primary.main" }}
-          />
+          <ListItemText primary={props.shortUrl} sx={{ color: "primary.main" }} />
         </ListItem>
         <ListItem sx={{ pt: 0 }}>{generateButton()}</ListItem>
-        <ListItem sx={{justifyContent: "center"}}>
+        <ListItem>
+          <Button variant="cyanBg" fullWidth onClick={handleEditBackHalf}>
+            Edit Back Half
+          </Button>
+        </ListItem>
+        <ListItem sx={{ justifyContent: "center" }}>
           <QRCodeSVG value={props.shortUrl} size={100} />
         </ListItem>
       </List>
 
-      {/* Desktop view */}
-      <Stack sx={desktopStyle} >
+      <Stack sx={desktopStyle}>
         <Typography
           variant="body2"
           component="p"
           sx={{ color: "neutral.veryDarkViolet", fontSize: "1rem" }}
-  
         >
           {props.originalUrl}
         </Typography>
 
-          <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
-            <Typography
-              variant="body2"
-              component="p"
-              sx={{
-                color: "primary.main",
-                fontSize: "1rem",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {props.shortUrl}
-            </Typography>
-            {generateButton()}
-          </Stack>
-
-        <Stack direction="row" spacing={2} sx={{ alignItems: "center"}}>
-          <QRCodeSVG value={props.shortUrl} size={100} />
+        <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+          <Typography
+            variant="body2"
+            component="p"
+            sx={{
+              color: "primary.main",
+              fontSize: "1rem",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {props.shortUrl}
+          </Typography>
+          {generateButton()}
+          <Button variant="cyanBg" fullWidth onClick={handleEditBackHalf}>
+            Edit
+          </Button>
         </Stack>
 
+        <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+          <QRCodeSVG value={props.shortUrl} size={100} />
+        </Stack>
       </Stack>
     </Paper>
   );
 };
 
 export default SingleOutput;
-
-SingleOutput.defaultProps = {
-  original_link: "http://www.frontendmentor.io",
-  full_short_link: "https://rel.link/k4lKyk",
-};
