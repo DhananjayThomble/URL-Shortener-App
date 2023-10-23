@@ -51,8 +51,8 @@ UserSchema.methods.comparePassword = function (password, callback) {
   });
 };
 
-<<<<<<< HEAD
-=======
+
+
 // Add a reference to the LinkInBioPage model
 UserSchema.virtual("linkInBioPage", {
   ref: "LinkInBioPage",
@@ -61,7 +61,7 @@ UserSchema.virtual("linkInBioPage", {
   justOne: true,
 });
 
->>>>>>> upstream/main
+
 const User = mongoose.model("User", UserSchema);
 
 export default User;
