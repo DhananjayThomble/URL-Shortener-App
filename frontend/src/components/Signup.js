@@ -76,21 +76,13 @@ function Signup() {
 
   const fetchSignup = async () => {
     try {
-<<<<<<< HEAD
-       console.log(URL);
-=======
       // console.log(URL);
->>>>>>> upstream/main
       const response = await axios.post(`${URL}/auth/signup`, {
         email,
         password,
         name,
       });
-<<<<<<< HEAD
-       console.log(response);
-=======
       // console.log(response);
->>>>>>> upstream/main
       if (response.data.ok) {
         toast.update(toastId, {
           render: "Signup successful",
@@ -177,11 +169,7 @@ function Signup() {
               <Button
                 variant="info"
                 type="submit"
-<<<<<<< HEAD
                 style={{ backgroundColor: "#4B3F6B" }}
-=======
-                style={{ backgroundColor: "#4B3F6B", color: "white" }}
->>>>>>> upstream/main
               >
                 <FaRegPaperPlane /> Sign Up
               </Button>
