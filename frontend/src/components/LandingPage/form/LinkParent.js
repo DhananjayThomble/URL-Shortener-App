@@ -5,9 +5,6 @@ import LinkForm from "./LinkForm";
 import LinkList from "./LinkList";
 
 const LinkParent = () => {
-
-  const [formValue, setFormValue] = useState(null);
-
   const [responseList, setResponseList] = useState([]);
   const [snackbar, setSnackbar] = useState(null);
   // const [shortUrls, setShortUrls] = useState([]);
@@ -20,9 +17,6 @@ const LinkParent = () => {
 
   // STUB: grab formValue from LinkForm onSubmit
   const handleFormValue = (param) => {
-
-    setFormValue(param);
-
     // console.log("formValue from parent", param);
     // setResponseList([...responseList, param]);
     setResponseList((prev) => [...prev, param]);
