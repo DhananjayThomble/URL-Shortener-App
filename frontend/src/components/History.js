@@ -1,20 +1,19 @@
-import React from "react";
+import React, { useRef } from "react";
 import Container from "react-bootstrap/Container";
 import Row from "react-bootstrap/Row";
-import Col from "react-bootstrap/Col";
-import HistoryCard from "./HistoryCard";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import ExportToExcel from "./ExportToExcel";
 import { Button, Dropdown, Form } from "react-bootstrap";
+import Pagination from "./pagination";
 
 function History() {
   const [history, setHistory] = useState([]);
   const [categoryArray, setCategoryArray] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState(null);
   const [addCategory, setAddCategory] = useState();
-  let toastId = null;
+  let toastId = useRef(null);
 
   const historyCategory = (history) => {
     const categories = history.reduce((acc, curr) => {
@@ -26,11 +25,14 @@ function History() {
     setCategoryArray(categories);
   };
 
+  // let toastId = useRef(null);
+
   useEffect(() => {
+    // console.log(`history api is called`);
+    // console.log(process.env.REACT_APP_API_ENDPOINT);
     const fetchData = async () => {
       try {
-        toastId = null;
-        toastId = toast.loading("Fetching History...");
+        toastId.current = toast.loading("Fetching History...");
         const result = await axios.get(
           `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
           {
@@ -42,9 +44,9 @@ function History() {
         setHistory(result.data.urlArray);
         historyCategory(result.data.urlArray);
         // console.log(history);
-        console.log(`history api is called`);
+        // console.log(`history api is called`);
         if (result.data.urlArray.length === 0) {
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "No History Found",
             type: "info",
             isLoading: false,
@@ -52,7 +54,7 @@ function History() {
           });
         }
 
-        toast.update(toastId, {
+        toast.update(toastId.current, {
           render: "History Fetched",
           type: "success",
           isLoading: false,
@@ -60,7 +62,7 @@ function History() {
         });
       } catch (error) {
         if (error.response.status === 401) {
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "Please Login First",
             type: "error",
             isLoading: false,
@@ -68,7 +70,7 @@ function History() {
           });
         }
 
-        toast.update(toastId, {
+        toast.update(toastId.current, {
           render: "Something went wrong",
           type: "error",
           isLoading: false,
@@ -87,8 +89,7 @@ function History() {
     selectedFilter &&
       (async () => {
         try {
-          toastId = null;
-          toastId = toast.loading("Fetching History...");
+          toastId.current = toast.loading("Fetching History...");
           const result = await axios.get(
             `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
             {
@@ -98,15 +99,16 @@ function History() {
             }
           );
           setHistory(result.data.urlArray);
+          // console.log(`length of history array is ${result.data.urlArray.length}`);
           if (result.data.urlArray.length === 0) {
-            toast.update(toastId, {
+            toast.update(toastId.current, {
               render: "No History Found",
               type: "info",
               isLoading: false,
               autoClose: 2000,
             });
           }
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "History Fetched",
             type: "success",
             isLoading: false,
@@ -114,7 +116,7 @@ function History() {
           });
         } catch (error) {
           if (error.response.status === 401) {
-            toast.update(toastId, {
+            toast.update(toastId.current, {
               render: "Please Login First",
               type: "error",
               isLoading: false,
@@ -122,7 +124,7 @@ function History() {
             });
           }
 
-          toast.update(toastId, {
+          toast.update(toastId.current, {
             render: "Something went wrong",
             type: "error",
             isLoading: false,
@@ -134,13 +136,10 @@ function History() {
 
   return (
     <Container className={"pb-5"}>
-      <div className="my-3  container d-flex align-items-center justify-content-around">
+      <h3 className="my-3">URLs</h3>
+      <div className="d-md-flex justify-content-between sm:block text-sm">
         <Dropdown>
-          <Dropdown.Toggle
-            variant="success"
-            id="dropdown-basic"
-            className="mt-2"
-          >
+          <Dropdown.Toggle id="dropdown-basic" className="my-2">
             {selectedFilter || "Select Category"}
           </Dropdown.Toggle>
           <Dropdown.Menu>
@@ -157,7 +156,7 @@ function History() {
           </Dropdown.Menu>
         </Dropdown>
         <Form>
-          <div className="d-flex">
+          <div className="d-flex my-2">
             <Form.Control
               type="text"
               aria-describedby="Add New Category"
@@ -178,27 +177,15 @@ function History() {
             </Button>
           </div>
         </Form>
+        <Row className="my-2">
+          <ExportToExcel />
+        </Row>
       </div>
-
-      <Row className={"my-1"}>
-        {history.map((data) => {
-          return (
-            <Col md={6} className={"p-1"} key={data._id}>
-              <HistoryCard
-                key={data._id}
-                shortUrl={data.shortUrl}
-                originalUrl={data.originalUrl}
-                visitCount={data.visitCount || 0}
-                category={data.category}
-                categoryArray={categoryArray}
-              />
-            </Col>
-          );
-        })}
-      </Row>
-      <Row>
-        <ExportToExcel />
-      </Row>
+      <Pagination
+        history={history}
+        cardsPerPage={3}
+        categoryArray={categoryArray}
+      />
     </Container>
   );
 }

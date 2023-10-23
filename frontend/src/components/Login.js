@@ -137,7 +137,7 @@ function Login() {
                 className={"w-100"}
                 variant="info"
                 type="submit"
-                style={{ backgroundColor: "#4B3F6B" }}
+                style={{ backgroundColor: "#4B3F6B", color: "white" }}
               >
                 <FaRegPaperPlane />
                 Login

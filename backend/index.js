@@ -57,7 +57,6 @@ app.use(limiter); // limit number of req for each client
 
 // -------------------------------- API ROUTES -------------------------------
 import { redirectToOriginalUrl } from "./controllers/url.controller.js";
-app.use(cors());
 
 app.use("/api", cors(), urlRoute);
 app.use("/auth", cors(), authRoute);

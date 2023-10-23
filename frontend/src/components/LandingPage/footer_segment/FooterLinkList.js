@@ -1,6 +1,7 @@
 import React from "react";
 import { Stack, Typography } from "@mui/material";
 import FooterLink from "./FooterLink";
+import propTypes from "prop-types";
 
 const FooterLinkList = ({ content }) => {
   return (
@@ -36,4 +37,8 @@ FooterLinkList.defaultProps = {
     title: "Features",
     bodyText: ["Link Shortening", "Branded Links", "Analytics"],
   },
+};
+
+FooterLinkList.propTypes = {
+  content: propTypes.object,
 };

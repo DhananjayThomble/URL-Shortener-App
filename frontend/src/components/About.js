@@ -1,5 +1,8 @@
 import Accordion from "react-bootstrap/Accordion";
 
+import React from "react";
+
+
 function About() {
   return (
     <Accordion defaultActiveKey="0">
