@@ -6,7 +6,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import ExportToExcel from "./ExportToExcel";
 import { Button, Dropdown, Form } from "react-bootstrap";
-import Pagination from "./pagination";
+import Pagination from "./Pagination";
 
 function History() {
   const [history, setHistory] = useState([]);
