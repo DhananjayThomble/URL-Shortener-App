@@ -23,7 +23,7 @@ export const changeName = async (req, res) => {
 
         const newName = req.body.name;
 
-        // Update the user's email
+        // Update the user's name
         user.name = newName;
 
         // Save the updated user

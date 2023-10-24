@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../../models/UserModel.js";
 import dotenv from "dotenv";
+import { isValidEmail } from "../../utils/helperfunc.js";
 dotenv.config();
 
 export const changeEmail = async (req, res) => {
@@ -21,8 +22,6 @@ export const changeEmail = async (req, res) => {
         if (!user) {
           return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const newEmail = req.body.email;
 
         // Update the user's email
         user.email = newEmail;

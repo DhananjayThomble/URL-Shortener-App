@@ -3,7 +3,7 @@ import bcrypt from "bcrypt";
 
 const saltRounds = 10; // Affects the performance and password security level
 
-const UserSchema = new mongoose.Schema({
+const AdminSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
@@ -27,7 +27,7 @@ const UserSchema = new mongoose.Schema({
 });
 
 // Hash the password before saving
-UserSchema.pre("save", function (next) {
+AdminSchema.pre("save", function (next) {
   const user = this;
   if (!user.isModified("password")) return next();
 
@@ -44,24 +44,13 @@ UserSchema.pre("save", function (next) {
 });
 
 // Compare the password
-UserSchema.methods.comparePassword = function (password, callback) {
+AdminSchema.methods.comparePassword = function (password, callback) {
   bcrypt.compare(password, this.password, (err, isMatch) => {
     if (err) return callback(err);
     callback(null, isMatch);
   });
 };
 
+const Admin = mongoose.model("Admin", AdminSchema);
 
-
-// Add a reference to the LinkInBioPage model
-UserSchema.virtual("linkInBioPage", {
-  ref: "LinkInBioPage",
-  localField: "_id",
-  foreignField: "userId",
-  justOne: true,
-});
-
-
-const User = mongoose.model("User", UserSchema);
-
-export default User;
+export default Admin;

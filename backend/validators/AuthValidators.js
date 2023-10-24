@@ -74,3 +74,33 @@ export const forgetPasswordValidator=[
     body("email").notEmpty().withMessage("Email is required").isEmail().withMessage("Invalid Email Address")
 ]
 
+export const validateName = [
+    body("name")
+        .notEmpty()
+        .trim()
+        .escape()
+        .withMessage("Name is required")
+        .bail()
+        .isLength({ min: 3 })
+        .withMessage("Name must be at least 3 characters long"),
+];
+
+export const validateEmail = [
+    body("email")
+        .notEmpty()
+        .trim()
+        .escape()
+        .withMessage("Email is required")
+        .bail()
+        .isEmail()
+        .withMessage("Invalid email format")
+        .bail()
+        .custom(async (value) => {
+            const user = await User.findOne({ email: value });
+            if (user) {
+                throw new Error("Email already in use");
+            }
+        }),
+];
+
+

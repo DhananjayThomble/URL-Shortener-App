@@ -169,7 +169,7 @@ function Signup() {
               <Button
                 variant="info"
                 type="submit"
-                style={{ backgroundColor: "#4B3F6B", color: "white" }}
+                style={{ backgroundColor: "#4B3F6B" }}
               >
                 <FaRegPaperPlane /> Sign Up
               </Button>
