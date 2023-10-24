@@ -21,8 +21,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run Prettier
-        run: npm run format
+      - name: Run Prettier in /backend
+        run: npm run format --prefix backend
+
+      - name: Run Prettier in /frontend
+        run: npm run format --prefix frontend
 
       - name: Check for changes
         id: check_changes
