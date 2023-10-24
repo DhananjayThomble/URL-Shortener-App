@@ -1,5 +1,5 @@
 ## What does this PR do?
-
+https://github.com/Vidit-Kushwaha/URL-Shortener-App/tree/feat/pullTemplate/.github/.github
 <!-- Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change. -->
 
 Fixes # (issue)
@@ -16,7 +16,7 @@ Fixes # (issue)
 <!-- Please delete bullets that are not relevant. -->
 
 - [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] Chore (refactoring code, technical debt, workflow improvements)
+- [ ] Chore (refactoring code, workflow improvements)
 - [ ] New feature (non-breaking change which adds functionality)
 - [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
 - [ ] This change requires a documentation update
@@ -27,12 +27,7 @@ Fixes # (issue)
 
 - Are there environment variables that should be set?
 - What are the minimal test data to have?
-- What is expected (happy path) to have (input and output)?
 - Any other important info that could help to test that PR
-
-## Mandatory Tasks
-
-- [ ] Make sure you have review changeous from netlify bot.
 
 ## Checklist
 
