@@ -6,12 +6,13 @@ dotenv.config();
 export const adminLogin = async (req, res) => {
   try {
     // get email and password from request body
-    const { email, password } = req.body;
+          const { email, password } = req.body;
 
-    const user = await Admin.findOne({ email });
+    const user =
+      await Admin.findOne({ email });
 
     // if user not found, 401 status for unauthorized
-    if (!user) return res.status(401).json({ error: 'Email does not exist' });
+            if (!user) return res.status(401).json({ error: 'Email does not exist' });
 
     // check password using passport
     user.comparePassword(password, (err, isMatch) => {

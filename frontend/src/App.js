@@ -30,10 +30,11 @@ function App() {
           <MyNavbar />
           <ToastContainer />
           <Routes>
-            <Route index path="/" element={<LandingPage />} />
-            <Route path="/about" element={<About />} />
+                            <Route index path="/" element={<LandingPage />} />
+                <Route path="/about" element={<About />} />
             <Route path="/login" element={<Login />} />
-            <Route path={'/signup'} element={<Signup />} />
+
+ <Route path={'/signup'} element={<Signup />} />
             <Route path={'/logout'} element={<Logout />} />
             <Route path="*" element={<LandingPage />} />
             <Route path={'/history'} element={<History />} />
