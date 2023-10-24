@@ -13,6 +13,7 @@ import Contributors from "./components/Contributors";
 import React, { useState } from "react";
 import Linkinbio from "./components/Linkinbio";
 import ProfilePage from "./components/ProfilePage";
+import Profile from "./components/Profile";
 import ResetPassword from "./components/ResetPassword";
 // import LandingPage from "./components/LandingPage/LandingPage";
 // for react-toastify
@@ -40,6 +41,7 @@ function App() {
             <Route path={"/contributors"} element={<Contributors />} />
             <Route path={"/linkinbio/*"} element={<Linkinbio />} /> {/* Use /linkinbio/* */}
             <Route path={"/linkinbio/profile"} element={<ProfilePage />} /> {/* Use /linkinbio/* */}
+            <Route path={"/profile"} element={<Profile />} /> {/* Use /linkinbio/* */}
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path={"/Sharepage"} element={<SharePage />} />
           </Routes>
