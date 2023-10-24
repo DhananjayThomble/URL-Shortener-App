@@ -19,7 +19,7 @@ jobs:
           node-version: "14.x"
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --prefix backend && npm install --prefix frontend
 
       - name: Run Prettier in /backend
         run: npm run format --prefix backend
