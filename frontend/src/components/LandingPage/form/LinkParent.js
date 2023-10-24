@@ -1,8 +1,8 @@
-import React, { useState } from "react";
-import Snackbar from "@mui/material/Snackbar";
-import Alert from "@mui/material/Alert";
-import LinkForm from "./LinkForm";
-import LinkList from "./LinkList";
+import React, { useState } from 'react';
+import Snackbar from '@mui/material/Snackbar';
+import Alert from '@mui/material/Alert';
+import LinkForm from './LinkForm';
+import LinkList from './LinkList';
 
 const LinkParent = () => {
   const [responseList, setResponseList] = useState([]);
@@ -39,7 +39,7 @@ const LinkParent = () => {
       {!!snackbar && (
         <Snackbar
           open
-          anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
           onClose={handleCloseSnackbar}
           autoHideDuration={10000}
         >

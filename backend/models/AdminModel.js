@@ -1,5 +1,5 @@
-import mongoose from "mongoose";
-import bcrypt from "bcrypt";
+import mongoose from 'mongoose';
+import bcrypt from 'bcrypt';
 
 const saltRounds = 10; // Affects the performance and password security level
 
@@ -27,9 +27,9 @@ const AdminSchema = new mongoose.Schema({
 });
 
 // Hash the password before saving
-AdminSchema.pre("save", function (next) {
+AdminSchema.pre('save', function (next) {
   const user = this;
-  if (!user.isModified("password")) return next();
+  if (!user.isModified('password')) return next();
 
   bcrypt.genSalt(saltRounds, function (err, salt) {
     if (err) return next(err);
@@ -51,6 +51,6 @@ AdminSchema.methods.comparePassword = function (password, callback) {
   });
 };
 
-const Admin = mongoose.model("Admin", AdminSchema);
+const Admin = mongoose.model('Admin', AdminSchema);
 
 export default Admin;

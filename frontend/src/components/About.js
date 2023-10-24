@@ -1,12 +1,11 @@
-import Accordion from "react-bootstrap/Accordion";
+import Accordion from 'react-bootstrap/Accordion';
 
-import React from "react";
-
+import React from 'react';
 
 function About() {
   return (
     <div className="d-flex justify-content-center">
-      <div className="w-75 p-3" style={{ maxWidth: "200px;" }}>
+      <div className="w-75 p-3" style={{ maxWidth: '200px;' }}>
         <h1>About SnapURL</h1>
         <p>
           SnapURL is an open-source URL shortener that makes converting long,

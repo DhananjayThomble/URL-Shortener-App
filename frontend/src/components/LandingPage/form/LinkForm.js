@@ -1,16 +1,16 @@
-import React from "react";
-import { Form, FormikProvider, useFormik } from "formik";
-import { Button, Stack, TextField } from "@mui/material";
-import { LinkSchema } from "./Schema";
-import mobileBackgroundShorten from "../Images/ShortenMobile.svg";
-import desktopBackgroundShorten from "../Images/ShortenDesktop.svg";
-import axios from "axios";
-import PropTypes from "prop-types";
+import React from 'react';
+import { Form, FormikProvider, useFormik } from 'formik';
+import { Button, Stack, TextField } from '@mui/material';
+import { LinkSchema } from './Schema';
+import mobileBackgroundShorten from '../Images/ShortenMobile.svg';
+import desktopBackgroundShorten from '../Images/ShortenDesktop.svg';
+import axios from 'axios';
+import PropTypes from 'prop-types';
 
 const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
   const formik = useFormik({
     initialValues: {
-      link: "",
+      link: '',
     },
     validationSchema: LinkSchema,
     onSubmit: async (values, actions) => {
@@ -29,9 +29,9 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
           },
           {
             headers: {
-              Authorization: `Bearer ${localStorage.getItem("token")}`,
+              Authorization: `Bearer ${localStorage.getItem('token')}`,
             },
-          }
+          },
         );
 
         const { shortUrl } = response.data;
@@ -39,8 +39,8 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
         onFormValueChange({ originalUrl: link, shortUrl });
 
         onSnackbarSuccess({
-          children: "Your shortlink is ready",
-          severity: "success",
+          children: 'Your shortlink is ready',
+          severity: 'success',
         });
         actions.resetForm();
         // console.log("Short URL:", shortUrl);
@@ -48,14 +48,14 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
         // console.log(error);
         if (error.response.status === 401) {
           onSnackbarSuccess({
-            children: "Please login to create a shortlink",
-            severity: "error",
+            children: 'Please login to create a shortlink',
+            severity: 'error',
           });
           return;
         }
         onSnackbarSuccess({
-          children: "Something went wrong. Please try again later.",
-          severity: "error",
+          children: 'Something went wrong. Please try again later.',
+          severity: 'error',
         });
       }
     },
@@ -70,21 +70,21 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
       sm: `url(${desktopBackgroundShorten})`,
     },
     backgroundSize: {
-      xs: "70% auto",
-      sm: "cover",
+      xs: '70% auto',
+      sm: 'cover',
     },
-    backgroundRepeat: "no-repeat",
+    backgroundRepeat: 'no-repeat',
     backgroundPosition: {
-      xs: "right top",
-      sm: "bottom",
+      xs: 'right top',
+      sm: 'bottom',
     },
-    bgcolor: "violetBg.main",
+    bgcolor: 'violetBg.main',
     borderRadius: 1,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    alignItems: "center",
-    maxWidth: "100%",
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    maxWidth: '100%',
     // px: 6,
     // py: 4,
     px: [2, 6],
@@ -99,13 +99,13 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
             fullWidth
             type="url"
             placeholder="Shorten a link here..."
-            {...getFieldProps("link")}
+            {...getFieldProps('link')}
             error={Boolean(touched.link && errors.link)}
             helperText={touched.link && errors.link}
             sx={{
-              bgcolor: "#fff",
+              bgcolor: '#fff',
               borderRadius: 1,
-              flexBasis: { sx: "100%", md: "60vw" },
+              flexBasis: { sx: '100%', md: '60vw' },
             }}
           />
 
@@ -117,12 +117,12 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
             sx={{
               mt: { xs: 2, md: 0 },
               p: 2,
-              fontSize: "1.15rem",
+              fontSize: '1.15rem',
               fontWeight: 600,
-              flexBasis: { sx: "100%", md: "15vw" },
+              flexBasis: { sx: '100%', md: '15vw' },
             }}
           >
-            {isSubmitting ? "loading..." : "Shorten It!"}
+            {isSubmitting ? 'loading...' : 'Shorten It!'}
           </Button>
         </Stack>
       </Form>

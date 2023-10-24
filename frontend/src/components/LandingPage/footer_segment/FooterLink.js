@@ -1,18 +1,18 @@
-import React from "react";
-import { Button } from "@mui/material";
-import propTypes from "prop-types";
+import React from 'react';
+import { Button } from '@mui/material';
+import propTypes from 'prop-types';
 
 const FooterLink = ({ bodyText }) => {
   return (
     <Button
       sx={{
-        color: "neutral.gray",
+        color: 'neutral.gray',
         minWidth: 0,
         px: 0,
-        "&:hover": {
-          color: "hsl(180, 66%, 49%)",
+        '&:hover': {
+          color: 'hsl(180, 66%, 49%)',
           fontWeight: 400,
-          backgroundColor: "transparent",
+          backgroundColor: 'transparent',
         },
       }}
     >
@@ -24,7 +24,7 @@ const FooterLink = ({ bodyText }) => {
 export default FooterLink;
 
 FooterLink.defaultProps = {
-  bodyText: "FooterLink",
+  bodyText: 'FooterLink',
 };
 
 FooterLink.propTypes = {

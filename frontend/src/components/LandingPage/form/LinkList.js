@@ -1,5 +1,5 @@
-import React from "react";
-import SingleOutput from "./SingleOutput";
+import React from 'react';
+import SingleOutput from './SingleOutput';
 
 const LinkList = ({ responseList }) => {
   return (

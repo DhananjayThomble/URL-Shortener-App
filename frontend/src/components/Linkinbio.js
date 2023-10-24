@@ -1,7 +1,6 @@
 import React from 'react';
 import ProfileForm from './ProfileForm';
-import "../App.css";
-
+import '../App.css';
 
 function Linkinbio() {
   return (

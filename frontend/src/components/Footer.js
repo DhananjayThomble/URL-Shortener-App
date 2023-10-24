@@ -1,25 +1,26 @@
-import React from "react";
-import "./Footer.css";
-import { Container, Typography, IconButton } from "@mui/material";
-import { Facebook, Twitter, Instagram } from "@mui/icons-material";
+import React from 'react';
+import './Footer.css';
+import { Container, Typography, IconButton } from '@mui/material';
+import { Facebook, Twitter, Instagram } from '@mui/icons-material';
 import InsertLinkIcon from '@mui/icons-material/InsertLink';
 
-
 function Footer() {
-
   return (
     <Container className="footer">
       <div className="mainfooter">
         <div className="left">
           <div className="Heading">
-        <InsertLinkIcon className="Icon" sx={{ display: { xs: 'none', md: 'flex' }, mr: 1 }} />
-          <Typography
-            variant="h5"
-            color="inherit"
-            style={{ marginLeft: "40px", fontWeight: "bold" }}
-          >
-            SnapURL
-          </Typography>
+            <InsertLinkIcon
+              className="Icon"
+              sx={{ display: { xs: 'none', md: 'flex' }, mr: 1 }}
+            />
+            <Typography
+              variant="h5"
+              color="inherit"
+              style={{ marginLeft: '40px', fontWeight: 'bold' }}
+            >
+              SnapURL
+            </Typography>
           </div>
           <div className="othertext">
             <span>&copy;2021</span>
