@@ -6,7 +6,7 @@ import React, { useEffect, useState, useContext } from "react";
 import { toast } from "react-toastify";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { FaUserAlt, FaKey, FaRegPaperPlane } from "react-icons/fa";
+import { FaUserAlt, FaKey, FaSignInAlt } from "react-icons/fa";
 import UserContext from "../context/UserContext";
 import "../App.css";
 import "./Footer.css";
@@ -139,14 +139,23 @@ function Login() {
                 type="submit"
                 style={{ backgroundColor: "#4B3F6B", color: "white" }}
               >
-                <FaRegPaperPlane />
-                Login
+                <FaSignInAlt style={{ marginRight: "0.3rem" }} />
+                LOGIN
               </Button>
             </Form>
           </Card.Body>
           <Card.Footer className="text-muted" style={{}}>
             Don't Have an Account?{" "}
-            <a href="/reset-password">
+            <a
+              onClick={() => {
+                navigate("/reset-password");
+              }}
+              style={{
+                textDecoration: "none",
+                color: "#4B3F6B",
+                cursor: "pointer",
+              }}
+            >
               {" "}
               <span style={{ marginLeft: "30px", color: "#4B3F6B" }}>
                 Forgot password
@@ -154,11 +163,14 @@ function Login() {
             </a>{" "}
             <br />
             <a
-              href="/signup"
               style={{
                 textDecoration: "none",
                 color: "#4B3F6B",
                 marginLeft: "100px",
+                cursor: "pointer",
+              }}
+              onClick={() => {
+                navigate("/signup");
               }}
             >
               <span>Click Here to Signup</span>

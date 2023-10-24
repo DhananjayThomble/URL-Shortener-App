@@ -10,7 +10,7 @@ import Container from "@mui/material/Container";
 import Avatar from "@mui/material/Avatar";
 import Tooltip from "@mui/material/Tooltip";
 import MenuItem from "@mui/material/MenuItem";
-import OfflineShareIcon from '@mui/icons-material/OfflineShare';
+import OfflineShareIcon from "@mui/icons-material/OfflineShare";
 import InsertLinkIcon from "@mui/icons-material/InsertLink";
 import HomeIcon from "@mui/icons-material/Home";
 import InfoIcon from "@mui/icons-material/Info";
@@ -25,7 +25,7 @@ const pages = [
   { name: "About", icon: <InfoIcon /> },
   { name: "Contributors", icon: <PersonAddIcon /> },
   { name: "Login", icon: <LoginIcon /> },
-  { name: "Linkinbio", icon: <OfflineShareIcon />},
+  { name: "Linkinbio", icon: <OfflineShareIcon /> },
   { name: "Signup", icon: <PersonAddIcon /> },
 ];
 
@@ -33,7 +33,7 @@ const pagesAfterLogin = [
   { name: "Home", icon: <HomeIcon /> },
   { name: "About", icon: <InfoIcon /> },
   { name: "Contributors", icon: <PersonAddIcon /> },
-  { name: "Linkinbio", icon: <OfflineShareIcon />},
+  { name: "Linkinbio", icon: <OfflineShareIcon /> },
   { name: "History", icon: <LoginIcon /> },
   { name: "Logout", icon: <PersonAddIcon /> },
 ];
@@ -121,48 +121,53 @@ function Navbar() {
             >
               {user === null
                 ? pages.map((page) => (
-                    <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                      {page.icon}
-                      <NavLink
-                        style={({ isActive }) => {
-                          return isActive
-                            ? {
-                                color: "white",
-                                background: "#51087E",
-                                padding: "4px",
-                                borderRadius: "5px",
-                              }
-                            : { color: "black" };
-                        }}
-                        to={"/" + page.name}
+                    <NavLink
+                      key={page.name}
+                      to={"/" + page.name}
+                      style={({ isActive }) => {
+                        return isActive
+                          ? {
+                              color: "#51087E",
+                              background: "#51087E",
+                              borderRadius: "5px",
+                            }
+                          : { color: "black" };
+                      }}
+                    >
+                      <MenuItem
+                        onClick={handleCloseNavMenu}
+                        selected={page.name === "Home"}
                       >
+                        {page.icon}
+
                         <Typography textAlign="center">{page.name}</Typography>
-                      </NavLink>
-                    </MenuItem>
+                      </MenuItem>
+                    </NavLink>
                   ))
                 : pagesAfterLogin.map((page) => (
-                    <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                      {page.icon}
-                      <NavLink
-                        style={({ isActive }) => {
-                          return isActive
-                            ? {
-                                color: "white",
-                                background: "#51087E",
-                                padding: "4px",
-                                borderRadius: "5px",
-                              }
-                            : { color: "black" };
-                        }}
-                        to={"/" + page.name}
-                      >
+                    <NavLink
+                      to={"/" + page.name}
+                      key={page.name}
+                      style={({ isActive }) => {
+                        return isActive
+                          ? {
+                              color: "#51087E",
+                              background: "#51087E",
+                              borderRadius: "5px",
+                            }
+                          : { color: "black" };
+                      }}
+                    >
+                      <MenuItem onClick={handleCloseNavMenu}>
+                        {page.icon}
                         <Typography textAlign="center">{page.name}</Typography>
-                      </NavLink>
-                    </MenuItem>
+                      </MenuItem>
+                    </NavLink>
                   ))}
             </Menu>
           </Box>
 
+          {/* For lg */}
           <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
             <Link
               style={{ color: "white", textDecoration: "none" }}
@@ -192,48 +197,50 @@ function Navbar() {
           <Box sx={{ flexGrow: 1, display: { xs: "none", md: "flex" } }}>
             {user === null
               ? pages.map((page) => (
-                  <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                    <NavLink
-                      style={({ isActive }) => {
-                        return isActive
-                          ? {
-                              color: "white",
-                              background: "#51087E",
-                              padding: "4px",
-                              borderRadius: "5px",
-                            }
-                          : { color: "white" };
-                      }}
-                      to={"/" + page.name}
-                    >
+                  <NavLink
+                    key={page.name}
+                    to={"/" + page.name}
+                    style={({ isActive }) => {
+                      return isActive
+                        ? {
+                            color: "white",
+                            background: "#51087E",
+                            padding: "0.1rem",
+                            borderRadius: "5px",
+                          }
+                        : { color: "white" };
+                    }}
+                  >
+                    <MenuItem onClick={handleCloseNavMenu}>
                       <Typography textAlign="center">
                         {page.icon}
                         {page.name}
                       </Typography>{" "}
-                    </NavLink>
-                  </MenuItem>
+                    </MenuItem>
+                  </NavLink>
                 ))
               : pagesAfterLogin.map((page) => (
-                  <MenuItem key={page.name} onClick={handleCloseNavMenu}>
-                    <NavLink
-                      style={({ isActive }) => {
-                        return isActive
-                          ? {
-                              color: "white",
-                              background: "#51087E",
-                              padding: "4px",
-                              borderRadius: "5px",
-                            }
-                          : { color: "white" };
-                      }}
-                      to={"/" + page.name}
-                    >
+                  <NavLink
+                    to={"/" + page.name}
+                    key={page.name}
+                    style={({ isActive }) => {
+                      return isActive
+                        ? {
+                            color: "white",
+                            background: "#51087E",
+                            padding: "0.1rem",
+                            borderRadius: "5px",
+                          }
+                        : { color: "white" };
+                    }}
+                  >
+                    <MenuItem onClick={handleCloseNavMenu}>
                       <Typography textAlign="center">
                         {page.icon}
                         {page.name}
                       </Typography>{" "}
-                    </NavLink>
-                  </MenuItem>
+                    </MenuItem>
+                  </NavLink>
                 ))}
           </Box>
           {user !== null && (
@@ -260,9 +267,11 @@ function Navbar() {
                 onClose={handleCloseUserMenu}
               >
                 {settings.map((setting) => (
-                  <MenuItem key={setting} onClick={handleCloseUserMenu}>
-                    <Typography textAlign="center">{setting}</Typography>
-                  </MenuItem>
+                  <NavLink to={"/" + setting} key={setting}>
+                    <MenuItem key={setting} onClick={handleCloseUserMenu}>
+                      <Typography textAlign="center">{setting}</Typography>
+                    </MenuItem>
+                  </NavLink>
                 ))}
               </Menu>
             </Box>
