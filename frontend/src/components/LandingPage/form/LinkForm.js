@@ -85,8 +85,10 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
     justifyContent: "space-between",
     alignItems: "center",
     maxWidth: "100%",
-    px: 6,
-    py: 4,
+    // px: 6,
+    // py: 4,
+    px: [2, 6],
+    py: [1, 4],
   };
 
   return (

@@ -32,7 +32,8 @@ const appTheme = {
         textTransform: "capitalize",
       },
       body1: {
-        fontSize: "1.45rem",
+        // fontSize: "1.45rem",
+        fontSize: window.innerWidth <= 768 ? "1rem" : "1.45rem",
       },
     },
     components: {

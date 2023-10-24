@@ -78,8 +78,14 @@ function HistoryCard({
       <Card border="secondary">
         <Card.Header as="h5">
           {getDomainName(originalUrl)}
-          <div className={"float-end"}>
-            <Button variant={"danger"} onClick={deleteUrl}>
+
+          <div>
+            <Button
+              variant={"danger"}
+              onClick={deleteUrl}
+              className="float-end"
+              style={{ marginTop: "-1.5rem" }}
+            >
               <FaTrashAlt />
             </Button>
           </div>
@@ -87,7 +93,7 @@ function HistoryCard({
         <Card.Body>
           <Card.Title
             as={"h6"}
-          >{`${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`}</Card.Title>
+          >{`${process.env.REACT_APP_API_ENDPOINT}/u/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
         </Card.Body>
         <div className="card-footer text-body-secondary d-flex gap-2 justify-content-around">
@@ -111,7 +117,7 @@ function HistoryCard({
             onClick={() => {
               //    open in new tab
               window.open(
-                `${process.env.REACT_APP_API_ENDPOINT}/api/url/${shortUrl}`,
+                `${process.env.REACT_APP_API_ENDPOINT}/u/${shortUrl}`,
                 "_blank"
               );
               //  increase visit count

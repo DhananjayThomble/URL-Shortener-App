@@ -10,7 +10,7 @@ import {
   FaUserAlt,
   FaKey,
   FaUserCircle,
-  FaRegPaperPlane,
+  FaUserPlus,
 } from "react-icons/fa";
 
 function Signup() {
@@ -167,11 +167,12 @@ function Signup() {
               </Form.Group>
 
               <Button
+                className={"w-100"}
                 variant="info"
                 type="submit"
-                style={{ backgroundColor: "#4B3F6B" }}
+                style={{ backgroundColor: "#4B3F6B", color: "white" }}
               >
-                <FaRegPaperPlane /> Sign Up
+                <FaUserPlus style={{ marginRight: "0.3rem" }} />SIGN UP
               </Button>
             </Form>
           </Card.Body>
