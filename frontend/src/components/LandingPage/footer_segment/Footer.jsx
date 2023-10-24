@@ -1,10 +1,9 @@
 // STUB: contains footer nav links
 import React from "react";
 import { Avatar, Box, IconButton, Stack } from "@mui/material";
+import { FaFacebookSquare as Facebook, FaTwitter as Twitter, FaInstagram as Instagram } from "react-icons/fa";
+
 import FooterLinkList from "./FooterLinkList";
-import { ReactComponent as FacebookLogo } from "../Images/facebook.svg";
-import { ReactComponent as TwitterLogo } from "../Images/twitter.svg";
-import { ReactComponent as InstagramLogo } from "../Images/instagram.svg";
 
 const textLinks = [
   {
@@ -21,7 +20,7 @@ const textLinks = [
   },
 ];
 
-const iconLinks = [FacebookLogo, TwitterLogo, InstagramLogo];
+const iconLinks = [Facebook, Twitter, Instagram];
 
 const containerStyles = {
   backgroundColor: "neutral.veryDarkViolet",
