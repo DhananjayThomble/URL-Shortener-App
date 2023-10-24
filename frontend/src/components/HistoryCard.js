@@ -78,14 +78,8 @@ function HistoryCard({
       <Card border="secondary">
         <Card.Header as="h5">
           {getDomainName(originalUrl)}
-
-          <div>
-            <Button
-              variant={"danger"}
-              onClick={deleteUrl}
-              className="float-end"
-              style={{ marginTop: "-1.5rem" }}
-            >
+          <div className={"float-end"}>
+            <Button variant={"danger"} onClick={deleteUrl}>
               <FaTrashAlt />
             </Button>
           </div>
