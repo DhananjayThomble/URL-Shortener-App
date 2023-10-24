@@ -169,9 +169,12 @@ function Signup() {
               <Button
                 variant="info"
                 type="submit"
-                style={{ backgroundColor: "#4B3F6B" }}
+                style={{ backgroundColor: "#4B3F6B" ,
+              color:"white",
+              
+         }}
               >
-                <FaRegPaperPlane /> Sign Up
+                <FaRegPaperPlane />  Sign Up
               </Button>
             </Form>
           </Card.Body>
