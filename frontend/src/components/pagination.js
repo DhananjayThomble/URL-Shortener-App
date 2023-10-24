@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import HistoryCard from "./HistoryCard";
+import React, { useState } from 'react';
+import HistoryCard from './HistoryCard';
 
 const Pagination = ({ history, cardsPerPage, categoryArray }) => {
   const [currentPage, setCurrentPage] = useState(1);
@@ -42,13 +42,13 @@ const Pagination = ({ history, cardsPerPage, categoryArray }) => {
           {pageNumbers.push(
             <li
               key={i}
-              className={`page-item ${currentPage === i ? "active" : ""}`}
+              className={`page-item ${currentPage === i ? 'active' : ''}`}
               aria-current="page"
             >
               <span onClick={(e) => handleClick(e, i)} className="page-link">
                 {i}
               </span>
-            </li>
+            </li>,
           )}
         </ul>
       </nav>;

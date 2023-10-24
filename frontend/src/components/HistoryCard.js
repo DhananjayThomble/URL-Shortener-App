@@ -1,11 +1,11 @@
-import Button from "react-bootstrap/Button";
-import Card from "react-bootstrap/Card";
-import React, { useState, useEffect } from "react";
-import axios from "axios";
-import { toast } from "react-toastify";
-import { FaRegChartBar, FaExternalLinkAlt, FaTrashAlt } from "react-icons/fa";
-import { Dropdown } from "react-bootstrap";
-import PropTypes from "prop-types";
+import Button from 'react-bootstrap/Button';
+import Card from 'react-bootstrap/Card';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { toast } from 'react-toastify';
+import { FaRegChartBar, FaExternalLinkAlt, FaTrashAlt } from 'react-icons/fa';
+import { Dropdown } from 'react-bootstrap';
+import PropTypes from 'prop-types';
 
 function HistoryCard({
   shortUrl,
@@ -14,7 +14,7 @@ function HistoryCard({
   category,
   categoryArray,
 }) {
-  const [urlId, setUrlId] = useState("");
+  const [urlId, setUrlId] = useState('');
   const [showCard, setShowCard] = useState(true);
   const [visitCountState, setVisitCountState] = useState(visitCount);
   const [categoryState, setCategoryState] = useState(category);
@@ -28,12 +28,12 @@ function HistoryCard({
       const result = await axios.delete(
         `${process.env.REACT_APP_API_ENDPOINT}/api/delete/${urlId}`,
         {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        },
       );
       // console.log(result);
       if (result.status === 200) {
-        toast.success("URL Deleted Successfully");
+        toast.success('URL Deleted Successfully');
         setShowCard(false);
       }
     } catch (error) {
@@ -45,7 +45,7 @@ function HistoryCard({
 
   // extracting domain name from url
   const getDomainName = (url) => {
-    const domainName = url.replace(/(^\w+:|^)\/\//, "").split("/")[0];
+    const domainName = url.replace(/(^\w+:|^)\/\//, '').split('/')[0];
     return domainName;
   };
 
@@ -59,13 +59,13 @@ function HistoryCard({
           category: e.target.innerText,
         },
         {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        },
       );
       // console.log(result);
       if (result.status === 200) {
         setCategoryState(e.target.innerText);
-        toast.success("Category Updated Successfully");
+        toast.success('Category Updated Successfully');
       }
     } catch (error) {
       console.error(error);
@@ -81,10 +81,10 @@ function HistoryCard({
 
           <div>
             <Button
-              variant={"danger"}
+              variant={'danger'}
               onClick={deleteUrl}
               className="float-end"
-              style={{ marginTop: "-1.5rem" }}
+              style={{ marginTop: '-1.5rem' }}
             >
               <FaTrashAlt />
             </Button>
@@ -92,14 +92,14 @@ function HistoryCard({
         </Card.Header>
         <Card.Body>
           <Card.Title
-            as={"h6"}
+            as={'h6'}
           >{`${process.env.REACT_APP_API_ENDPOINT}/u/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
         </Card.Body>
         <div className="card-footer text-body-secondary d-flex gap-2 justify-content-around">
           <Dropdown>
             <Dropdown.Toggle variant="success" id="dropdown-basic">
-              {categoryState || "Select Category"}
+              {categoryState || 'Select Category'}
             </Dropdown.Toggle>
             <Dropdown.Menu>
               {categoryArray.map((item, index) => {
@@ -118,7 +118,7 @@ function HistoryCard({
               //    open in new tab
               window.open(
                 `${process.env.REACT_APP_API_ENDPOINT}/u/${shortUrl}`,
-                "_blank"
+                '_blank',
               );
               //  increase visit count
               setVisitCountState(visitCountState + 1);

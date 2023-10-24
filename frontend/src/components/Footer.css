@@ -1,120 +1,96 @@
-.footer{
-    position: absolute;
-    bottom: 0px;
-    max-width: 100% !important;
-    height: 13rem;
-    display: flex !important;
-    flex-wrap: wrap;
-    justify-content: center;
-    align-items: center;
-    background-color: rgb(209, 210, 213);
-    color: rgb(11, 1, 1);
-    /* box-shadow: rgba(14, 95, 157, 0.3) 0px 1px 2px 0px, rgba(60, 64, 67, 0.15) 0px 1px 3px 1px; */
-    box-shadow: -1px -0px 10px rgb(108, 117, 128);
-    margin-top: 2rem; 
-    border-bottom: 50px solid rgb(55, 103, 165); 
+.footer {
+  position: absolute;
+  bottom: 0px;
+  max-width: 100% !important;
+  height: 13rem;
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  background-color: rgb(209, 210, 213);
+  color: rgb(11, 1, 1);
+  /* box-shadow: rgba(14, 95, 157, 0.3) 0px 1px 2px 0px, rgba(60, 64, 67, 0.15) 0px 1px 3px 1px; */
+  box-shadow: -1px -0px 10px rgb(108, 117, 128);
+  margin-top: 2rem;
+  border-bottom: 50px solid rgb(55, 103, 165);
 }
 
-.mainfooter{
-    width: 70%;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-around;
-    align-items: center;
-    gap: 2rem;
-    font-weight: 600;
+.mainfooter {
+  width: 70%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+  align-items: center;
+  gap: 2rem;
+  font-weight: 600;
 }
 
 .othertext {
-   display: flex;
-   gap: 15px;
-
+  display: flex;
+  gap: 15px;
 }
-.Heading{
-    display: flex;
-    position: relative;
-    margin-bottom: 15px;
-    margin-left: 0px;
-    
+.Heading {
+  display: flex;
+  position: relative;
+  margin-bottom: 15px;
+  margin-left: 0px;
 }
-.Icon{
-    font-size: 35px !important;
-    position: absolute;
+.Icon {
+  font-size: 35px !important;
+  position: absolute;
 }
-.right{
- display: flex;
- margin-bottom: 44px;
- flex-direction: column; 
-  justify-content:center; 
+.right {
+  display: flex;
+  margin-bottom: 44px;
+  flex-direction: column;
+  justify-content: center;
   margin-right: -20rem;
 }
 
-.Social{
-    font-size: 50px !important;
-    margin-left: 95px;
+.Social {
+  font-size: 50px !important;
+  margin-left: 95px;
 }
 
 .left {
-    margin-left: -20rem;
-} 
-a{
+  margin-left: -20rem;
+}
+a {
   text-decoration: none;
 }
 
-span:hover{
+span:hover {
   color: blue !important;
   font-weight: 500;
   text-decoration: underline;
 }
 
+@media only screen and (max-width: 600px) {
+  .right {
+    margin-right: 0px;
+  }
+  .left {
+    margin-left: 0px;
+  }
+  .mainfooter {
+    width: 100%;
 
-@media only screen and (max-width: 600px){
-    .right{
-     
-         margin-right: 0px;
-       }
-       .left {
-        margin-left: 0px;
-    } 
-    .mainfooter{
-        width: 100%;
-       
-        padding: 1rem;
-        gap: 0rem;
-       
-    }
-    .Social{
-        
-        margin-left: 40px;
-    }
+    padding: 1rem;
+    gap: 0rem;
+  }
+  .Social {
+    margin-left: 40px;
+  }
 
-.Heading{
-   margin-left: 30px;
-    
-}
-.footer{
+  .Heading {
+    margin-left: 30px;
+  }
+  .footer {
     height: 17rem;
+  }
 }
 
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- /* Footer Container */
+/* Footer Container */
 /*.footer {
     position: absolute;
     bottom: 0px;
@@ -142,9 +118,9 @@ span:hover{
     gap: 2rem;
     font-weight: 600;
   } */
-  
-  /* Align the 'SnapURL' text with proper spacing */
-  /*.Heading {
+
+/* Align the 'SnapURL' text with proper spacing */
+/*.Heading {
     display: flex;
     align-items: center;
     margin-bottom: 15px;
@@ -160,7 +136,7 @@ span:hover{
   }
   
   /* Right and Left Columns */
-  /*.right,
+/*.right,
   .left {
     flex: 1; 
     text-align: center; 
@@ -169,7 +145,7 @@ span:hover{
   }
   
   /* Social Media Icons */
- /* .Social {
+/* .Social {
     font-size: 20px !important;
     margin-right: -70px;
    
@@ -180,7 +156,7 @@ span:hover{
   }
   
   /* Text in Both Columns */
-  /*.othertext {
+/*.othertext {
     display: flex;
     flex-wrap: wrap;
     gap: 15px;
@@ -188,9 +164,8 @@ span:hover{
     font-size: 14px;
     margin-bottom: 8px;
   }*/
-  
-  
- /* @media only screen and (max-width: 600px) {
+
+/* @media only screen and (max-width: 600px) {
     .footer {
       flex-direction: row;
     }

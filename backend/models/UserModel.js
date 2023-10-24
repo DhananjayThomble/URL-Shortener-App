@@ -1,5 +1,5 @@
-import mongoose from "mongoose";
-import bcrypt from "bcrypt";
+import mongoose from 'mongoose';
+import bcrypt from 'bcrypt';
 
 const saltRounds = 10; // Affects the performance and password security level
 
@@ -27,9 +27,9 @@ const UserSchema = new mongoose.Schema({
 });
 
 // Hash the password before saving
-UserSchema.pre("save", function (next) {
+UserSchema.pre('save', function (next) {
   const user = this;
-  if (!user.isModified("password")) return next();
+  if (!user.isModified('password')) return next();
 
   bcrypt.genSalt(saltRounds, function (err, salt) {
     if (err) return next(err);
@@ -51,17 +51,14 @@ UserSchema.methods.comparePassword = function (password, callback) {
   });
 };
 
-
-
 // Add a reference to the LinkInBioPage model
-UserSchema.virtual("linkInBioPage", {
-  ref: "LinkInBioPage",
-  localField: "_id",
-  foreignField: "userId",
+UserSchema.virtual('linkInBioPage', {
+  ref: 'LinkInBioPage',
+  localField: '_id',
+  foreignField: 'userId',
   justOne: true,
 });
 
-
-const User = mongoose.model("User", UserSchema);
+const User = mongoose.model('User', UserSchema);
 
 export default User;

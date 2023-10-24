@@ -1,30 +1,30 @@
-import Button from "react-bootstrap/Button";
-import Card from "react-bootstrap/Card";
-import Form from "react-bootstrap/Form";
-import Container from "react-bootstrap/Container";
-import React, { useEffect, useState, useContext } from "react";
-import { toast } from "react-toastify";
-import axios from "axios";
-import { useNavigate } from "react-router-dom";
-import { FaUserAlt, FaKey, FaSignInAlt } from "react-icons/fa";
-import UserContext from "../context/UserContext";
-import "../App.css";
-import "./Footer.css";
+import Button from 'react-bootstrap/Button';
+import Card from 'react-bootstrap/Card';
+import Form from 'react-bootstrap/Form';
+import Container from 'react-bootstrap/Container';
+import React, { useEffect, useState, useContext } from 'react';
+import { toast } from 'react-toastify';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import { FaUserAlt, FaKey, FaSignInAlt } from 'react-icons/fa';
+import UserContext from '../context/UserContext';
+import '../App.css';
+import './Footer.css';
 
 function Login() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
   const navigate = useNavigate();
   const context = useContext(UserContext);
   let toastId = null;
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem('token');
     if (token) {
-      toast.warning("You are already logged in");
+      toast.warning('You are already logged in');
       setTimeout(() => {
-        navigate("/");
+        navigate('/');
       }, 4000);
     }
   }, [navigate]);
@@ -32,17 +32,17 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     toastId = null;
-    toastId = toast.loading("Logging in...");
+    toastId = toast.loading('Logging in...');
     if (!validateForm()) return;
 
     await fetchLogin();
   };
 
   function validateForm() {
-    if (email === "" || password === "") {
+    if (email === '' || password === '') {
       toast.update(toastId, {
-        render: "Please fill all the fields",
-        type: "error",
+        render: 'Please fill all the fields',
+        type: 'error',
         isLoading: false,
         autoClose: 2000,
       });
@@ -63,16 +63,16 @@ function Login() {
       } = response.data;
 
       //    set token and logged-in user's name in local storage
-      localStorage.setItem("token", token);
-      localStorage.setItem("name", name);
+      localStorage.setItem('token', token);
+      localStorage.setItem('name', name);
       context.setUser({ token: token });
       toast.update(toastId, {
         render: `Welcome ${name}`,
-        type: "success",
+        type: 'success',
         isLoading: false,
         autoClose: 2000,
       });
-      navigate("/");
+      navigate('/');
     } catch ({
       response: {
         status,
@@ -80,8 +80,8 @@ function Login() {
       },
     }) {
       toast.update(toastId, {
-        render: "Login failed",
-        type: "error",
+        render: 'Login failed',
+        type: 'error',
         isLoading: false,
         autoClose: 2000,
       });
@@ -90,7 +90,7 @@ function Login() {
       } else if (status === 401) {
         toast.error(error);
       } else {
-        toast.error("Something went wrong");
+        toast.error('Something went wrong');
       }
     }
   };
@@ -98,13 +98,13 @@ function Login() {
   return (
     <Container
       className="d-flex align-items-center justify-content-center"
-      style={{ minHeight: "90vh" }}
+      style={{ minHeight: '90vh' }}
     >
-      <div className="w-100" style={{ maxWidth: "400px" }}>
+      <div className="w-100" style={{ maxWidth: '400px' }}>
         <Card>
-          <Card.Header style={{ backgroundColor: "#4B3F6B" }}>
-            {" "}
-            <h4 style={{ backgroundColor: "#4B3F6B" }}>Login</h4>{" "}
+          <Card.Header style={{ backgroundColor: '#4B3F6B' }}>
+            {' '}
+            <h4 style={{ backgroundColor: '#4B3F6B' }}>Login</h4>{' '}
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
@@ -134,43 +134,43 @@ function Login() {
                 />
               </Form.Group>
               <Button
-                className={"w-100"}
+                className={'w-100'}
                 variant="info"
                 type="submit"
-                style={{ backgroundColor: "#4B3F6B", color: "white" }}
+                style={{ backgroundColor: '#4B3F6B', color: 'white' }}
               >
-                <FaSignInAlt style={{ marginRight: "0.3rem" }} />
+                <FaSignInAlt style={{ marginRight: '0.3rem' }} />
                 LOGIN
               </Button>
             </Form>
           </Card.Body>
           <Card.Footer className="text-muted" style={{}}>
-            Don't Have an Account?{" "}
+            Don't Have an Account?{' '}
             <a
               onClick={() => {
-                navigate("/reset-password");
+                navigate('/reset-password');
               }}
               style={{
-                textDecoration: "none",
-                color: "#4B3F6B",
-                cursor: "pointer",
+                textDecoration: 'none',
+                color: '#4B3F6B',
+                cursor: 'pointer',
               }}
             >
-              {" "}
-              <span style={{ marginLeft: "30px", color: "#4B3F6B" }}>
+              {' '}
+              <span style={{ marginLeft: '30px', color: '#4B3F6B' }}>
                 Forgot password
-              </span>{" "}
-            </a>{" "}
+              </span>{' '}
+            </a>{' '}
             <br />
             <a
               style={{
-                textDecoration: "none",
-                color: "#4B3F6B",
-                marginLeft: "100px",
-                cursor: "pointer",
+                textDecoration: 'none',
+                color: '#4B3F6B',
+                marginLeft: '100px',
+                cursor: 'pointer',
               }}
               onClick={() => {
-                navigate("/signup");
+                navigate('/signup');
               }}
             >
               <span>Click Here to Signup</span>

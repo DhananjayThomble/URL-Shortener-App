@@ -12,319 +12,321 @@ body {
     margin: 0;
   }
   */
-  .profile-page{
-    font-family: Arial, sans-serif;
-    background-color: #f5f5f5;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-  }
-  .profile-form{
-    font-family: Arial, sans-serif;
-    background-color: #f5f5f5;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    margin-top: 20px;
-    height: 100vh;
+.profile-page {
+  font-family: Arial, sans-serif;
+  background-color: #f5f5f5;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+.profile-form {
+  font-family: Arial, sans-serif;
+  background-color: #f5f5f5;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 20px;
+  height: 100vh;
+}
 
-  }
-  
-  .center-content {
-    font-family: Arial, sans-serif;
-    background-color: rgb(75, 63, 107);
-    width: 700px;
-    padding: 20px;
-    border-radius: 8px;
-    color: #fff;
-    box-shadow: rgb(38, 57, 77) 0px 20px 30px -10px;
-    text-align: center;
-    max-width: 400px; /* Added a max-width for better readability */
-    margin: 0 auto; /* Center-align the container */
-  }
-  /* Add this CSS to your stylesheet */
-  
-  /* Navbar container */
-  .navbar {
-    display: flex;
-    width: 700px;
-    justify-content: space-between;
-    background-color: #fff;
-    align-items: center;
-    padding: 10px 20px;
-    margin-top: 100px;
-    margin-bottom: 30px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    color: #fff;
-  }
-  
-  /* Navbar buttons */
-  .navbar-button {
-    background-color: #fff;
-    color: #4B3F6B;
-    
-    border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-    margin-right: 10px;
-    font-size: 16px;
-  }
-  
-  .navbar-button:hover {
-    background-color: #a597cb;
-    transition: background-color 0.3s ease;
-  }
-  
-  /* You can adjust the colors, sizes, and margins as needed to fit your design. */
-  
-  
-  .btn-info {
-    background-color: #007bff;
-    border-color: #007bff;
-    color: whitesmoke;
-  }
-  /* CSS for the QR code popup overlay */
-  .qr-code-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.6); /* Semi-transparent background */
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 999; /* Ensure it appears above other content */
-  }
-  
-  /* CSS for the QR code popup */
+.center-content {
+  font-family: Arial, sans-serif;
+  background-color: rgb(75, 63, 107);
+  width: 700px;
+  padding: 20px;
+  border-radius: 8px;
+  color: #fff;
+  box-shadow: rgb(38, 57, 77) 0px 20px 30px -10px;
+  text-align: center;
+  max-width: 400px; /* Added a max-width for better readability */
+  margin: 0 auto; /* Center-align the container */
+}
+/* Add this CSS to your stylesheet */
+
+/* Navbar container */
+.navbar {
+  display: flex;
+  width: 700px;
+  justify-content: space-between;
+  background-color: #fff;
+  align-items: center;
+  padding: 10px 20px;
+  margin-top: 100px;
+  margin-bottom: 30px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  color: #fff;
+}
+
+/* Navbar buttons */
+.navbar-button {
+  background-color: #fff;
+  color: #4b3f6b;
+
+  border: none;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-right: 10px;
+  font-size: 16px;
+}
+
+.navbar-button:hover {
+  background-color: #a597cb;
+  transition: background-color 0.3s ease;
+}
+
+/* You can adjust the colors, sizes, and margins as needed to fit your design. */
+
+.btn-info {
+  background-color: #007bff;
+  border-color: #007bff;
+  color: whitesmoke;
+}
+/* CSS for the QR code popup overlay */
+.qr-code-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6); /* Semi-transparent background */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999; /* Ensure it appears above other content */
+}
+
+/* CSS for the QR code popup */
+.qr-code-popup {
+  width: 400px;
+  background: #fff;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  text-align: center;
+}
+
+/* Style for the QR code image */
+.qr-code-popup img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Style for the close button */
+.qr-code-popup button {
+  background: rgb(75, 63, 107); /* Blue color */
+  color: #fff; /* White text */
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 20px;
+  transition: background 0.3s;
+}
+
+.qr-code-popup button:hover {
+  background: rgb(195, 189, 213); /* Darker blue on hover */
+}
+
+/* Center the QR code popup */
+.qr-code-popup {
+  width: 80%;
+}
+
+/* Adjust the max width based on your preference */
+@media (max-width: 768px) {
   .qr-code-popup {
-    width: 400px;
-    background: #fff;
-    padding: 20px;
-    border-radius: 10px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    text-align: center;
-  }
-  
-  /* Style for the QR code image */
-  .qr-code-popup img {
-    max-width: 100%;
-    height: auto;
-  }
-  
-  /* Style for the close button */
-  .qr-code-popup button {
-    background: rgb(75, 63, 107); /* Blue color */
-    color: #fff; /* White text */
-    padding: 10px 20px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 16px;
-    margin-top: 20px;
-    transition: background 0.3s;
-  }
-  
-  .qr-code-popup button:hover {
-    background: rgb(195, 189, 213); /* Darker blue on hover */
-  }
-  
-  /* Center the QR code popup */
-  .qr-code-popup {
-    width: 80%;
-  }
-  
-  /* Adjust the max width based on your preference */
-  @media (max-width: 768px) {
-    .qr-code-popup {
-      width: 100%;
-    }
-  }
-  
-  h1 {
-    font-size: 24px;
-    margin-bottom: 20px;
-  }
-  
-  label {
-    font-weight: 500;
-  }
-  
-  input[type="text"],
-  input[type="file"] {
-    display: block;
-    background-color: #f8f9fa;
     width: 100%;
-    padding: 10px;
-    margin: 8px 0;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    box-sizing: border-box;
   }
-  
-  input[type="file"] {
-    background-color: #f8f9fa;
-    color: rgb(75, 63, 107);
-    cursor: pointer;
-  }
-  
-  ul {
-    list-style: none;
-    padding: 0;
-  }
-  
-  li {
-    margin: 8px 0;
-  }
-  
-  a {
-    text-decoration: none;
-    color: #0077b5; /* LinkedIn blue */
-  }
-  
-  .profile-picture {
-    width: 100px;
-    height: 100px;
-    border-radius: 50%;
-    overflow: hidden;
-    margin: 0 auto;
-  }
-  
-  .profile-picture img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  
-  .left-label {
-    display: flex;
-    align-items: center;
-    text-align: left;
-    margin-bottom: 10px;
-    color: #fff;
-  }
-  
-  .icon {
-    font-size: 1.2em;
-    margin-right: 10px;
-  }
-  
-  .center-content {
-    text-align: center;
-  }
-  
-  .xyz {
-    text-align: left;
-  }
-  .input {
-    display: block;
-    margin-bottom: 10px; /* Add margin to separate each input field */
-    width: 100%;
-    padding: 10px;
-    background-color: #f8f9fa;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    box-sizing: border-box;
-  }
-  
-  /* CSS */
-  .btn {
-    align-items: center;
-    margin-top: 20px;
-    appearance: none;
-    background-color: #fff;
-    border-radius: 24px;
-    border-style: none;
-    box-shadow: rgba(0, 0, 0, .2) 0 3px 5px -1px,rgba(0, 0, 0, .14) 0 6px 10px 0,rgba(0, 0, 0, .12) 0 1px 18px 0;
-    box-sizing: border-box;
-    color: #3c4043;
-    cursor: pointer;
-    display: inline-flex;
-    fill: currentcolor;
-    font-family: "Google Sans",Roboto,Arial,sans-serif;
-    font-size: 14px;
-    font-weight: 500;
-    height: 48px;
-    justify-content: center;
-    letter-spacing: .25px;
-    line-height: normal;
-    max-width: 100%;
-    overflow: visible;
-    padding: 2px 24px;
-    position: relative;
-    text-align: center;
-    text-transform: none;
-    transition: box-shadow 280ms cubic-bezier(.4, 0, .2, 1),opacity 15ms linear 30ms,transform 270ms cubic-bezier(0, 0, .2, 1) 0ms;
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: manipulation;
-    width: auto;
-    will-change: transform,opacity;
-    z-index: 0;
-  }
-  
-  .btn:hover {
-    background: #F6F9FE;
-    color: rgb(75, 63, 107);
-  }
-  
-  .btn:active {
-    box-shadow: 0 4px 4px 0 rgb(60 64 67 / 30%), 0 8px 12px 6px rgb(60 64 67 / 15%);
-    outline: none;
-  }
-  
-  .btn:focus {
-    outline: none;
-    border: 2px solid #4285f4;
-  }
-  
-  .btn:not(:disabled) {
-    box-shadow: rgba(60, 64, 67, .3) 0 1px 3px 0, rgba(60, 64, 67, .15) 0 4px 8px 3px;
-  }
-  
-  .btn:not(:disabled):hover {
-    box-shadow: rgba(60, 64, 67, .3) 0 2px 3px 0, rgba(60, 64, 67, .15) 0 6px 10px 4px;
-  }
-  
-  .btn:not(:disabled):focus {
-    box-shadow: rgba(60, 64, 67, .3) 0 1px 3px 0, rgba(60, 64, 67, .15) 0 4px 8px 3px;
-  }
-  
-  .btn:not(:disabled):active {
-    box-shadow: rgba(60, 64, 67, .3) 0 4px 4px 0, rgba(60, 64, 67, .15) 0 8px 12px 6px;
-  }
-  
-  .btn:disabled {
-    box-shadow: rgba(60, 64, 67, .3) 0 1px 3px 0, rgba(60, 64, 67, .15) 0 4px 8px 3px;
-  }
-  
-  /* CSS to style the icon row and icons */
-  .icon-row {
-    display: flex;
-    justify-content: space-between; /* Equal spacing between icons */
-    margin-top: 20px;
-  }
-  
-  .icon-row a {
-    text-decoration: none; /* Remove underlines for links */
-  }
-  
-  .icon-row .icon {
-    color: white; /* Set the color to white */
-    font-size: 2rem;/* Adjust the size of the icons as needed */
-    margin: 0 10px; /* Add spacing between icons */
-  }
-  .fadummyuser{
-    font-size: 5rem;
-  }
-  
-  
-  
-  
+}
+
+h1 {
+  font-size: 24px;
+  margin-bottom: 20px;
+}
+
+label {
+  font-weight: 500;
+}
+
+input[type='text'],
+input[type='file'] {
+  display: block;
+  background-color: #f8f9fa;
+  width: 100%;
+  padding: 10px;
+  margin: 8px 0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+input[type='file'] {
+  background-color: #f8f9fa;
+  color: rgb(75, 63, 107);
+  cursor: pointer;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  margin: 8px 0;
+}
+
+a {
+  text-decoration: none;
+  color: #0077b5; /* LinkedIn blue */
+}
+
+.profile-picture {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+.profile-picture img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.left-label {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  margin-bottom: 10px;
+  color: #fff;
+}
+
+.icon {
+  font-size: 1.2em;
+  margin-right: 10px;
+}
+
+.center-content {
+  text-align: center;
+}
+
+.xyz {
+  text-align: left;
+}
+.input {
+  display: block;
+  margin-bottom: 10px; /* Add margin to separate each input field */
+  width: 100%;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+/* CSS */
+.btn {
+  align-items: center;
+  margin-top: 20px;
+  appearance: none;
+  background-color: #fff;
+  border-radius: 24px;
+  border-style: none;
+  box-shadow: rgba(0, 0, 0, 0.2) 0 3px 5px -1px,
+    rgba(0, 0, 0, 0.14) 0 6px 10px 0, rgba(0, 0, 0, 0.12) 0 1px 18px 0;
+  box-sizing: border-box;
+  color: #3c4043;
+  cursor: pointer;
+  display: inline-flex;
+  fill: currentcolor;
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  height: 48px;
+  justify-content: center;
+  letter-spacing: 0.25px;
+  line-height: normal;
+  max-width: 100%;
+  overflow: visible;
+  padding: 2px 24px;
+  position: relative;
+  text-align: center;
+  text-transform: none;
+  transition: box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 15ms linear 30ms, transform 270ms cubic-bezier(0, 0, 0.2, 1) 0ms;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  width: auto;
+  will-change: transform, opacity;
+  z-index: 0;
+}
+
+.btn:hover {
+  background: #f6f9fe;
+  color: rgb(75, 63, 107);
+}
+
+.btn:active {
+  box-shadow: 0 4px 4px 0 rgb(60 64 67 / 30%),
+    0 8px 12px 6px rgb(60 64 67 / 15%);
+  outline: none;
+}
+
+.btn:focus {
+  outline: none;
+  border: 2px solid #4285f4;
+}
+
+.btn:not(:disabled) {
+  box-shadow: rgba(60, 64, 67, 0.3) 0 1px 3px 0,
+    rgba(60, 64, 67, 0.15) 0 4px 8px 3px;
+}
+
+.btn:not(:disabled):hover {
+  box-shadow: rgba(60, 64, 67, 0.3) 0 2px 3px 0,
+    rgba(60, 64, 67, 0.15) 0 6px 10px 4px;
+}
+
+.btn:not(:disabled):focus {
+  box-shadow: rgba(60, 64, 67, 0.3) 0 1px 3px 0,
+    rgba(60, 64, 67, 0.15) 0 4px 8px 3px;
+}
+
+.btn:not(:disabled):active {
+  box-shadow: rgba(60, 64, 67, 0.3) 0 4px 4px 0,
+    rgba(60, 64, 67, 0.15) 0 8px 12px 6px;
+}
+
+.btn:disabled {
+  box-shadow: rgba(60, 64, 67, 0.3) 0 1px 3px 0,
+    rgba(60, 64, 67, 0.15) 0 4px 8px 3px;
+}
+
+/* CSS to style the icon row and icons */
+.icon-row {
+  display: flex;
+  justify-content: space-between; /* Equal spacing between icons */
+  margin-top: 20px;
+}
+
+.icon-row a {
+  text-decoration: none; /* Remove underlines for links */
+}
+
+.icon-row .icon {
+  color: white; /* Set the color to white */
+  font-size: 2rem; /* Adjust the size of the icons as needed */
+  margin: 0 10px; /* Add spacing between icons */
+}
+.fadummyuser {
+  font-size: 5rem;
+}

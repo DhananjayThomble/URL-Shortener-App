@@ -1,14 +1,14 @@
-import React from "react";
-import AxiosFetch from "./AxiosFetch";
-import Lottie from "lottie-react";
-import "./Contributers.css";
+import React from 'react';
+import AxiosFetch from './AxiosFetch';
+import Lottie from 'lottie-react';
+import './Contributers.css';
 
-import Circle from "@mui/icons-material/Circle";
-import cont1 from "../assets/cont1.json";
+import Circle from '@mui/icons-material/Circle';
+import cont1 from '../assets/cont1.json';
 
 function Contributers() {
   const { data, isPending, error } = AxiosFetch(
-    "https://api.github.com/repos/DhananjayThomble/URL-Shortener-App/contributors"
+    'https://api.github.com/repos/DhananjayThomble/URL-Shortener-App/contributors',
   );
   return (
     <div className="contributers">

@@ -1,9 +1,9 @@
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
 
 const LinkInBioPageSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    ref: 'User',
     required: true,
   },
   pageTitle: {
@@ -23,6 +23,6 @@ LinkInBioPageSchema.add({
   ],
 });
 
-const LinkInBioPage = mongoose.model("LinkInBioPage", LinkInBioPageSchema);
+const LinkInBioPage = mongoose.model('LinkInBioPage', LinkInBioPageSchema);
 
 export default LinkInBioPage;

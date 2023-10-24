@@ -1,23 +1,18 @@
-import Button from "react-bootstrap/Button";
-import Card from "react-bootstrap/Card";
-import Form from "react-bootstrap/Form";
-import Container from "react-bootstrap/Container";
-import React, { useState } from "react";
-import { toast } from "react-toastify";
-import axios from "axios";
-import { useNavigate } from "react-router-dom";
-import {
-  FaUserAlt,
-  FaKey,
-  FaUserCircle,
-  FaUserPlus,
-} from "react-icons/fa";
+import Button from 'react-bootstrap/Button';
+import Card from 'react-bootstrap/Card';
+import Form from 'react-bootstrap/Form';
+import Container from 'react-bootstrap/Container';
+import React, { useState } from 'react';
+import { toast } from 'react-toastify';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import { FaUserAlt, FaKey, FaUserCircle, FaUserPlus } from 'react-icons/fa';
 
 function Signup() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [name, setName] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [name, setName] = useState('');
   const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
   const navigate = useNavigate();
   let toastId = null;
@@ -26,7 +21,7 @@ function Signup() {
     e.preventDefault();
 
     toastId = null;
-    toastId = toast.loading("Signing up...");
+    toastId = toast.loading('Signing up...');
     if (!validateForm()) return;
     await fetchSignup();
   };
@@ -34,16 +29,16 @@ function Signup() {
   function checkPassword() {
     if (password !== confirmPassword) {
       toast.update(toastId, {
-        render: "Passwords do not match",
-        type: "error",
+        render: 'Passwords do not match',
+        type: 'error',
         isLoading: false,
         autoClose: 2000,
       });
       return false;
     } else if (password.length < 6) {
       toast.update(toastId, {
-        render: "Password must be at least 6 characters",
-        type: "error",
+        render: 'Password must be at least 6 characters',
+        type: 'error',
         isLoading: false,
         autoClose: 2000,
       });
@@ -54,14 +49,14 @@ function Signup() {
 
   function validateForm() {
     if (
-      email === "" ||
-      password === "" ||
-      confirmPassword === "" ||
-      name === ""
+      email === '' ||
+      password === '' ||
+      confirmPassword === '' ||
+      name === ''
     ) {
       toast.update(toastId, {
-        render: "Please fill all the fields",
-        type: "error",
+        render: 'Please fill all the fields',
+        type: 'error',
         isLoading: false,
         autoClose: 2000,
       });
@@ -85,25 +80,25 @@ function Signup() {
       // console.log(response);
       if (response.data.ok) {
         toast.update(toastId, {
-          render: "Signup successful",
-          type: "success",
+          render: 'Signup successful',
+          type: 'success',
           isLoading: false,
           autoClose: 2000,
         });
-        navigate("/login");
+        navigate('/login');
       } else {
         toast.update(toastId, {
-          render: "Signup failed",
-          type: "error",
+          render: 'Signup failed',
+          type: 'error',
           isLoading: false,
           autoClose: 2000,
         });
       }
     } catch (error) {
-      console.error("Error during signup:", error);
+      console.error('Error during signup:', error);
       toast.update(toastId, {
-        render: "Signup failed",
-        type: "error",
+        render: 'Signup failed',
+        type: 'error',
         isLoading: false,
         autoClose: 2000,
       });
@@ -113,22 +108,22 @@ function Signup() {
   return (
     <Container
       className="d-flex align-items-center justify-content-center"
-      style={{ minHeight: "90vh" }}
+      style={{ minHeight: '90vh' }}
     >
-      <div className="w-100" style={{ maxWidth: "400px" }}>
+      <div className="w-100" style={{ maxWidth: '400px' }}>
         <Card>
-          <Card.Header style={{ backgroundColor: "#4B3F6B" }}>
-            <h4 style={{ backgroundColor: "#4B3F6B" }}>Sign Up</h4>
+          <Card.Header style={{ backgroundColor: '#4B3F6B' }}>
+            <h4 style={{ backgroundColor: '#4B3F6B' }}>Sign Up</h4>
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
-              <Form.Group className={"md-3"} controlId={"formName"}>
+              <Form.Group className={'md-3'} controlId={'formName'}>
                 <Form.Label>
                   <FaUserCircle /> Name
                 </Form.Label>
                 <Form.Control
-                  type={"text"}
-                  placeholder={"Enter Your Name"}
+                  type={'text'}
+                  placeholder={'Enter Your Name'}
                   onChange={(e) => setName(e.target.value)}
                 />
               </Form.Group>
@@ -167,25 +162,26 @@ function Signup() {
               </Form.Group>
 
               <Button
-                className={"w-100"}
+                className={'w-100'}
                 variant="info"
                 type="submit"
-                style={{ backgroundColor: "#4B3F6B", color: "white" }}
+                style={{ backgroundColor: '#4B3F6B', color: 'white' }}
               >
-                <FaUserPlus style={{ marginRight: "0.3rem" }} />SIGN UP
+                <FaUserPlus style={{ marginRight: '0.3rem' }} />
+                SIGN UP
               </Button>
             </Form>
           </Card.Body>
           <Card.Footer className="text-muted">
-            Already Have an Account?{" "}
+            Already Have an Account?{' '}
             <a
               style={{
-                textDecoration: "none",
-                color: "#4B3F6B",
-                cursor: "pointer",
+                textDecoration: 'none',
+                color: '#4B3F6B',
+                cursor: 'pointer',
               }}
               onClick={() => {
-                navigate("/login");
+                navigate('/login');
               }}
             >
               Click Here to Login

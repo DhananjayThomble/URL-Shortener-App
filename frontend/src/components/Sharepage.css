@@ -1,148 +1,148 @@
 /* Container styles */
 .share-pages-container {
-    background-color: #f7f7f7;
-    padding: 20px;
-    border-radius: 10px;
-    text-align: center;
-  }
-  
-  /* Input styles */
-  .url-input {
-    width: 100%;
-    padding: 10px;
-    margin: 10px 0;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-  }
-  
-  /* Shorten button styles */
-  .shorten-button {
-    background-color: #007BFF;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 10px 20px;
-    cursor: pointer;
-  }
-  
-  /* Shortened URL container styles */
-  .short-url-container {
-    background-color: #fff;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    padding: 20px;
-    margin-top: 20px;
-  }
-  
-  /* Shortened URL text styles */
-  .short-url-text {
-    font-weight: bold;
-    color: #333;
-    margin-bottom: 10px;
-  }
-  
-  /* Shortened URL styles */
-  .short-url {
-    color: #007BFF;
-    word-wrap: break-word;
-  }
-  
-  /* Platform select styles */
-  .platform-select {
-    width: 100%;
-    padding: 10px;
-    margin: 10px 0;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-  }
-  
-  /* Share button styles */
-  .share-button {
-    background-color: #007BFF;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 10px 20px;
-    cursor: pointer;
-  }
-  
-  /* Share.css */
-  
-  /* Container styles */
-  .share-pages-container {
-    background-color: #f7f7f7;
-    padding: 20px;
-    border-radius: 10px;
-    text-align: center;
-  }
-  
-  /* Input styles */
-  .url-input {
-    width: 100%;
-    padding: 10px;
-    margin: 10px 0;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-  }
-  
-  /* Shorten button styles */
-  .shorten-button {
-    background-color: #4B3F6B;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 10px 20px;
-    cursor: pointer;
-  }
-  
-  /* Shortened URL container styles */
-  .short-url-container {
-    background-color: #fff;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    padding: 20px;
-    margin-top: 20px;
-  }
-  
-  /* Shortened URL text styles */
-  .short-url-text {
-    font-weight: bold;
-    color: #333;
-    margin-bottom: 10px;
-  }
-  
-  /* Shortened URL styles */
-  .short-url {
-    color: #00a6ff;
-    word-wrap: break-word;
-  }
-  
-  /* Copy Link button styles */
-  .copy-link-button {
-    background-color: #007BFF;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 10px 20px;
-    cursor: pointer;
-    margin-top: 10px;
-  }
-  
-  /* Platform select styles */
-  .platform-select {
-    width: 100%;
-    padding: 10px;
-    margin: 10px 0;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-  }
-  
-  /* Share button styles */
-  .share-button {
-    background-color: #4B3F6B;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 10px 20px;
-    cursor: pointer;
-  }
+  background-color: #f7f7f7;
+  padding: 20px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+/* Input styles */
+.url-input {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+/* Shorten button styles */
+.shorten-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+
+/* Shortened URL container styles */
+.short-url-container {
+  background-color: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+/* Shortened URL text styles */
+.short-url-text {
+  font-weight: bold;
+  color: #333;
+  margin-bottom: 10px;
+}
+
+/* Shortened URL styles */
+.short-url {
+  color: #007bff;
+  word-wrap: break-word;
+}
+
+/* Platform select styles */
+.platform-select {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+/* Share button styles */
+.share-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+
+/* Share.css */
+
+/* Container styles */
+.share-pages-container {
+  background-color: #f7f7f7;
+  padding: 20px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+/* Input styles */
+.url-input {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+/* Shorten button styles */
+.shorten-button {
+  background-color: #4b3f6b;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+
+/* Shortened URL container styles */
+.short-url-container {
+  background-color: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+/* Shortened URL text styles */
+.short-url-text {
+  font-weight: bold;
+  color: #333;
+  margin-bottom: 10px;
+}
+
+/* Shortened URL styles */
+.short-url {
+  color: #00a6ff;
+  word-wrap: break-word;
+}
+
+/* Copy Link button styles */
+.copy-link-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 20px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+/* Platform select styles */
+.platform-select {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+/* Share button styles */
+.share-button {
+  background-color: #4b3f6b;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 20px;
+  cursor: pointer;
+}

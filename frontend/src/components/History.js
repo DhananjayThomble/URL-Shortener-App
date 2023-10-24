@@ -1,12 +1,12 @@
-import React, { useRef } from "react";
-import Container from "react-bootstrap/Container";
-import Row from "react-bootstrap/Row";
-import { useState, useEffect } from "react";
-import axios from "axios";
-import { toast } from "react-toastify";
-import ExportToExcel from "./ExportToExcel";
-import { Button, Dropdown, Form } from "react-bootstrap";
-import Pagination from "./pagination";
+import React, { useRef } from 'react';
+import Container from 'react-bootstrap/Container';
+import Row from 'react-bootstrap/Row';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
+import { toast } from 'react-toastify';
+import ExportToExcel from './ExportToExcel';
+import { Button, Dropdown, Form } from 'react-bootstrap';
+import Pagination from './pagination';
 
 function History() {
   const [history, setHistory] = useState([]);
@@ -32,14 +32,14 @@ function History() {
     // console.log(process.env.REACT_APP_API_ENDPOINT);
     const fetchData = async () => {
       try {
-        toastId.current = toast.loading("Fetching History...");
+        toastId.current = toast.loading('Fetching History...');
         const result = await axios.get(
           `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
           {
             headers: {
-              Authorization: `Bearer ${localStorage.getItem("token")}`,
+              Authorization: `Bearer ${localStorage.getItem('token')}`,
             },
-          }
+          },
         );
         setHistory(result.data.urlArray);
         historyCategory(result.data.urlArray);
@@ -47,39 +47,39 @@ function History() {
         // console.log(`history api is called`);
         if (result.data.urlArray.length === 0) {
           toast.update(toastId.current, {
-            render: "No History Found",
-            type: "info",
+            render: 'No History Found',
+            type: 'info',
             isLoading: false,
             autoClose: 2000,
           });
         }
 
         toast.update(toastId.current, {
-          render: "History Fetched",
-          type: "success",
+          render: 'History Fetched',
+          type: 'success',
           isLoading: false,
           autoClose: 2000,
         });
       } catch (error) {
         if (error.response.status === 401) {
           toast.update(toastId.current, {
-            render: "Please Login First",
-            type: "error",
+            render: 'Please Login First',
+            type: 'error',
             isLoading: false,
             autoClose: 2000,
           });
         }
 
         toast.update(toastId.current, {
-          render: "Something went wrong",
-          type: "error",
+          render: 'Something went wrong',
+          type: 'error',
           isLoading: false,
           autoClose: 2000,
         });
       }
     };
-    if (localStorage.getItem("token") === null) {
-      toast.warning("Please Login First");
+    if (localStorage.getItem('token') === null) {
+      toast.warning('Please Login First');
     } else {
       fetchData();
     }
@@ -89,44 +89,44 @@ function History() {
     selectedFilter &&
       (async () => {
         try {
-          toastId.current = toast.loading("Fetching History...");
+          toastId.current = toast.loading('Fetching History...');
           const result = await axios.get(
             `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
             {
               headers: {
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
+                Authorization: `Bearer ${localStorage.getItem('token')}`,
               },
-            }
+            },
           );
           setHistory(result.data.urlArray);
           // console.log(`length of history array is ${result.data.urlArray.length}`);
           if (result.data.urlArray.length === 0) {
             toast.update(toastId.current, {
-              render: "No History Found",
-              type: "info",
+              render: 'No History Found',
+              type: 'info',
               isLoading: false,
               autoClose: 2000,
             });
           }
           toast.update(toastId.current, {
-            render: "History Fetched",
-            type: "success",
+            render: 'History Fetched',
+            type: 'success',
             isLoading: false,
             autoClose: 2000,
           });
         } catch (error) {
           if (error.response.status === 401) {
             toast.update(toastId.current, {
-              render: "Please Login First",
-              type: "error",
+              render: 'Please Login First',
+              type: 'error',
               isLoading: false,
               autoClose: 2000,
             });
           }
 
           toast.update(toastId.current, {
-            render: "Something went wrong",
-            type: "error",
+            render: 'Something went wrong',
+            type: 'error',
             isLoading: false,
             autoClose: 2000,
           });
@@ -135,12 +135,12 @@ function History() {
   }, [selectedFilter]);
 
   return (
-    <Container className={"pb-5"}>
+    <Container className={'pb-5'}>
       <h3 className="my-3">URLs</h3>
       <div className="d-md-flex justify-content-between sm:block text-sm">
         <Dropdown>
           <Dropdown.Toggle id="dropdown-basic" className="my-2">
-            {selectedFilter || "Select Category"}
+            {selectedFilter || 'Select Category'}
           </Dropdown.Toggle>
           <Dropdown.Menu>
             {categoryArray.map((item, index) => {
@@ -170,7 +170,7 @@ function History() {
               onClick={(e) => {
                 e.preventDefault();
                 setCategoryArray((prev) => [...prev, addCategory]);
-                setAddCategory("");
+                setAddCategory('');
               }}
             >
               Add

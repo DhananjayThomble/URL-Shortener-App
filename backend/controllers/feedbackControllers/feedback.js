@@ -1,7 +1,7 @@
 // Route for submitting feedback
-import {  validationResult } from 'express-validator';
-import Feedback from '../../models/Feedback.js'
-import User from "../../models/UserModel.js";
+import { validationResult } from 'express-validator';
+import Feedback from '../../models/Feedback.js';
+import User from '../../models/UserModel.js';
 export const submitFeedback = async (req, res) => {
   try {
     // Implement validation using express-validator
@@ -18,14 +18,11 @@ export const submitFeedback = async (req, res) => {
     // Destructure name and email from user
     const { name, email } = user;
     // Destructure data from the request body
-   
+
     const { message, rating } = req.body;
 
-   
-    
-
     // Create a new feedback instance with email, username, message, and rating
-    const feedback = new Feedback({ name ,email,  message, rating });
+    const feedback = new Feedback({ name, email, message, rating });
     await feedback.save();
 
     return res.status(200).send('Feedback submitted successfully.');
