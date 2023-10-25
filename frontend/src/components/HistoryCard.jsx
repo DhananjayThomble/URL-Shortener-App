@@ -26,7 +26,7 @@ function HistoryCard({
   const deleteUrl = async () => {
     try {
       const result = await axios.delete(
-        `${process.env.REACT_APP_API_ENDPOINT}/api/delete/${urlId}`,
+        `${import.meta.env.VITE_API_ENDPOINT}/api/delete/${urlId}`,
         {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         },
@@ -53,7 +53,7 @@ function HistoryCard({
     try {
       console.log(`update category api is called`);
       const result = await axios.put(
-        `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/`,
+        `${import.meta.env.VITE_API_ENDPOINT}/api/url/filter/`,
         {
           shortUrl: shortUrl,
           category: e.target.innerText,
@@ -93,7 +93,7 @@ function HistoryCard({
         <Card.Body>
           <Card.Title
             as={'h6'}
-          >{`${process.env.REACT_APP_API_ENDPOINT}/u/${shortUrl}`}</Card.Title>
+          >{`${import.meta.env.VITE_API_ENDPOINT}/u/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
         </Card.Body>
         <div className="card-footer text-body-secondary d-flex gap-2 justify-content-around">
@@ -117,7 +117,7 @@ function HistoryCard({
             onClick={() => {
               //    open in new tab
               window.open(
-                `${process.env.REACT_APP_API_ENDPOINT}/u/${shortUrl}`,
+                `${import.meta.env.VITE_API_ENDPOINT}/u/${shortUrl}`,
                 '_blank',
               );
               //  increase visit count

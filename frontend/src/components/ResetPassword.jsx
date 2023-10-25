@@ -28,7 +28,7 @@ function ResetPassword() {
     try {
       // Make a POST request to your backend API to reset the password
       const response = await fetch(
-        `${process.env.REACT_APP_API_ENDPOINT}/auth/reset-password`,
+        `${import.meta.env.VITE_API_ENDPOINT}/auth/reset-password`,
         {
           method: 'POST',
           headers: {
