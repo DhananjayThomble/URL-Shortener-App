@@ -6,7 +6,7 @@ import axios from 'axios';
 import { toast } from 'react-toastify';
 import ExportToExcel from './ExportToExcel';
 import { Button, Dropdown, Form } from 'react-bootstrap';
-import Pagination from './pagination';
+import Pagination from './Pagination';
 
 function History() {
   const [history, setHistory] = useState([]);
@@ -29,12 +29,12 @@ function History() {
 
   useEffect(() => {
     // console.log(`history api is called`);
-    // console.log(process.env.REACT_APP_API_ENDPOINT);
+    // console.log(import.meta.env.VITE_API_ENDPOINT);
     const fetchData = async () => {
       try {
         toastId.current = toast.loading('Fetching History...');
         const result = await axios.get(
-          `${process.env.REACT_APP_API_ENDPOINT}/api/history`,
+          `${import.meta.env.VITE_API_ENDPOINT}/api/history`,
           {
             headers: {
               Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -91,7 +91,7 @@ function History() {
         try {
           toastId.current = toast.loading('Fetching History...');
           const result = await axios.get(
-            `${process.env.REACT_APP_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
+            `${import.meta.env.VITE_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
             {
               headers: {
                 Authorization: `Bearer ${localStorage.getItem('token')}`,

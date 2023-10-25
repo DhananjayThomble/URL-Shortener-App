@@ -14,7 +14,7 @@ import './Footer.css';
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
+  const URL = `${import.meta.env.VITE_API_ENDPOINT}`;
   const navigate = useNavigate();
   const context = useContext(UserContext);
   let toastId = null;

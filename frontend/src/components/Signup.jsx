@@ -13,7 +13,7 @@ function Signup() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
-  const URL = `${process.env.REACT_APP_API_ENDPOINT}`;
+  const URL = `${import.meta.env.VITE_API_ENDPOINT}`;
   const navigate = useNavigate();
   let toastId = null;
 

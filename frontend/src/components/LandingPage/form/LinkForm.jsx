@@ -19,7 +19,7 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
       // console.log("Original URL:", link);
 
       // call axios post request
-      const ApiEndpoint = `${process.env.REACT_APP_API_ENDPOINT}/api/url`;
+      const ApiEndpoint = `${import.meta.env.VITE_API_ENDPOINT}/api/url`;
 
       try {
         const response = await axios.post(

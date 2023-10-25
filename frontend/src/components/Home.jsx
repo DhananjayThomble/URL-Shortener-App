@@ -9,7 +9,7 @@ function Home() {
   const [shortUrl, setShortUrl] = useState('');
   const [name, setName] = useState(localStorage.getItem('name') || 'Guest');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const URL = `${process.env.REACT_APP_API_ENDPOINT}/api/url`;
+  const URL = `${import.meta.env.VITE_API_ENDPOINT}/api/url`;
 
   useEffect(() => {
     const token = localStorage.getItem('token');
