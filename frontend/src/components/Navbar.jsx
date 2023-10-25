@@ -140,7 +140,7 @@ function Navbar() {
                       >
                         {page.icon}
 
-                        <Typography textAlign="center">{page.name}</Typography>
+                        <Typography m="5px" textAlign="center">{page.name}</Typography>
                       </MenuItem>
                     </NavLink>
                   ))
@@ -160,7 +160,7 @@ function Navbar() {
                     >
                       <MenuItem onClick={handleCloseNavMenu}>
                         {page.icon}
-                        <Typography textAlign="center">{page.name}</Typography>
+                        <Typography m="5px" textAlign="center">{page.name}</Typography>
                       </MenuItem>
                     </NavLink>
                   ))}
@@ -212,7 +212,7 @@ function Navbar() {
                     }}
                   >
                     <MenuItem onClick={handleCloseNavMenu}>
-                      <Typography textAlign="center">
+                      <Typography display="flex" gap="4px" textAlign="center">
                         {page.icon}
                         {page.name}
                       </Typography>{' '}
@@ -235,7 +235,7 @@ function Navbar() {
                     }}
                   >
                     <MenuItem onClick={handleCloseNavMenu}>
-                      <Typography textAlign="center">
+                      <Typography display="flex" gap="4px" textAlign="center">
                         {page.icon}
                         {page.name}
                       </Typography>{' '}
