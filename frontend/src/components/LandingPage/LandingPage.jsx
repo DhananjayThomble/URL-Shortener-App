@@ -1,9 +1,9 @@
-import "./LandingPage.css";
-import { createTheme, ThemeProvider } from "@mui/material";
-import HomePage from "./HomePage";
-import appTheme from "./appTheme";
-import FooterSegment from "./footer_segment/FooterSegment";
-import React from "react";
+import './LandingPage.css';
+import { createTheme, ThemeProvider } from '@mui/material';
+import HomePage from './HomePage';
+import appTheme from './appTheme';
+import FooterSegment from './footer_segment/FooterSegment';
+import React from 'react';
 
 const theme = createTheme(appTheme);
 

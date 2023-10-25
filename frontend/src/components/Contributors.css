@@ -1,161 +1,157 @@
 @import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
-.contributors{
-    font-family: "poppins";
+.contributors {
+  font-family: 'poppins';
 }
 
-.contributors-main{
-    display: flex;
-    align-items: center;
-    padding: 0px 0px;
-    width: 80vw;
-    margin: auto;
-    justify-content: space-around;
+.contributors-main {
+  display: flex;
+  align-items: center;
+  padding: 0px 0px;
+  width: 80vw;
+  margin: auto;
+  justify-content: space-around;
 }
-.contributors-main .contributors-animation{
-    width: 100%;
+.contributors-main .contributors-animation {
+  width: 100%;
+  min-width: 300px;
+  flex: 1;
+}
+.contributors .contributrers-main-text {
+  flex: 1;
+}
+.contributors .contributrers-main-text h1 {
+  text-align: left;
+  font-size: 60px;
+  font-weight: 800;
+}
+.contributors .contributrers-main-text h2 {
+  font-size: 20px;
+  font-weight: 500;
+}
+.contributors .contributrers-main-text h3 {
+  font-size: 15px;
+  color: grey;
+  font-weight: 400;
+}
+
+.contributors .title {
+  font-size: 50px;
+  font-weight: 800;
+  width: 90vw;
+  margin: auto;
+  display: flex;
+  align-items: center;
+}
+
+.contributors .title .circle {
+  font-size: 30px;
+  margin-right: 20px;
+  color: rgb(75, 63, 107);
+}
+
+.contributors .contributer-container {
+  width: 90vw;
+  margin: auto;
+  margin-top: 40px;
+  display: grid;
+  grid-template-columns: auto auto auto auto;
+  grid-auto-flow: row;
+  gap: 20px;
+}
+
+.profile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px;
+  border-radius: 20px;
+}
+
+.profile:hover {
+  cursor: pointer;
+  background-color: rgba(75, 63, 107, 0.235);
+}
+
+.profile img {
+  height: auto;
+  width: 10rem;
+  border-radius: 50%;
+}
+
+.profile h1 {
+  font-size: 1rem;
+  margin-top: 20px;
+  color: black;
+  text-align: center;
+}
+
+.loading {
+  width: 50px;
+  height: 50px;
+  margin: 20px auto;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid rgb(75, 63, 107);
+  border-radius: 50%;
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@media screen and (max-width: 800px) {
+  .contributors-main {
+    /* background-color: #ff5722; */
+    flex-direction: column-reverse;
+    justify-content: center;
+    width: 90vw;
+  }
+
+  .contributors-main .contributors-animation {
     min-width: 300px;
-    flex: 1;
-}
-.contributors .contributrers-main-text{
-    flex: 1;
-}
-.contributors .contributrers-main-text h1{
-    text-align: left;
-    font-size: 60px;
-    font-weight: 800;
-}
-.contributors .contributrers-main-text h2{
-    font-size: 20px;
-    font-weight: 500;
-}
-.contributors .contributrers-main-text h3{
-    font-size: 15px;
-    color: grey;
-    font-weight: 400;
-}
-
-.contributors .title{
-    font-size: 50px;
-    font-weight: 800;
-    width: 90vw;
-    margin: auto;
-    display: flex;
-    align-items: center;
-}
-
-.contributors .title .circle{
+    width: 50%;
+    /* background-color: red; */
+  }
+  .contributors-main .contributrers-main-text {
+    padding-top: 40px;
+    text-align: center;
+  }
+  .contributors-main .contributrers-main-text h1 {
     font-size: 30px;
-    margin-right: 20px;
+    text-align: center;
+  }
+  .contributors .title {
+    font-size: 25px;
+    margin-right: 10px;
+  }
+  .contributors .title .circle {
+    font-size: 20px;
+    margin-right: 10px;
     color: rgb(75, 63, 107);
-}
-
-.contributors .contributer-container{
-    width: 90vw;
+  }
+  .contributors .contributer-container {
+    /* background-color: red; */
+    width: 100vw;
+    max-width: 99vw;
     margin: auto;
     margin-top: 40px;
     display: grid;
-    grid-template-columns: auto auto auto auto;
+    grid-template-columns: auto auto;
     grid-auto-flow: row;
-    gap: 20px;
-}
-
-.profile{
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 10px;
-    border-radius: 20px;
-}
-
-.profile:hover{
-    cursor: pointer;
-    background-color: rgba(75, 63, 107, 0.235);
-}
-
-.profile img{
-    height: auto;
-    width: 10rem;
-    border-radius: 50%;
-}
-
-.profile h1{
-    font-size: 1rem;
-    margin-top: 20px;
-    color: black;
-    text-align: center;
-}
-
-
-.loading {
-    width: 50px;
-    height: 50px;
-    margin: 20px auto;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid rgb(75, 63, 107);
-    border-radius: 50%;
-    animation: spin 1.5s linear infinite;
+    gap: 0px;
+    overflow: hidden;
+    padding: 0px 10px;
   }
-  
-  @keyframes spin {
-    0% {
-      transform: rotate(0deg);
-    }
-  
-    100% {
-      transform: rotate(360deg);
-    }
+  .profile img {
+    width: 7rem;
   }
-
-
-  @media screen and (max-width:800px) {
-    .contributors-main{
-        /* background-color: #ff5722; */
-        flex-direction: column-reverse;
-        justify-content: center;
-        width: 90vw;
-    }
-
-    .contributors-main .contributors-animation{
-        min-width: 300px;
-        width: 50%;
-        /* background-color: red; */
-    }
-    .contributors-main .contributrers-main-text{
-        padding-top: 40px;
-        text-align: center;
-    }
-    .contributors-main .contributrers-main-text h1{
-        font-size: 30px;
-        text-align: center;
-    }
-    .contributors .title{
-        font-size: 25px;
-        margin-right: 10px;
-    }
-    .contributors .title .circle{
-        font-size: 20px;
-        margin-right: 10px;
-        color: rgb(75, 63, 107);
-    }
-    .contributors .contributer-container{
-        /* background-color: red; */
-        width: 100vw;
-        max-width: 99vw;
-        margin: auto;
-        margin-top: 40px;
-        display: grid;
-        grid-template-columns: auto auto;
-        grid-auto-flow: row;
-        gap: 0px;
-        overflow: hidden;
-        padding: 0px 10px;
-    }
-    .profile img{
-        width: 7rem;
-    }
-    .profile h1{
-        font-size: 0.8rem;
-    }
-
-
+  .profile h1 {
+    font-size: 0.8rem;
   }
+}

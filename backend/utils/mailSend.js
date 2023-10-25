@@ -1,11 +1,11 @@
-import nodemailer from "nodemailer"
-import User from "../models/UserModel.js"
-import TokenModel from "../models/Tokenmodel.js";
-import dotenv from "dotenv"
-import crypto from "crypto";
-import fs from "fs";
-import ejs from "ejs";
-dotenv.config()
+import nodemailer from 'nodemailer';
+import User from '../models/UserModel.js';
+import TokenModel from '../models/Tokenmodel.js';
+import dotenv from 'dotenv';
+import crypto from 'crypto';
+import fs from 'fs';
+import ejs from 'ejs';
+dotenv.config();
 
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
@@ -17,7 +17,6 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_HOST_PASSWORD,
   },
 });
-
 
 export const sendEmail = async (options) => {
   return new Promise((resolve, reject) => {
@@ -49,14 +48,13 @@ export const sendEmail = async (options) => {
   });
 };
 
-
 // <--------------------Sending email to the user ----------------------------------->
 
 export const sendWelcomeEmail = async (name, email, userID) => {
   try {
     const verifyEmailTemplate = fs.readFileSync(
-      "./views/welcome_email_template.ejs",
-      "utf-8"
+      './views/welcome_email_template.ejs',
+      'utf-8',
     );
 
     const dataToRender = {
@@ -66,8 +64,8 @@ export const sendWelcomeEmail = async (name, email, userID) => {
     const htmlTemplate = ejs.render(verifyEmailTemplate, dataToRender);
 
     const options = {
-      from: "SnapURL@dturl.live",
-      subject: "Welcome to SnapURL !!!",
+      from: 'SnapURL@dturl.live',
+      subject: 'Welcome to SnapURL !!!',
       recipient: email,
       html: htmlTemplate,
     };
@@ -85,10 +83,10 @@ export const sendVerificationEmail = async (email) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-      throw new Error("User not found");
+      throw new Error('User not found');
     }
 
-    const token = crypto.randomBytes(32).toString("hex"); // Generate a random token
+    const token = crypto.randomBytes(32).toString('hex'); // Generate a random token
     const expiration = Date.now() + 24 * 60 * 60 * 1000; // Token expires in 24 hours
 
     const verificationToken = new TokenModel({
@@ -99,16 +97,16 @@ export const sendVerificationEmail = async (email) => {
 
     await verificationToken.save();
 
-    const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`;  // TODO:Replace this with frontend route
+    const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`; // TODO:Replace this with frontend route
     const emailOptions = {
-      from: "SnapURL@dturl.live",
-      subject: "Email Verification for SnapURL",
+      from: 'SnapURL@dturl.live',
+      subject: 'Email Verification for SnapURL',
       recipient: email,
       html: `Click <a href="${verificationLink}">here</a> to verify your email address.`,
     };
 
     await sendEmail(emailOptions);
   } catch (error) {
-    console.error("Error sending verification email:", error);
+    console.error('Error sending verification email:', error);
   }
 };

@@ -1,19 +1,26 @@
-import React, { useState, useEffect } from "react";
-import { Container, Card, Typography, TextField, Button,Box } from "@mui/material";
-import { useLocation } from "react-router-dom";
+import React, { useState, useEffect } from 'react';
+import {
+  Container,
+  Card,
+  Typography,
+  TextField,
+  Button,
+  Box,
+} from '@mui/material';
+import { useLocation } from 'react-router-dom';
 
 function ResetPassword() {
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
-  const token = queryParams.get("token");
+  const token = queryParams.get('token');
 
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
     if (!token) {
-      setMessage("Invalid or missing token.");
+      setMessage('Invalid or missing token.');
     }
   }, [token]);
 
@@ -23,24 +30,24 @@ function ResetPassword() {
       const response = await fetch(
         `${process.env.REACT_APP_API_ENDPOINT}/auth/reset-password`,
         {
-          method: "POST",
+          method: 'POST',
           headers: {
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({ token, password }),
-        }
+        },
       );
 
       if (response.status === 200) {
-        setMessage("Password reset successful.");
+        setMessage('Password reset successful.');
       } else {
         // Handle error response from the backend
         const data = await response.json();
-        setMessage(data.error || "Password reset failed.");
+        setMessage(data.error || 'Password reset failed.');
       }
     } catch (error) {
-      console.error("Error resetting password:", error);
-      setMessage("Password reset failed.");
+      console.error('Error resetting password:', error);
+      setMessage('Password reset failed.');
     }
   };
 
@@ -48,17 +55,16 @@ function ResetPassword() {
     <Container
       maxWidth="sm"
       style={{
-        minHeight: "90vh",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center", 
-        alignItems: "center", 
+        minHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
       }}
     >
       <Card>
         <Box m={2}>
-          <div style={{ padding: "16px" }}>
-          
+          <div style={{ padding: '16px' }}>
             <Typography variant="h4" component="h2" gutterBottom>
               Reset Password
             </Typography>
@@ -74,7 +80,6 @@ function ResetPassword() {
                 />
               </Box>
               <Box mb={2}>
-               
                 <TextField
                   label="Confirm Password"
                   type="password"
@@ -83,11 +88,10 @@ function ResetPassword() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                 />
-              </Box >
-          
+              </Box>
 
               <Button
-                style={{backgroundColor:"#4B3F6B"}}
+                style={{ backgroundColor: '#4B3F6B' }}
                 variant="contained"
                 // color="primary"
                 fullWidth
@@ -96,7 +100,7 @@ function ResetPassword() {
                 Reset Password
               </Button>
             </form>
-            <Typography variant="body1" style={{ marginTop: "16px" }}>
+            <Typography variant="body1" style={{ marginTop: '16px' }}>
               {message}
             </Typography>
           </div>

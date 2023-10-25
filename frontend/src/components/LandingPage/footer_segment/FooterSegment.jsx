@@ -1,6 +1,6 @@
-import React from "react";
-import BoostBox from "./BoostBox";
-import Footer from "./Footer";
+import React from 'react';
+import BoostBox from './BoostBox';
+import Footer from './Footer';
 
 const FooterSegment = () => {
   return (

@@ -18,12 +18,21 @@ const Sharepages = () => {
 
   const handleShare = () => {
     if (platform === 'twitter') {
-      window.open(`https://twitter.com/intent/tweet?text=${shortUrl}`, '_blank');
+      window.open(
+        `https://twitter.com/intent/tweet?text=${shortUrl}`,
+        '_blank',
+      );
     } else if (platform === 'facebook') {
-      window.open(`https://www.facebook.com/sharer/sharer.php?u=${shortUrl}`, '_blank');
+      window.open(
+        `https://www.facebook.com/sharer/sharer.php?u=${shortUrl}`,
+        '_blank',
+      );
     } else if (platform === 'linkedin') {
       // Share on LinkedIn
-      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${shortUrl}`, '_blank');
+      window.open(
+        `https://www.linkedin.com/sharing/share-offsite/?url=${shortUrl}`,
+        '_blank',
+      );
     } else if (platform === 'whatsapp') {
       window.open(`https://api.whatsapp.com/send?text=${shortUrl}`, '_blank');
     } else {
@@ -56,7 +65,11 @@ const Sharepages = () => {
             </button>
           </CopyToClipboard>
 
-          <select className="platform-select" value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          <select
+            className="platform-select"
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+          >
             <option value="">Select a platform to share</option>
             <option value="twitter">Twitter</option>
             <option value="facebook">Facebook</option>

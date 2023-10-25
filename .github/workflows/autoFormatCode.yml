@@ -1,0 +1,45 @@
+name: Auto Format Code with Prettier
+# This action automatically formats code with Prettier when a push is made to the main branch.
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "14.x"
+
+      - name: Install dependencies
+        run: npm install --prefix backend && npm install --prefix frontend
+
+      - name: Run Prettier in /backend
+        run: npm run format --prefix backend
+
+      - name: Run Prettier in /frontend
+        run: npm run format --prefix frontend
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          git diff --exit-code --quiet || echo "::set-output name=changes::true"
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit files
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          git add .
+          git commit -m "Auto formatting with Prettier"
+          git push

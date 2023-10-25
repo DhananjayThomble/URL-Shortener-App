@@ -1,45 +1,45 @@
-import * as React from "react";
-import AppBar from "@mui/material/AppBar";
-import Box from "@mui/material/Box";
-import Toolbar from "@mui/material/Toolbar";
-import IconButton from "@mui/material/IconButton";
-import Typography from "@mui/material/Typography";
-import Menu from "@mui/material/Menu";
-import MenuIcon from "@mui/icons-material/Menu";
-import Container from "@mui/material/Container";
-import Avatar from "@mui/material/Avatar";
-import Tooltip from "@mui/material/Tooltip";
-import MenuItem from "@mui/material/MenuItem";
-import OfflineShareIcon from "@mui/icons-material/OfflineShare";
-import InsertLinkIcon from "@mui/icons-material/InsertLink";
-import HomeIcon from "@mui/icons-material/Home";
-import InfoIcon from "@mui/icons-material/Info";
-import LoginIcon from "@mui/icons-material/Login";
-import PersonAddIcon from "@mui/icons-material/PersonAdd";
-import { useContext } from "react";
-import UserContext from "../context/UserContext";
-import { Link, NavLink } from "react-router-dom";
+import * as React from 'react';
+import AppBar from '@mui/material/AppBar';
+import Box from '@mui/material/Box';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import Menu from '@mui/material/Menu';
+import MenuIcon from '@mui/icons-material/Menu';
+import Container from '@mui/material/Container';
+import Avatar from '@mui/material/Avatar';
+import Tooltip from '@mui/material/Tooltip';
+import MenuItem from '@mui/material/MenuItem';
+import OfflineShareIcon from '@mui/icons-material/OfflineShare';
+import InsertLinkIcon from '@mui/icons-material/InsertLink';
+import HomeIcon from '@mui/icons-material/Home';
+import InfoIcon from '@mui/icons-material/Info';
+import LoginIcon from '@mui/icons-material/Login';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import { useContext } from 'react';
+import UserContext from '../context/UserContext';
+import { Link, NavLink } from 'react-router-dom';
 
 const pages = [
-  { name: "Home", icon: <HomeIcon /> },
-  { name: "About", icon: <InfoIcon /> },
-  { name: "Contributors", icon: <PersonAddIcon /> },
-  { name: "Login", icon: <LoginIcon /> },
-  { name: "Linkinbio", icon: <OfflineShareIcon /> },
-  { name: "Signup", icon: <PersonAddIcon /> },
+  { name: 'Home', icon: <HomeIcon /> },
+  { name: 'About', icon: <InfoIcon /> },
+  { name: 'Contributors', icon: <PersonAddIcon /> },
+  { name: 'Login', icon: <LoginIcon /> },
+  { name: 'Linkinbio', icon: <OfflineShareIcon /> },
+  { name: 'Signup', icon: <PersonAddIcon /> },
 ];
 
 const pagesAfterLogin = [
-  { name: "Home", icon: <HomeIcon /> },
-  { name: "About", icon: <InfoIcon /> },
-  { name: "Contributors", icon: <PersonAddIcon /> },
-  { name: "Linkinbio", icon: <OfflineShareIcon /> },
-  { name: "History", icon: <LoginIcon /> },
-  { name: "Logout", icon: <PersonAddIcon /> },
+  { name: 'Home', icon: <HomeIcon /> },
+  { name: 'About', icon: <InfoIcon /> },
+  { name: 'Contributors', icon: <PersonAddIcon /> },
+  { name: 'Linkinbio', icon: <OfflineShareIcon /> },
+  { name: 'History', icon: <LoginIcon /> },
+  { name: 'Logout', icon: <PersonAddIcon /> },
 ];
 
 // const settings = ["Profile", "Account", "Dashboard", "Logout"];
-const settings = ["Logout"];
+const settings = ['Logout'];
 
 function Navbar() {
   const context = useContext(UserContext);
@@ -69,28 +69,28 @@ function Navbar() {
   };
 
   return (
-    <AppBar style={{ backgroundColor: "#4B3F6B" }} position="static">
+    <AppBar style={{ backgroundColor: '#4B3F6B' }} position="static">
       <Container maxWidth="xl">
         <Toolbar disableGutters>
-          <InsertLinkIcon sx={{ display: { xs: "none", md: "flex" }, mr: 1 }} />
-          <Link style={{ color: "white", textDecoration: "none" }} to="/Home">
+          <InsertLinkIcon sx={{ display: { xs: 'none', md: 'flex' }, mr: 1 }} />
+          <Link style={{ color: 'white', textDecoration: 'none' }} to="/Home">
             <Typography
               variant="h6"
               noWrap
               sx={{
                 mr: 2,
-                display: { xs: "none", md: "flex" },
-                fontFamily: "monospace",
+                display: { xs: 'none', md: 'flex' },
+                fontFamily: 'monospace',
                 fontWeight: 700,
-                letterSpacing: ".1rem",
-                color: "inherit",
-                textDecoration: "none",
+                letterSpacing: '.1rem',
+                color: 'inherit',
+                textDecoration: 'none',
               }}
             >
               SnapURL
             </Typography>
           </Link>
-          <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
+          <Box sx={{ flexGrow: 1, display: { xs: 'flex', md: 'none' } }}>
             <IconButton
               size="large"
               aria-label="account of current user"
@@ -105,38 +105,38 @@ function Navbar() {
               id="menu-appbar"
               anchorEl={anchorElNav}
               anchorOrigin={{
-                vertical: "bottom",
-                horizontal: "left",
+                vertical: 'bottom',
+                horizontal: 'left',
               }}
               keepMounted
               transformOrigin={{
-                vertical: "top",
-                horizontal: "left",
+                vertical: 'top',
+                horizontal: 'left',
               }}
               open={Boolean(anchorElNav)}
               onClose={handleCloseNavMenu}
               sx={{
-                display: { xs: "block", md: "none" },
+                display: { xs: 'block', md: 'none' },
               }}
             >
               {user === null
                 ? pages.map((page) => (
                     <NavLink
                       key={page.name}
-                      to={"/" + page.name}
+                      to={'/' + page.name}
                       style={({ isActive }) => {
                         return isActive
                           ? {
-                              color: "#51087E",
-                              background: "#51087E",
-                              borderRadius: "5px",
+                              color: '#51087E',
+                              background: '#51087E',
+                              borderRadius: '5px',
                             }
-                          : { color: "black" };
+                          : { color: 'black' };
                       }}
                     >
                       <MenuItem
                         onClick={handleCloseNavMenu}
-                        selected={page.name === "Home"}
+                        selected={page.name === 'Home'}
                       >
                         {page.icon}
 
@@ -146,16 +146,16 @@ function Navbar() {
                   ))
                 : pagesAfterLogin.map((page) => (
                     <NavLink
-                      to={"/" + page.name}
+                      to={'/' + page.name}
                       key={page.name}
                       style={({ isActive }) => {
                         return isActive
                           ? {
-                              color: "#51087E",
-                              background: "#51087E",
-                              borderRadius: "5px",
+                              color: '#51087E',
+                              background: '#51087E',
+                              borderRadius: '5px',
                             }
-                          : { color: "black" };
+                          : { color: 'black' };
                       }}
                     >
                       <MenuItem onClick={handleCloseNavMenu}>
@@ -168,77 +168,77 @@ function Navbar() {
           </Box>
 
           {/* For lg */}
-          <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
+          <Box sx={{ flexGrow: 1, display: { xs: 'flex', md: 'none' } }}>
             <Link
-              style={{ color: "white", textDecoration: "none" }}
-              to={"/Home"}
+              style={{ color: 'white', textDecoration: 'none' }}
+              to={'/Home'}
             >
               <Typography
                 variant="h5"
                 noWrap
                 sx={{
                   mr: 2,
-                  display: { xs: "flex", md: "none" },
+                  display: { xs: 'flex', md: 'none' },
                   flexGrow: 1,
-                  fontFamily: "monospace",
+                  fontFamily: 'monospace',
                   fontWeight: 700,
-                  letterSpacing: ".3rem",
-                  color: "inherit",
-                  textDecoration: "none",
+                  letterSpacing: '.3rem',
+                  color: 'inherit',
+                  textDecoration: 'none',
                 }}
               >
                 <InsertLinkIcon
-                  sx={{ display: { xs: "flex", md: "none" }, mr: 1, mt: 0.5 }}
+                  sx={{ display: { xs: 'flex', md: 'none' }, mr: 1, mt: 0.5 }}
                 />
                 SnapURL
               </Typography>
             </Link>
           </Box>
-          <Box sx={{ flexGrow: 1, display: { xs: "none", md: "flex" } }}>
+          <Box sx={{ flexGrow: 1, display: { xs: 'none', md: 'flex' } }}>
             {user === null
               ? pages.map((page) => (
                   <NavLink
                     key={page.name}
-                    to={"/" + page.name}
+                    to={'/' + page.name}
                     style={({ isActive }) => {
                       return isActive
                         ? {
-                            color: "white",
-                            background: "#51087E",
-                            padding: "0.1rem",
-                            borderRadius: "5px",
+                            color: 'white',
+                            background: '#51087E',
+                            padding: '0.1rem',
+                            borderRadius: '5px',
                           }
-                        : { color: "white" };
+                        : { color: 'white' };
                     }}
                   >
                     <MenuItem onClick={handleCloseNavMenu}>
                       <Typography textAlign="center">
                         {page.icon}
                         {page.name}
-                      </Typography>{" "}
+                      </Typography>{' '}
                     </MenuItem>
                   </NavLink>
                 ))
               : pagesAfterLogin.map((page) => (
                   <NavLink
-                    to={"/" + page.name}
+                    to={'/' + page.name}
                     key={page.name}
                     style={({ isActive }) => {
                       return isActive
                         ? {
-                            color: "white",
-                            background: "#51087E",
-                            padding: "0.1rem",
-                            borderRadius: "5px",
+                            color: 'white',
+                            background: '#51087E',
+                            padding: '0.1rem',
+                            borderRadius: '5px',
                           }
-                        : { color: "white" };
+                        : { color: 'white' };
                     }}
                   >
                     <MenuItem onClick={handleCloseNavMenu}>
                       <Typography textAlign="center">
                         {page.icon}
                         {page.name}
-                      </Typography>{" "}
+                      </Typography>{' '}
                     </MenuItem>
                   </NavLink>
                 ))}
@@ -251,23 +251,23 @@ function Navbar() {
                 </IconButton>
               </Tooltip>
               <Menu
-                sx={{ mt: "45px" }}
+                sx={{ mt: '45px' }}
                 id="menu-appbar"
                 anchorEl={anchorElUser}
                 anchorOrigin={{
-                  vertical: "top",
-                  horizontal: "right",
+                  vertical: 'top',
+                  horizontal: 'right',
                 }}
                 keepMounted
                 transformOrigin={{
-                  vertical: "top",
-                  horizontal: "right",
+                  vertical: 'top',
+                  horizontal: 'right',
                 }}
                 open={Boolean(anchorElUser)}
                 onClose={handleCloseUserMenu}
               >
                 {settings.map((setting) => (
-                  <NavLink to={"/" + setting} key={setting}>
+                  <NavLink to={'/' + setting} key={setting}>
                     <MenuItem key={setting} onClick={handleCloseUserMenu}>
                       <Typography textAlign="center">{setting}</Typography>
                     </MenuItem>

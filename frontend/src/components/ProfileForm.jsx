@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FaUser, FaFileImage, FaInstagram, FaLinkedin, FaGithub, FaFacebook, FaCopy, FaTrash, FaQrcode } from 'react-icons/fa';
+import {
+  FaUser,
+  FaFileImage,
+  FaInstagram,
+  FaLinkedin,
+  FaGithub,
+  FaFacebook,
+  FaCopy,
+  FaTrash,
+  FaQrcode,
+} from 'react-icons/fa';
 import QRCode from 'qrcode.react';
-import "./linkinbio.css"
+import './linkinbio.css';
 
 function ProfileForm() {
   const navigate = useNavigate();
@@ -53,11 +63,14 @@ function ProfileForm() {
     });
 
     // Use the Clipboard API to copy the text
-    navigator.clipboard.writeText(detailsToCopy).then(() => {
-      alert('Details copied to clipboard!');
-    }).catch((err) => {
-      console.error('Failed to copy to clipboard:', err);
-    });
+    navigator.clipboard
+      .writeText(detailsToCopy)
+      .then(() => {
+        alert('Details copied to clipboard!');
+      })
+      .catch((err) => {
+        console.error('Failed to copy to clipboard:', err);
+      });
   };
 
   const handleDiscard = () => {
@@ -84,7 +97,7 @@ function ProfileForm() {
   };
 
   return (
-    <div className='profile-form'>
+    <div className="profile-form">
       <div className="navbar">
         <button className="navbar-button" onClick={handleCopy}>
           <FaCopy className="icon" />
@@ -102,7 +115,8 @@ function ProfileForm() {
       {qrCodeVisible && (
         <div className="qr-code-overlay">
           <div className="qr-code-popup">
-            <QRCode value="https://example.com" size={128} /> {/* Replace with your actual link */}
+            <QRCode value="https://example.com" size={128} />{' '}
+            {/* Replace with your actual link */}
             <button onClick={closeQRCode}>X</button>
           </div>
         </div>
@@ -114,49 +128,49 @@ function ProfileForm() {
         <form>
           {/* ... Rest of the form inputs */}
           <div className="input-container">
-          <div className="left-label">
-            <FaUser className="icon" />
-            <label>Name</label>
-          </div>
-          <input
-            className="input"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <div className="input-container">
-          <div className="left-label">
-            <FaFileImage className="icon" />
-            <label>Profile Picture</label>
-          </div>
-          <input
-            className="input"
-            type="file"
-            accept="image/*"
-            onChange={handleFileChange}
-          />
-        </div>
-        {links.map((link, index) => (
-          <div className="input-container" key={index}>
             <div className="left-label">
-              {link.label === 'Instagram' && <FaInstagram className="icon" />}
-              {link.label === 'LinkedIn' && <FaLinkedin className="icon" />}
-              {link.label === 'GitHub' && <FaGithub className="icon" />}
-              {link.label === 'Facebook' && <FaFacebook className="icon" />}
-              <label>{link.label}</label>
+              <FaUser className="icon" />
+              <label>Name</label>
             </div>
             <input
               className="input"
               type="text"
-              value={link.url}
-              onChange={(e) => handleLinkChange(index, e.target.value)}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
             />
           </div>
-        ))}
-        <button className="btn" onClick={handleSubmit}>
-          Publish
-        </button>
+          <div className="input-container">
+            <div className="left-label">
+              <FaFileImage className="icon" />
+              <label>Profile Picture</label>
+            </div>
+            <input
+              className="input"
+              type="file"
+              accept="image/*"
+              onChange={handleFileChange}
+            />
+          </div>
+          {links.map((link, index) => (
+            <div className="input-container" key={index}>
+              <div className="left-label">
+                {link.label === 'Instagram' && <FaInstagram className="icon" />}
+                {link.label === 'LinkedIn' && <FaLinkedin className="icon" />}
+                {link.label === 'GitHub' && <FaGithub className="icon" />}
+                {link.label === 'Facebook' && <FaFacebook className="icon" />}
+                <label>{link.label}</label>
+              </div>
+              <input
+                className="input"
+                type="text"
+                value={link.url}
+                onChange={(e) => handleLinkChange(index, e.target.value)}
+              />
+            </div>
+          ))}
+          <button className="btn" onClick={handleSubmit}>
+            Publish
+          </button>
         </form>
       </div>
     </div>

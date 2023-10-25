@@ -1,8 +1,8 @@
 {
-  "name": "urlshortener-app",
+  "name": "snapurl-frontend",
   "version": "1.0.0",
   "private": true,
-  "author": "Dhananjay Thomble",
+  "author": "SnapURL Team",
   "dependencies": {
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
@@ -35,10 +35,12 @@
   },
   "scripts": {
     "dev": "vite",
+    "start": "vite preview",
     "build": "vite build",
     "test": "vite test",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,scss,md,json}\""
   },
   "eslintConfig": {
     "extends": [
