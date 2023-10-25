@@ -91,7 +91,9 @@ function History() {
         try {
           toastId.current = toast.loading('Fetching History...');
           const result = await axios.get(
-            `${import.meta.env.VITE_API_ENDPOINT}/api/url/filter/${selectedFilter}`,
+            `${
+              import.meta.env.VITE_API_ENDPOINT
+            }/api/url/filter/${selectedFilter}`,
             {
               headers: {
                 Authorization: `Bearer ${localStorage.getItem('token')}`,

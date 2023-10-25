@@ -91,9 +91,9 @@ function HistoryCard({
           </div>
         </Card.Header>
         <Card.Body>
-          <Card.Title
-            as={'h6'}
-          >{`${import.meta.env.VITE_API_ENDPOINT}/u/${shortUrl}`}</Card.Title>
+          <Card.Title as={'h6'}>{`${
+            import.meta.env.VITE_API_ENDPOINT
+          }/u/${shortUrl}`}</Card.Title>
           <Card.Text>{originalUrl}</Card.Text>
         </Card.Body>
         <div className="card-footer text-body-secondary d-flex gap-2 justify-content-around">
