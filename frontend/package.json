@@ -35,7 +35,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "start": "vite preview",
+    "start": "vite dev",
     "build": "vite build",
     "test": "vite test",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
