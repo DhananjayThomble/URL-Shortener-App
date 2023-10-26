@@ -11,11 +11,17 @@ import {
 const ForgotPassword = () => {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSendMail = async () => {
     try {
-      // Make a POST request to your backend API to reset the password
+      if (!email) {
+        setMessage('Please enter your email.');
+        return;
+      }
 
+      // Make a POST request to your backend API to reset the password
+      setIsLoading(true);
       const response = await fetch(
         `${import.meta.env.VITE_API_ENDPOINT}/auth/forgot-password`,
         {
@@ -28,7 +34,7 @@ const ForgotPassword = () => {
       );
 
       if (response.status === 200) {
-        setMessage('Email sent successfully.');
+        setMessage('Email sent successfully. Please check your inbox.');
       } else {
         // Handle error response from the backend
 
@@ -39,6 +45,8 @@ const ForgotPassword = () => {
     } catch (error) {
       console.error('Error sending mail:', error);
       setMessage('mail send failed.');
+    } finally {
+      setIsLoading(false); // re-enable the button irrespective of success/error
     }
   };
 
@@ -74,7 +82,7 @@ const ForgotPassword = () => {
               <Button
                 style={{ backgroundColor: '#4B3F6B' }}
                 variant="contained"
-                // color="primary"
+                disabled={isLoading}
                 fullWidth
                 onClick={handleSendMail}
               >
