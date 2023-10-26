@@ -23,7 +23,6 @@ export const adminResetPassword = async (req, res) => {
     // remove password reset token from database
     await resetToken.remove();
 
-    
     return res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     console.error(error);

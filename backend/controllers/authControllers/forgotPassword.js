@@ -40,7 +40,6 @@ const generatePasswordResetToken = async (email) => {
 
 // Forgot Password controller
 export const forgotPassword = async (req, res) => {
-
   try {
     const { email } = req.body;
     // check that email existis in database or not

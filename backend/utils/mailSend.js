@@ -19,7 +19,6 @@ const transporter = nodemailer.createTransport({
 });
 
 export const sendEmail = async (options) => {
-  console.log(options);
   return new Promise((resolve, reject) => {
     try {
       const subject = options.subject;
