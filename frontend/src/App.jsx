@@ -19,6 +19,7 @@ import ResetPassword from './components/ResetPassword';
 import 'react-toastify/dist/ReactToastify.css';
 import { ToastContainer } from 'react-toastify';
 import SharePage from './components/Sharepage';
+import ForgotPassword from './components/ForgotPassword';
 
 function App() {
   const [user, setUser] = useState(localStorage.getItem('token') || null);
@@ -42,7 +43,8 @@ function App() {
             {/* Use /linkinbio/* */}
             <Route path={'/linkinbio/profile'} element={<ProfilePage />} />{' '}
             {/* Use /linkinbio/* */}
-            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/reset-password/" element={<ResetPassword />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path={'/Sharepage'} element={<SharePage />} />
           </Routes>
           {/* <Footer /> */}

@@ -108,8 +108,8 @@ function Login() {
           </Card.Header>
           <Card.Body>
             <Form onSubmit={handleSubmit}>
-              <Form.Group className="mb-3" controlId="formBasicEmail">
-                <Form.Label>
+              <Form.Group  className="mb-3" controlId="formBasicEmail">
+                <Form.Label style={{display:"flex",gap:"5px" , alignItems:"center"}}>
                   <FaUserAlt /> Email address
                 </Form.Label>
                 <Form.Control
@@ -123,7 +123,7 @@ function Login() {
                 </Form.Text>
               </Form.Group>
               <Form.Group className="mb-3" controlId="formBasicPassword">
-                <Form.Label>
+                <Form.Label style={{display:"flex",gap:"5px" , alignItems:"center"}}>
                   <FaKey /> Password
                 </Form.Label>
                 <Form.Control
@@ -132,6 +132,21 @@ function Login() {
                   onChange={(e) => setPassword(e.target.value)}
                   aria-required={true}
                 />
+                    <a
+                  onClick={() => {
+                    navigate('/forgot-password');
+                  }}
+                  style={{
+                    textDecoration: 'none',
+                    color: '#4B3F6B',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {' '}
+                  <span style={{fontSize:"14px" ,color: '#4B3F6B' }}>
+                    Forgot password
+                  </span>{' '}
+                </a>{' '}
               </Form.Group>
               <Button
                 className={'w-100'}
@@ -144,29 +159,12 @@ function Login() {
               </Button>
             </Form>
           </Card.Body>
-          <Card.Footer className="text-muted" style={{}}>
+          <Card.Footer className="text-muted" style={{display:"flex", justifyContent:"space-between"}}>
             Don't Have an Account?{' '}
             <a
-              onClick={() => {
-                navigate('/reset-password');
-              }}
               style={{
                 textDecoration: 'none',
                 color: '#4B3F6B',
-                cursor: 'pointer',
-              }}
-            >
-              {' '}
-              <span style={{ marginLeft: '30px', color: '#4B3F6B' }}>
-                Forgot password
-              </span>{' '}
-            </a>{' '}
-            <br />
-            <a
-              style={{
-                textDecoration: 'none',
-                color: '#4B3F6B',
-                marginLeft: '100px',
                 cursor: 'pointer',
               }}
               onClick={() => {

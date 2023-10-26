@@ -20,7 +20,7 @@ import { isApiAuthenticated } from '../middlewares/authMiddleware.js';
 router.post('/login', validateLogin, validationErrorHandler, adminLogin);
 router.post('/signup', validateSignup, validationErrorHandler, adminSignup);
 router.post(
-  '/forgot-password',
+  '/auth/forgot-password',
   forgetPasswordValidator,
   validationErrorHandler,
   adminForgotPassword,

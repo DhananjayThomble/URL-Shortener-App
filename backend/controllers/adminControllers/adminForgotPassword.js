@@ -15,7 +15,7 @@ const generatePasswordResetToken = async (email) => {
 
   // generate password reset token
   const token = crypto.randomBytes(32).toString('hex');
-  const expiration = Date.now() + 3600000;
+  const expiration = Date.anow() + 3600000;
 
   const resetToken = new TokenModel({
     userId: user._id,

@@ -58,8 +58,15 @@ import adminAuthRoute from './routes/adminAuth.route.js';
 import urlRoute from './routes/url.route.js';
 import admin from './routes/admin.route.js';
 
+const corsOptions = {
+  origin: 'http://localhost:5173',
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  preflightContinue: false,
+  optionsSuccessStatus: 200,
+};
+
 app.use('/api', cors(), urlRoute);
-app.use('/auth', cors(), userAuthRoute);
+app.use('/auth', cors(corsOptions), userAuthRoute);
 app.use('/admin/auth', cors(), adminAuthRoute);
 app.use('/admin', cors(), admin);
 
