@@ -1,6 +1,5 @@
 import Admin from '../../models/AdminModel.js';
 import {
-  sendVerificationEmail,
   sendWelcomeEmail,
 } from '../../utils/mailSend.js';
 import dotenv from 'dotenv';
@@ -30,7 +29,6 @@ export const adminSignup = async (req, res) => {
     console.log('User saved');
 
     // Sending the welcome email
-    await sendVerificationEmail(user.email);
     await sendWelcomeEmail(user.name, user.email);
 
     return res.status(200).json({ ok: true });

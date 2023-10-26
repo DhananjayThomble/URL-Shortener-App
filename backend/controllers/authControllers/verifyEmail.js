@@ -1,15 +1,14 @@
 import User from '../../models/UserModel.js';
 import TokenModel from '../../models/Tokenmodel.js';
 import dotenv from 'dotenv';
-import { query } from 'express-validator';
 dotenv.config();
 
 export const verifyEmail = async (req, res) => {
   try {
-    // token validation
-    query('token').notEmpty().trim().escape().withMessage('Token is required');
     // get token from request
     const { token } = req.query;
+
+    // token is already validated by the middleware
 
     const verificationToken = await TokenModel.findOne({ token });
 
@@ -38,7 +37,7 @@ export const verifyEmail = async (req, res) => {
 
     console.log('Email verification done');
 
-    return res.status(200).json({ message: 'Email verification successful' });
+    return res.redirect('https://app.snapurl.in/login');
   } catch (error) {
     console.error('Error verifying email:', error);
     res.status(500).json({ error: 'Server error' });

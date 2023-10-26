@@ -1,20 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to Our Platform</title>
-   
+    <title>Welcome to SnapURL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background-color: rgb(75, 63, 107);
+            color: #fff;
+            padding: 20px;
+        }
+
+        header img {
+            max-width: 100px;
+            margin: 0 auto;
+            display: block;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        h3 {
+            color: #777;
+        }
+
+        footer {
+            background-color: rgb(75, 63, 107);
+            color: #fff;
+            padding: 10px 0;
+        }
     </style>
 </head>
+
 <body>
-    <div style="text-align: center;">
-        <img src="data:image/png;base64,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" alt="Platform Logo" width="200px">
+    <div class="container">
+        <header>
+            <img src="https://app.snapurl.in/logo.png" alt="SnapURL">
+        </header>
+        <h1>Welcome to SnapURL, <%= name %>!</h1>
+        <h3>Your URL Shortening Platform 🚀</h3>
+        <p>
+            Thank you for joining SnapURL. We're thrilled to have you on board. Get started now by shortening your URLs
+            and managing your links with ease.
+        </p>
+        <p>
+            To complete your registration, please verify your email address by clicking the following link:
+            <a href="<%= verificationLink %>" style="color: #4CAF50;">Verify
+                Email</a>
+        </p>
     </div>
-    <h1><%= name  %></h1>
-    <h3>Welcome to Our Platform! 🚀</h3>
     <footer>
-        <p>&copy; <%= new Date().getFullYear() %> Your Company Name. All rights reserved.</p>
+        &copy; <%= new Date().getFullYear() %> SnapURL. All rights reserved.
     </footer>
 </body>
+
 </html>

@@ -52,6 +52,7 @@ export const sendEmail = async (options) => {
 
 export const sendWelcomeEmail = async (name, email, userID) => {
   try {
+    console.log('Sending welcome email to', email);
     const verifyEmailTemplate = fs.readFileSync(
       './views/welcome_email_template.ejs',
       'utf-8',
@@ -59,54 +60,43 @@ export const sendWelcomeEmail = async (name, email, userID) => {
 
     const dataToRender = {
       name: name,
+      verificationLink: await getVerificationLink(userID),
     };
 
     const htmlTemplate = ejs.render(verifyEmailTemplate, dataToRender);
 
     const options = {
       from: 'SnapURL@dturl.live',
-      subject: 'Welcome to SnapURL !!!',
+      subject: 'Welcome to SnapURL🔗',
       recipient: email,
       html: htmlTemplate,
     };
 
     await sendEmail(options);
   } catch (err) {
+    console.log('Error sending welcome email to', email);
     console.error(err);
   }
 };
 
-// Function to send the verification email
-export const sendVerificationEmail = async (email) => {
+const getVerificationLink = async (userId) => {
   try {
-    console.log(email);
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      throw new Error('User not found');
-    }
-
     const token = crypto.randomBytes(32).toString('hex'); // Generate a random token
     const expiration = Date.now() + 24 * 60 * 60 * 1000; // Token expires in 24 hours
 
     const verificationToken = new TokenModel({
-      userId: user._id,
+      userId,
       token,
       expiration,
     });
 
     await verificationToken.save();
 
-    const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`; // TODO:Replace this with frontend route
-    const emailOptions = {
-      from: 'SnapURL@dturl.live',
-      subject: 'Email Verification for SnapURL',
-      recipient: email,
-      html: `Click <a href="${verificationLink}">here</a> to verify your email address.`,
-    };
-
-    await sendEmail(emailOptions);
+    // const verificationLink = `http://localhost:4001/auth/verify-email?token=${token}`;
+    const verificationLink = `${process.env.BASE_URL}/auth/verify-email?token=${token}`;
+    return verificationLink;
   } catch (error) {
-    console.error('Error sending verification email:', error);
+    console.error(error);
+    return null;
   }
 };
