@@ -7,7 +7,7 @@ import {
   Button,
   Box,
 } from '@mui/material';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 function ResetPassword() {
   const location = useLocation();
@@ -17,15 +17,25 @@ function ResetPassword() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!token) {
       setMessage('Invalid or missing token.');
+      setIsLoading(true);
     }
   }, [token]);
 
   const handleResetPassword = async () => {
     try {
+      if (password !== confirmPassword) {
+        setMessage('Passwords do not match.');
+        return;
+      }
+
+      setIsLoading(true);
+
       // Make a POST request to your backend API to reset the password
       const response = await fetch(
         `${import.meta.env.VITE_API_ENDPOINT}/auth/reset-password`,
@@ -40,6 +50,7 @@ function ResetPassword() {
 
       if (response.status === 200) {
         setMessage('Password reset successful.');
+        navigate('/login');
       } else {
         // Handle error response from the backend
         const data = await response.json();
@@ -48,6 +59,8 @@ function ResetPassword() {
     } catch (error) {
       console.error('Error resetting password:', error);
       setMessage('Password reset failed.');
+    } finally {
+      setIsLoading(false); // re-enable the btn
     }
   };
 
@@ -93,7 +106,7 @@ function ResetPassword() {
               <Button
                 style={{ backgroundColor: '#4B3F6B' }}
                 variant="contained"
-                // color="primary"
+                disabled={isLoading}
                 fullWidth
                 onClick={handleResetPassword}
               >

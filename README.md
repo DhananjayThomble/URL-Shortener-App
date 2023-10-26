@@ -130,6 +130,7 @@ EMAIL_HOST=<your-email-host>, e.g. smtp.gmail.com
 EMAIL_PORT=<your-email-port>, e.g. 587
 EMAIL_HOST_USER=<your-email-host-user>, e.g. john@gmail.com
 EMAIL_HOST_PASSWORD=<your-email-host-password>, e.g. john123
+FRONTEND_URL=<your-frontend-webapp-url>
 ```
 
 Example .env file:
@@ -144,6 +145,7 @@ EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_HOST_USER=john@gmail.com
 EMAIL_HOST_PASSWORD=john123
+FRONTEND_URL=https://app.snapurl.in
 ```
 
 You can get your MongoDB database URL from [here](https://www.mongodb.com/cloud/atlas).

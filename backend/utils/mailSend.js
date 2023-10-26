@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import User from '../models/UserModel.js';
 import TokenModel from '../models/Tokenmodel.js';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
@@ -66,7 +65,7 @@ export const sendWelcomeEmail = async (name, email, userID) => {
     const htmlTemplate = ejs.render(verifyEmailTemplate, dataToRender);
 
     const options = {
-      from: 'SnapURL@dturl.live',
+      from: 'SnapURL@snapurl.in',
       subject: 'Welcome to SnapURL🔗',
       recipient: email,
       html: htmlTemplate,
@@ -98,5 +97,32 @@ const getVerificationLink = async (userId) => {
   } catch (error) {
     console.error(error);
     return null;
+  }
+};
+
+export const sendPasswordResetEmail = async (email, resetLink) => {
+  try {
+    const resetPasswordTemplate = fs.readFileSync(
+      './views/reset_password_email_template.ejs',
+      'utf-8',
+    );
+
+    const dataToRender = {
+      resetLink: resetLink,
+    };
+
+    const htmlTemplate = ejs.render(resetPasswordTemplate, dataToRender);
+
+    const options = {
+      from: 'SnapURL@snapurl.in',
+      subject: 'Reset your SnapURL password',
+      recipient: email,
+      html: htmlTemplate,
+    };
+
+    await sendEmail(options);
+  } catch (err) {
+    console.log('Error sending password reset email to', email);
+    console.error(err);
   }
 };
