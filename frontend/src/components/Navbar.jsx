@@ -140,7 +140,9 @@ function Navbar() {
                       >
                         {page.icon}
 
-                        <Typography m="5px" textAlign="center">{page.name}</Typography>
+                        <Typography m="5px" textAlign="center">
+                          {page.name}
+                        </Typography>
                       </MenuItem>
                     </NavLink>
                   ))
@@ -160,7 +162,9 @@ function Navbar() {
                     >
                       <MenuItem onClick={handleCloseNavMenu}>
                         {page.icon}
-                        <Typography m="5px" textAlign="center">{page.name}</Typography>
+                        <Typography m="5px" textAlign="center">
+                          {page.name}
+                        </Typography>
                       </MenuItem>
                     </NavLink>
                   ))}
