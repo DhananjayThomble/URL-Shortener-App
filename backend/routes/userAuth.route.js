@@ -19,19 +19,13 @@ import { validationErrorHandler } from '../middlewares/ValidatorErrorHandler.js'
 
 import { validateFeedback } from '../validators/feedbackValidator.js';
 import { submitFeedback } from '../controllers/feedbackControllers/feedback.js';
-import { getReviews } from '../controllers/feedbackControllers/reviews.js';
-
-import {
-  deleteReview,
-  deleteAllFeedback,
-} from '../controllers/adminControllers/manageReviews.js';
-import { isAdmin } from '../middlewares/isAdmin.js';
 
 import { changeEmail } from '../controllers/authControllers/changeEmail.js';
 import { getCurrentUser } from '../controllers/authControllers/getCurrentUser.js';
 import { changeName } from '../controllers/authControllers/changeName.js';
 import { validateEmail } from '../validators/authValidators.js';
 import { validateName } from '../validators/authValidators.js';
+import { validateToken } from '../validators/authValidators.js';
 
 // Auth Routes
 router.post('/login', validateLogin, validationErrorHandler, login);
@@ -43,7 +37,7 @@ router.post(
   forgotPassword,
 ); //For Sending the password reset request
 router.post('/reset-password', resetPassword); // For Reseting the password
-router.get('/verify-email', verifyEmail);
+router.get('/verify-email', validateToken, validationErrorHandler, verifyEmail);
 
 // Profile Routes
 router.get('/current-user', getCurrentUser);

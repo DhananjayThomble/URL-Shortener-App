@@ -1,4 +1,4 @@
-import { body } from 'express-validator';
+import { body, query } from 'express-validator';
 import User from '../models/UserModel.js';
 
 export const validateLogin = [
@@ -16,7 +16,15 @@ export const validateLogin = [
 ];
 
 export const validateSignup = [
-  body('name').notEmpty().trim().escape().withMessage('Name is required'),
+  body('name')
+    .notEmpty()
+    .trim()
+    .escape()
+    .withMessage('Name is required')
+    .bail()
+    .isLength({ min: 3 })
+    .withMessage('Name must be at least 3 characters long'),
+
   body('email')
     .notEmpty()
     .trim()
@@ -100,4 +108,8 @@ export const validateEmail = [
         throw new Error('Email already in use');
       }
     }),
+];
+
+export const validateToken = [
+  query('token').notEmpty().trim().escape().withMessage('Token is required'),
 ];
