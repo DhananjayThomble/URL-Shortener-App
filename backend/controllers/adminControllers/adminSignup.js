@@ -1,7 +1,5 @@
 import Admin from '../../models/AdminModel.js';
-import {
-  sendWelcomeEmail,
-} from '../../utils/mailSend.js';
+import { sendWelcomeEmail } from '../../utils/mailSend.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
