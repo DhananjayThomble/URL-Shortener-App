@@ -1,4 +1,4 @@
-import React ,{useState} from 'react'
+import React, { useState } from 'react';
 import {
   Container,
   Card,
@@ -8,46 +8,39 @@ import {
   Box,
 } from '@mui/material';
 
-
 const ForgotPassword = () => {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
 
-    const [email, setEmail] = useState('');
-    const [message, setMessage] = useState('');
+  const handleSendMail = async () => {
+    try {
+      // Make a POST request to your backend API to reset the password
 
-    const handleSendMail = async () => {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_ENDPOINT}/auth/forgot-password`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email }),
+        },
+      );
 
-        try {
-        // Make a POST request to your backend API to reset the password
-        
-        const response = await fetch(
-            `${import.meta.env.VITE_API_ENDPOINT}/auth/forgot-password`,
-            {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ email }),
-            },
+      if (response.status === 200) {
+        setMessage('Email sent successfully.');
+      } else {
+        // Handle error response from the backend
 
-        );
-        
-        if (response.status === 200) {
-            setMessage('Email sent successfully.');
-        } else {
-            // Handle error response from the backend
-            
-            const data = await response.json();
+        const data = await response.json();
 
-            
-            setMessage(data.error || 'Email sent failed.');
-        }
-        } catch (error) {
-        console.error('Error sending mail:', error);
-        setMessage('mail send failed.');
-        }
-    };
-    
-
+        setMessage(data.error || 'Email sent failed.');
+      }
+    } catch (error) {
+      console.error('Error sending mail:', error);
+      setMessage('mail send failed.');
+    }
+  };
 
   return (
     <Container
@@ -78,7 +71,6 @@ const ForgotPassword = () => {
                 />
               </Box>
 
-
               <Button
                 style={{ backgroundColor: '#4B3F6B' }}
                 variant="contained"
@@ -96,7 +88,7 @@ const ForgotPassword = () => {
         </Box>
       </Card>
     </Container>
-  )
-}
+  );
+};
 
-export default ForgotPassword
+export default ForgotPassword;
