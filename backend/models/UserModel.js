@@ -3,28 +3,31 @@ import bcrypt from 'bcrypt';
 
 const saltRounds = 10; // Affects the performance and password security level
 
-const UserSchema = new mongoose.Schema({
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-  },
+const UserSchema = new mongoose.Schema(
+  {
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+    },
 
-  password: {
-    type: String,
-    required: true,
-  },
+    password: {
+      type: String,
+      required: true,
+    },
 
-  name: {
-    type: String,
-    required: true,
-  },
+    name: {
+      type: String,
+      required: true,
+    },
 
-  isEmailVerified: {
-    type: Boolean,
-    default: false, // Initially, the email is not verified
+    isEmailVerified: {
+      type: Boolean,
+      default: false, // Initially, the email is not verified
+    },
   },
-});
+  { timestamps: true },
+);
 
 // Hash the password before saving
 UserSchema.pre('save', function (next) {
