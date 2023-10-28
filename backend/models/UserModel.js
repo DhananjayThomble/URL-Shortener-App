@@ -24,6 +24,29 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: false, // Initially, the email is not verified
   },
+
+  customDomain: {
+    type: {
+      url: {
+        type: String,
+        default: null,
+      },
+      dnsVerificationCode: {
+        type: String,
+        default: null,
+      },
+      isVerified: {
+        type: Boolean,
+        default: false,
+      },
+    },
+    default: {
+      url: null,
+      dnsVerificationCode: null,
+      isVerified: false,
+    },
+    select: false,
+  },
 });
 
 // Hash the password before saving
