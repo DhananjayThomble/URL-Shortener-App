@@ -5,7 +5,7 @@ export const redirectToOriginalUrl = async (req, res) => {
   try {
     const { short } = req.params;
 
-    const url = await UrlModel.findOne({shortUrl: short});
+    const url = await UrlModel.findOne({ shortUrl: short });
 
     // if the URL does not exist
     if (!url) {
