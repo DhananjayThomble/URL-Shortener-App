@@ -52,7 +52,10 @@ const limiter = rateLimit({
 app.use(limiter); // limit number of req for each client
 
 // -------------------------------- API ROUTES -------------------------------
-import { redirectToOriginalUrl } from './controllers/urlControllers/redirectToURL.js';
+import {
+  redirectToOriginalUrl,
+  redirectViaCustomBackHalf,
+} from './controllers/urlControllers/redirectToURL.js';
 import { validateShortId } from './validators/urlValidator.js';
 import { validationErrorHandler } from './middlewares/ValidatorErrorHandler.js';
 import userAuthRoute from './routes/userAuth.route.js';
@@ -72,6 +75,8 @@ app.get(
   validationErrorHandler,
   redirectToOriginalUrl,
 );
+
+app.get('/r/:backHalf', redirectViaCustomBackHalf);
 
 // goto /doc to see api documentation
 app.get('/', (req, res) => {
