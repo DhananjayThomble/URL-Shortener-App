@@ -57,11 +57,14 @@ import userAuthRoute from './routes/userAuth.route.js';
 import adminAuthRoute from './routes/adminAuth.route.js';
 import urlRoute from './routes/url.route.js';
 import admin from './routes/admin.route.js';
+import domainRoutes from './routes/domain.route.js';
+import initCustomDomainJobs from './jobs/customDomainJobs.js';
 
 app.use('/api', cors(), urlRoute);
 app.use('/auth', cors(), userAuthRoute);
 app.use('/admin/auth', cors(), adminAuthRoute);
 app.use('/admin', cors(), admin);
+app.use('/domain', cors(), domainRoutes);
 
 // for accessing short url
 app.get('/u/:short', redirectToOriginalUrl);
@@ -74,5 +77,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, function () {
   console.log(`Listening on port ${PORT}`);
 });
+
+initCustomDomainJobs();
 
 export { app };
