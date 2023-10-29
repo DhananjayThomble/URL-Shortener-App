@@ -1,0 +1,26 @@
+{
+  "name": "url-shortener-app",
+  "version": "1.0.0",
+  "description": "A URL Shortener Web Application",
+  "main": "index.js",
+  "scripts": {
+    "install-frontend": "npm install --prefix frontend",
+    "install-backend": "npm install --prefix backend",
+    "install": "npm run install-frontend && npm run install-backend",
+    "backend": "npm start --prefix backend",
+    "frontend": "npm start --prefix frontend",
+    "start": "npm run backend & npm run frontend",
+    "build-frontend": "npm run build --prefix frontend",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DhananjayThomble/URL-Shortener-App.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/DhananjayThomble/URL-Shortener-App/issues"
+  },
+  "homepage": "https://github.com/DhananjayThomble/URL-Shortener-App#readme"
+}
