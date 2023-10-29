@@ -3,6 +3,7 @@ import { configDotenv } from 'dotenv';
 configDotenv();
 
 mongoose.set('strictQuery', false);
+mongoose.set('debug', process.env.NODE_ENV === 'development'); // if dev mode, log all mongoose query
 
 async function mongoConnect() {
   try {

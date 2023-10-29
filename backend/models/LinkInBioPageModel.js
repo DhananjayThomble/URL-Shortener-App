@@ -5,15 +5,12 @@ const LinkInBioPageSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
+    index: true,
   },
   pageTitle: {
     type: String,
     required: true,
   },
-});
-
-// Add an array of links
-LinkInBioPageSchema.add({
   links: [
     {
       title: String,
