@@ -1,53 +1,45 @@
-import UrlModel from '../../models/UrlModel.js';
 import { nanoid } from 'nanoid';
-import { SHORT_URL_PREFIX } from '../../extras/Constants.js';
+import UrlModel from '../../models/UrlModel.js';
 
 // Generate a short URL for a given long URL
 export const generateShortUrl = async (req, res) => {
+  const SHORT_URL_PREFIX = process.env.SHORT_URL_PREFIX;
   try {
     const { url } = req.body;
-    const id = nanoid(10);
 
     // Get the user ID from the request
     const userId = req.user._id;
-    const urlObj = req.userId;
-    const customId = req.custom;
-    // console.log(`customId : ${customId}`);
 
-    if (urlObj) {
-      // Append the new URL to the existing array
-      urlObj.urlArray.push({
-        shortUrl: id,
-        originalUrl: url,
-        customUrl: customId,
+    // Get the URL details from the database
+    const urlDetails = await UrlModel.findOne(
+      { originalUrl: url, userId },
+      { shortUrl: 1, _id: 0 },
+    );
+    // console.log(`urlDetails: ${urlDetails}`);
+
+    if (urlDetails) {
+      // if the URL has already been shortened for the user, return the existing short URL
+      const { shortUrl } = urlDetails;
+      return res.status(200).json({
+        shortUrl: `${SHORT_URL_PREFIX}/${shortUrl}`,
       });
-      await urlObj.save();
-    } else {
-      // Create a new collection for the user
-      const myModel = new UrlModel();
-      myModel.userId = userId;
-      myModel.urlArray.push({
-        shortUrl: id,
-        originalUrl: url,
-        customUrl: customId,
-      });
-      await myModel.save();
     }
 
+    // If the URL has not been shortened for the user, generate a new short URL
+    const id = nanoid(10);
+
+    await UrlModel.create({
+      userId,
+      shortUrl: id,
+      originalUrl: url,
+    });
+
     // Send response with the generated short URL
-    // value of SHORT_URL_PREFIX is http://localhost:4001/u/ and for production : https://dturl.live/u/
     res.status(200).json({
-      shortUrl: `${SHORT_URL_PREFIX}${id}`,
-      customUrl: `${SHORT_URL_PREFIX}${customId}`,
+      shortUrl: `${SHORT_URL_PREFIX}/${id}`,
     });
   } catch (error) {
     console.error(error);
-    if (error.code === 11000) {
-      return res.status(400).json({
-        error:
-          'Sorry, the custom word you chose has already been registered. Please try a different one!',
-      });
-    }
     res.status(500).json({ error: 'Server error' });
   }
 };

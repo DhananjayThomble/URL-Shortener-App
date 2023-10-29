@@ -23,7 +23,7 @@ const urlSchema = new mongoose.Schema(
       default: 0,
       index: { order: -1 }, // this will help to get top visited urls, for sorting
     },
-    customUrl: {
+    customBackHalf: {
       type: String,
     },
   },

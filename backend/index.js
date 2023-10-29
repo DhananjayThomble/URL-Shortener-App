@@ -52,7 +52,12 @@ const limiter = rateLimit({
 app.use(limiter); // limit number of req for each client
 
 // -------------------------------- API ROUTES -------------------------------
-import { redirectToOriginalUrl } from './controllers/urlControllers/redirectToURL.js';
+import {
+  redirectToOriginalUrl,
+  redirectViaCustomBackHalf,
+} from './controllers/urlControllers/redirectToURL.js';
+import { validateShortId } from './validators/urlValidator.js';
+import { validationErrorHandler } from './middlewares/ValidatorErrorHandler.js';
 import userAuthRoute from './routes/userAuth.route.js';
 import adminAuthRoute from './routes/adminAuth.route.js';
 import urlRoute from './routes/url.route.js';
@@ -64,7 +69,14 @@ app.use('/admin/auth', cors(), adminAuthRoute);
 app.use('/admin', cors(), admin);
 
 // for accessing short url
-app.get('/u/:short', redirectToOriginalUrl);
+app.get(
+  '/u/:short',
+  validateShortId,
+  validationErrorHandler,
+  redirectToOriginalUrl,
+);
+
+app.get('/r/:backHalf', redirectViaCustomBackHalf);
 
 // goto /doc to see api documentation
 app.get('/', (req, res) => {

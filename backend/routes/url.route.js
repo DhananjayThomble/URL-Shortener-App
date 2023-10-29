@@ -7,7 +7,7 @@ import { deleteUrl } from '../controllers/urlControllers/deleteUrl.js';
 import { getHistory } from '../controllers/urlControllers/getHistory.js';
 import { generateShortUrl } from '../controllers/urlControllers/generateShortUrl.js';
 import { exportGeneratedUrls } from '../controllers/urlControllers/exportGeneratedUrls.js';
-import { generateCustomUrl } from '../controllers/urlControllers/generateCustomUrl.js';
+import { generateCustomBackHalf } from '../controllers/urlControllers/generateCustomBackHalf.js';
 import { validateUrl } from '../validators/urlValidator.js';
 
 import { isApiAuthenticated } from '../middlewares/authMiddleware.js';
@@ -25,9 +25,10 @@ router.post(
   isApiAuthenticated,
   validateUrl,
   validationErrorHandler,
-  generateCustomUrl,
   generateShortUrl,
 );
+
+router.post('/url/custom', isApiAuthenticated, generateCustomBackHalf);
 
 router.get('/history', isApiAuthenticated, getHistory);
 
@@ -35,8 +36,8 @@ router.delete('/delete/:id', isApiAuthenticated, deleteUrl);
 
 router.get('/export', isApiAuthenticated, exportGeneratedUrls);
 
-router.get('/url/filter/:category', isApiAuthenticated, getFilteredCategory);
+router.get('/filter/:category', isApiAuthenticated, getFilteredCategory);
 
-router.put('/url/filter', isApiAuthenticated, updateCategory);
+router.put('/filter', isApiAuthenticated, updateCategory);
 
 export default router;
