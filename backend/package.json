@@ -52,6 +52,7 @@
     "chai": "^4.3.10",
     "chai-http": "^4.4.0",
     "mocha": "^10.2.0",
+    "nodemon": "^3.0.1",
     "prettier": "^3.0.3",
     "supertest": "^6.3.3"
   }
