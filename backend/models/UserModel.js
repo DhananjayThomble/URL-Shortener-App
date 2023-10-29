@@ -26,25 +26,9 @@ const UserSchema = new mongoose.Schema({
   },
 
   customDomain: {
-    type: {
-      url: {
-        type: String,
-        default: null,
-      },
-      dnsVerificationCode: {
-        type: String,
-        default: null,
-      },
-      isVerified: {
-        type: Boolean,
-        default: false,
-      },
-    },
-    default: {
-      url: null,
-      dnsVerificationCode: null,
-      isVerified: false,
-    },
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CustomDomain',
+    default: null,
     select: false,
   },
 });

@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import CustomDomain from '../../models/CustomDomainsModel.js';
 import User from '../../models/UserModel.js';
 
 export const addCustomDomain = async (req, res) => {
@@ -19,14 +20,15 @@ export const addCustomDomain = async (req, res) => {
 
     const dnsVerificationCode = randomBytes(32).toString('hex');
 
-    user.customDomain = {
+    const customDomain = await CustomDomain.create({
       url: domain,
       dnsVerificationCode,
-    };
-
-    await user.save();
+      user: req.user,
+    });
 
     // TODO: send email for verification process for the DNS
+    user.customDomain = customDomain;
+    await user.save();
 
     res.status(200).json({
       message:
