@@ -25,7 +25,7 @@ router.post(
   isApiAuthenticated,
   validateUrl,
   validationErrorHandler,
-  generateCustomUrl,
+  // generateCustomUrl,   //TODO: create a new route for custom url
   generateShortUrl,
 );
 
