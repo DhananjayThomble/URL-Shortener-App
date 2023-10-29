@@ -3,43 +3,46 @@ import UrlModel from '../../models/UrlModel.js';
 // Redirect to the original URL associated with a short URL
 export const redirectToOriginalUrl = async (req, res) => {
   try {
-    const shortUrl = req.params.short;
+    const { short } = req.params;
 
-    // Find the URL object with the short URL in the database
-    const url = await UrlModel.findOne({
-      'urlArray.shortUrl': shortUrl,
-    }).select({ 'urlArray.$': 1 });
+    const url = await UrlModel.findOne(short);
 
-    // Check if the URL is present in the database
+    // if the URL does not exist
     if (!url) {
-      res.status(404).json({ error: 'Url not found' });
-      return;
+      return res.status(404).json({ error: 'Url not found' });
     }
 
-    // Increment the URL visit count
-    const visitCount = url.urlArray[0].visitCount || 0;
-    await countUrlVisit(shortUrl, visitCount);
+    // increment the URL visit count
+    const visitCount = url.visitCount || 0;
+    await url.updateOne({ visitCount: visitCount + 1 });
 
     // Perform a 302 redirect to the original URL
-    res.status(302).redirect(url.urlArray[0].originalUrl);
+    res.status(302).redirect(url.originalUrl);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Server error' });
   }
 };
 
-// Increment the visit count for a URL
-async function countUrlVisit(urlID, visitCount) {
+export const redirectViaCustomBackHalf = async (req, res) => {
   try {
-    // Find the URL object containing the URL ID and increment the visit count
-    const urlObj = await UrlModel.findOneAndUpdate(
-      { 'urlArray.shortUrl': urlID },
-      { $set: { 'urlArray.$.visitCount': visitCount + 1 } },
-    );
-    if (!urlObj) {
-      console.error('URL not found');
+    const { backHalf } = req.params;
+
+    const url = await UrlModel.findOne({ customBackHalf: backHalf });
+
+    // if the URL does not exist
+    if (!url) {
+      return res.status(404).json({ error: 'Url not found' });
     }
+
+    // increment the URL visit count
+    const visitCount = url.visitCount || 0;
+    await url.updateOne({ visitCount: visitCount + 1 });
+
+    // Perform a 302 redirect to the original URL
+    res.status(302).redirect(url.originalUrl);
   } catch (error) {
     console.error(error);
+    res.status(500).json({ error: 'Server error' });
   }
-}
+};

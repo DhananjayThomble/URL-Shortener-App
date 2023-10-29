@@ -1,57 +1,51 @@
-// Export the generated URLs for a user as an Excel spreadsheet
 import ExcelJS from 'exceljs';
 import UrlModel from '../../models/UrlModel.js';
 
 export const exportGeneratedUrls = async (req, res) => {
   try {
-    const urlObj = await UrlModel.findOne({ userId: req.user._id });
-    if (urlObj && urlObj.urlArray.length) {
-      // also check if array has item
+    const urls = await UrlModel.find({ userId: req.user._id });
 
-      // Create a new workbook
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'DT URL Shortener';
-      workbook.created = new Date();
-
-      const worksheet = workbook.addWorksheet('Generated_URLs');
-
-      // Add headers to the worksheet
-      worksheet.columns = [
-        { header: 'Short URL', key: 'shortUrl', width: 50 },
-        { header: 'Original URL', key: 'originalUrl', width: 50 },
-        { header: 'Visits', key: 'visits', width: 10 },
-      ];
-
-      // Make header row bold
-      worksheet.getRow(1).font = { bold: true };
-
-      // Add data to the sheet
-      urlObj.urlArray.forEach((url) => {
-        worksheet.addRow({
-          shortUrl: SHORT_URL_PREFIX + url.shortUrl,
-          originalUrl: url.originalUrl,
-          visits: url.visitCount,
-        });
-      });
-
-      // Set the response headers
-      res.setHeader(
-        'Content-Type',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      );
-
-      // Send the Excel file to the client
-      const buffer = await workbook.xlsx.writeBuffer();
-      // Set the file name
-      res.setHeader(
-        'Content-Disposition',
-        'attachment; filename=Generated_URLs.xlsx',
-      );
-      res.status(200).send(buffer);
-    } else {
-      // Data not found
-      res.status(404).json({ error: 'No Generated URL found' });
+    if (!urls.length) {
+      return res.status(404).json({ error: 'No Generated URL found' });
     }
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'SnapURL';
+    workbook.created = new Date();
+
+    const worksheet = workbook.addWorksheet('Generated_URLs Sheet');
+
+    worksheet.columns = [
+      { header: 'Short URL', key: 'shortUrl', width: 50 },
+      { header: 'Original URL', key: 'originalUrl', width: 50 },
+      { header: 'Category', key: 'category', width: 20 },
+      { header: 'Custom Back Half', key: 'customBackHalf', width: 20 },
+      { header: 'Visits', key: 'visits', width: 10 },
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+
+    urls.forEach((url) => {
+      worksheet.addRow({
+        shortUrl: `${process.env.SHORT_URL_PREFIX}/${url.shortUrl}`,
+        originalUrl: url.originalUrl,
+        category: url.category,
+        customBackHalf: url.customBackHalf,
+        visits: url.visitCount,
+      });
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=Generated_URLs.xlsx',
+    );
+    res.status(200).send(buffer);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Server error' });
