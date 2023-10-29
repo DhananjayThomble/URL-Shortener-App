@@ -27,8 +27,7 @@ export const verifyCustomDomain = async (req, res) => {
     }
 
     const domainVerification = await checkDNSTxtVerification(
-      // This URL might need change
-      `_verification.${user.customDomain.url}`,
+      `${user.customDomain.url}`,
       user.customDomain.dnsVerificationCode,
     );
 
