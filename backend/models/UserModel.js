@@ -25,16 +25,16 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: false, // Initially, the email is not verified
     },
+    customDomain: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CustomDomain',
+      default: null,
+      select: false,
+    },
   },
-  customDomain: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'CustomDomain',
-    default: null,
-    select: false,
-  },
-},
+
   { timestamps: true },
- );
+);
 
 // Hash the password before saving
 UserSchema.pre('save', function (next) {
