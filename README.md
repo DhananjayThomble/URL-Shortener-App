@@ -107,10 +107,10 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
     git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
     ```
 2. Install the dependencies:
-  ```bash
-  cd ./URL-Shortener-App
-  npm install
-  ```
+    ```bash
+    cd ./URL-Shortener-App
+    npm install
+    ```
 ### for backend:
 
 i. Goto the backend directory
