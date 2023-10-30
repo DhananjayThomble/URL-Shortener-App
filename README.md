@@ -106,19 +106,15 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
     ```bash
     git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
     ```
-### for backend:
-
-i. Goto the backend directory:
-```bash
-cd backend
-```
-
-ii. Install the dependencies:
+2. Install the dependencies:
 ```bash
 npm install
 ```
+### for backend:
 
-iii. Create a .env file in the backend directory and add the following environment variables:
+i. Goto the backend directory:
+
+ii. Create a .env file in the backend directory and add the following environment variables:
 ```bash
 DB_URL=<your-mongodb-database-url>
 JWT_SECRET=<your-jwt-secret>
@@ -129,7 +125,7 @@ SHORT_URL_PREFIX=http://localhost:4001/u
 EMAIL_HOST=<your-email-host>, e.g. smtp.gmail.com
 EMAIL_PORT=<your-email-port>, e.g. 587
 EMAIL_HOST_USER=<your-email-host-user>, e.g. john@gmail.com
-EMAIL_HOST_PASSWORD=<your-email-host-password>, e.g. john123
+EMAIL_HOST_PASSWORD=<your-email-host-password>, e.g. btvpykqmgtrpeukj
 FRONTEND_URL=<your-frontend-webapp-url>
 ```
 
@@ -144,7 +140,7 @@ SHORT_URL_PREFIX=http://localhost:4001/u
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_HOST_USER=john@gmail.com
-EMAIL_HOST_PASSWORD=john123
+EMAIL_HOST_PASSWORD=btvpykqmgtrpeukj
 FRONTEND_URL=https://app.snapurl.in
 ```
 
@@ -155,10 +151,6 @@ You can even use your **Gmail** account for this. If you have enabled 2-step ver
 
 Contact me if you need help with this.
 
-iv. Start the backend server:
-```bash
-npm run dev
-```
 
 ### for frontend:
 
@@ -167,21 +159,15 @@ i. Goto the frontend directory:
 cd frontend
 ```
 
-ii. Install the dependencies:
-```bash
-npm install
-```
-
-iii. Create a .env file in the frontend directory and add the following environment variables:
+ii. Create a .env file in the frontend directory and add the following environment variables:
 ```bash
 VITE_API_ENDPOINT=http://localhost:4001
 ```
 
-iv. Start the frontend server:
+4. Start both backend and the fronend server
 ```bash
 npm start
 ```
-
 5. Open http://localhost:4001/doc to view the API documentation.
 6. To view the frontend, check the terminal for the URL.
 
