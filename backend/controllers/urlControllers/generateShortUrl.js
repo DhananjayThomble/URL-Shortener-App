@@ -13,15 +13,16 @@ export const generateShortUrl = async (req, res) => {
     // Get the URL details from the database
     const urlDetails = await UrlModel.findOne(
       { originalUrl: url, userId },
-      { shortUrl: 1, _id: 0 },
+      { shortUrl: 1, customBackHalf: 1, _id: 0 },
     );
     // console.log(`urlDetails: ${urlDetails}`);
 
     if (urlDetails) {
       // if the URL has already been shortened for the user, return the existing short URL
-      const { shortUrl } = urlDetails;
+      const { shortUrl, customBackHalf } = urlDetails;
       return res.status(200).json({
         shortUrl: `${SHORT_URL_PREFIX}/${shortUrl}`,
+        customBackHalf: customBackHalf
       });
     }
 
@@ -37,6 +38,7 @@ export const generateShortUrl = async (req, res) => {
     // Send response with the generated short URL
     res.status(200).json({
       shortUrl: `${SHORT_URL_PREFIX}/${id}`,
+      customBackHalf: null
     });
   } catch (error) {
     console.error(error);

@@ -7,7 +7,12 @@ import {
   Paper,
   Stack,
   Typography,
+  Modal,
 } from '@mui/material';
+import { useFormik } from 'formik';
+import { backHalfSchema } from './Schema';
+import axios from 'axios';
+import BackHalfForm from './BackHalfForm';
 
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -25,19 +30,69 @@ const desktopStyle = {
 };
 
 const SingleOutput = (props) => {
+  const shortUrlKey = props.shortUrl.split('/').pop()
   const [copySuccess, setCopySuccess] = useState(false);
+  const [modalDisplay, setModalDisplay] = useState(false);
 
-  const handleEditBackHalf = () => {
-    const currentBackHalf = window.prompt(
-      `Edit the last part of your shortened link: ${props.shortUrl}`,
-      props.shortUrl.split('/').pop(),
-    );
+  const formik = useFormik({
+    enableReinitialize: true,
+    initialValues: {
+      customBackHalf: props.customBackHalf || shortUrlKey
+    },
+    validationSchema: backHalfSchema,
+    onSubmit: async (values, actions) => {
+      const { customBackHalf: backHalf } = values;
+      // console.log(values.customBackHalf)
 
-    if (currentBackHalf !== null) {
-      // Handle the updated back half, e.g., make an API call to update the link
-      alert(`Back Half updated to: ${currentBackHalf}`);
+      // call axios post request
+      const ApiEndpoint = `${import.meta.env.VITE_API_ENDPOINT}/api/url/custom`;
+
+      try {
+        const response = await axios.post(
+          ApiEndpoint,
+          {
+            backHalf: backHalf,
+            shortUrl: shortUrlKey
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem('token')}`,
+            },
+          },
+        );
+
+        const { customBackHalf } = response.data;
+        // console.log(`Short URL: ${props.shortUrl} and custom back half: ${customBackHalf}`)
+        props.onFormValueChange({
+          originalUrl: props.originalUrl,
+          shortUrl: props.shortUrl,
+          customBackHalf
+        })
+
+        props.onSnackbarSuccess({
+          children: `Back half updated to: ${customBackHalf}`,
+          severity: 'success',
+        });
+        actions.resetForm();
+      } catch (error) {
+        if (error.response.status === 400) {
+          const { error: errorMsg, suggestion } = error.response.data;
+          console.log(error, suggestion)
+
+          props.onSnackbarSuccess({
+            children: errorMsg + (suggestion ? `\nSuggested link: ${suggestion}` : ''),
+            severity: 'error',
+          });
+          return;
+        }
+        props.onSnackbarSuccess({
+          children: 'Something went wrong. Please try again later.',
+          severity: 'error',
+        });
+      }
+      setModalDisplay(false)
     }
-  };
+  })
 
   const handleClick = () => {
     navigator.clipboard.writeText(props.shortUrl);
@@ -61,6 +116,13 @@ const SingleOutput = (props) => {
       {/* mobile view */}
 
       <List sx={mobileStyle}>
+        <Modal
+          open={modalDisplay}
+          onClose={() => setModalDisplay(false)}
+          sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}
+        >
+          <BackHalfForm formik={formik} shortUrl={props.shortUrl} />
+        </Modal>
         <ListItem divider>
           <ListItemText
             primary={props.originalUrl}
@@ -73,9 +135,15 @@ const SingleOutput = (props) => {
             sx={{ color: 'primary.main' }}
           />
         </ListItem>
+        <ListItem>
+          <ListItemText
+            primary={props.customBackHalf}
+            sx={{ color: 'primary.main' }}
+          />
+        </ListItem>
         <ListItem sx={{ pt: 0 }}>{generateButton()}</ListItem>
         <ListItem>
-          <Button variant="cyanBg" fullWidth onClick={handleEditBackHalf}>
+          <Button variant="cyanBg" fullWidth onClick={() => setModalDisplay(true)}>
             Edit Back Half
           </Button>
         </ListItem>
@@ -84,7 +152,15 @@ const SingleOutput = (props) => {
         </ListItem>
       </List>
 
+      {/* desktop view */}
       <Stack sx={desktopStyle}>
+        <Modal
+          open={modalDisplay}
+          onClose={() => setModalDisplay(false)}
+          sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}
+        >
+          <BackHalfForm formik={formik} shortUrl={props.shortUrl} />
+        </Modal>
         <Typography
           variant="body2"
           component="p"
@@ -94,19 +170,35 @@ const SingleOutput = (props) => {
         </Typography>
 
         <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
-          <Typography
-            variant="body2"
-            component="p"
-            sx={{
-              color: 'primary.main',
-              fontSize: '1rem',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {props.shortUrl}
-          </Typography>
+          <Stack direction="column" spacing={2} sx={{ alignItems: 'center' }}>
+            <Typography
+              variant="body2"
+              component="p"
+              sx={{
+                color: 'primary.main',
+                fontSize: '1rem',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {props.shortUrl}
+            </Typography>
+            {
+              props.customBackHalf &&
+              <Typography
+              variant="body2"
+              component="p"
+              sx={{
+                color: 'primary.main',
+                fontSize: '1rem',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {props.customBackHalf}
+            </Typography>
+            }
+          </Stack>
           {generateButton()}
-          <Button variant="cyanBg" fullWidth onClick={handleEditBackHalf}>
+          <Button variant="cyanBg" fullWidth onClick={() => setModalDisplay(true)}>
             Edit
           </Button>
         </Stack>

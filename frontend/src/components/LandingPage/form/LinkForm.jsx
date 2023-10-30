@@ -34,9 +34,9 @@ const LinkForm = ({ onFormValueChange, onSnackbarSuccess }) => {
           },
         );
 
-        const { shortUrl } = response.data;
+        const { shortUrl, customBackHalf } = response.data;
         // console.log(`Short URL: ${shortUrl} and Original URL: ${link}`);
-        onFormValueChange({ originalUrl: link, shortUrl });
+        onFormValueChange({ originalUrl: link, shortUrl, customBackHalf });
 
         onSnackbarSuccess({
           children: 'Your shortlink is ready',
