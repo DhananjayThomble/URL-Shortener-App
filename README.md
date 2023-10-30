@@ -129,7 +129,7 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
     FRONTEND_URL=<your-frontend-webapp-url>
     ```
 
-Example .env file:
+  Example .env file:
     ```bash
     DB_URL=mongodb+srv://<username>:<password>@<cluster-url>/<database-name>?retryWrites=true&w=majority
     JWT_SECRET=secret
