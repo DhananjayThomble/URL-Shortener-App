@@ -129,27 +129,27 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
     FRONTEND_URL=<your-frontend-webapp-url>
     ```
 
-  Example .env file:
-    ```bash
-    DB_URL=mongodb+srv://<username>:<password>@<cluster-url>/<database-name>?retryWrites=true&w=majority
-    JWT_SECRET=secret
-    SESSION_SECRET=secret
-    PORT=4001
-    BASE_URL=http://localhost:4001
-    SHORT_URL_PREFIX=http://localhost:4001/u
-    EMAIL_HOST=smtp.gmail.com
-    EMAIL_PORT=587
-    EMAIL_HOST_USER=john@gmail.com
-    EMAIL_HOST_PASSWORD=btvpykqmgtrpeukj
-    FRONTEND_URL=https://app.snapurl.in
-    ```
+    Example .env file:
+      ```bash
+      DB_URL=mongodb+srv://<username>:<password>@<cluster-url>/<database-name>?retryWrites=true&w=majority
+      JWT_SECRET=secret
+      SESSION_SECRET=secret
+      PORT=4001
+      BASE_URL=http://localhost:4001
+      SHORT_URL_PREFIX=http://localhost:4001/u
+      EMAIL_HOST=smtp.gmail.com
+      EMAIL_PORT=587
+      EMAIL_HOST_USER=john@gmail.com
+      EMAIL_HOST_PASSWORD=btvpykqmgtrpeukj
+      FRONTEND_URL=https://app.snapurl.in
+      ```
 
-You can get your MongoDB database URL from [here](https://www.mongodb.com/cloud/atlas).
-
-You can get your Email Host, Email Port, Email Host User and Email Host Password from your email service provider. 
-You can even use your **Gmail** account for this. If you have enabled 2-step verification for your gmail account, you will need to generate an app password. you can find more information about this [here](https://support.google.com/accounts/answer/185833?hl=en).
-
-Contact me if you need help with this.
+    You can get your MongoDB database URL from [here](https://www.mongodb.com/cloud/atlas).
+    
+    You can get your Email Host, Email Port, Email Host User and Email Host Password from your email service provider. 
+    You can even use your **Gmail** account for this. If you have enabled 2-step verification for your gmail account, you will need to generate an app password. you can find more information about this [here](https://support.google.com/accounts/answer/185833?hl=en).
+    
+    Contact me if you need help with this.
 
 
 5. Goto the frontend directory:
@@ -159,7 +159,7 @@ Contact me if you need help with this.
 VITE_API_ENDPOINT=http://localhost:4001
 ```
 
-7. Start both backend and the fronend server from the root directory
+7. Start both backend and the frontend server from the root directory
 ```bash
 npm start
 ```
