@@ -107,12 +107,13 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
     git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
     ```
 2. Install the dependencies:
-```bash
-npm install
-```
+  ```bash
+  cd ./URL-Shortener-App
+  npm install
+  ```
 ### for backend:
 
-i. Goto the backend directory:
+i. Goto the backend directory
 
 ii. Create a .env file in the backend directory and add the following environment variables:
 ```bash
@@ -155,16 +156,13 @@ Contact me if you need help with this.
 ### for frontend:
 
 i. Goto the frontend directory:
-```bash
-cd frontend
-```
 
 ii. Create a .env file in the frontend directory and add the following environment variables:
 ```bash
 VITE_API_ENDPOINT=http://localhost:4001
 ```
 
-4. Start both backend and the fronend server
+4. Start both backend and the fronend server from the root directory
 ```bash
 npm start
 ```
