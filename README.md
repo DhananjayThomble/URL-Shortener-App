@@ -111,11 +111,10 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
     cd ./URL-Shortener-App
     npm install
     ```
-### for backend:
 
-i. Goto the backend directory
+3. Goto the backend directory
 
-ii. Create a .env file in the backend directory and add the following environment variables:
+4. Create a .env file in the backend directory and add the following environment variables:
 ```bash
 DB_URL=<your-mongodb-database-url>
 JWT_SECRET=<your-jwt-secret>
@@ -153,21 +152,19 @@ You can even use your **Gmail** account for this. If you have enabled 2-step ver
 Contact me if you need help with this.
 
 
-### for frontend:
+5. Goto the frontend directory:
 
-i. Goto the frontend directory:
-
-ii. Create a .env file in the frontend directory and add the following environment variables:
+6. Create a .env file in the frontend directory and add the following environment variables:
 ```bash
 VITE_API_ENDPOINT=http://localhost:4001
 ```
 
-4. Start both backend and the fronend server from the root directory
+7. Start both backend and the fronend server from the root directory
 ```bash
 npm start
 ```
-5. Open http://localhost:4001/doc to view the API documentation.
-6. To view the frontend, check the terminal for the URL.
+8. Open http://localhost:4001/doc to view the API documentation.
+9. To view the frontend, check the terminal for the URL.
 
 ## Contributing
 
