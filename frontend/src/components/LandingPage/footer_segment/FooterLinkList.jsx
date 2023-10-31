@@ -38,17 +38,17 @@ FooterLinkList.defaultProps = {
     bodyText: [
       {
         text: 'Link Shortening',
-        path: ''
+        path: '',
       },
       {
         text: 'Branded Links',
-        path: ''
+        path: '',
       },
       {
         text: 'Analytics',
-        path: ''
+        path: '',
       },
-    ]
+    ],
   },
 };
 

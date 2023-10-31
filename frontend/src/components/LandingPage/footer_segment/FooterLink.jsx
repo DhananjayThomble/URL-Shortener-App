@@ -4,7 +4,6 @@ import propTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 
 const FooterLink = ({ bodyText, path }) => {
-
   const navigate = useNavigate();
 
   return (
@@ -19,7 +18,9 @@ const FooterLink = ({ bodyText, path }) => {
           backgroundColor: 'transparent',
         },
       }}
-      onClick={() => {navigate(path)}}
+      onClick={() => {
+        navigate(path);
+      }}
     >
       {bodyText}
     </Button>
@@ -30,10 +31,10 @@ export default FooterLink;
 
 FooterLink.defaultProps = {
   bodyText: 'FooterLink',
-  path: ''
+  path: '',
 };
 
 FooterLink.propTypes = {
   bodyText: propTypes.string,
-  path: propTypes.string
+  path: propTypes.string,
 };

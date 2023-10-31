@@ -14,60 +14,60 @@ const textLinks = [
     bodyText: [
       {
         text: 'Link Shortening',
-        path: ''
+        path: '',
       },
       {
         text: 'Branded Links',
-        path: ''
+        path: '',
       },
       {
         text: 'Analytics',
-        path: ''
+        path: '',
       },
-    ]
+    ],
   },
   {
     title: 'Resources',
     bodyText: [
       {
         text: 'Blog',
-        path: ''
+        path: '',
       },
       {
         text: 'Developers',
-        path: ''
+        path: '',
       },
       {
         text: 'Support',
-        path: ''
+        path: '',
       },
-    ]
+    ],
   },
   {
     title: 'Company',
     bodyText: [
       {
-        text : 'About',
-        path : ''
+        text: 'About',
+        path: '',
       },
       {
-        text : 'Our Team',
-        path : ''
+        text: 'Our Team',
+        path: '',
       },
       {
-        text : 'Careers',
-        path : ''
+        text: 'Careers',
+        path: '',
       },
       {
-        text : 'Contact',
-        path : ''
+        text: 'Contact',
+        path: '',
       },
       {
-        text : 'Feedback',
-        path : '/feedback'
-      }
-    ]
-  }
+        text: 'Feedback',
+        path: '/feedback',
+      },
+    ],
+  },
 ];
 
 const iconLinks = [FacebookLogo, TwitterLogo, InstagramLogo];

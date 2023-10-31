@@ -47,7 +47,7 @@ function App() {
             <Route path="/reset-password/" element={<ResetPassword />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path={'/Sharepage'} element={<SharePage />} />
-            <Route path={'/feedback'} element={<FeedbackForm />}/>
+            <Route path={'/feedback'} element={<FeedbackForm />} />
           </Routes>
           {/* <Footer /> */}
         </UserContext.Provider>
