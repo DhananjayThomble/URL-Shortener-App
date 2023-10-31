@@ -19,7 +19,12 @@ const LinkParent = () => {
   const handleFormValue = (param) => {
     // console.log("formValue from parent", param);
     // setResponseList([...responseList, param]);
-    setResponseList((prev) => [...prev, param]);
+    setResponseList((prev) => {
+        // remove old url data if exists
+        prev = prev.filter((data) => data.shortUrl !== param.shortUrl)
+        // now update
+        return [...prev, param]
+    });
     // console.log("responseList from parent", responseList);
   };
 
@@ -34,7 +39,11 @@ const LinkParent = () => {
         onFormValueChange={handleFormValue}
         onSnackbarSuccess={handleSnackbarSuccess}
       />
-      <LinkList responseList={responseList} />
+      <LinkList
+        responseList={responseList}
+        onFormValueChange={handleFormValue}
+        onSnackbarSuccess={handleSnackbarSuccess}
+      />
 
       {!!snackbar && (
         <Snackbar
