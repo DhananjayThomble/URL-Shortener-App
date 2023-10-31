@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import './FeedbackForm.css';
 import Image from '../assets/images/feedback.png';
 import { toast } from 'react-toastify';
+import axios from 'axios';
 
 const FeedbackForm = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [attachment, setAttachment] = useState(null);
+  // TODO: Implement attachments later
   const [feedback, setFeedback] = useState('');
   const [nameError, setNameError] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -15,6 +17,14 @@ const FeedbackForm = () => {
 
   const handleAttachmentChange = (event) => {
     setAttachment(event.target.files[0]);
+  };
+
+  const resetState = () => {
+    setName('');
+    setEmail('');
+    setFeedback('');
+    setAttachment(null);
+    setFileInputKey((prevKey) => prevKey + 1);
   };
 
   const isNameValid = (input) => {
@@ -27,7 +37,7 @@ const FeedbackForm = () => {
     return emailPattern.test(input);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     let isFormValid = true;
     setEmailError('');
     setNameError('');
@@ -49,12 +59,41 @@ const FeedbackForm = () => {
     }
 
     if (isFormValid) {
-      toast.success('Submitted');
-      setName('');
-      setEmail('');
-      setFeedback('');
-      setAttachment(null);
-      setFileInputKey((prevKey) => prevKey + 1);
+      // Submit form details to the API
+      const apiEndpoint = `${import.meta.env.VITE_API_ENDPOINT}/auth/feedback`;
+
+      try {
+        const response = await axios.post(
+          apiEndpoint,
+          {
+            message: feedback,
+            rating: 5,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem('token')}`,
+            },
+          },
+        );
+        console.log(response.status);
+
+        toast.success('Submitted');
+        resetState();
+      } catch (error) {
+        if (error.response.status === 400) {
+          const { error: errorMsg } = error.response.data;
+          console.log(error, errorMsg);
+
+          toast.error(errorMsg);
+        } else if (
+          error.response.status === 404 ||
+          error.response.status === 401
+        ) {
+          toast.error('Please log in or sign up first!');
+        } else {
+          toast.error('Something went wrong. Please try again later.');
+        }
+      }
     }
   };
 
