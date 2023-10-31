@@ -104,12 +104,31 @@ const SingleOutput = (props) => {
     }, 5000);
   };
 
-  const generateButton = () => {
-    return (
-      <Button variant="cyanBg" fullWidth onClick={handleClick}>
-        {copySuccess ? 'copied!' : 'copy'}
-      </Button>
+  const handleClickCustom = () => {
+    navigator.clipboard.writeText(
+      `${import.meta.env.VITE_API_ENDPOINT}/r/${props.customBackHalf}`,
     );
+    setCopySuccess(true);
+
+    setTimeout(() => {
+      setCopySuccess(false);
+    }, 5000);
+  };
+
+  const generateButton = () => {
+    if (props.customBackHalf) {
+      return (
+        <Button variant="cyanBg" fullWidth onClick={handleClickCustom}>
+          {copySuccess ? 'copied!' : 'copy custom url'}
+        </Button>
+      );
+    } else {
+      return (
+        <Button variant="cyanBg" fullWidth onClick={handleClick}>
+          {copySuccess ? 'copied!' : 'copy'}
+        </Button>
+      );
+    }
   };
 
   return (
@@ -142,10 +161,14 @@ const SingleOutput = (props) => {
           />
         </ListItem>
         <ListItem>
-          <ListItemText
-            primary={props.customBackHalf}
-            sx={{ color: 'primary.main' }}
-          />
+          {props.customBackHalf && (
+            <ListItemText
+              primary={`${import.meta.env.VITE_API_ENDPOINT}/r/${
+                props.customBackHalf
+              }`}
+              sx={{ color: 'primary.main' }}
+            />
+          )}
         </ListItem>
         <ListItem sx={{ pt: 0 }}>{generateButton()}</ListItem>
         <ListItem>
@@ -207,10 +230,13 @@ const SingleOutput = (props) => {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {props.customBackHalf}
+                {`${import.meta.env.VITE_API_ENDPOINT}/r/${
+                  props.customBackHalf
+                }`}
               </Typography>
             )}
           </Stack>
+
           {generateButton()}
           <Button
             variant="cyanBg"
