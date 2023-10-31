@@ -53,7 +53,7 @@ function HistoryCard({
     try {
       console.log(`update category api is called`);
       const result = await axios.put(
-        `${import.meta.env.VITE_API_ENDPOINT}/api/url/filter/`,
+        `${import.meta.env.VITE_API_ENDPOINT}/api/filter/`,
         {
           shortUrl: shortUrl,
           category: e.target.innerText,

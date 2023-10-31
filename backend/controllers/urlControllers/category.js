@@ -8,8 +8,8 @@ export const getFilteredCategory = async (req, res) => {
       userId,
       category,
     });
-
-    res.status(200).json({ urls });
+    // console.log(urls);
+    res.status(200).json(urls);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Server error' });
@@ -18,7 +18,7 @@ export const getFilteredCategory = async (req, res) => {
 
 export const updateCategory = async (req, res) => {
   const userId = req.user._id;
-  const category = req.params.category;
+  const category = req.body.category;
   const shortUrl = req.body.shortUrl;
   try {
     const updatedUrl = await UrlModel.findOneAndUpdate(

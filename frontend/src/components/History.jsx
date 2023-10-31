@@ -41,11 +41,11 @@ function History() {
             },
           },
         );
-        setHistory(result.data.urlArray);
-        historyCategory(result.data.urlArray);
+        setHistory(result.data);
+        historyCategory(result.data);
         // console.log(history);
         // console.log(`history api is called`);
-        if (result.data.urlArray.length === 0) {
+        if (result.data.length === 0) {
           toast.update(toastId.current, {
             render: 'No History Found',
             type: 'info',
@@ -91,18 +91,16 @@ function History() {
         try {
           toastId.current = toast.loading('Fetching History...');
           const result = await axios.get(
-            `${
-              import.meta.env.VITE_API_ENDPOINT
-            }/api/url/filter/${selectedFilter}`,
+            `${import.meta.env.VITE_API_ENDPOINT}/api/filter/${selectedFilter}`,
             {
               headers: {
                 Authorization: `Bearer ${localStorage.getItem('token')}`,
               },
             },
           );
-          setHistory(result.data.urlArray);
-          // console.log(`length of history array is ${result.data.urlArray.length}`);
-          if (result.data.urlArray.length === 0) {
+          setHistory(result.data);
+          // console.log(`length of history array is ${result.data.length}`);
+          if (result.data.length === 0) {
             toast.update(toastId.current, {
               render: 'No History Found',
               type: 'info',
