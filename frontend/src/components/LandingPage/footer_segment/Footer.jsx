@@ -11,16 +11,63 @@ import {
 const textLinks = [
   {
     title: 'Features',
-    bodyText: ['Link Shortening', 'Branded Links', 'Analytics'],
+    bodyText: [
+      {
+        text: 'Link Shortening',
+        path: ''
+      },
+      {
+        text: 'Branded Links',
+        path: ''
+      },
+      {
+        text: 'Analytics',
+        path: ''
+      },
+    ]
   },
   {
     title: 'Resources',
-    bodyText: ['Blog', 'Developers', 'Support'],
+    bodyText: [
+      {
+        text: 'Blog',
+        path: ''
+      },
+      {
+        text: 'Developers',
+        path: ''
+      },
+      {
+        text: 'Support',
+        path: ''
+      },
+    ]
   },
   {
     title: 'Company',
-    bodyText: ['About', 'Our Team', 'Careers', 'Contact'],
-  },
+    bodyText: [
+      {
+        text : 'About',
+        path : ''
+      },
+      {
+        text : 'Our Team',
+        path : ''
+      },
+      {
+        text : 'Careers',
+        path : ''
+      },
+      {
+        text : 'Contact',
+        path : ''
+      },
+      {
+        text : 'Feedback',
+        path : '/feedback'
+      }
+    ]
+  }
 ];
 
 const iconLinks = [FacebookLogo, TwitterLogo, InstagramLogo];

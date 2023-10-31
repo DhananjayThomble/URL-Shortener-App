@@ -1,8 +1,12 @@
 import React from 'react';
 import { Button } from '@mui/material';
 import propTypes from 'prop-types';
+import { useNavigate } from 'react-router-dom';
 
-const FooterLink = ({ bodyText }) => {
+const FooterLink = ({ bodyText, path }) => {
+
+  const navigate = useNavigate();
+
   return (
     <Button
       sx={{
@@ -15,6 +19,7 @@ const FooterLink = ({ bodyText }) => {
           backgroundColor: 'transparent',
         },
       }}
+      onClick={() => {navigate(path)}}
     >
       {bodyText}
     </Button>
@@ -25,8 +30,10 @@ export default FooterLink;
 
 FooterLink.defaultProps = {
   bodyText: 'FooterLink',
+  path: ''
 };
 
 FooterLink.propTypes = {
   bodyText: propTypes.string,
+  path: propTypes.string
 };

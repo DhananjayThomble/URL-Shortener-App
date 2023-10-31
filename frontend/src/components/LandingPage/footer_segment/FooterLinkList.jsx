@@ -24,7 +24,7 @@ const FooterLinkList = ({ content }) => {
         {content.title}
       </Typography>
       {content.bodyText.map((item) => (
-        <FooterLink key={item} bodyText={item} />
+        <FooterLink key={item} bodyText={item.text} path={item.path} />
       ))}
     </Stack>
   );
@@ -35,7 +35,20 @@ export default FooterLinkList;
 FooterLinkList.defaultProps = {
   content: {
     title: 'Features',
-    bodyText: ['Link Shortening', 'Branded Links', 'Analytics'],
+    bodyText: [
+      {
+        text: 'Link Shortening',
+        path: ''
+      },
+      {
+        text: 'Branded Links',
+        path: ''
+      },
+      {
+        text: 'Analytics',
+        path: ''
+      },
+    ]
   },
 };
 
