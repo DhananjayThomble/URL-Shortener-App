@@ -209,6 +209,10 @@ paths:
                   shortUrl:
                     type: string
                     description: The shortened URL.
+                  customBackHalf:
+                    type: string
+                    nullable: true
+                    description: The custom back half (if set)
 
         "400":
           description: Bad request
@@ -220,6 +224,95 @@ paths:
                   error:
                     type: string
                     description: The error message.
+
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+        "500":
+          description: Error creating URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+
+  /api/url/custom:
+    post:
+      tags:
+         - Generate Url
+      summary: Generates a custom back half link
+      description: Create or edit the custom back half link of a short URL
+
+      security:
+        - BearerAuth: []
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                backHalf:
+                  type: string
+                  description: The new back half link of URL
+                shortUrl:
+                  type: string
+                  description: The original URL's short code
+              example:
+                backHalf: custom123
+                shortUrl: Yua7s8adce
+
+      responses:
+        "200":
+          description: Custom back half created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  customBackHalf:
+                    type: string
+                    description: The custom back half link
+                example:
+                  message: Custom back-half generated
+                  customBackHalf: custom123
+
+        "400":
+          description: Bad request (either the URL does not exist or this custom back link string already exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: The error message.
+                  suggestion:
+                    type: string
+                    nullable: true
+                    description: Suggested custom back link word
+              examples:
+                Back half already exists:
+                  value:
+                    error: 'Custom back-half already exists'
+                    suggestion: Random back half word
+                Url does not exist:
+                  value:
+                    error: URL does not exist
 
         "401":
           description: Unauthorized
