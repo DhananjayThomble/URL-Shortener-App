@@ -8,12 +8,14 @@ const LinkList = ({ responseList, onSnackbarSuccess, onFormValueChange }) => {
         responseList.map((item) => {
           const { shortUrl } = item;
 
-          return <SingleOutput
-            key={shortUrl}
-            {...item}
-            onSnackbarSuccess={onSnackbarSuccess}
-            onFormValueChange={onFormValueChange}
-          />;
+          return (
+            <SingleOutput
+              key={shortUrl}
+              {...item}
+              onSnackbarSuccess={onSnackbarSuccess}
+              onFormValueChange={onFormValueChange}
+            />
+          );
         })}
     </div>
   );

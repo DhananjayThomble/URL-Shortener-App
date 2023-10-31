@@ -12,6 +12,6 @@ const backHalfSchema = Yup.object().shape({
     .required('Please add a link')
     .min(3, 'Length should be 3-10 characters')
     .max(10, 'Length should be 3-10 characters'),
-})
+});
 
 export { LinkSchema, backHalfSchema };

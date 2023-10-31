@@ -3,7 +3,8 @@ import { Form, FormikProvider } from 'formik';
 import { Button, TextField, Typography } from '@mui/material';
 
 const BackHalfForm = (props) => {
-  const { errors, touched, isSubmitting, handleSubmit, getFieldProps } = props.formik;
+  const { errors, touched, isSubmitting, handleSubmit, getFieldProps } =
+    props.formik;
 
   return (
     <FormikProvider value={props.formik}>
@@ -24,7 +25,10 @@ const BackHalfForm = (props) => {
         <Typography
           variant="body2"
           component="p"
-          sx={{ color: 'neutral.veryDarkViolet', fontSize: { xs: '0.75rem', sm: '1rem' } }}
+          sx={{
+            color: 'neutral.veryDarkViolet',
+            fontSize: { xs: '0.75rem', sm: '1rem' },
+          }}
         >
           Edit the last part of your shortened link: {props.shortUrl}
         </Typography>
@@ -37,10 +41,14 @@ const BackHalfForm = (props) => {
           error={Boolean(touched.customBackHalf && errors.customBackHalf)}
           helperText={touched.customBackHalf && errors.customBackHalf}
           inputProps={{
-            style: { fontSize: { xs: '0.75rem', sm: '1rem'}, padding: '1rem 0.5rem', backgroundColor: 'transparent' }
+            style: {
+              fontSize: { xs: '0.75rem', sm: '1rem' },
+              padding: '1rem 0.5rem',
+              backgroundColor: 'transparent',
+            },
           }}
           InputLabelProps={{
-            style: { paddingLeft: '0.5rem' }
+            style: { paddingLeft: '0.5rem' },
           }}
         />
         <Button
@@ -50,10 +58,10 @@ const BackHalfForm = (props) => {
           sx={{
             mt: { xs: 2, md: 0 },
             p: 2,
-            fontSize: { xs: '1rem', sm: '1.15rem'},
+            fontSize: { xs: '1rem', sm: '1.15rem' },
             fontWeight: 600,
             maxWidth: 'fit-content',
-            maxHeight: '3rem'
+            maxHeight: '3rem',
           }}
         >
           {isSubmitting ? 'loading...' : 'Create custom back half!'}

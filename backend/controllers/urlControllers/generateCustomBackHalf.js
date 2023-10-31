@@ -24,7 +24,7 @@ export const generateCustomBackHalf = async (req, res) => {
     const updatedUrl = await UrlModel.findOneAndUpdate(
       { userId, shortUrl },
       { customBackHalf: backHalf },
-      { new: true }
+      { new: true },
     );
     // console.log('Updated url data:', updatedUrl);
 
@@ -38,7 +38,7 @@ export const generateCustomBackHalf = async (req, res) => {
     // Send response with the success message
     res.status(200).json({
       message: 'Custom back-half generated',
-      customBackHalf: updatedUrl.customBackHalf
+      customBackHalf: updatedUrl.customBackHalf,
     });
   } catch (error) {
     console.error(error);

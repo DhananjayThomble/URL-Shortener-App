@@ -20,10 +20,10 @@ const LinkParent = () => {
     // console.log("formValue from parent", param);
     // setResponseList([...responseList, param]);
     setResponseList((prev) => {
-        // remove old url data if exists
-        prev = prev.filter((data) => data.shortUrl !== param.shortUrl)
-        // now update
-        return [...prev, param]
+      // remove old url data if exists
+      prev = prev.filter((data) => data.shortUrl !== param.shortUrl);
+      // now update
+      return [...prev, param];
     });
     // console.log("responseList from parent", responseList);
   };

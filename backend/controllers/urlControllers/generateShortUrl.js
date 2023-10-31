@@ -22,7 +22,7 @@ export const generateShortUrl = async (req, res) => {
       const { shortUrl, customBackHalf } = urlDetails;
       return res.status(200).json({
         shortUrl: `${SHORT_URL_PREFIX}/${shortUrl}`,
-        customBackHalf: customBackHalf
+        customBackHalf: customBackHalf,
       });
     }
 
@@ -38,7 +38,7 @@ export const generateShortUrl = async (req, res) => {
     // Send response with the generated short URL
     res.status(200).json({
       shortUrl: `${SHORT_URL_PREFIX}/${id}`,
-      customBackHalf: null
+      customBackHalf: null,
     });
   } catch (error) {
     console.error(error);

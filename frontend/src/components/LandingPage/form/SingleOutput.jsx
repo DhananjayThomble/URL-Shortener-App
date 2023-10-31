@@ -30,14 +30,14 @@ const desktopStyle = {
 };
 
 const SingleOutput = (props) => {
-  const shortUrlKey = props.shortUrl.split('/').pop()
+  const shortUrlKey = props.shortUrl.split('/').pop();
   const [copySuccess, setCopySuccess] = useState(false);
   const [modalDisplay, setModalDisplay] = useState(false);
 
   const formik = useFormik({
     enableReinitialize: true,
     initialValues: {
-      customBackHalf: props.customBackHalf || shortUrlKey
+      customBackHalf: props.customBackHalf || shortUrlKey,
     },
     validationSchema: backHalfSchema,
     onSubmit: async (values, actions) => {
@@ -52,7 +52,7 @@ const SingleOutput = (props) => {
           ApiEndpoint,
           {
             backHalf: backHalf,
-            shortUrl: shortUrlKey
+            shortUrl: shortUrlKey,
           },
           {
             headers: {
@@ -66,8 +66,8 @@ const SingleOutput = (props) => {
         props.onFormValueChange({
           originalUrl: props.originalUrl,
           shortUrl: props.shortUrl,
-          customBackHalf
-        })
+          customBackHalf,
+        });
 
         props.onSnackbarSuccess({
           children: `Back half updated to: ${customBackHalf}`,
@@ -77,10 +77,11 @@ const SingleOutput = (props) => {
       } catch (error) {
         if (error.response.status === 400) {
           const { error: errorMsg, suggestion } = error.response.data;
-          console.log(error, suggestion)
+          console.log(error, suggestion);
 
           props.onSnackbarSuccess({
-            children: errorMsg + (suggestion ? `\nSuggested link: ${suggestion}` : ''),
+            children:
+              errorMsg + (suggestion ? `\nSuggested link: ${suggestion}` : ''),
             severity: 'error',
           });
           return;
@@ -90,9 +91,9 @@ const SingleOutput = (props) => {
           severity: 'error',
         });
       }
-      setModalDisplay(false)
-    }
-  })
+      setModalDisplay(false);
+    },
+  });
 
   const handleClick = () => {
     navigator.clipboard.writeText(props.shortUrl);
@@ -119,7 +120,12 @@ const SingleOutput = (props) => {
         <Modal
           open={modalDisplay}
           onClose={() => setModalDisplay(false)}
-          sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '100vh',
+          }}
         >
           <BackHalfForm formik={formik} shortUrl={props.shortUrl} />
         </Modal>
@@ -143,7 +149,11 @@ const SingleOutput = (props) => {
         </ListItem>
         <ListItem sx={{ pt: 0 }}>{generateButton()}</ListItem>
         <ListItem>
-          <Button variant="cyanBg" fullWidth onClick={() => setModalDisplay(true)}>
+          <Button
+            variant="cyanBg"
+            fullWidth
+            onClick={() => setModalDisplay(true)}
+          >
             Edit Back Half
           </Button>
         </ListItem>
@@ -157,7 +167,12 @@ const SingleOutput = (props) => {
         <Modal
           open={modalDisplay}
           onClose={() => setModalDisplay(false)}
-          sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '100vh',
+          }}
         >
           <BackHalfForm formik={formik} shortUrl={props.shortUrl} />
         </Modal>
@@ -182,23 +197,26 @@ const SingleOutput = (props) => {
             >
               {props.shortUrl}
             </Typography>
-            {
-              props.customBackHalf &&
+            {props.customBackHalf && (
               <Typography
-              variant="body2"
-              component="p"
-              sx={{
-                color: 'primary.main',
-                fontSize: '1rem',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {props.customBackHalf}
-            </Typography>
-            }
+                variant="body2"
+                component="p"
+                sx={{
+                  color: 'primary.main',
+                  fontSize: '1rem',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {props.customBackHalf}
+              </Typography>
+            )}
           </Stack>
           {generateButton()}
-          <Button variant="cyanBg" fullWidth onClick={() => setModalDisplay(true)}>
+          <Button
+            variant="cyanBg"
+            fullWidth
+            onClick={() => setModalDisplay(true)}
+          >
             Edit
           </Button>
         </Stack>
