@@ -32,6 +32,7 @@ function About() {
           <li>Link Analytics</li>
           <li>QR Code Generation</li>
           <li>Link Deletion</li>
+          <li>Export generated URL's to excel file</li>
         </ol>
         <br />
         <h3>Frequently Asked Questions</h3>
