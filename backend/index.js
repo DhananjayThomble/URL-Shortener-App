@@ -75,7 +75,6 @@ const corsOptions = {
       if (origin && /\.snapurl\.in$/.test(origin)) {
         callback(null, true);
       } else {
-        console.error(`CORS Error: Request from origin ${origin} is not allowed`);
         callback(new Error('Only requests from snapurl.in subdomains are allowed.'));
       }
     } else {
