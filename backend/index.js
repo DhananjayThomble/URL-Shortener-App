@@ -66,16 +66,17 @@ import domainRoutes from './routes/domain.route.js';
 import initCustomDomainJobs from './jobs/customDomainJobs.js';
 
 // cors configuration, allowing only snapurl.in domain and subdomains in production
+const isProduction = process.env.NODE_ENV === 'production';
+// const isProduction = true;
 const corsOptions = {
   origin: function (origin, callback) {
-    if (process.env.NODE_ENV === 'production') {
-      if (/\.snapurl\.in$/.test(origin)) {
+    if (isProduction) {
+      // allow all subdomains of snapurl.in in production
+      if (origin && /\.snapurl\.in$/.test(origin)) {
         callback(null, true);
       } else {
-        console.error(
-          `CORS Error: Request from origin ${origin} is not allowed`,
-        );
-        callback(new Error('Not allowed by CORS'));
+        console.error(`CORS Error: Request from origin ${origin} is not allowed`);
+        callback(new Error('Only requests from snapurl.in subdomains are allowed.'));
       }
     } else {
       // allow all origins in non-production environments
@@ -106,6 +107,16 @@ app.get('/', (req, res) => {
   res.send(`Please goto <a href='/doc'>/doc</a> to see api documentation`);
 });
 
+// global error handler
+app.use((err, req, res, next) => {
+  if (err) {
+    console.error(err.message);
+    res.status(500).json({ error: err.message || 'Internal Server Error' });
+  } else {
+    next();
+  }
+});
+
 app.listen(PORT, function () {
   console.log(`Listening on port ${PORT}`);
 });
@@ -113,9 +124,6 @@ app.listen(PORT, function () {
 // -------------------AWS Cloudwatch Logs-------------------
 import winston from 'winston';
 import WinstonCloudWatch from 'winston-cloudwatch';
-
-const isProduction = process.env.NODE_ENV === 'production';
-// const isProduction = true;
 
 // Configure Winston logger
 const logger = winston.createLogger({
