@@ -75,7 +75,9 @@ const corsOptions = {
       if (origin && /\.snapurl\.in$/.test(origin)) {
         callback(null, true);
       } else {
-        callback(new Error('Only requests from snapurl.in subdomains are allowed.'));
+        callback(
+          new Error('Only requests from snapurl.in subdomains are allowed.'),
+        );
       }
     } else {
       // allow all origins in non-production environments
