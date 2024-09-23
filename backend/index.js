@@ -90,6 +90,45 @@ app.listen(PORT, function () {
   console.log(`Listening on port ${PORT}`);
 });
 
+// -------------------AWS Cloudwatch Logs-------------------
+import winston from 'winston';
+import WinstonCloudWatch from 'winston-cloudwatch';
+
+const isProduction = process.env.NODE_ENV === 'production';
+// const isProduction = true;
+
+// Configure Winston logger
+const logger = winston.createLogger({
+  transports: [
+    isProduction
+      ? new WinstonCloudWatch({
+          logGroupName: 'snapurl',
+          logStreamName: 'express-server',
+          awsRegion: 'ap-south-1',
+          jsonMessage: true,
+          awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        })
+      : new winston.transports.Console({
+          format: winston.format.simple(),
+        }),
+  ],
+});
+
+logger.level = 'debug';
+logger.on('error', (err) => {
+  console.error('Error in Winston CloudWatch logger:', err);
+});
+
+// override console.log and console.error
+console.log = function (...args) {
+  logger.info(args.join(' '));
+};
+
+console.error = function (...args) {
+  logger.error(args.join(' '));
+};
+
 initCustomDomainJobs();
 
 export { app };
