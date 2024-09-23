@@ -110,7 +110,8 @@ app.get('/', (req, res) => {
 // global error handler
 app.use((err, req, res, next) => {
   if (err) {
-    console.error(err.message);
+    const ip = req.headers['x-forwarded-for'] || req.ip;
+    console.error(`Error from IP ${ip}:`, err);
     res.status(500).json({ error: err.message || 'Internal Server Error' });
   } else {
     next();
