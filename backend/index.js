@@ -65,11 +65,31 @@ import admin from './routes/admin.route.js';
 import domainRoutes from './routes/domain.route.js';
 import initCustomDomainJobs from './jobs/customDomainJobs.js';
 
-app.use('/api', cors(), urlRoute);
-app.use('/auth', cors(), userAuthRoute);
-app.use('/admin/auth', cors(), adminAuthRoute);
-app.use('/admin', cors(), admin);
-app.use('/domain', cors(), domainRoutes);
+// cors configuration, allowing only snapurl.in domain and subdomains in production
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (process.env.NODE_ENV === 'production') {
+      if (/\.snapurl\.in$/.test(origin)) {
+        callback(null, true);
+      } else {
+        console.error(
+          `CORS Error: Request from origin ${origin} is not allowed`,
+        );
+        callback(new Error('Not allowed by CORS'));
+      }
+    } else {
+      // allow all origins in non-production environments
+      callback(null, true);
+    }
+  },
+  optionsSuccessStatus: 200,
+};
+
+app.use('/api', cors(corsOptions), urlRoute);
+app.use('/auth', cors(corsOptions), userAuthRoute);
+app.use('/admin/auth', cors(corsOptions), adminAuthRoute);
+app.use('/admin', cors(corsOptions), admin);
+app.use('/domain', cors(corsOptions), domainRoutes);
 
 // for accessing short url
 app.get(
