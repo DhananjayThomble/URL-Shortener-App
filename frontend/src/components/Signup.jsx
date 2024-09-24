@@ -1,12 +1,21 @@
-import Button from 'react-bootstrap/Button';
-import Card from 'react-bootstrap/Card';
-import Form from 'react-bootstrap/Form';
-import Container from 'react-bootstrap/Container';
 import React, { useState } from 'react';
 import { toast } from 'react-toastify';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { FaUserAlt, FaKey, FaUserCircle, FaUserPlus } from 'react-icons/fa';
+import {
+  Container,
+  Box,
+  Card,
+  CardContent,
+  CardHeader,
+  CardActions,
+  Button,
+  TextField,
+  Typography,
+  Link,
+  Divider,
+} from '@mui/material';
 
 function Signup() {
   const [email, setEmail] = useState('');
@@ -19,14 +28,21 @@ function Signup() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    toastId = null;
     toastId = toast.loading('Signing up...');
     if (!validateForm()) return;
     await fetchSignup();
   };
 
-  function checkPassword() {
+  const validateForm = () => {
+    if (email === '' || password === '' || confirmPassword === '' || name === '') {
+      toast.update(toastId, {
+        render: 'Please fill all the fields',
+        type: 'error',
+        isLoading: false,
+        autoClose: 2000,
+      });
+      return false;
+    }
     if (password !== confirmPassword) {
       toast.update(toastId, {
         render: 'Passwords do not match',
@@ -35,7 +51,8 @@ function Signup() {
         autoClose: 2000,
       });
       return false;
-    } else if (password.length < 6) {
+    }
+    if (password.length < 6) {
       toast.update(toastId, {
         render: 'Password must be at least 6 characters',
         type: 'error',
@@ -45,39 +62,15 @@ function Signup() {
       return false;
     }
     return true;
-  }
-
-  function validateForm() {
-    if (
-      email === '' ||
-      password === '' ||
-      confirmPassword === '' ||
-      name === ''
-    ) {
-      toast.update(toastId, {
-        render: 'Please fill all the fields',
-        type: 'error',
-        isLoading: false,
-        autoClose: 2000,
-      });
-      return false;
-    }
-
-    if (!checkPassword()) {
-      return false;
-    }
-    return true;
-  }
+  };
 
   const fetchSignup = async () => {
     try {
-      // console.log(URL);
       const response = await axios.post(`${URL}/auth/signup`, {
         email,
         password,
         name,
       });
-      // console.log(response);
       if (response.data.ok) {
         toast.update(toastId, {
           render: 'Signup successful',
@@ -95,7 +88,6 @@ function Signup() {
         });
       }
     } catch (error) {
-      console.error('Error during signup:', error);
       toast.update(toastId, {
         render: 'Signup failed',
         type: 'error',
@@ -107,88 +99,151 @@ function Signup() {
 
   return (
     <Container
-      className="d-flex align-items-center justify-content-center"
-      style={{ minHeight: '90vh' }}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '90vh',
+      }}
     >
-      <div className="w-100" style={{ maxWidth: '400px' }}>
+      <Box sx={{ maxWidth: '400px', width: '100%' }}>
         <Card>
-          <Card.Header style={{ backgroundColor: '#4B3F6B' }}>
-            <h4 style={{ backgroundColor: '#4B3F6B' }}>Sign Up</h4>
-          </Card.Header>
-          <Card.Body>
-            <Form onSubmit={handleSubmit}>
-              <Form.Group className={'md-3'} controlId={'formName'}>
-                <Form.Label>
+          <CardHeader
+            sx={{ backgroundColor: '#4B3F6B', color: 'white' }}
+            title={<Typography variant="h5">Sign Up</Typography>}
+          />
+          <CardContent>
+            <Box component="form" onSubmit={handleSubmit}>
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  component="label"
+                  sx={{
+                    display: 'flex',
+                    gap: '5px',
+                    alignItems: 'center',
+                    marginBottom: '7px',
+                    fontWeight: '600',
+                  }}
+                >
                   <FaUserCircle /> Name
-                </Form.Label>
-                <Form.Control
-                  type={'text'}
-                  placeholder={'Enter Your Name'}
-                  onChange={(e) => setName(e.target.value)}
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type=""
+                  placeholder="Enter Your Name"
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
                 />
-              </Form.Group>
-              <Form.Group className="mb-3" controlId="formBasicEmail">
-                <Form.Label>
+              </Box>
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  component="label"
+                  sx={{
+                    display: 'flex',
+                    gap: '5px',
+                    alignItems: 'center',
+                    marginBottom: '7px',
+                    fontWeight: '600',
+                  }}
+                >
                   <FaUserAlt /> Email address
-                </Form.Label>
-                <Form.Control
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
                   type="email"
                   placeholder="Enter email"
                   onChange={(e) => setEmail(e.target.value)}
+                  required
                 />
-                <Form.Text className="text-muted">
+                <Typography variant="caption" color="textSecondary">
                   We'll never share your email with anyone else.
-                </Form.Text>
-              </Form.Group>
-              <Form.Group className="mb-3" controlId="formBasicPassword">
-                <Form.Label>
+                </Typography>
+              </Box>
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  component="label"
+                  sx={{
+                    display: 'flex',
+                    gap: '5px',
+                    alignItems: 'center',
+                    marginBottom: '7px',
+                    fontWeight: '600',
+                  }}
+                >
                   <FaKey /> Password
-                </Form.Label>
-                <Form.Control
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
                   type="password"
                   placeholder="Password"
                   onChange={(e) => setPassword(e.target.value)}
+                  required
                 />
-              </Form.Group>
-              <Form.Group className="mb-3" controlId="formBasicPasswordConfirm">
-                <Form.Label>
+              </Box>
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  component="label"
+                  sx={{
+                    display: 'flex',
+                    gap: '5px',
+                    alignItems: 'center',
+                    marginBottom: '7px',
+                    fontWeight: '600',
+                  }}
+                >
                   <FaKey /> Confirm Password
-                </Form.Label>
-                <Form.Control
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
                   type="password"
                   placeholder="Confirm Password"
                   onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
                 />
-              </Form.Group>
-
+              </Box>
               <Button
-                className={'w-100'}
-                variant="info"
+                fullWidth
+                variant="contained"
                 type="submit"
-                style={{ backgroundColor: '#4B3F6B', color: 'white' }}
+                sx={{
+                  backgroundColor: '#4B3F6B',
+                  color: 'white',
+                  borderRadius: '20px',
+                }}
+                startIcon={<FaUserPlus />}
               >
-                <FaUserPlus style={{ marginRight: '0.3rem' }} />
                 SIGN UP
               </Button>
-            </Form>
-          </Card.Body>
-          <Card.Footer className="text-muted">
-            Already Have an Account?{' '}
-            <a
-              style={{
+            </Box>
+          </CardContent>
+          <Divider sx={{ backgroundColor: 'black' }} />
+          <CardActions
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              padding: '14px',
+            }}
+          >
+            <Typography variant="body1" sx={{ color: 'grey' }}>
+              Already Have an Account?
+            </Typography>
+            <Link
+              onClick={() => navigate('/login')}
+              sx={{
                 textDecoration: 'none',
                 color: '#4B3F6B',
                 cursor: 'pointer',
               }}
-              onClick={() => {
-                navigate('/login');
-              }}
             >
               Click Here to Login
-            </a>
-          </Card.Footer>
+            </Link>
+          </CardActions>
         </Card>
-      </div>
+      </Box>
     </Container>
   );
 }

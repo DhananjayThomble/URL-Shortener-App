@@ -1,13 +1,22 @@
-import Button from 'react-bootstrap/Button';
-import Card from 'react-bootstrap/Card';
-import Form from 'react-bootstrap/Form';
-import Container from 'react-bootstrap/Container';
 import React, { useEffect, useState, useContext } from 'react';
 import { toast } from 'react-toastify';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { FaUserAlt, FaKey, FaSignInAlt } from 'react-icons/fa';
 import UserContext from '../context/UserContext';
+import {
+  Container,
+  Box,
+  Card,
+  CardContent,
+  CardHeader,
+  CardActions,
+  Button,
+  TextField,
+  Typography,
+  Link,
+  Divider,
+} from '@mui/material';
 import '../App.css';
 import './Footer.css';
 
@@ -62,7 +71,6 @@ function Login() {
         user: { name },
       } = response.data;
 
-      //    set token and logged-in user's name in local storage
       localStorage.setItem('token', token);
       localStorage.setItem('name', name);
       context.setUser({ token: token });
@@ -97,92 +105,119 @@ function Login() {
 
   return (
     <Container
-      className="d-flex align-items-center justify-content-center"
-      style={{ minHeight: '90vh' }}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '90vh',
+      }}
     >
-      <div className="w-100" style={{ maxWidth: '400px' }}>
+      <Box sx={{ maxWidth: '400px', width: '100%' }}>
         <Card>
-          <Card.Header style={{ backgroundColor: '#4B3F6B' }}>
-            {' '}
-            <h4 style={{ backgroundColor: '#4B3F6B' }}>Login</h4>{' '}
-          </Card.Header>
-          <Card.Body>
-            <Form onSubmit={handleSubmit}>
-              <Form.Group className="mb-3" controlId="formBasicEmail">
-                <Form.Label
-                  style={{ display: 'flex', gap: '5px', alignItems: 'center' }}
+          <CardHeader
+            sx={{ backgroundColor: '#4B3F6B', color: 'white' }}
+            title={<Typography variant="h5">Login</Typography>}
+          />
+          <CardContent>
+            <Box component="form" onSubmit={handleSubmit}>
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  component="label"
+                  sx={{
+                    display: 'flex',
+                    gap: '5px',
+                    alignItems: 'center',
+                    marginBottom: '7px',
+                    fontWeight: '600',
+                  }}
                 >
                   <FaUserAlt /> Email address
-                </Form.Label>
-                <Form.Control
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
                   type="email"
                   placeholder="Enter email"
                   onChange={(e) => setEmail(e.target.value)}
-                  aria-required={true}
+                  required
                 />
-                <Form.Text className="text-muted">
+                <Typography variant="caption" color="textSecondary">
                   We'll never share your email with anyone else.
-                </Form.Text>
-              </Form.Group>
-              <Form.Group className="mb-3" controlId="formBasicPassword">
-                <Form.Label
-                  style={{ display: 'flex', gap: '5px', alignItems: 'center' }}
+                </Typography>
+              </Box>
+
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  component="label"
+                  sx={{
+                    display: 'flex',
+                    gap: '5px',
+                    alignItems: 'center',
+                    marginBottom: '7px',
+                    fontWeight: '600',
+                  }}
                 >
                   <FaKey /> Password
-                </Form.Label>
-                <Form.Control
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
                   type="password"
                   placeholder="Password"
                   onChange={(e) => setPassword(e.target.value)}
-                  aria-required={true}
+                  required
                 />
-                <a
-                  onClick={() => {
-                    navigate('/forgot-password');
-                  }}
-                  style={{
+                <Link
+                  onClick={() => navigate('/forgot-password')}
+                  sx={{
                     textDecoration: 'none',
                     color: '#4B3F6B',
                     cursor: 'pointer',
+                    fontSize: '14px',
                   }}
                 >
-                  {' '}
-                  <span style={{ fontSize: '14px', color: '#4B3F6B' }}>
-                    Forgot password
-                  </span>{' '}
-                </a>{' '}
-              </Form.Group>
+                  Forgot password
+                </Link>
+              </Box>
               <Button
-                className={'w-100'}
-                variant="info"
+                fullWidth
+                variant="contained"
                 type="submit"
-                style={{ backgroundColor: '#4B3F6B', color: 'white' }}
+                sx={{
+                  backgroundColor: '#4B3F6B',
+                  color: 'white',
+                  borderRadius: '20px',
+                }}
+                startIcon={<FaSignInAlt />}
               >
-                <FaSignInAlt style={{ marginRight: '0.3rem' }} />
                 LOGIN
               </Button>
-            </Form>
-          </Card.Body>
-          <Card.Footer
-            className="text-muted"
-            style={{ display: 'flex', justifyContent: 'space-between' }}
+            </Box>
+          </CardContent>
+          <Divider sx={{ backgroundColor: 'black' }} />
+          <CardActions
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              padding: '14px',
+            }}
           >
-            Don't Have an Account?{' '}
-            <a
-              style={{
+            <Typography variant="body1" sx={{ color: 'grey' }}>
+              Don't Have an Account?
+            </Typography>
+            <Link
+              onClick={() => navigate('/signup')}
+              sx={{
                 textDecoration: 'none',
                 color: '#4B3F6B',
                 cursor: 'pointer',
               }}
-              onClick={() => {
-                navigate('/signup');
-              }}
             >
-              <span>Click Here to Signup</span>
-            </a>
-          </Card.Footer>
+              Click Here to Signup
+            </Link>
+          </CardActions>
         </Card>
-      </div>
+      </Box>
     </Container>
   );
 }
