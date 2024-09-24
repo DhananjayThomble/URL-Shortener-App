@@ -132,7 +132,7 @@ function Signup() {
                   size="small"
                   type=""
                   placeholder="Enter Your Name"
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => setName(e.target.value)}
                   required
                 />
               </Box>
