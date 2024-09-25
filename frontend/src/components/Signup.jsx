@@ -34,7 +34,12 @@ function Signup() {
   };
 
   const validateForm = () => {
-    if (email === '' || password === '' || confirmPassword === '' || name === '') {
+    if (
+      email === '' ||
+      password === '' ||
+      confirmPassword === '' ||
+      name === ''
+    ) {
       toast.update(toastId, {
         render: 'Please fill all the fields',
         type: 'error',
