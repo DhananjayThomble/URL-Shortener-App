@@ -1,0 +1,332 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SnapURL Serverless Backend
+  
+  AWS Serverless migration of the SnapURL Node.js/Express backend
+  
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs22.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        USERS_TABLE: !Ref UsersTable
+        URLS_TABLE: !Ref UrlsTable
+        ADMINS_TABLE: !Ref AdminsTable
+        FEEDBACK_TABLE: !Ref FeedbackTable
+        TOKENS_TABLE: !Ref TokensTable
+        CUSTOM_DOMAINS_TABLE: !Ref CustomDomainsTable
+        USER_POOL_ID: !Ref UserPool
+        ADMIN_USER_POOL_ID: !Ref AdminUserPool
+        USER_POOL_CLIENT_ID: !Ref UserPoolClient
+        ADMIN_USER_POOL_CLIENT_ID: !Ref AdminUserPoolClient
+        JWT_SECRET: !Ref JWTSecret
+        SHORT_URL_PREFIX: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/u"
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    Description: API Gateway stage name
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT Secret for token signing
+    Default: "your-jwt-secret-change-in-production"
+
+Resources:
+  # ============== DynamoDB Tables ==============
+  
+  # Users Table
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "snapurl-users-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # URLs Table  
+  UrlsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "snapurl-urls-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: shortUrl
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: customBackHalf
+          AttributeType: S
+      KeySchema:
+        - AttributeName: shortUrl
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: CustomBackHalfIndex
+          KeySchema:
+            - AttributeName: customBackHalf
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Admins Table
+  AdminsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "snapurl-admins-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: adminId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: adminId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # Feedback Table
+  FeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "snapurl-feedback-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: feedbackId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: feedbackId
+          KeyType: HASH
+
+  # Tokens Table
+  TokensTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "snapurl-tokens-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiration
+        Enabled: true
+
+  # Custom Domains Table
+  CustomDomainsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "snapurl-custom-domains-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: domainId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: url
+          AttributeType: S
+      KeySchema:
+        - AttributeName: domainId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: UrlIndex
+          KeySchema:
+            - AttributeName: url
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # ============== Cognito User Pools ==============
+  
+  # User Pool for regular users
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "snapurl-users-${Stage}"
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: name
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub "snapurl-web-client-${Stage}"
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ADMIN_NO_SRP_AUTH
+        - USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # User Pool for admins
+  AdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "snapurl-admins-${Stage}"
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 10
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: name
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+
+  AdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref AdminUserPool
+      ClientName: !Sub "snapurl-admin-client-${Stage}"
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ADMIN_NO_SRP_AUTH
+        - USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ============== Sample Lambda Function (to be expanded) ==============
+  
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: hello-world/
+      Handler: app.lambdaHandler
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            Path: /hello
+            Method: get
+
+Outputs:
+  # API Gateway
+  ApiGatewayEndpoint:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiEndpoint"
+
+  # DynamoDB Tables
+  UsersTableName:
+    Description: "Users DynamoDB table name"
+    Value: !Ref UsersTable
+    Export:
+      Name: !Sub "${AWS::StackName}-UsersTable"
+      
+  UrlsTableName:
+    Description: "URLs DynamoDB table name"  
+    Value: !Ref UrlsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-UrlsTable"
+
+  AdminsTableName:
+    Description: "Admins DynamoDB table name"
+    Value: !Ref AdminsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-AdminsTable"
+
+  # Cognito User Pools
+  UserPoolId:
+    Description: "User Pool ID"
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+      
+  AdminUserPoolId:
+    Description: "Admin User Pool ID"
+    Value: !Ref AdminUserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-AdminUserPoolId"
+
+  UserPoolClientId:
+    Description: "User Pool Client ID"
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"
+      
+  AdminUserPoolClientId:
+    Description: "Admin User Pool Client ID"
+    Value: !Ref AdminUserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-AdminUserPoolClientId"

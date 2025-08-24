@@ -1,0 +1,35 @@
+{
+  "name": "snapurl-serverless-backend",
+  "version": "1.0.0",
+  "description": "AWS Serverless backend for SnapURL",
+  "main": "index.js",
+  "scripts": {
+    "build": "sam build",
+    "deploy": "sam deploy --guided",
+    "deploy-prod": "sam deploy --parameter-overrides Stage=prod",
+    "local": "sam local start-api",
+    "test": "npm run unit",
+    "unit": "NODE_ENV=test mocha tests/unit/",
+    "integration": "NODE_ENV=test mocha tests/integration/",
+    "format": "prettier --write \"**/*.{js,json,yaml}\"",
+    "validate": "sam validate"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1691.0",
+    "@aws-sdk/client-dynamodb": "^3.450.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.450.0", 
+    "@aws-sdk/client-ses": "^3.450.0",
+    "@aws-sdk/lib-dynamodb": "^3.450.0",
+    "nanoid": "^4.0.0",
+    "jsonwebtoken": "^9.0.0"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0",
+    "chai": "^4.3.10",
+    "prettier": "^3.0.3",
+    "nodemon": "^3.0.1"
+  },
+  "type": "module",
+  "author": "SnapURL Team",
+  "license": "ISC"
+}
