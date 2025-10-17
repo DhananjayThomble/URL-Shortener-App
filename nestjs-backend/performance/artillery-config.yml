@@ -1,0 +1,123 @@
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Warm-up phase
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm-up"
+    
+    # Ramp-up phase
+    - duration: 120
+      arrivalRate: 5
+      rampTo: 50
+      name: "Ramp-up"
+    
+    # Sustained load phase
+    - duration: 300
+      arrivalRate: 50
+      name: "Sustained load"
+    
+    # Peak load phase
+    - duration: 120
+      arrivalRate: 50
+      rampTo: 100
+      name: "Peak load"
+    
+    # Cool-down phase
+    - duration: 60
+      arrivalRate: 100
+      rampTo: 5
+      name: "Cool-down"
+
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+      User-Agent: 'Artillery Performance Test'
+
+  variables:
+    testUrls:
+      - "https://example.com"
+      - "https://google.com"
+      - "https://github.com"
+      - "https://stackoverflow.com"
+      - "https://medium.com"
+
+  plugins:
+    metrics-by-endpoint:
+      useOnlyRequestNames: true
+    
+scenarios:
+  # Health check scenario (lightweight)
+  - name: "Health Check"
+    weight: 10
+    requests:
+      - get:
+          url: "/health/simple"
+          name: "Health Check"
+
+  # URL creation scenario
+  - name: "Create URL"
+    weight: 30
+    beforeRequest: "setAuthToken"
+    requests:
+      - post:
+          url: "/api/v1/urls"
+          name: "Create URL"
+          json:
+            originalUrl: "{{ $randomString() }}.example.com"
+          capture:
+            - json: "$.shortCode"
+              as: "shortCode"
+
+  # URL access scenario (most common)
+  - name: "Access URL"
+    weight: 50
+    requests:
+      - get:
+          url: "/{{ shortCode || 'test123' }}"
+          name: "Access URL"
+          followRedirects: false
+
+  # Analytics scenario
+  - name: "Get Analytics"
+    weight: 5
+    beforeRequest: "setAuthToken"
+    requests:
+      - get:
+          url: "/api/v1/urls/{{ shortCode || 'test123' }}/analytics"
+          name: "Get Analytics"
+
+  # Admin dashboard scenario
+  - name: "Admin Dashboard"
+    weight: 3
+    beforeRequest: "setAdminToken"
+    requests:
+      - get:
+          url: "/admin/dashboard"
+          name: "Admin Dashboard"
+
+  # User management scenario
+  - name: "User Profile"
+    weight: 2
+    beforeRequest: "setAuthToken"
+    requests:
+      - get:
+          url: "/api/v1/users/profile"
+          name: "Get User Profile"
+
+# Custom functions for authentication
+functions:
+  setAuthToken: |
+    function(requestParams, context, ee, next) {
+      // In a real test, you would authenticate and get a real token
+      requestParams.headers = requestParams.headers || {};
+      requestParams.headers['Authorization'] = 'Bearer test_jwt_token';
+      return next();
+    }
+  
+  setAdminToken: |
+    function(requestParams, context, ee, next) {
+      requestParams.headers = requestParams.headers || {};
+      requestParams.headers['Authorization'] = 'Bearer test_admin_token';
+      return next();
+    }

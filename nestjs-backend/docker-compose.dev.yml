@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # Development databases only
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: url_shortener_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:7-jammy
+    environment:
+      MONGO_INITDB_DATABASE: url_shortener_dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_dev_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  postgres_dev_data:
+  mongo_dev_data:
+  redis_dev_data:
