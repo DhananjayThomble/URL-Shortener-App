@@ -1,5 +1,6 @@
 const axios = require('axios');
 const colors = require('colors');
+require('dotenv').config();
 
 // Configuration
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';

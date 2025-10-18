@@ -2,6 +2,11 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { User } from '../modules/users/entities/user.entity';
+import { RefreshToken } from '../modules/users/entities/refresh-token.entity';
+import { CustomDomain } from '../modules/users/entities/custom-domain.entity';
+import { AdminUser } from '../modules/users/entities/admin-user.entity';
+import { AuditLog } from '../modules/users/entities/audit-log.entity';
 
 @Module({
   imports: [
@@ -16,9 +21,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         username: configService.get('DATABASE_USERNAME', 'postgres'),
         password: configService.get('DATABASE_PASSWORD', 'password'),
         database: configService.get('DATABASE_NAME', 'url_shortener'),
-        entities: [
-          __dirname + '/../modules/users/entities/*.entity{.ts,.js}',
-        ],
+        entities: [User, RefreshToken, CustomDomain, AdminUser, AuditLog],
         migrations: [__dirname + '/../migrations/*{.ts,.js}'],
         migrationsRun: false, // Set to true for auto-run in development
         synchronize: configService.get('NODE_ENV') === 'development',
