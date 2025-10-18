@@ -35,7 +35,7 @@ export class EnhancedLoggerService implements NestLoggerService {
           message,
           service: 'nestjs-url-shortener',
           environment,
-          ...context,
+          ...(typeof context === 'object' && context !== null ? context : {}),
           ...meta,
         };
         return JSON.stringify(logEntry);

@@ -25,7 +25,7 @@ export class UrlsService {
     private auditLogService: AuditLogService,
   ) {}
 
-  async create(createUrlDto: CreateUrlDto, userId: string): Promise<Url> {
+  async create(createUrlDto: CreateUrlDto, userId: string): Promise<UrlDocument> {
     // Validate URL format
     if (!this.isValidUrl(createUrlDto.originalUrl)) {
       throw new BadRequestException('Invalid URL format');
@@ -99,7 +99,7 @@ export class UrlsService {
     return savedUrl;
   }
 
-  async findAll(userId: string, page = 1, limit = 10): Promise<{ urls: Url[]; total: number }> {
+  async findAll(userId: string, page = 1, limit = 10): Promise<{ urls: UrlDocument[]; total: number }> {
     const skip = (page - 1) * limit;
     
     const [urls, total] = await Promise.all([
@@ -115,7 +115,7 @@ export class UrlsService {
     return { urls, total };
   }
 
-  async findOne(id: string, userId: string): Promise<Url> {
+  async findOne(id: string, userId: string): Promise<UrlDocument> {
     const url = await this.urlModel.findOne({ _id: id, userId });
     
     if (!url) {
@@ -160,7 +160,7 @@ export class UrlsService {
     return url.originalUrl;
   }
 
-  async update(id: string, updateUrlDto: UpdateUrlDto, userId: string): Promise<Url> {
+  async update(id: string, updateUrlDto: UpdateUrlDto, userId: string): Promise<UrlDocument> {
     const url = await this.findOne(id, userId);
 
     if (updateUrlDto.originalUrl && !this.isValidUrl(updateUrlDto.originalUrl)) {
@@ -168,7 +168,7 @@ export class UrlsService {
     }
 
     Object.assign(url, updateUrlDto);
-    const updatedUrl = await url.save();
+    const updatedUrl = await this.urlModel.findByIdAndUpdate(url._id, updateUrlDto, { new: true });
 
     // Update cache if URL changed
     if (updateUrlDto.originalUrl) {
@@ -309,8 +309,8 @@ export class UrlsService {
     };
   }
 
-  async bulkCreate(urls: CreateUrlDto[], userId: string): Promise<Url[]> {
-    const results: Url[] = [];
+  async bulkCreate(urls: CreateUrlDto[], userId: string): Promise<UrlDocument[]> {
+    const results: UrlDocument[] = [];
     const errors: string[] = [];
 
     for (const urlDto of urls) {
@@ -329,7 +329,7 @@ export class UrlsService {
     return results;
   }
 
-  async findByCategory(userId: string, category: string, page = 1, limit = 10): Promise<{ urls: Url[]; total: number }> {
+  async findByCategory(userId: string, category: string, page = 1, limit = 10): Promise<{ urls: UrlDocument[]; total: number }> {
     const skip = (page - 1) * limit;
     
     const [urls, total] = await Promise.all([
@@ -345,7 +345,7 @@ export class UrlsService {
     return { urls, total };
   }
 
-  async findByTags(userId: string, tags: string[], page = 1, limit = 10): Promise<{ urls: Url[]; total: number }> {
+  async findByTags(userId: string, tags: string[], page = 1, limit = 10): Promise<{ urls: UrlDocument[]; total: number }> {
     const skip = (page - 1) * limit;
     
     const [urls, total] = await Promise.all([
@@ -367,7 +367,7 @@ export class UrlsService {
     return { urls, total };
   }
 
-  async setUrlPassword(id: string, userId: string, password: string): Promise<Url> {
+  async setUrlPassword(id: string, userId: string, password: string): Promise<UrlDocument> {
     const url = await this.findOne(id, userId);
     
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -377,7 +377,7 @@ export class UrlsService {
       expiresAt: undefined, // Password doesn't expire by default
     };
 
-    return url.save();
+    return this.urlModel.findByIdAndUpdate(url._id, { protection: url.protection }, { new: true });
   }
 
   async validateUrlPassword(shortCode: string, password: string): Promise<boolean> {
@@ -390,7 +390,7 @@ export class UrlsService {
     return bcrypt.compare(password, url.protection.password);
   }
 
-  async deactivateUrl(id: string, userId: string): Promise<Url> {
+  async deactivateUrl(id: string, userId: string): Promise<UrlDocument> {
     const url = await this.findOne(id, userId);
     url.isActive = false;
     
@@ -399,10 +399,10 @@ export class UrlsService {
       this.cacheService.generateUrlCacheKey(url.shortCode)
     );
 
-    return url.save();
+    return this.urlModel.findByIdAndUpdate(url._id, { isActive: false }, { new: true });
   }
 
-  async reactivateUrl(id: string, userId: string): Promise<Url> {
+  async reactivateUrl(id: string, userId: string): Promise<UrlDocument> {
     const url = await this.findOne(id, userId);
     url.isActive = true;
     
@@ -413,10 +413,10 @@ export class UrlsService {
       3600,
     );
 
-    return url.save();
+    return this.urlModel.findByIdAndUpdate(url._id, { isActive: true }, { new: true });
   }
 
-  async getPopularUrls(userId: string, limit = 10): Promise<Url[]> {
+  async getPopularUrls(userId: string, limit = 10): Promise<UrlDocument[]> {
     return this.urlModel
       .find({ userId, isActive: true })
       .sort({ visitCount: -1 })

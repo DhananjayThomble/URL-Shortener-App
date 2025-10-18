@@ -7,7 +7,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
-import { ApiKeyStrategy } from './strategies/api-key.strategy';
+// import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { UsersModule } from '../users/users.module';
 
 @Module({
@@ -26,7 +26,7 @@ import { UsersModule } from '../users/users.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, LocalStrategy, JwtStrategy, ApiKeyStrategy],
+  providers: [AuthService, LocalStrategy, JwtStrategy], // ApiKeyStrategy
   exports: [AuthService],
 })
 export class AuthModule {}

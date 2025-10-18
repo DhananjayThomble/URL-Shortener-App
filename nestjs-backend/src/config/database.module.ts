@@ -16,7 +16,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         username: configService.get('DATABASE_USERNAME', 'postgres'),
         password: configService.get('DATABASE_PASSWORD', 'password'),
         database: configService.get('DATABASE_NAME', 'url_shortener'),
-        entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+        entities: [
+          __dirname + '/../modules/users/entities/*.entity{.ts,.js}',
+        ],
         migrations: [__dirname + '/../migrations/*{.ts,.js}'],
         migrationsRun: false, // Set to true for auto-run in development
         synchronize: configService.get('NODE_ENV') === 'development',
@@ -48,8 +50,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         uri: configService.get('MONGODB_URI', 'mongodb://localhost:27017/url_shortener'),
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
+        // useNewUrlParser and useUnifiedTopology are default in newer versions
         // Connection pool optimization
         maxPoolSize: parseInt(configService.get('MONGO_POOL_MAX', '20'), 10),
         minPoolSize: parseInt(configService.get('MONGO_POOL_MIN', '5'), 10),
@@ -61,7 +62,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         connectTimeoutMS: parseInt(configService.get('MONGO_CONNECT_TIMEOUT', '10000'), 10),
         // Performance optimization
         bufferCommands: false,
-        bufferMaxEntries: 0,
+        // bufferMaxEntries: 0, // This option is deprecated in newer MongoDB drivers
         compressors: ['zlib'],
         zlibCompressionLevel: 6,
         // Read preferences for better performance

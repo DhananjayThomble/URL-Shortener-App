@@ -1,10 +1,10 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
-import { Strategy } from 'passport-headerapikey';
+const HeaderAPIKeyStrategy = require('passport-headerapikey').Strategy;
 import { ConfigService } from '@nestjs/config';
 
 @Injectable()
-export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
+export class ApiKeyStrategy extends PassportStrategy(HeaderAPIKeyStrategy, 'api-key') {
   constructor(private configService: ConfigService) {
     super(
       { header: 'X-API-Key', prefix: '' },

@@ -68,18 +68,13 @@ async function bootstrap() {
   
   // Trust proxy in production (for proper IP detection behind load balancer)
   if (isProduction) {
-    app.set('trust proxy', 1);
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
 
   // Global pipes
   app.useGlobalPipes(
     new SanitizationPipe(),
-    new CustomValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      disableErrorMessages: isProduction,
-    }),
+    new CustomValidationPipe(),
   );
 
   // Global filters and interceptors

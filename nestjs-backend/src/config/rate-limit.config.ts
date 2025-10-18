@@ -24,10 +24,10 @@ export const getRateLimitConfig = (configService: ConfigService): ThrottlerModul
       limit: 100,
     },
   ],
-  storage: {
-    // Redis storage will be configured here
-    // This requires a custom storage implementation
-  },
+  // storage: {
+  //   // Redis storage will be configured here
+  //   // This requires a custom storage implementation
+  // },
 });
 
 export const rateLimitConfig = {
