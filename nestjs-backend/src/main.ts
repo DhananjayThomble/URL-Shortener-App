@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -63,8 +63,10 @@ async function bootstrap() {
     threshold: 1024,
   }));
 
-  // Global configuration
-  app.setGlobalPrefix(configService.get('API_PREFIX', 'api/v1'));
+  // Global configuration - exclude redirect routes from API prefix
+  app.setGlobalPrefix(configService.get('API_PREFIX', 'api/v1'), {
+    exclude: [{ path: ':shortCode', method: RequestMethod.GET }],
+  });
   
   // Trust proxy in production (for proper IP detection behind load balancer)
   if (isProduction) {

@@ -26,10 +26,13 @@ export class UrlsService {
   ) {}
 
   async create(createUrlDto: CreateUrlDto, userId: string): Promise<UrlDocument> {
-    // Validate URL format
-    if (!this.isValidUrl(createUrlDto.originalUrl)) {
-      throw new BadRequestException('Invalid URL format');
-    }
+    try {
+      this.logger.debug(`Creating URL for user ${userId}: ${JSON.stringify(createUrlDto)}`);
+      
+      // Validate URL format
+      if (!this.isValidUrl(createUrlDto.originalUrl)) {
+        throw new BadRequestException('Invalid URL format');
+      }
 
     // Generate short code
     let shortCode: string;
@@ -97,6 +100,10 @@ export class UrlsService {
     this.logger.log(`URL created: ${shortCode} -> ${createUrlDto.originalUrl}`);
 
     return savedUrl;
+    } catch (error) {
+      this.logger.error(`Error creating URL for user ${userId}:`, error.stack);
+      throw error;
+    }
   }
 
   async findAll(userId: string, page = 1, limit = 10): Promise<{ urls: UrlDocument[]; total: number }> {

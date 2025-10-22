@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger, InternalServerErrorException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -12,6 +12,8 @@ import { CacheService } from '../../common/services/cache.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private usersService: UsersService,
     private refreshTokenService: RefreshTokenService,
@@ -21,50 +23,92 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.usersService.findByEmail(email);
-    if (user && await this.comparePassword(password, user.passwordHash)) {
+    try {
+      this.logger.debug(`Validating user: ${email}`);
+      
+      const user = await this.usersService.findByEmail(email);
+      if (!user) {
+        this.logger.debug(`User not found: ${email}`);
+        return null;
+      }
+
+      this.logger.debug(`User found: ${user.id}, checking password`);
+      
+      const isPasswordValid = await this.comparePassword(password, user.passwordHash);
+      if (!isPasswordValid) {
+        this.logger.debug(`Invalid password for user: ${email}`);
+        return null;
+      }
+
+      this.logger.debug(`Password valid for user: ${email}`);
       return user;
+    } catch (error) {
+      this.logger.error(`Error validating user ${email}:`, error.stack);
+      return null;
     }
-    return null;
   }
 
   async login(loginDto: LoginDto) {
-    const user = await this.validateUser(loginDto.email, loginDto.password);
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+    try {
+      this.logger.debug(`Login attempt for email: ${loginDto.email}`);
+      
+      // Validate input
+      if (!loginDto.email || !loginDto.password) {
+        this.logger.warn(`Login failed: Missing email or password for ${loginDto.email}`);
+        throw new UnauthorizedException('Email and password are required');
+      }
+
+      const user = await this.validateUser(loginDto.email, loginDto.password);
+      if (!user) {
+        this.logger.warn(`Login failed: Invalid credentials for ${loginDto.email}`);
+        throw new UnauthorizedException('Invalid email or password');
+      }
+
+      this.logger.debug(`User validated successfully: ${user.id}`);
+
+      const payload = { 
+        sub: user.id, 
+        email: user.email, 
+        role: user.role 
+      };
+
+      const accessToken = this.jwtService.sign(payload);
+      const refreshToken = this.jwtService.sign(payload, {
+        secret: this.configService.get('JWT_REFRESH_SECRET'),
+        expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN', '7d'),
+      });
+
+      this.logger.debug(`Tokens generated for user: ${user.id}`);
+
+      // Store refresh token in database
+      await this.refreshTokenService.createRefreshToken(user.id, refreshToken);
+
+      // Cache user session data for quick access
+      const sessionData = {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        lastLogin: new Date(),
+      };
+      
+      await this.cacheService.cacheUserSession(user.id, sessionData, 900); // 15 minutes TTL
+
+      this.logger.log(`Login successful for user: ${user.email}`);
+
+      return {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        user: sessionData,
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      
+      this.logger.error(`Login error for ${loginDto.email}:`, error.stack);
+      throw new InternalServerErrorException('Login failed. Please try again.');
     }
-
-    const payload = { 
-      sub: user.id, 
-      email: user.email, 
-      role: user.role 
-    };
-
-    const accessToken = this.jwtService.sign(payload);
-    const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_REFRESH_SECRET'),
-      expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN', '7d'),
-    });
-
-    // Store refresh token in database
-    await this.refreshTokenService.createRefreshToken(user.id, refreshToken);
-
-    // Cache user session data for quick access
-    const sessionData = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      lastLogin: new Date(),
-    };
-    
-    await this.cacheService.cacheUserSession(user.id, sessionData, 900); // 15 minutes TTL
-
-    return {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      user: sessionData,
-    };
   }
 
   async register(registerDto: RegisterDto) {
