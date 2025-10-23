@@ -621,34 +621,557 @@ docker-compose exec mongo mongosh url_shortener_dev
 
 ## 📚 API Documentation
 
+### Swagger/OpenAPI Documentation
+
 The API documentation is automatically generated using Swagger/OpenAPI and is available at:
 - **Development**: http://localhost:3000/docs
-- **Production**: https://your-domain.com/docs
+- **Production**: https://api.snapurl.in/docs
 
-### Key Endpoints
+The Swagger UI provides:
+- Interactive API exploration
+- Request/response examples
+- Authentication testing
+- Schema definitions
+- Try-it-out functionality
 
-- `GET /` - Health check
-- `GET /health` - Detailed health information
-- `POST /api/v1/auth/login` - User authentication
-- `POST /api/v1/urls` - Create short URL
-- `GET /api/v1/urls` - List user URLs
-- `GET /:shortCode` - Redirect to original URL
+### API Endpoints
+
+All API endpoints follow REST conventions and return JSON responses.
+
+#### Authentication Endpoints (`/api/v1/auth`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/auth/register` | Register new user account | No |
+| POST | `/auth/login` | Login and receive JWT tokens | No |
+| POST | `/auth/logout` | Logout (invalidate tokens) | Yes |
+| POST | `/auth/refresh` | Refresh access token using refresh token | No |
+| POST | `/auth/forgot-password` | Request password reset email | No |
+| POST | `/auth/reset-password` | Reset password with token | No |
+| POST | `/auth/verify-email` | Verify email with token | No |
+| POST | `/auth/resend-verification` | Resend verification email | Yes |
+
+**Example: Register**
+```bash
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!",
+  "name": "John Doe"
+}
+
+Response:
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "user@example.com",
+      "name": "John Doe"
+    },
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+  }
+}
+```
+
+**Example: Login**
+```bash
+POST /api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!"
+}
+
+Response:
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6...",
+    "expiresIn": 900
+  }
+}
+```
+
+#### User Endpoints (`/api/v1/users`)
+
+| Method | Endpoint | Description | Auth Required | Role |
+|--------|----------|-------------|---------------|------|
+| GET | `/users/profile` | Get current user profile | Yes | User |
+| PUT | `/users/profile` | Update user profile | Yes | User |
+| PUT | `/users/password` | Change password | Yes | User |
+| DELETE | `/users/account` | Delete account | Yes | User |
+| GET | `/users/:id` | Get user by ID | Yes | Admin |
+
+**Example: Get Profile**
+```bash
+GET /api/v1/users/profile
+Authorization: Bearer <accessToken>
+
+Response:
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "name": "John Doe",
+    "role": "user",
+    "isEmailVerified": true,
+    "createdAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+#### URL Endpoints (`/api/v1/urls`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/urls` | Create shortened URL | Yes |
+| GET | `/urls` | List user's URLs (paginated) | Yes |
+| GET | `/urls/:id` | Get URL details | Yes |
+| PUT | `/urls/:id` | Update URL | Yes |
+| DELETE | `/urls/:id` | Delete URL | Yes |
+| GET | `/urls/:id/analytics` | Get URL analytics | Yes |
+| POST | `/urls/:id/qr` | Generate QR code | Yes |
+| GET | `/:shortCode` | Redirect to original URL | No |
+
+**Example: Create URL**
+```bash
+POST /api/v1/urls
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "originalUrl": "https://example.com/very/long/url",
+  "customAlias": "my-link",  // Optional
+  "title": "Example Page",   // Optional
+  "tags": ["marketing"]      // Optional
+}
+
+Response:
+{
+  "success": true,
+  "data": {
+    "id": "objectId",
+    "shortCode": "abc123",
+    "shortUrl": "http://localhost:3000/abc123",
+    "originalUrl": "https://example.com/very/long/url",
+    "customAlias": "my-link",
+    "title": "Example Page",
+    "clicks": 0,
+    "isActive": true,
+    "createdAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+**Example: List URLs**
+```bash
+GET /api/v1/urls?page=1&limit=10&sortBy=createdAt&order=desc
+Authorization: Bearer <accessToken>
+
+Response:
+{
+  "success": true,
+  "data": {
+    "urls": [...],
+    "pagination": {
+      "total": 45,
+      "page": 1,
+      "limit": 10,
+      "pages": 5
+    }
+  }
+}
+```
+
+**Example: Get Analytics**
+```bash
+GET /api/v1/urls/:id/analytics?startDate=2024-01-01&endDate=2024-01-31
+Authorization: Bearer <accessToken>
+
+Response:
+{
+  "success": true,
+  "data": {
+    "totalClicks": 1523,
+    "uniqueVisitors": 892,
+    "clicksByDate": [...],
+    "topReferrers": [...],
+    "deviceBreakdown": {
+      "mobile": 45%,
+      "desktop": 40%,
+      "tablet": 15%
+    },
+    "geographicData": [...]
+  }
+}
+```
+
+#### Admin Endpoints (`/api/v1/admin`)
+
+| Method | Endpoint | Description | Role Required |
+|--------|----------|-------------|---------------|
+| GET | `/admin/users` | List all users | Admin |
+| GET | `/admin/users/:id` | Get user details | Admin |
+| PUT | `/admin/users/:id` | Update user | Admin |
+| DELETE | `/admin/users/:id` | Delete user | Admin |
+| GET | `/admin/analytics` | System-wide analytics | Admin |
+| GET | `/admin/audit-logs` | View audit logs | Admin |
+| POST | `/admin/urls/:id/activate` | Activate URL | Admin |
+| POST | `/admin/urls/:id/deactivate` | Deactivate URL | Admin |
+
+### Response Format
+
+All API responses follow a consistent format:
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    // Response data
+  },
+  "message": "Operation successful",  // Optional
+  "meta": {                           // Optional
+    "timestamp": "2024-01-01T00:00:00.000Z",
+    "version": "1.0.0"
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": [
+      {
+        "field": "email",
+        "message": "Email must be a valid email address"
+      }
+    ]
+  },
+  "statusCode": 400,
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "path": "/api/v1/auth/register"
+}
+```
+
+### Error Codes
+
+| Code | Status | Description |
+|------|--------|-------------|
+| `VALIDATION_ERROR` | 400 | Request validation failed |
+| `UNAUTHORIZED` | 401 | Authentication required |
+| `FORBIDDEN` | 403 | Insufficient permissions |
+| `NOT_FOUND` | 404 | Resource not found |
+| `CONFLICT` | 409 | Resource already exists |
+| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
+| `INTERNAL_ERROR` | 500 | Server error |
+
+### Authentication
+
+The API uses JWT Bearer tokens for authentication:
+
+```bash
+Authorization: Bearer <accessToken>
+```
+
+**Token Flow:**
+1. Login/Register → Receive `accessToken` (15min) and `refreshToken` (7 days)
+2. Include `accessToken` in Authorization header for authenticated requests
+3. When `accessToken` expires (401 error), use `refreshToken` to get new tokens
+4. If `refreshToken` expires, user must login again
+
+**Refresh Token Example:**
+```bash
+POST /api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+}
+
+Response:
+{
+  "success": true,
+  "data": {
+    "accessToken": "new-access-token",
+    "refreshToken": "new-refresh-token"
+  }
+}
+```
+
+### Rate Limiting
+
+The API implements rate limiting to prevent abuse:
+
+- **Global limit**: 1000 requests per 15 minutes per IP
+- **Auth endpoints**: 5 requests per 15 minutes per IP
+- **URL creation**: 100 requests per hour per user
+
+Rate limit headers are included in responses:
+```
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Reset: 1640995200
+```
+
+When limit is exceeded:
+```json
+{
+  "success": false,
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Too many requests, please try again later"
+  },
+  "statusCode": 429
+}
+```
 
 ## 🧪 Testing
 
+### Running Tests
+
 ```bash
-# Run unit tests
+# Run all unit tests
 npm run test
 
-# Run tests in watch mode
+# Run tests in watch mode (re-runs on file changes)
 npm run test:watch
 
-# Run tests with coverage
+# Run tests with coverage report
 npm run test:cov
 
-# Run e2e tests
+# Run E2E tests
 npm run test:e2e
+
+# Run production readiness tests
+npm run test:prod-ready
+
+# Run specific test file
+npm test -- users.service.spec.ts
+
+# Run tests with debugging
+npm run test:debug
 ```
+
+### Test Structure
+
+The application has comprehensive test coverage:
+
+**Unit Tests** (`*.spec.ts` files)
+- Located next to source files
+- Test individual functions and methods
+- Mock dependencies
+- Fast execution (~2-5 seconds)
+
+Example:
+```typescript
+// users.service.spec.ts
+describe('UsersService', () => {
+  let service: UsersService;
+  let repository: Repository<User>;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        UsersService,
+        {
+          provide: getRepositoryToken(User),
+          useClass: Repository,
+        },
+      ],
+    }).compile();
+
+    service = module.get<UsersService>(UsersService);
+    repository = module.get<Repository<User>>(getRepositoryToken(User));
+  });
+
+  it('should create a user', async () => {
+    const dto = { email: 'test@example.com', password: 'pass', name: 'Test' };
+    const user = await service.create(dto);
+    expect(user.email).toBe(dto.email);
+  });
+});
+```
+
+**Integration Tests** (in `test/` directory)
+- Test module interactions
+- Use test database
+- Test with real database connections
+- Slower execution (~10-30 seconds)
+
+**E2E Tests** (`test/*.e2e-spec.ts` files)
+- Test full HTTP request/response cycles
+- Use Supertest for HTTP assertions
+- Test entire application flow
+- Includes authentication, authorization
+- Execution time (~30-60 seconds)
+
+Example:
+```typescript
+// auth.e2e-spec.ts
+describe('Authentication (e2e)', () => {
+  let app: INestApplication;
+
+  beforeEach(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  it('/api/v1/auth/register (POST)', () => {
+    return request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({
+        email: 'test@example.com',
+        password: 'SecurePass123!',
+        name: 'Test User',
+      })
+      .expect(201)
+      .expect((res) => {
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.accessToken).toBeDefined();
+      });
+  });
+});
+```
+
+### Test Coverage
+
+The project maintains >80% code coverage:
+
+```bash
+# Generate coverage report
+npm run test:cov
+
+# View coverage report
+open coverage/lcov-report/index.html
+```
+
+Coverage includes:
+- Statements: >85%
+- Branches: >80%
+- Functions: >85%
+- Lines: >85%
+
+### Testing Best Practices
+
+1. **Write tests first** (TDD approach recommended)
+2. **Test behavior, not implementation**
+3. **Use meaningful test descriptions**
+4. **Mock external dependencies**
+5. **Keep tests independent**
+6. **Use test factories** for data generation
+7. **Test error cases** as well as success cases
+
+## 📦 Dependencies
+
+### Production Dependencies
+
+| Package | Version | Purpose | Why Chosen |
+|---------|---------|---------|------------|
+| `@nestjs/common` | ^10.0.0 | Core NestJS framework | Modern architecture, dependency injection, modular design |
+| `@nestjs/core` | ^10.0.0 | NestJS core functionality | Required for NestJS apps |
+| `@nestjs/platform-express` | ^10.0.0 | Express adapter for NestJS | Production-tested HTTP server |
+| `@nestjs/config` | ^3.1.1 | Configuration management | Type-safe env variables, validation |
+| `@nestjs/typeorm` | ^10.0.0 | TypeORM integration | PostgreSQL ORM with migrations |
+| `@nestjs/mongoose` | ^10.0.2 | Mongoose integration | MongoDB object modeling |
+| `@nestjs/jwt` | ^10.2.0 | JWT utilities | Token generation and verification |
+| `@nestjs/passport` | ^10.0.2 | Passport.js integration | Authentication strategies |
+| `@nestjs/swagger` | ^7.1.17 | OpenAPI/Swagger documentation | Auto-generated API docs |
+| `@nestjs/throttler` | ^5.0.1 | Rate limiting | DDoS protection, API abuse prevention |
+| `@nestjs/schedule` | ^4.0.0 | Task scheduling | Cron jobs, intervals |
+
+#### Database & ORM
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `typeorm` | ^0.3.17 | PostgreSQL ORM with migrations and entity management |
+| `pg` | ^8.11.3 | PostgreSQL client library |
+| `mongoose` | ^8.0.3 | MongoDB object modeling with schema validation |
+| `ioredis` | ^5.3.2 | Redis client with cluster support and pipelining |
+| `redis` | ^4.6.10 | Redis client alternative |
+
+#### Authentication & Security
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `passport` | ^0.7.0 | Authentication middleware |
+| `passport-jwt` | ^4.0.1 | JWT authentication strategy |
+| `passport-local` | ^1.0.0 | Local (email/password) strategy |
+| `passport-headerapikey` | ^1.2.2 | API key authentication |
+| `bcrypt` | ^5.1.1 | Password hashing (12+ salt rounds) |
+| `helmet` | ^7.1.0 | Security headers (CSP, HSTS, etc.) |
+| `class-validator` | ^0.14.0 | DTO validation with decorators |
+| `class-transformer` | ^0.5.1 | Object transformation and serialization |
+
+#### Utilities
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `nanoid` | ^5.0.4 | Unique ID generation for short codes (URL-safe, collision-resistant) |
+| `uuid` | ^9.0.1 | UUID generation for primary keys |
+| `nodemailer` | ^7.0.9 | Email sending via SMTP |
+| `compression` | ^1.7.4 | Response compression (gzip/deflate) |
+| `winston` | ^3.11.0 | Logging with multiple transports |
+| `winston-cloudwatch` | ^6.3.0 | CloudWatch logging integration |
+
+### Development Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@nestjs/cli` | ^10.0.0 | NestJS command-line tools (generate, build) |
+| `@nestjs/schematics` | ^10.0.0 | Code generation schematics |
+| `@nestjs/testing` | ^10.0.0 | Testing utilities for NestJS |
+| `jest` | ^29.5.0 | Testing framework |
+| `ts-jest` | ^29.1.0 | TypeScript preprocessor for Jest |
+| `supertest` | ^6.3.3 | HTTP assertion library for E2E tests |
+| `testcontainers` | ^10.4.0 | Docker containers for integration tests |
+| `@typescript-eslint/eslint-plugin` | ^6.0.0 | TypeScript ESLint rules |
+| `@typescript-eslint/parser` | ^6.0.0 | TypeScript parser for ESLint |
+| `eslint` | ^8.42.0 | Code linting |
+| `prettier` | ^3.0.0 | Code formatting |
+| `husky` | ^8.0.3 | Git hooks (pre-commit, pre-push) |
+| `lint-staged` | ^15.2.0 | Run linters on staged files |
+| `ts-node` | ^10.9.1 | TypeScript execution environment |
+| `typescript` | ^5.1.3 | TypeScript compiler |
+| `axios` | ^1.6.2 | HTTP client for testing |
+| `colors` | ^1.4.0 | Terminal colors for scripts |
+
+### Why These Dependencies?
+
+**NestJS Ecosystem**: Provides enterprise-grade architecture with dependency injection, modularity, and TypeScript support out of the box.
+
+**TypeORM**: Chosen over Prisma for mature migration system, better TypeScript support, and excellent PostgreSQL features.
+
+**Mongoose**: Industry standard for MongoDB with flexible schema validation and middleware support.
+
+**ioredis**: Faster and more feature-rich than node-redis, with better TypeScript support and cluster capabilities.
+
+**bcrypt**: Industry standard for password hashing, resistant to brute-force attacks with configurable work factor.
+
+**Passport.js**: Flexible authentication with 500+ strategies available. Well-maintained and battle-tested.
+
+**nanoid**: Faster and smaller than UUID, optimized for URL-safe short codes. ~40% faster than UUID v4.
+
+**Winston**: Production-grade logging with multiple transports, log levels, and CloudWatch integration.
+
+**Jest**: Fast, parallel test execution with excellent TypeScript support and snapshot testing.
+
+**Testcontainers**: Enables testing with real databases in Docker containers, ensuring test reliability.
 
 ## 🔧 Development Commands
 
@@ -956,71 +1479,1078 @@ popular:urls → Sorted set of popular URLs (TTL: 30 min)
 - Perfect for rate limiting with atomic operations
 - Pub/sub for real-time features
 - TTL support for automatic expiration
-│   ├── urls/              # URL shortening module
-│   ├── admin/             # Admin functionality
-│   ├── analytics/         # Analytics and reporting
-│   └── domains/           # Custom domain management
-├── app.module.ts          # Root application module
-└── main.ts                # Application entry point
-```
 
 ## 🔒 Security Features
 
-- **JWT Authentication** with refresh tokens
-- **Role-Based Access Control** (RBAC)
-- **Rate Limiting** with Redis backend
-- **Input Validation** and sanitization
-- **Password Hashing** with bcrypt (12+ salt rounds)
-- **Security Headers** with Helmet.js
-- **CORS Configuration** with domain whitelisting
-- **API Key Authentication** for external integrations
+### Authentication & Authorization
+
+**JWT-Based Authentication**
+- Access tokens: 15-minute expiry
+- Refresh tokens: 7-day expiry
+- Secure token storage in HTTP-only cookies (optional)
+- Automatic token refresh on client
+- Token blacklisting on logout
+
+**Role-Based Access Control (RBAC)**
+```typescript
+// Roles: user, admin, superadmin
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+@Get('admin/users')
+async getUsers() {
+  // Only admins can access
+}
+```
+
+**Custom Decorators for Auth**
+```typescript
+@Public()  // Skip authentication
+@CurrentUser()  // Get current user from request
+@Roles('admin', 'user')  // Require specific roles
+```
+
+### Input Validation
+
+**class-validator Decorators**
+```typescript
+export class CreateUrlDto {
+  @IsUrl()
+  @IsNotEmpty()
+  originalUrl: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(3, 20)
+  @Matches(/^[a-zA-Z0-9-_]+$/)
+  customAlias?: string;
+}
+```
+
+**Validation Pipe** (Global)
+- Automatically validates all DTOs
+- Transforms and sanitizes input
+- Returns detailed validation errors
+- Strips unknown properties (whitelist: true)
+
+### Password Security
+
+**bcrypt Hashing**
+- 12 salt rounds (configurable)
+- Async hashing to prevent blocking
+- Unique salt per password
+- Resistant to rainbow table attacks
+
+```typescript
+// Password hashing
+const hashedPassword = await bcrypt.hash(password, 12);
+
+// Password verification
+const isValid = await bcrypt.compare(password, hashedPassword);
+```
+
+**Password Requirements**
+- Minimum 8 characters
+- Must include uppercase, lowercase, number
+- Must include special character
+- Validated on client and server
+
+### Rate Limiting
+
+**@nestjs/throttler** with Redis storage
+
+**Global Rate Limits:**
+```typescript
+@Module({
+  imports: [
+    ThrottlerModule.forRoot({
+      ttl: 900,  // 15 minutes
+      limit: 1000,  // 1000 requests
+    }),
+  ],
+})
+```
+
+**Endpoint-Specific Limits:**
+```typescript
+@Throttle(5, 900)  // 5 requests per 15 minutes
+@Post('auth/login')
+async login() { }
+
+@Throttle(100, 3600)  // 100 requests per hour
+@Post('urls')
+async createUrl() { }
+```
+
+**Rate Limit Response:**
+```json
+{
+  "statusCode": 429,
+  "message": "ThrottlerException: Too Many Requests"
+}
+```
+
+### Security Headers
+
+**Helmet.js Configuration**
+```typescript
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: { action: 'deny' },
+  noSniff: true,
+  xssFilter: true,
+}));
+```
+
+**Headers Applied:**
+- `Content-Security-Policy`: XSS protection
+- `Strict-Transport-Security`: HTTPS enforcement
+- `X-Frame-Options`: Clickjacking protection
+- `X-Content-Type-Options`: MIME sniffing protection
+- `X-XSS-Protection`: Legacy XSS protection
+
+### CORS Configuration
+
+```typescript
+app.enableCors({
+  origin: (origin, callback) => {
+    const whitelist = process.env.FRONTEND_URL.split(',');
+    if (whitelist.includes(origin) || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+});
+```
+
+### SQL Injection Protection
+
+- All queries use parameterized statements via TypeORM
+- Never concatenate user input into queries
+- Input validation before database operations
+
+```typescript
+// Safe (parameterized)
+await userRepository.findOne({ where: { email } });
+
+// UNSAFE (never do this)
+await userRepository.query(`SELECT * FROM users WHERE email = '${email}'`);
+```
+
+### XSS Protection
+
+- All output is automatically escaped by React/Next.js
+- Input sanitization with class-validator
+- Content-Security-Policy headers
+- No `eval()` or `innerHTML` usage
+
+### Additional Security Measures
+
+**API Key Authentication**
+```typescript
+@UseGuards(HeaderApiKeyGuard)
+@Get('external/data')
+async getExternalData() {
+  // Requires X-API-Key header
+}
+```
+
+**Request Logging**
+- All requests logged with correlation IDs
+- IP address tracking
+- User agent logging
+- Request timing
+
+**Error Handling**
+- Never expose stack traces in production
+- Generic error messages to clients
+- Detailed errors logged server-side
+- Correlation IDs for error tracking
 
 ## 📊 Monitoring & Logging
 
-- **Structured Logging** with Winston
-- **Health Check Endpoints** for application and databases
-- **Metrics Collection** (Prometheus compatible)
-- **Request/Response Logging** with correlation IDs
-- **Error Tracking** and alerting
-- **Performance Monitoring**
+### Winston Logging
 
-## 🚀 Deployment
+**Log Levels:**
+- `error`: Errors and exceptions
+- `warn`: Warnings
+- `info`: General information
+- `http`: HTTP requests
+- `debug`: Debug information
 
-### Production Build
+**Log Format:**
+```json
+{
+  "level": "info",
+  "message": "User registered",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "correlationId": "uuid",
+  "userId": "uuid",
+  "context": "AuthService",
+  "metadata": {
+    "email": "user@example.com"
+  }
+}
+```
+
+**Transports:**
+- Console (development)
+- File (production)
+- CloudWatch (production)
+
+**Configuration:**
+```typescript
+WinstonModule.forRoot({
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.timestamp(),
+        winston.format.printf(({ timestamp, level, message, context }) => {
+          return `${timestamp} [${context}] ${level}: ${message}`;
+        }),
+      ),
+    }),
+    new winston.transports.File({
+      filename: 'logs/error.log',
+      level: 'error',
+    }),
+    new winston.transports.File({
+      filename: 'logs/combined.log',
+    }),
+  ],
+});
+```
+
+### Health Checks
+
+**Health Endpoint** (`/health`)
+```json
+{
+  "status": "ok",
+  "info": {
+    "database": {
+      "status": "up",
+      "responseTime": "5ms"
+    },
+    "mongodb": {
+      "status": "up",
+      "responseTime": "3ms"
+    },
+    "redis": {
+      "status": "up",
+      "responseTime": "1ms"
+    }
+  },
+  "error": {},
+  "details": {
+    "database": {
+      "status": "up",
+      "responseTime": "5ms"
+    },
+    "mongodb": {
+      "status": "up",
+      "responseTime": "3ms"
+    },
+    "redis": {
+      "status": "up",
+      "responseTime": "1ms"
+    }
+  }
+}
+```
+
+**Health Checks Include:**
+- Database connectivity
+- MongoDB connectivity
+- Redis connectivity
+- Disk space
+- Memory usage
+- Response time
+
+### Performance Monitoring
+
+**Metrics Collected:**
+- Request latency (p50, p95, p99)
+- Requests per second
+- Error rate
+- Database query time
+- Cache hit/miss rate
+- Memory usage
+- CPU usage
+
+**Logging Interceptor:**
+```typescript
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const { method, url } = request;
+    const now = Date.now();
+
+    return next.handle().pipe(
+      tap(() => {
+        const responseTime = Date.now() - now;
+        this.logger.log(`${method} ${url} ${responseTime}ms`);
+      }),
+    );
+  }
+}
+```
+
+### Error Tracking
+
+**Error Logging:**
+```typescript
+try {
+  // Business logic
+} catch (error) {
+  this.logger.error('Failed to create URL', {
+    error: error.message,
+    stack: error.stack,
+    userId: user.id,
+    correlationId: req.correlationId,
+  });
+  throw new InternalServerErrorException('Failed to create URL');
+}
+```
+
+**Correlation IDs:**
+- Unique ID per request
+- Tracked across all logs
+- Included in error responses
+- Useful for debugging
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+#### 1. Database Connection Errors
+
+**Error: `connect ECONNREFUSED localhost:5432`**
 
 ```bash
+# Check if PostgreSQL is running
+sudo systemctl status postgresql
+
+# Start PostgreSQL
+sudo systemctl start postgresql
+
+# Check connection
+psql -U postgres -h localhost -p 5432
+```
+
+**Error: `authentication failed for user`**
+
+- Check DATABASE_URL in .env
+- Verify username/password
+- Check pg_hba.conf for authentication method
+
+#### 2. MongoDB Connection Errors
+
+**Error: `MongoNetworkError: failed to connect`**
+
+```bash
+# Check if MongoDB is running
+sudo systemctl status mongod
+
+# Start MongoDB
+sudo systemctl start mongod
+
+# Check connection
+mongosh mongodb://localhost:27017
+```
+
+#### 3. Redis Connection Errors
+
+**Error: `Redis connection to localhost:6379 failed`**
+
+```bash
+# Check if Redis is running
+redis-cli ping
+
+# Start Redis
+redis-server
+
+# Or with systemd
+sudo systemctl start redis
+```
+
+#### 4. Port Already in Use
+
+**Error: `EADDRINUSE: address already in use :::3000`**
+
+```bash
+# Find process using port 3000
+lsof -i :3000
+
+# Kill the process
+kill -9 <PID>
+
+# Or use different port
+PORT=3001 npm run start:dev
+```
+
+#### 5. Migration Errors
+
+**Error: `QueryFailedError: relation does not exist`**
+
+```bash
+# Run migrations
+npm run migration:run
+
+# If migrations fail, revert and retry
+npm run migration:revert
+npm run migration:run
+```
+
+#### 6. JWT Token Errors
+
+**Error: `JsonWebTokenError: invalid signature`**
+
+- Check JWT_SECRET matches between services
+- Verify token hasn't expired
+- Check token format (Bearer <token>)
+
+#### 7. Email Sending Errors
+
+**Error: `Invalid login: 535-5.7.8 Username and Password not accepted`**
+
+For Gmail:
+1. Enable 2-factor authentication
+2. Generate app password
+3. Use app password in EMAIL_PASS
+
+#### 8. Environment Variable Issues
+
+```bash
+# Validate environment variables
+npm run validate:env
+
+# Check loaded environment
+console.log(process.env.DATABASE_URL);
+```
+
+### Debug Mode
+
+```bash
+# Start with debug logging
+NODE_ENV=development npm run start:dev
+
+# Enable TypeScript source maps
+npm run start:debug
+
+# Attach debugger (VS Code)
+# Add breakpoints and press F5
+```
+
+### Performance Issues
+
+**Slow API responses:**
+
+1. Check database query performance:
+```bash
+# PostgreSQL: Enable query logging
+ALTER DATABASE url_shortener SET log_statement = 'all';
+
+# MongoDB: Enable profiling
+db.setProfilingLevel(2);
+```
+
+2. Check Redis cache hit rate:
+```bash
+redis-cli INFO stats | grep hit_rate
+```
+
+3. Analyze slow queries:
+```bash
+# PostgreSQL
+SELECT * FROM pg_stat_statements ORDER BY mean_time DESC LIMIT 10;
+```
+
+### Memory Leaks
+
+```bash
+# Monitor memory usage
+node --inspect dist/main.js
+
+# Use Chrome DevTools
+# Navigate to chrome://inspect
+# Take heap snapshots and compare
+```
+
+### Getting Help
+
+1. Check application logs:
+```bash
+tail -f logs/combined.log
+tail -f logs/error.log
+```
+
+2. Check database logs:
+```bash
+# PostgreSQL
+tail -f /var/log/postgresql/postgresql-15-main.log
+
+# MongoDB
+tail -f /var/log/mongodb/mongod.log
+```
+
+3. Enable verbose logging:
+```bash
+LOG_LEVEL=debug npm run start:dev
+```
+
+4. Create an issue with:
+   - Error message and stack trace
+   - Steps to reproduce
+   - Environment details
+   - Relevant logs
+
+## 🚀 Building & Deployment
+
+### Local Production Build
+
+```bash
+# Install production dependencies only
+npm ci --only=production
+
 # Build the application
 npm run build
 
+# The compiled output is in dist/ directory
+
 # Start production server
-npm run start:prod
+NODE_ENV=production npm run start:prod
 ```
 
-### Docker Production
+### Docker Deployment
 
+#### Production Dockerfile
+
+The project includes a multi-stage Dockerfile for optimized production builds:
+
+```dockerfile
+# Stage 1: Build
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 2: Production
+FROM node:18-alpine AS production
+WORKDIR /app
+ENV NODE_ENV production
+COPY package*.json ./
+RUN npm ci --only=production
+COPY --from=builder /app/dist ./dist
+EXPOSE 3000
+CMD ["node", "dist/main"]
+```
+
+**Build and Run:**
 ```bash
 # Build production image
-docker build -t nestjs-url-shortener .
+docker build -t snapurl-backend:latest .
 
-# Run production container
-docker run -p 3000:3000 --env-file .env.production nestjs-url-shortener
+# Run container
+docker run -d \
+  --name snapurl-api \
+  -p 3000:3000 \
+  --env-file .env.production \
+  --restart unless-stopped \
+  snapurl-backend:latest
+
+# View logs
+docker logs -f snapurl-api
+
+# Stop container
+docker stop snapurl-api
+
+# Remove container
+docker rm snapurl-api
 ```
+
+#### Docker Compose Production
+
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env.production
+    depends_on:
+      - postgres
+      - mongo
+      - redis
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: url_shortener
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:6
+    environment:
+      MONGO_INITDB_DATABASE: url_shortener
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
+```
+
+**Deploy with Docker Compose:**
+```bash
+# Start all services
+docker-compose -f docker-compose.prod.yml up -d
+
+# Scale the application
+docker-compose -f docker-compose.prod.yml up -d --scale app=3
+
+# View logs
+docker-compose logs -f app
+
+# Stop all services
+docker-compose -f docker-compose.prod.yml down
+```
+
+### Cloud Deployment
+
+#### AWS EC2
+
+1. **Launch EC2 instance** (Ubuntu 22.04 LTS, t3.medium)
+
+2. **Install dependencies:**
+```bash
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Install Docker Compose
+sudo apt install docker-compose -y
+```
+
+3. **Clone and setup:**
+```bash
+git clone https://github.com/your-repo/URL-Shortener-App.git
+cd URL-Shortener-App/nestjs-backend
+npm install
+cp .env.example .env.production
+nano .env.production  # Edit with production values
+```
+
+4. **Run with PM2:**
+```bash
+# Install PM2
+npm install -g pm2
+
+# Build application
+npm run build
+
+# Start with PM2
+pm2 start dist/main.js --name snapurl-api
+
+# Setup auto-restart on reboot
+pm2 startup
+pm2 save
+
+# View logs
+pm2 logs snapurl-api
+```
+
+5. **Setup Nginx reverse proxy:**
+```nginx
+# /etc/nginx/sites-available/snapurl
+server {
+    listen 80;
+    server_name api.snapurl.in;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+# Enable site
+sudo ln -s /etc/nginx/sites-available/snapurl /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+
+# Setup SSL with Let's Encrypt
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d api.snapurl.in
+```
+
+#### Heroku
+
+```bash
+# Install Heroku CLI
+curl https://cli-assets.heroku.com/install.sh | sh
+
+# Login
+heroku login
+
+# Create app
+heroku create snapurl-api
+
+# Add Heroku Postgres
+heroku addons:create heroku-postgresql:hobby-dev
+
+# Add MongoDB Atlas (or mLab)
+# Configure MONGODB_URI in Heroku config vars
+
+# Add Redis
+heroku addons:create heroku-redis:hobby-dev
+
+# Set environment variables
+heroku config:set NODE_ENV=production
+heroku config:set JWT_SECRET=your-secret
+# ... set other variables
+
+# Deploy
+git push heroku main
+
+# View logs
+heroku logs --tail
+```
+
+#### DigitalOcean App Platform
+
+```yaml
+# .do/app.yaml
+name: snapurl-api
+services:
+  - name: api
+    github:
+      repo: your-username/URL-Shortener-App
+      branch: main
+      deploy_on_push: true
+    build_command: cd nestjs-backend && npm run build
+    run_command: cd nestjs-backend && npm run start:prod
+    environment_slug: node-js
+    instance_count: 2
+    instance_size_slug: basic-xs
+    http_port: 3000
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        type: SECRET
+      - key: JWT_SECRET
+        type: SECRET
+
+databases:
+  - name: postgres
+    engine: PG
+    version: "15"
+  - name: mongodb
+    engine: MONGODB
+    version: "6"
+  - name: redis
+    engine: REDIS
+    version: "7"
+```
+
+```bash
+# Deploy
+doctl apps create --spec .do/app.yaml
+
+# Update
+doctl apps update <app-id> --spec .do/app.yaml
+```
+
+### Deployment Checklist
+
+Before deploying to production:
+
+- [ ] Update all environment variables in `.env.production`
+- [ ] Set strong JWT secrets (minimum 32 characters)
+- [ ] Configure production database URLs
+- [ ] Set BCRYPT_SALT_ROUNDS to 14 or higher
+- [ ] Configure email service (SendGrid, AWS SES, etc.)
+- [ ] Set FRONTEND_URL to production URL
+- [ ] Enable HTTPS/SSL certificates
+- [ ] Run database migrations: `npm run migration:run`
+- [ ] Build application: `npm run build`
+- [ ] Test production build locally: `npm run start:prod`
+- [ ] Run production readiness tests: `npm run test:prod-ready`
+- [ ] Setup monitoring and logging (CloudWatch, DataDog, etc.)
+- [ ] Configure error tracking (Sentry, Rollbar, etc.)
+- [ ] Setup automated backups for databases
+- [ ] Configure firewall rules (allow only necessary ports)
+- [ ] Setup load balancer (if multiple instances)
+- [ ] Configure auto-scaling policies
+- [ ] Document deployment procedures
+- [ ] Setup CI/CD pipeline
+- [ ] Test all critical endpoints
+- [ ] Monitor initial deployment closely
+
+### CI/CD Pipeline
+
+Example GitHub Actions workflow:
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - run: cd nestjs-backend && npm ci
+      - run: cd nestjs-backend && npm run test
+      - run: cd nestjs-backend && npm run test:e2e
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - run: cd nestjs-backend && npm ci
+      - run: cd nestjs-backend && npm run build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy to AWS EC2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # SSH into EC2 and pull latest code
+          # Run deployment script
+```
+
+### Production Monitoring
+
+**Essential Metrics to Monitor:**
+- Response time (p50, p95, p99)
+- Error rate
+- Request rate
+- Database query time
+- Cache hit rate
+- Memory usage
+- CPU usage
+- Disk space
+
+**Setup Alerts For:**
+- High error rate (>1%)
+- Slow response time (>1s p95)
+- High memory usage (>80%)
+- Database connection errors
+- Redis connection errors
+- Failed health checks
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+We welcome contributions from the community! Here's how you can help:
+
+### Development Process
+
+1. **Fork the repository** on GitHub
+2. **Clone your fork** locally:
+   ```bash
+   git clone https://github.com/your-username/URL-Shortener-App.git
+   cd URL-Shortener-App/nestjs-backend
+   ```
+3. **Create a feature branch**:
+   ```bash
+   git checkout -b feature/amazing-feature
+   ```
+4. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+5. **Make your changes** and ensure:
+   - Code follows TypeScript and ESLint conventions
+   - All tests pass: `npm test`
+   - New features have tests
+   - Documentation is updated
+6. **Commit your changes**:
+   ```bash
+   git commit -m 'feat: add amazing feature'
+   ```
+   Follow [Conventional Commits](https://www.conventionalcommits.org/)
+7. **Push to your fork**:
+   ```bash
+   git push origin feature/amazing-feature
+   ```
+8. **Open a Pull Request** on GitHub
+
+### Commit Message Convention
+
+Use semantic commit messages:
+
+- `feat:` New feature
+- `fix:` Bug fix
+- `docs:` Documentation changes
+- `style:` Code style changes (formatting)
+- `refactor:` Code refactoring
+- `perf:` Performance improvements
+- `test:` Test additions or fixes
+- `chore:` Build process or auxiliary tool changes
+
+Examples:
+```
+feat: add QR code generation endpoint
+fix: resolve memory leak in URL caching
+docs: update API documentation
+test: add integration tests for auth module
+```
+
+### Code Style Guidelines
+
+**TypeScript:**
+- Use TypeScript for all new code
+- Enable strict mode
+- Define proper interfaces and types
+- Avoid `any` type
+- Use async/await over promises
+
+**NestJS:**
+- Follow module-based architecture
+- Use dependency injection
+- Implement proper error handling
+- Use DTOs for validation
+- Add Swagger decorators
+
+**Testing:**
+- Write unit tests for services
+- Write E2E tests for controllers
+- Aim for >80% coverage
+- Mock external dependencies
+- Use descriptive test names
+
+**Naming:**
+- PascalCase for classes/interfaces
+- camelCase for variables/functions
+- UPPER_CASE for constants
+- Descriptive names, avoid abbreviations
+
+### Pull Request Checklist
+
+Before submitting a PR, ensure:
+
+- [ ] Code follows project conventions
+- [ ] All tests pass locally
+- [ ] New tests added for new features
+- [ ] Documentation updated
+- [ ] No console.log statements
+- [ ] No commented-out code
+- [ ] Commit messages follow convention
+- [ ] PR description explains changes
+- [ ] Screenshots included (if UI changes)
+- [ ] Breaking changes documented
+
+### Getting Help
+
+- Join our [Discord community](https://discord.gg/snapurl)
+- Read the [documentation](https://docs.snapurl.in)
+- Check existing [issues](https://github.com/DhananjayThomble/URL-Shortener-App/issues)
+- Ask questions in [Discussions](https://github.com/DhananjayThomble/URL-Shortener-App/discussions)
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
+
+## 📚 Additional Documentation
+
+- [Production Readiness Guide](./PRODUCTION_READINESS.md) - Complete production testing
+- [Deployment Checklist](./DEPLOYMENT_CHECKLIST.md) - Pre-deployment checklist
+- [Migration Guide](./docs/MIGRATION_GUIDE.md) - Express to NestJS migration
+- [Deployment Runbook](./docs/DEPLOYMENT_RUNBOOK.md) - Operations procedures
+- [Performance Optimization](./docs/PERFORMANCE_OPTIMIZATION.md) - Performance tuning
+- [API Reference](http://localhost:3000/docs) - Interactive API documentation
 
 ## 🆘 Support
 
 For support and questions:
-- Create an issue in the repository
-- Check the [API documentation](http://localhost:3000/docs)
-- Review the [troubleshooting guide](docs/troubleshooting.md)
+
+- **Issues**: [Create an issue](https://github.com/DhananjayThomble/URL-Shortener-App/issues)
+- **Discussions**: [Join discussions](https://github.com/DhananjayThomble/URL-Shortener-App/discussions)
+- **Email**: support@snapurl.in
+- **API Docs**: [http://localhost:3000/docs](http://localhost:3000/docs)
+- **Main Documentation**: [../README.md](../README.md)
+
+---
+
+**Note for AI Coding Tools**: This documentation is optimized for AI understanding. Key conventions:
+- All file paths are absolute from project root
+- Environment variables explicitly documented with types and defaults
+- API endpoints include full request/response examples with curl commands
+- Database schemas include SQL/NoSQL examples
+- Common issues have specific solutions with exact commands
+- No assumptions about implicit behavior or "standard" configurations
+- All dependencies listed with versions and purposes
+- Architecture decisions documented with rationale
