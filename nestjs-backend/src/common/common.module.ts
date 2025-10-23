@@ -10,6 +10,7 @@ import { CacheManagerService } from './services/cache-manager.service';
 import { PerformanceService } from './services/performance.service';
 import { HealthService } from './services/health.service';
 import { MetricsService } from './services/metrics.service';
+import { EmailService } from './services/email.service';
 import { GracefulShutdownService } from './services/graceful-shutdown.service';
 
 import { CacheController } from './controllers/cache.controller';
@@ -38,6 +39,7 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     PerformanceService,
     HealthService,
     MetricsService,
+    EmailService,
     RequestTrackingInterceptor,
     TracingMiddleware,
     GracefulShutdownService,
@@ -50,6 +52,7 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     PerformanceService,
     HealthService,
     MetricsService,
+    EmailService,
     RequestTrackingInterceptor,
     TracingMiddleware,
     GracefulShutdownService,

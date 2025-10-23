@@ -8,7 +8,10 @@ import { RefreshTokenService } from '../users/entities/refresh-token.service';
 import { User } from '../users/entities/user.entity';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { CacheService } from '../../common/services/cache.service';
+import { EmailService } from '../../common/services/email.service';
 
 @Injectable()
 export class AuthService {
@@ -20,12 +23,13 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private cacheService: CacheService,
-  ) {}
+    private emailService: EmailService,
+  ) { }
 
   async validateUser(email: string, password: string): Promise<User | null> {
     try {
       this.logger.debug(`Validating user: ${email}`);
-      
+
       const user = await this.usersService.findByEmail(email);
       if (!user) {
         this.logger.debug(`User not found: ${email}`);
@@ -33,7 +37,7 @@ export class AuthService {
       }
 
       this.logger.debug(`User found: ${user.id}, checking password`);
-      
+
       const isPasswordValid = await this.comparePassword(password, user.passwordHash);
       if (!isPasswordValid) {
         this.logger.debug(`Invalid password for user: ${email}`);
@@ -51,7 +55,7 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     try {
       this.logger.debug(`Login attempt for email: ${loginDto.email}`);
-      
+
       // Validate input
       if (!loginDto.email || !loginDto.password) {
         this.logger.warn(`Login failed: Missing email or password for ${loginDto.email}`);
@@ -66,10 +70,10 @@ export class AuthService {
 
       this.logger.debug(`User validated successfully: ${user.id}`);
 
-      const payload = { 
-        sub: user.id, 
-        email: user.email, 
-        role: user.role 
+      const payload = {
+        sub: user.id,
+        email: user.email,
+        role: user.role
       };
 
       const accessToken = this.jwtService.sign(payload);
@@ -91,7 +95,7 @@ export class AuthService {
         role: user.role,
         lastLogin: new Date(),
       };
-      
+
       await this.cacheService.cacheUserSession(user.id, sessionData, 900); // 15 minutes TTL
 
       this.logger.log(`Login successful for user: ${user.email}`);
@@ -105,7 +109,7 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      
+
       this.logger.error(`Login error for ${loginDto.email}:`, error.stack);
       throw new InternalServerErrorException('Login failed. Please try again.');
     }
@@ -147,10 +151,10 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
-      const newPayload = { 
-        sub: user.id, 
-        email: user.email, 
-        role: user.role 
+      const newPayload = {
+        sub: user.id,
+        email: user.email,
+        role: user.role
       };
 
       return {
@@ -163,14 +167,14 @@ export class AuthService {
 
   async logout(userId: string, refreshToken: string): Promise<void> {
     await this.refreshTokenService.revokeRefreshToken(userId, refreshToken);
-    
+
     // Clear user session from cache
     await this.cacheService.invalidateUserSession(userId);
   }
 
   async logoutAll(userId: string): Promise<void> {
     await this.refreshTokenService.revokeAllUserTokens(userId);
-    
+
     // Clear all user-related cache data
     await this.cacheService.invalidateUserCache(userId);
   }
@@ -211,9 +215,85 @@ export class AuthService {
       role: user.role,
       lastAccess: new Date(),
     };
-    
+
     await this.cacheService.cacheUserSession(user.id, sessionData, 900); // 15 minutes TTL
 
     return user;
+  }
+
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<{ message: string }> {
+    try {
+      this.logger.debug(`Password reset requested for: ${forgotPasswordDto.email}`);
+
+      const user = await this.usersService.findByEmail(forgotPasswordDto.email);
+      if (!user) {
+        // Don't reveal if email exists or not for security
+        this.logger.warn(`Password reset requested for non-existent email: ${forgotPasswordDto.email}`);
+        return { message: 'If the email exists, a password reset link has been sent.' };
+      }
+
+      // Generate secure reset token
+      const resetToken = this.generateResetToken();
+      const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+      // Save reset token to user
+      await this.usersService.updatePasswordResetToken(user.id, resetToken, resetExpires);
+
+      // Send reset email
+      await this.emailService.sendPasswordResetEmail(user.email, resetToken);
+
+      this.logger.log(`Password reset email sent to: ${user.email}`);
+      return { message: 'If the email exists, a password reset link has been sent.' };
+    } catch (error) {
+      this.logger.error(`Error in forgotPassword for ${forgotPasswordDto.email}:`, error.stack);
+      throw new InternalServerErrorException('Failed to process password reset request. Please try again.');
+    }
+  }
+
+  async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
+    try {
+      this.logger.debug(`Password reset attempt with token: ${resetPasswordDto.token.substring(0, 8)}...`);
+
+      const user = await this.usersService.findByPasswordResetToken(resetPasswordDto.token);
+      if (!user) {
+        this.logger.warn(`Invalid reset token used: ${resetPasswordDto.token.substring(0, 8)}...`);
+        throw new UnauthorizedException('Invalid or expired reset token');
+      }
+
+      // Check if token is expired
+      if (!user.passwordResetExpires || user.passwordResetExpires < new Date()) {
+        this.logger.warn(`Expired reset token used for user: ${user.email}`);
+        throw new UnauthorizedException('Invalid or expired reset token');
+      }
+
+      // Hash new password
+      const hashedPassword = await this.hashPassword(resetPasswordDto.newPassword);
+
+      // Update password and clear reset token
+      await this.usersService.updatePassword(user.id, hashedPassword);
+      await this.usersService.clearPasswordResetToken(user.id);
+
+      // Invalidate all refresh tokens for security
+      await this.refreshTokenService.revokeAllUserTokens(user.id);
+
+      // Clear user session cache
+      await this.cacheService.invalidateUserCache(user.id);
+
+      this.logger.log(`Password reset successful for user: ${user.email}`);
+      return { message: 'Password has been reset successfully. Please log in with your new password.' };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      this.logger.error(`Error in resetPassword:`, error.stack);
+      throw new InternalServerErrorException('Failed to reset password. Please try again.');
+    }
+  }
+
+  private generateResetToken(): string {
+    // Generate a secure random token
+    const crypto = require('crypto');
+    return crypto.randomBytes(32).toString('hex');
   }
 }

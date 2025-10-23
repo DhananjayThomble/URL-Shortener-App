@@ -184,7 +184,7 @@ export class UrlsController {
 }
 
 // Separate controller for public URL redirection
-@Controller()
+@Controller('r') // Use 'r' prefix to avoid conflicts
 export class RedirectController {
   constructor(private readonly urlsService: UrlsService) {}
 
@@ -255,3 +255,4 @@ export class RedirectController {
     return { valid: isValid };
   }
 }
+

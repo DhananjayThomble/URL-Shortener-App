@@ -7,6 +7,8 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @ApiTags('auth')
@@ -116,5 +118,44 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'User profile retrieved' })
   async getProfile(@Request() req) {
     return req.user;
+  }
+
+  @Post('forgot-password')
+  @Throttle({ name: 'auth', ttl: 900000, limit: 3 }) // 3 requests per 15 minutes
+  @ApiOperation({ summary: 'Request password reset' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Password reset email sent if email exists',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid email format' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(forgotPasswordDto);
+  }
+
+  @Post('reset-password')
+  @Throttle({ name: 'auth', ttl: 900000, limit: 5 }) // 5 requests per 15 minutes
+  @ApiOperation({ summary: 'Reset password with token' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Password reset successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request data' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired reset token' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
   }
 }

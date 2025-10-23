@@ -25,13 +25,23 @@ export class CustomValidationPipe implements PipeTransform<any> {
     });
 
     if (errors.length > 0) {
+      const formattedErrors = errors.map(error => ({
+        field: error.property,
+        value: error.value,
+        constraints: error.constraints,
+        messages: Object.values(error.constraints || {}),
+      }));
+      
       const errorMessages = errors.map(error => {
-        return Object.values(error.constraints || {}).join(', ');
+        const field = error.property;
+        const messages = Object.values(error.constraints || {});
+        return `${field}: ${messages.join(', ')}`;
       });
       
       throw new BadRequestException({
         message: 'Validation failed',
         errors: errorMessages,
+        details: formattedErrors,
       });
     }
 

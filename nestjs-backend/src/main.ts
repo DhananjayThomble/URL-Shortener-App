@@ -63,10 +63,8 @@ async function bootstrap() {
     threshold: 1024,
   }));
 
-  // Global configuration - exclude redirect routes from API prefix
-  app.setGlobalPrefix(configService.get('API_PREFIX', 'api/v1'), {
-    exclude: [{ path: ':shortCode', method: RequestMethod.GET }],
-  });
+  // Global configuration
+  app.setGlobalPrefix(configService.get('API_PREFIX', 'api/v1'));
   
   // Trust proxy in production (for proper IP detection behind load balancer)
   if (isProduction) {

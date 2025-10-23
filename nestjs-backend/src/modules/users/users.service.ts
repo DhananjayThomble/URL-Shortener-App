@@ -100,4 +100,43 @@ export class UsersService {
   async count(): Promise<number> {
     return this.usersRepository.count();
   }
+
+  async updatePasswordResetToken(id: string, token: string, expires: Date): Promise<void> {
+    await this.usersRepository.update(id, {
+      passwordResetToken: token,
+      passwordResetExpires: expires,
+    });
+
+    // Invalidate user cache
+    const cacheKey = this.cacheService.generateUserCacheKey(id);
+    await this.cacheService.del(cacheKey);
+  }
+
+  async findByPasswordResetToken(token: string): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { passwordResetToken: token },
+      select: ['id', 'email', 'name', 'passwordResetToken', 'passwordResetExpires'],
+    });
+  }
+
+  async clearPasswordResetToken(id: string): Promise<void> {
+    await this.usersRepository.update(id, {
+      passwordResetToken: null,
+      passwordResetExpires: null,
+    });
+
+    // Invalidate user cache
+    const cacheKey = this.cacheService.generateUserCacheKey(id);
+    await this.cacheService.del(cacheKey);
+  }
+
+  async updatePassword(id: string, hashedPassword: string): Promise<void> {
+    await this.usersRepository.update(id, {
+      passwordHash: hashedPassword,
+    });
+
+    // Invalidate user cache
+    const cacheKey = this.cacheService.generateUserCacheKey(id);
+    await this.cacheService.del(cacheKey);
+  }
 }
