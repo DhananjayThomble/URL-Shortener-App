@@ -13,6 +13,10 @@ import {
     Chip,
     Collapse,
     InputAdornment,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
 } from '@mui/material';
 import {
     Link as LinkIcon,
@@ -29,6 +33,7 @@ import {
 } from '@mui/icons-material';
 import { useUrls } from '@/hooks/useUrls';
 import { ValidationRules } from '@/lib/validation/rules';
+import { QRCodePreview } from '@/components/qr';
 import type { CreateURLData } from '@/types';
 
 interface UrlShortenerProps {
@@ -69,6 +74,7 @@ export function UrlShortener({
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     const [createdUrl, setCreatedUrl] = useState<any>(null);
     const [copied, setCopied] = useState(false);
+    const [showQRCode, setShowQRCode] = useState(false);
 
     // Form validation
     const validateForm = useCallback(() => {
@@ -215,10 +221,7 @@ export function UrlShortener({
                             <Button
                                 variant="outlined"
                                 startIcon={<QrCode />}
-                                onClick={() => {
-                                    // TODO: Implement QR code generation
-                                    alert('QR Code generation coming soon!');
-                                }}
+                                onClick={() => setShowQRCode(true)}
                             >
                                 QR Code
                             </Button>
@@ -431,6 +434,33 @@ export function UrlShortener({
                         </Stack>
                     </Stack>
                 </form>
+
+                {/* QR Code Dialog */}
+                <Dialog
+                    open={showQRCode}
+                    onClose={() => setShowQRCode(false)}
+                    maxWidth="sm"
+                    fullWidth
+                >
+                    <DialogTitle>
+                        QR Code for Your Shortened URL
+                    </DialogTitle>
+                    <DialogContent>
+                        {createdUrl && (
+                            <QRCodePreview
+                                url={`${window.location.origin}/${createdUrl.shortCode}`}
+                                size={256}
+                                showLabel={false}
+                                showActions={false}
+                            />
+                        )}
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => setShowQRCode(false)}>
+                            Close
+                        </Button>
+                    </DialogActions>
+                </Dialog>
             </CardContent>
         </Card>
     );

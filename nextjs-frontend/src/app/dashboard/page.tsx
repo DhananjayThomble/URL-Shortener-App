@@ -1,150 +1,131 @@
 'use client';
 
-import { Box, Container, Typography, Card, CardContent, Stack, Chip } from '@mui/material';
+import { useState } from 'react';
+import { Box, Container, Grid, Tabs, Tab } from '@mui/material';
 import { AuthGuard } from '@/components/auth/AuthGuard';
-import { useAuth } from '@/hooks/useAuth';
-import { Button } from '@/components/ui';
-import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { AuthenticatedLayout } from '@/components/layout/AuthenticatedLayout';
+import { 
+  DashboardOverview, 
+  RecentActivityFeed, 
+  TopPerformingUrls, 
+  DashboardStats,
+  UrlManagementDashboard,
+  QuickUrlWidget,
+  DashboardShortcuts
+} from '@/components/dashboard';
+import { LiveMetricsWidget } from '@/components/analytics';
+import { UrlShortener } from '@/components/url';
+
+type DashboardTab = 'overview' | 'urls' | 'analytics' | 'shortcuts';
 
 export default function DashboardPage() {
-  const { user, logout, getDisplayName, getUserInitials } = useAuth();
+  const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
 
-  const handleLogout = () => {
-    logout('/');
+  const handleCreateUrl = () => {
+    setActiveTab('urls');
+  };
+
+  const handleViewAnalytics = () => {
+    setActiveTab('analytics');
+  };
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: DashboardTab) => {
+    setActiveTab(newValue);
   };
 
   return (
     <AuthGuard requireAuth={true}>
-      <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-        {/* Header */}
-        <Box
-          sx={{
-            borderBottom: 1,
-            borderColor: 'divider',
-            bgcolor: 'background.paper',
-            py: 2,
-          }}
-        >
-          <Container maxWidth="lg">
-            <Stack
-              direction="row"
-              justifyContent="space-between"
-              alignItems="center"
-            >
-              <Typography variant="h5" component="h1">
-                SnapURL Dashboard
-              </Typography>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <ThemeToggle />
-                <Button variant="outlined" onClick={handleLogout}>
-                  Sign Out
-                </Button>
-              </Stack>
-            </Stack>
-          </Container>
-        </Box>
+      <AuthenticatedLayout>
+        <Container maxWidth="xl" sx={{ py: 3 }}>
+          {/* Dashboard Tabs */}
+          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+            <Tabs value={activeTab} onChange={handleTabChange}>
+              <Tab label="Overview" value="overview" />
+              <Tab label="URL Management" value="urls" />
+              <Tab label="Analytics" value="analytics" />
+              <Tab label="Quick Actions" value="shortcuts" />
+            </Tabs>
+          </Box>
 
-        {/* Main Content */}
-        <Container maxWidth="lg" sx={{ py: 4 }}>
-          <Stack spacing={4}>
-            {/* Welcome Section */}
-            <Card>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h4" component="h2">
-                    Welcome back, {getDisplayName()}!
-                  </Typography>
-                  <Typography variant="body1" color="text.secondary">
-                    You're successfully signed in to your SnapURL account.
-                  </Typography>
-                  
-                  {/* User Info */}
-                  <Stack direction="row" spacing={1} flexWrap="wrap">
-                    <Chip 
-                      label={`Email: ${user?.email}`} 
-                      variant="outlined" 
-                      size="small" 
-                    />
-                    <Chip 
-                      label={`Role: ${user?.role || 'User'}`} 
-                      variant="outlined" 
-                      size="small" 
-                    />
-                    {user?.isEmailVerified !== undefined && (
-                      <Chip 
-                        label={user.isEmailVerified ? 'Email Verified' : 'Email Not Verified'} 
-                        color={user.isEmailVerified ? 'success' : 'warning'}
-                        variant="outlined" 
-                        size="small" 
-                      />
-                    )}
-                  </Stack>
-                </Stack>
-              </CardContent>
-            </Card>
+          {/* Tab Content */}
+          {activeTab === 'overview' && (
+            <Grid container spacing={3}>
+              {/* Quick URL Widget */}
+              <Grid item xs={12} md={6} lg={4}>
+                <QuickUrlWidget
+                  showAdvanced={true}
+                  onSuccess={() => {
+                    // Refresh dashboard data
+                    console.log('URL created successfully');
+                  }}
+                />
+              </Grid>
 
-            {/* Quick Stats */}
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={3}>
-              <Card sx={{ flex: 1 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    URLs Created
-                  </Typography>
-                  <Typography variant="h3" color="primary.main">
-                    0
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Start creating short URLs
-                  </Typography>
-                </CardContent>
-              </Card>
+              {/* Live Metrics Widget */}
+              <Grid item xs={12} md={6} lg={4}>
+                <LiveMetricsWidget
+                  urlId="sample-url-id" // This would be dynamic
+                  compact={true}
+                  autoRefresh={true}
+                />
+              </Grid>
 
-              <Card sx={{ flex: 1 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Total Clicks
-                  </Typography>
-                  <Typography variant="h3" color="success.main">
-                    0
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Track your link performance
-                  </Typography>
-                </CardContent>
-              </Card>
+              {/* Dashboard Stats */}
+              <Grid item xs={12} lg={4}>
+                <DashboardStats
+                  title="Quick Stats"
+                  subtitle="Key performance indicators"
+                  compact={true}
+                />
+              </Grid>
 
-              <Card sx={{ flex: 1 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Active Links
-                  </Typography>
-                  <Typography variant="h3" color="info.main">
-                    0
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Currently active URLs
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Stack>
+              {/* Top Performing URLs */}
+              <Grid item xs={12} lg={8}>
+                <TopPerformingUrls
+                  maxItems={5}
+                  onViewAnalytics={handleViewAnalytics}
+                  onViewAll={() => setActiveTab('urls')}
+                />
+              </Grid>
 
-            {/* URL Shortener */}
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  URL Shortener
-                </Typography>
-                <Typography variant="body1" color="text.secondary" paragraph>
-                  Create short URLs for easy sharing and tracking.
-                </Typography>
-                <Typography variant="body2" color="warning.main">
-                  URL shortening functionality is being implemented. Please check back soon!
-                </Typography>
-              </CardContent>
-            </Card>
-          </Stack>
+              {/* Recent Activity Feed */}
+              <Grid item xs={12} lg={4}>
+                <RecentActivityFeed
+                  maxItems={8}
+                  onRefresh={() => console.log('Refresh activity')}
+                  onViewAll={() => console.log('View all activity')}
+                />
+              </Grid>
+            </Grid>
+          )}
+
+          {activeTab === 'urls' && (
+            <UrlManagementDashboard />
+          )}
+
+          {activeTab === 'analytics' && (
+            <Grid container spacing={3}>
+              <Grid item xs={12}>
+                <DashboardOverview
+                  onCreateUrl={handleCreateUrl}
+                  onViewAnalytics={handleViewAnalytics}
+                />
+              </Grid>
+            </Grid>
+          )}
+
+          {activeTab === 'shortcuts' && (
+            <DashboardShortcuts
+              onCreateUrl={() => setActiveTab('urls')}
+              onViewAnalytics={() => setActiveTab('analytics')}
+              onGenerateQR={() => console.log('Generate QR')}
+              onExportData={() => console.log('Export data')}
+              onViewSettings={() => console.log('View settings')}
+              onViewHelp={() => console.log('View help')}
+            />
+          )}
         </Container>
-      </Box>
+      </AuthenticatedLayout>
     </AuthGuard>
   );
 }

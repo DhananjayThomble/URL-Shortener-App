@@ -213,4 +213,12 @@ export const urlAPI = {
     });
     return response.data;
   },
+
+  /**
+   * Get dashboard metrics
+   */
+  async getDashboardMetrics(): Promise<any> {
+    const response = await apiClient.get('/dashboard/metrics');
+    return response.data;
+  },
 };

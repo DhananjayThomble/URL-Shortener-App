@@ -6,3 +6,8 @@ export { ReferrerChart } from './ReferrerChart';
 export { MetricCard } from './MetricCard';
 export { DateRangePicker } from './DateRangePicker';
 export { ExportButton } from './ExportButton';
+export { InteractiveChart } from './InteractiveChart';
+export { ChartComparison } from './ChartComparison';
+export { RealTimeDashboard } from './RealTimeDashboard';
+export { NotificationCenter } from './NotificationCenter';
+export { LiveMetricsWidget } from './LiveMetricsWidget';

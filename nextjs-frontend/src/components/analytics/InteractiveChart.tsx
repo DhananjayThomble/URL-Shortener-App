@@ -3,22 +3,24 @@
 import React, { useState, useMemo } from 'react';
 import {
   Box,
+  Card,
+  CardContent,
+  Typography,
   ToggleButton,
   ToggleButtonGroup,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Chip,
-  Typography,
-  Paper,
-  IconButton,
+  Stack,
   Tooltip,
+  IconButton,
 } from '@mui/material';
 import {
-  ShowChart,
+  TrendingUp,
   BarChart as BarChartIcon,
-  AreaChart as AreaChartIcon,
+  ShowChart,
+  Timeline,
   Fullscreen,
   ZoomIn,
   ZoomOut,
@@ -28,19 +30,17 @@ import type { ClicksByDate } from '@/types/analytics';
 
 interface InteractiveChartProps {
   data: ClicksByDate[];
-  period: '24h' | '7d' | '30d' | '90d' | 'custom';
   title?: string;
-  showControls?: boolean;
-  allowFullscreen?: boolean;
+  period: '24h' | '7d' | '30d' | '90d' | 'custom';
+  onPeriodChange?: (period: string) => void;
   className?: string;
 }
 
 export const InteractiveChart: React.FC<InteractiveChartProps> = ({
   data,
-  period,
   title = 'Click Analytics',
-  showControls = true,
-  allowFullscreen = true,
+  period,
+  onPeriodChange,
   className,
 }) => {
   const [chartType, setChartType] = useState<'line' | 'bar' | 'area'>('line');
@@ -48,30 +48,43 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
 
-  // Calculate statistics
-  const stats = useMemo(() => {
-    if (!data || data.length === 0) return null;
+  // Calculate metrics
+  const metrics = useMemo(() => {
+    if (!data || data.length === 0) {
+      return {
+        totalClicks: 0,
+        uniqueClicks: 0,
+        averageClicks: 0,
+        trend: 0,
+        peakDay: null,
+      };
+    }
 
-    const totalClicks = data.reduce((sum, item) => sum + item.clicks, 0);
-    const totalUniqueClicks = data.reduce((sum, item) => sum + item.uniqueClicks, 0);
-    const avgClicks = totalClicks / data.length;
-    const avgUniqueClicks = totalUniqueClicks / data.length;
+    const totalClicks = data.reduce((sum, day) => sum + day.clicks, 0);
+    const uniqueClicks = data.reduce((sum, day) => sum + day.uniqueClicks, 0);
+    const averageClicks = totalClicks / data.length;
+
+    // Calculate trend (comparing first half vs second half)
+    const midPoint = Math.floor(data.length / 2);
+    const firstHalf = data.slice(0, midPoint);
+    const secondHalf = data.slice(midPoint);
     
-    const maxClicks = Math.max(...data.map(item => item.clicks));
-    const minClicks = Math.min(...data.map(item => item.clicks));
+    const firstHalfAvg = firstHalf.reduce((sum, day) => sum + day.clicks, 0) / firstHalf.length;
+    const secondHalfAvg = secondHalf.reduce((sum, day) => sum + day.clicks, 0) / secondHalf.length;
     
-    const peakDay = data.find(item => item.clicks === maxClicks);
-    const lowDay = data.find(item => item.clicks === minClicks);
+    const trend = firstHalfAvg > 0 ? ((secondHalfAvg - firstHalfAvg) / firstHalfAvg) * 100 : 0;
+
+    // Find peak day
+    const peakDay = data.reduce((max, day) => 
+      day.clicks > max.clicks ? day : max, data[0]
+    );
 
     return {
       totalClicks,
-      totalUniqueClicks,
-      avgClicks,
-      avgUniqueClicks,
-      maxClicks,
-      minClicks,
+      uniqueClicks,
+      averageClicks,
+      trend,
       peakDay,
-      lowDay,
     };
   }, [data]);
 
@@ -84,25 +97,24 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
     }
   };
 
-  const handleFullscreenToggle = () => {
-    setIsFullscreen(!isFullscreen);
-  };
-
   const handleZoomIn = () => {
-    setZoomLevel(prev => Math.min(prev + 0.2, 2));
+    setZoomLevel(prev => Math.min(prev * 1.2, 3));
   };
 
   const handleZoomOut = () => {
-    setZoomLevel(prev => Math.max(prev - 0.2, 0.5));
+    setZoomLevel(prev => Math.max(prev / 1.2, 0.5));
   };
 
-  const chartHeight = isFullscreen ? 600 : 350;
+  const toggleFullscreen = () => {
+    setIsFullscreen(!isFullscreen);
+  };
+
+  const chartHeight = isFullscreen ? 500 : 350;
 
   return (
-    <Paper 
+    <Card 
       className={className}
       sx={{
-        p: 3,
         ...(isFullscreen && {
           position: 'fixed',
           top: 0,
@@ -111,131 +123,166 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
           bottom: 0,
           zIndex: 1300,
           borderRadius: 0,
-          overflow: 'auto',
         }),
       }}
     >
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h6" component="h3">
-          {title}
-        </Typography>
-        
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {allowFullscreen && (
-            <Tooltip title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}>
-              <IconButton onClick={handleFullscreenToggle} size="small">
+      <CardContent sx={{ p: 3 }}>
+        {/* Header */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Typography variant="h6" component="h3" fontWeight="bold">
+            {title}
+          </Typography>
+          
+          <Stack direction="row" spacing={1} alignItems="center">
+            {/* Chart Type Toggle */}
+            <ToggleButtonGroup
+              value={chartType}
+              exclusive
+              onChange={handleChartTypeChange}
+              size="small"
+            >
+              <ToggleButton value="line" aria-label="line chart">
+                <Tooltip title="Line Chart">
+                  <ShowChart />
+                </Tooltip>
+              </ToggleButton>
+              <ToggleButton value="area" aria-label="area chart">
+                <Tooltip title="Area Chart">
+                  <Timeline />
+                </Tooltip>
+              </ToggleButton>
+              <ToggleButton value="bar" aria-label="bar chart">
+                <Tooltip title="Bar Chart">
+                  <BarChartIcon />
+                </Tooltip>
+              </ToggleButton>
+            </ToggleButtonGroup>
+
+            {/* Zoom Controls */}
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Tooltip title="Zoom Out">
+                <IconButton size="small" onClick={handleZoomOut} disabled={zoomLevel <= 0.5}>
+                  <ZoomOut />
+                </IconButton>
+              </Tooltip>
+              <Typography variant="caption" sx={{ mx: 1, minWidth: 30, textAlign: 'center' }}>
+                {Math.round(zoomLevel * 100)}%
+              </Typography>
+              <Tooltip title="Zoom In">
+                <IconButton size="small" onClick={handleZoomIn} disabled={zoomLevel >= 3}>
+                  <ZoomIn />
+                </IconButton>
+              </Tooltip>
+            </Box>
+
+            {/* Fullscreen Toggle */}
+            <Tooltip title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
+              <IconButton size="small" onClick={toggleFullscreen}>
                 <Fullscreen />
               </IconButton>
             </Tooltip>
-          )}
-          
-          <Tooltip title="Zoom in">
-            <IconButton onClick={handleZoomIn} size="small" disabled={zoomLevel >= 2}>
-              <ZoomIn />
-            </IconButton>
-          </Tooltip>
-          
-          <Tooltip title="Zoom out">
-            <IconButton onClick={handleZoomOut} size="small" disabled={zoomLevel <= 0.5}>
-              <ZoomOut />
-            </IconButton>
-          </Tooltip>
+          </Stack>
         </Box>
-      </Box>
 
-      {/* Controls */}
-      {showControls && (
-        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
-          <ToggleButtonGroup
-            value={chartType}
-            exclusive
-            onChange={handleChartTypeChange}
-            size="small"
-            aria-label="chart type"
-          >
-            <ToggleButton value="line" aria-label="line chart">
-              <ShowChart />
-            </ToggleButton>
-            <ToggleButton value="bar" aria-label="bar chart">
-              <BarChartIcon />
-            </ToggleButton>
-            <ToggleButton value="area" aria-label="area chart">
-              <AreaChartIcon />
-            </ToggleButton>
-          </ToggleButtonGroup>
+        {/* Metrics Summary */}
+        <Box sx={{ 
+          display: 'grid', 
+          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' },
+          gap: 2,
+          mb: 3 
+        }}>
+          <Box sx={{ textAlign: 'center', p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Typography variant="h6" color="primary.main" fontWeight="bold">
+              {metrics.totalClicks.toLocaleString()}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Total Clicks
+            </Typography>
+          </Box>
+          
+          <Box sx={{ textAlign: 'center', p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Typography variant="h6" color="secondary.main" fontWeight="bold">
+              {metrics.uniqueClicks.toLocaleString()}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Unique Clicks
+            </Typography>
+          </Box>
+          
+          <Box sx={{ textAlign: 'center', p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Typography variant="h6" color="info.main" fontWeight="bold">
+              {Math.round(metrics.averageClicks)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Avg per Day
+            </Typography>
+          </Box>
+          
+          <Box sx={{ textAlign: 'center', p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography 
+                variant="h6" 
+                color={metrics.trend >= 0 ? 'success.main' : 'error.main'}
+                fontWeight="bold"
+              >
+                {metrics.trend >= 0 ? '+' : ''}{metrics.trend.toFixed(1)}%
+              </Typography>
+              <TrendingUp 
+                sx={{ 
+                  ml: 0.5, 
+                  color: metrics.trend >= 0 ? 'success.main' : 'error.main',
+                  transform: metrics.trend < 0 ? 'rotate(180deg)' : 'none'
+                }} 
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              Trend
+            </Typography>
+          </Box>
+        </Box>
 
+        {/* Chart Controls */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Data Series</InputLabel>
+            <InputLabel>Show Data</InputLabel>
             <Select
               value={showUniqueClicks ? 'both' : 'total'}
-              label="Data Series"
+              label="Show Data"
               onChange={(e) => setShowUniqueClicks(e.target.value === 'both')}
             >
               <MenuItem value="total">Total Clicks Only</MenuItem>
-              <MenuItem value="both">Total + Unique Clicks</MenuItem>
+              <MenuItem value="both">Total + Unique</MenuItem>
             </Select>
           </FormControl>
 
-          {zoomLevel !== 1 && (
-            <Chip
-              label={`Zoom: ${Math.round(zoomLevel * 100)}%`}
-              size="small"
-              onDelete={() => setZoomLevel(1)}
-              color="primary"
-              variant="outlined"
-            />
+          {metrics.peakDay && (
+            <Typography variant="caption" color="text.secondary">
+              Peak: {metrics.peakDay.clicks} clicks on {new Date(metrics.peakDay.date).toLocaleDateString()}
+            </Typography>
           )}
         </Box>
-      )}
 
-      {/* Statistics */}
-      {stats && (
-        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-          <Chip
-            label={`Total: ${stats.totalClicks.toLocaleString()}`}
-            color="primary"
-            variant="outlined"
+        {/* Chart */}
+        <Box sx={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top left' }}>
+          <ClickChart
+            data={data}
+            type={chartType}
+            period={period}
+            showUniqueClicks={showUniqueClicks}
+            height={chartHeight}
           />
-          <Chip
-            label={`Unique: ${stats.totalUniqueClicks.toLocaleString()}`}
-            color="secondary"
-            variant="outlined"
-          />
-          <Chip
-            label={`Avg: ${Math.round(stats.avgClicks)}/day`}
-            color="info"
-            variant="outlined"
-          />
-          {stats.peakDay && (
-            <Chip
-              label={`Peak: ${stats.maxClicks} on ${new Date(stats.peakDay.date).toLocaleDateString()}`}
-              color="success"
-              variant="outlined"
-            />
-          )}
         </Box>
-      )}
 
-      {/* Chart */}
-      <Box sx={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top left' }}>
-        <ClickChart
-          data={data}
-          type={chartType}
-          period={period}
-          showUniqueClicks={showUniqueClicks}
-          height={chartHeight}
-        />
-      </Box>
-
-      {/* Footer info for fullscreen */}
-      {isFullscreen && (
-        <Box sx={{ mt: 3, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-          <Typography variant="body2" color="text.secondary">
-            Press ESC or click the fullscreen button to exit fullscreen mode
-          </Typography>
-        </Box>
-      )}
-    </Paper>
+        {/* Chart Info */}
+        {data && data.length > 0 && (
+          <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              Data from {new Date(data[0].date).toLocaleDateString()} to {new Date(data[data.length - 1].date).toLocaleDateString()} 
+              ({data.length} data points)
+            </Typography>
+          </Box>
+        )}
+      </CardContent>
+    </Card>
   );
 };

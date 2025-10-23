@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import type { AnalyticsData, ClicksByDate, CountryData, DeviceData, ReferrerData } from '@/types/analytics';
 
 export type ExportFormat = 'csv' | 'excel' | 'pdf' | 'json';
@@ -49,12 +50,98 @@ export class AnalyticsExporter {
   }
 
   /**
-   * Export to Excel format (using CSV for now, can be enhanced with xlsx library)
+   * Export to Excel format using xlsx library
    */
   private static async exportToExcel(data: AnalyticsData, filename: string): Promise<void> {
-    // For now, export as CSV. Can be enhanced with xlsx library later
-    const csvContent = this.generateCSVContent(data);
-    this.downloadFile(csvContent, `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const workbook = XLSX.utils.book_new();
+
+    // Summary sheet
+    const summaryData = [
+      ['Metric', 'Value'],
+      ['Total Clicks', data.totalClicks],
+      ['Unique Clicks', data.uniqueClicks],
+      ['Click-Through Rate', `${((data.uniqueClicks / data.totalClicks) * 100).toFixed(2)}%`],
+      ['Export Date', new Date().toLocaleDateString()],
+    ];
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+
+    // Clicks by date sheet
+    const clicksData = [
+      ['Date', 'Total Clicks', 'Unique Clicks'],
+      ...data.clicksByDate.map(item => [
+        new Date(item.date).toLocaleDateString(),
+        item.clicks,
+        item.uniqueClicks
+      ])
+    ];
+    const clicksSheet = XLSX.utils.aoa_to_sheet(clicksData);
+    XLSX.utils.book_append_sheet(workbook, clicksSheet, 'Clicks by Date');
+
+    // Countries sheet
+    const countriesData = [
+      ['Country', 'Country Code', 'Clicks', 'Percentage'],
+      ...data.topCountries.map(item => [
+        item.country,
+        item.countryCode,
+        item.clicks,
+        `${item.percentage.toFixed(2)}%`
+      ])
+    ];
+    const countriesSheet = XLSX.utils.aoa_to_sheet(countriesData);
+    XLSX.utils.book_append_sheet(workbook, countriesSheet, 'Countries');
+
+    // Devices sheet
+    const devicesData = [
+      ['Device', 'Clicks', 'Percentage'],
+      ...data.topDevices.map(item => [
+        item.device,
+        item.clicks,
+        `${item.percentage.toFixed(2)}%`
+      ])
+    ];
+    const devicesSheet = XLSX.utils.aoa_to_sheet(devicesData);
+    XLSX.utils.book_append_sheet(workbook, devicesSheet, 'Devices');
+
+    // Browsers sheet
+    const browsersData = [
+      ['Browser', 'Version', 'Clicks', 'Percentage'],
+      ...data.topBrowsers.map(item => [
+        item.browser,
+        item.version || 'N/A',
+        item.clicks,
+        `${item.percentage.toFixed(2)}%`
+      ])
+    ];
+    const browsersSheet = XLSX.utils.aoa_to_sheet(browsersData);
+    XLSX.utils.book_append_sheet(workbook, browsersSheet, 'Browsers');
+
+    // Referrers sheet
+    const referrersData = [
+      ['Referrer', 'Domain', 'Clicks', 'Percentage'],
+      ...data.topReferrers.map(item => [
+        item.referrer,
+        item.domain,
+        item.clicks,
+        `${item.percentage.toFixed(2)}%`
+      ])
+    ];
+    const referrersSheet = XLSX.utils.aoa_to_sheet(referrersData);
+    XLSX.utils.book_append_sheet(workbook, referrersSheet, 'Referrers');
+
+    // Generate Excel file and download
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    URL.revokeObjectURL(url);
   }
 
   /**

@@ -1,0 +1,56 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e6] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e7]:
+      - img [ref=e8]
+    - generic [ref=e11]:
+      - button "Open issues overlay" [ref=e12]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: "0"
+          - generic [ref=e15]: "1"
+        - generic [ref=e16]: Issue
+      - button "Collapse issues badge" [ref=e17]:
+        - img [ref=e18]
+  - alert [ref=e20]
+  - generic [ref=e24]:
+    - generic [ref=e25]:
+      - heading "Welcome Back" [level=1] [ref=e26]
+      - paragraph [ref=e27]: Sign in to your SnapURL account
+    - generic [ref=e28]:
+      - button "Continue with Google" [ref=e29] [cursor=pointer]:
+        - img [ref=e31]
+        - text: Continue with Google
+      - button "Continue with GitHub" [ref=e33] [cursor=pointer]:
+        - img [ref=e35]
+        - text: Continue with GitHub
+    - separator [ref=e37]:
+      - paragraph [ref=e39]: or
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - generic [ref=e44]:
+          - text: Email Address*
+          - generic [ref=e45]: "*"
+        - generic [ref=e48]:
+          - textbox "Enter your email" [ref=e49]
+          - group
+      - generic [ref=e50]:
+        - generic [ref=e51]:
+          - text: Password*
+          - generic [ref=e52]: "*"
+        - generic [ref=e55]:
+          - textbox "Enter your password" [ref=e56]
+          - button "toggle password visibility" [ref=e59] [cursor=pointer]:
+            - img [ref=e60]
+          - group
+      - generic [ref=e64] [cursor=pointer]:
+        - checkbox "Remember me for 30 days" [ref=e65]
+        - text: Remember me for 30 days
+      - generic [ref=e66]:
+        - button "Sign In" [disabled]
+        - button "Forgot your password?" [ref=e68] [cursor=pointer]
+    - paragraph [ref=e70]:
+      - text: Don't have an account?
+      - button "Sign up" [ref=e71] [cursor=pointer]
+```

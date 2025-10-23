@@ -20,6 +20,10 @@ import {
   Checkbox,
   Collapse,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   MoreVert,
@@ -40,6 +44,7 @@ import {
   ExpandLess,
 } from '@mui/icons-material';
 import { useUrls } from '@/hooks/useUrls';
+import { QRCodePreview } from '@/components/qr';
 import type { URLData } from '@/types';
 
 interface UrlCardProps {
@@ -67,6 +72,7 @@ export function UrlCard({
   const [copied, setCopied] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
+  const [showQRCode, setShowQRCode] = useState(false);
 
   const menuOpen = Boolean(anchorEl);
   const shortUrl = `${window.location.origin}/${url.shortCode}`;
@@ -453,7 +459,7 @@ export function UrlCard({
           <ListItemText>Analytics</ListItemText>
         </MenuItem>
 
-        <MenuItem onClick={() => alert('QR Code coming soon!')}>
+        <MenuItem onClick={() => setShowQRCode(true)}>
           <ListItemIcon>
             <QrCode fontSize="small" />
           </ListItemIcon>
@@ -483,6 +489,31 @@ export function UrlCard({
           <ListItemText>Delete</ListItemText>
         </MenuItem>
       </Menu>
+
+      {/* QR Code Dialog */}
+      <Dialog
+        open={showQRCode}
+        onClose={() => setShowQRCode(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          QR Code for {url.metadata?.title || getDomain(url.originalUrl)}
+        </DialogTitle>
+        <DialogContent>
+          <QRCodePreview
+            url={shortUrl}
+            size={256}
+            showLabel={false}
+            showActions={false}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowQRCode(false)}>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 }
