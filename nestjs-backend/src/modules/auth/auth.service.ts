@@ -296,4 +296,56 @@ export class AuthService {
     const crypto = require('crypto');
     return crypto.randomBytes(32).toString('hex');
   }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    try {
+      this.logger.debug(`Password change attempt for user: ${userId}`);
+
+      // Get user and verify current password
+      const user = await this.usersService.findById(userId);
+      if (!user) {
+        this.logger.warn(`User not found for password change: ${userId}`);
+        throw new UnauthorizedException('User not found');
+      }
+
+      // Verify current password
+      const isPasswordValid = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!isPasswordValid) {
+        this.logger.warn(`Invalid current password for user: ${user.email}`);
+        throw new UnauthorizedException('Current password is incorrect');
+      }
+
+      // Check if new password is different from current
+      const isSamePassword = await bcrypt.compare(newPassword, user.passwordHash);
+      if (isSamePassword) {
+        throw new UnauthorizedException('New password must be different from current password');
+      }
+
+      // Hash new password
+      const hashedPassword = await this.hashPassword(newPassword);
+
+      // Update password
+      await this.usersService.updatePassword(user.id, hashedPassword);
+
+      // Invalidate all refresh tokens for security
+      await this.refreshTokenService.revokeAllUserTokens(user.id);
+
+      // Clear user session cache
+      await this.cacheService.invalidateUserCache(user.id);
+
+      this.logger.log(`Password changed successfully for user: ${user.email}`);
+      return { message: 'Password has been changed successfully. Please log in with your new password.' };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      this.logger.error(`Error in changePassword:`, error.stack);
+      throw new InternalServerErrorException('Failed to change password. Please try again.');
+    }
+  }
 }
