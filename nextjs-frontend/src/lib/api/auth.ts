@@ -172,7 +172,7 @@ export const authAPI = {
   async resetPassword(token: string, newPassword: string): Promise<void> {
     await apiClient.post('/auth/reset-password', {
       token,
-      password: newPassword,
+      newPassword,
     });
   },
 
