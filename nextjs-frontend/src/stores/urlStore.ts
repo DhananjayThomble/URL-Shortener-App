@@ -126,7 +126,7 @@ export const useUrlStore = create<URLStore>()(
           const newUrl = await urlAPI.createUrl(data);
           
           set(state => ({
-            urls: [newUrl, ...state.urls],
+            urls: [newUrl, ...(state.urls || [])],
             isCreating: false,
             pagination: {
               ...state.pagination,
@@ -149,7 +149,7 @@ export const useUrlStore = create<URLStore>()(
           const updatedUrl = await urlAPI.updateUrl(id, data);
           
           set(state => ({
-            urls: state.urls.map(url => url.id === id ? updatedUrl : url),
+            urls: (state.urls || []).map(url => url.id === id ? updatedUrl : url),
             currentUrl: state.currentUrl?.id === id ? updatedUrl : state.currentUrl,
             isUpdating: false,
           }));
@@ -169,7 +169,7 @@ export const useUrlStore = create<URLStore>()(
           await urlAPI.deleteUrl(id);
           
           set(state => ({
-            urls: state.urls.filter(url => url.id !== id),
+            urls: (state.urls || []).filter(url => url.id !== id),
             selectedUrls: state.selectedUrls.filter(urlId => urlId !== id),
             currentUrl: state.currentUrl?.id === id ? null : state.currentUrl,
             isDeleting: false,
@@ -192,7 +192,7 @@ export const useUrlStore = create<URLStore>()(
           await get().bulkOperation({ action: 'delete', urlIds: ids });
           
           set(state => ({
-            urls: state.urls.filter(url => !ids.includes(url.id)),
+            urls: (state.urls || []).filter(url => !ids.includes(url.id)),
             selectedUrls: [],
             isDeleting: false,
             pagination: {
@@ -243,7 +243,7 @@ export const useUrlStore = create<URLStore>()(
           const response = await urlAPI.getUserUrls(requestParams);
           
           set({
-            urls: response.data,
+            urls: Array.isArray(response.data) ? response.data : [],
             pagination: response.pagination,
             isLoading: false,
           });
@@ -290,7 +290,7 @@ export const useUrlStore = create<URLStore>()(
 
       selectAllUrls: () => {
         set(state => ({
-          selectedUrls: state.urls.map(url => url.id),
+          selectedUrls: (state.urls || []).map(url => url.id),
         }));
       },
 

@@ -446,7 +446,7 @@ export function UrlList({
               mb: 3 
             }}
           >
-            {urls.map((url) => (
+            {(urls || []).map((url) => (
               <UrlCard
                 key={url.id}
                 url={url}

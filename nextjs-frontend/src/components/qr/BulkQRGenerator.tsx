@@ -78,7 +78,7 @@ export const BulkQRGenerator: React.FC<BulkQRGeneratorProps> = ({
   const canvasRefs = useRef<{ [key: string]: HTMLCanvasElement }>({});
 
   const initializeResults = () => {
-    return urls.map(url => ({
+    return (urls || []).map(url => ({
       url,
       status: 'pending' as const,
     }));
