@@ -7,7 +7,7 @@ export { APIError, NetworkError, ValidationError, handleAPIError } from './error
 // Export API services
 export { authAPI } from './auth';
 export { urlAPI } from './urls';
-export { userAPI } from './users';
+export { usersAPI } from './users';
 export { adminAPI } from './admin';
 
 // Export types

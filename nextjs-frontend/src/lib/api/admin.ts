@@ -1,247 +1,193 @@
 import { apiClient } from './client';
-import { API_ENDPOINTS } from '@/lib/constants';
-import type { User, PaginatedResponse, SystemAnalytics } from '@/types';
+import type { APIResponse, PaginatedResponse } from '@/types';
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  permissions: AdminPermission[];
+  isActive: boolean;
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export enum AdminPermission {
+  USER_MANAGEMENT = 'user_management',
+  URL_MANAGEMENT = 'url_management',
+  ANALYTICS_VIEW = 'analytics_view',
+  SYSTEM_CONFIG = 'system_config',
+  AUDIT_LOGS = 'audit_logs',
+}
+
+export interface CreateAdminData {
+  email: string;
+  password: string;
+  name: string;
+  permissions: AdminPermission[];
+}
+
+export interface UpdateAdminData {
+  name?: string;
+  permissions?: AdminPermission[];
+  isActive?: boolean;
+}
+
+export interface DashboardStats {
+  users: {
+    total: number;
+    newThisMonth: number;
+    activeThisWeek: number;
+  };
+  urls: {
+    total: number;
+    createdThisMonth: number;
+    totalClicks: number;
+  };
+  analytics: {
+    clicksToday: number;
+    clicksThisWeek: number;
+    topCountries: Array<{ country: string; clicks: number }>;
+    topDevices: Array<{ device: string; clicks: number }>;
+  };
+  system: {
+    cacheHitRate: number;
+    avgResponseTime: number;
+    uptime: number;
+  };
+}
+
+export interface SystemHealth {
+  status: 'healthy' | 'warning' | 'critical';
+  database: {
+    status: 'connected' | 'disconnected';
+    responseTime: number;
+  };
+  redis: {
+    status: 'connected' | 'disconnected';
+    responseTime: number;
+  };
+  memory: {
+    used: number;
+    total: number;
+    percentage: number;
+  };
+  cpu: {
+    usage: number;
+  };
+}
+
+export interface AuditLog {
+  id: string;
+  adminId: string;
+  action: string;
+  resource: string;
+  resourceId: string;
+  details: Record<string, any>;
+  ipAddress: string;
+  userAgent: string;
+  createdAt: string;
+}
+
+export interface UserListItem {
+  id: string;
+  email: string;
+  name: string;
+  isEmailVerified: boolean;
+  role: 'user' | 'admin';
+  createdAt: string;
+  lastLoginAt?: string;
+  urlCount: number;
+  totalClicks: number;
+}
 
 export const adminAPI = {
-  /**
-   * Get admin dashboard statistics
-   */
-  async getDashboard(): Promise<SystemAnalytics> {
-    const response = await apiClient.get<SystemAnalytics>(
-      API_ENDPOINTS.admin.dashboard
-    );
-    return response.data;
+  // Authentication
+  login: (email: string, password: string): Promise<APIResponse<{ token: string; admin: AdminUser }>> => {
+    return apiClient.post('/admin/auth/login', { email, password });
   },
 
-  /**
-   * Get system health status
-   */
-  async getHealth(): Promise<{
-    status: 'healthy' | 'degraded' | 'unhealthy';
-    services: Record<string, { status: string; responseTime?: number }>;
-    uptime: number;
-  }> {
-    const response = await apiClient.get('/admin/health');
-    return response.data;
+  logout: (): Promise<APIResponse<void>> => {
+    return apiClient.post('/admin/auth/logout');
   },
 
-  /**
-   * Get all users with pagination and filtering
-   */
-  async getUsers(params?: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    role?: string;
-    status?: string;
-    sortBy?: string;
-    sortOrder?: 'asc' | 'desc';
-  }): Promise<PaginatedResponse<User>> {
-    const response = await apiClient.get<PaginatedResponse<User>>(
-      API_ENDPOINTS.admin.users,
-      { params }
-    );
-    return response.data;
+  changePassword: (currentPassword: string, newPassword: string): Promise<APIResponse<{ message: string }>> => {
+    return apiClient.post('/admin/auth/change-password', { currentPassword, newPassword });
   },
 
-  /**
-   * Get user by ID
-   */
-  async getUser(id: string): Promise<User> {
-    const response = await apiClient.get<User>(`/admin/users/${id}`);
-    return response.data;
+  // Dashboard
+  getDashboardStats: (): Promise<APIResponse<DashboardStats>> => {
+    return apiClient.get('/admin/dashboard');
   },
 
-  /**
-   * Update user
-   */
-  async updateUser(id: string, updates: Partial<User>): Promise<User> {
-    const response = await apiClient.put<User>(`/admin/users/${id}`, updates);
-    return response.data;
+  getSystemHealth: (): Promise<APIResponse<SystemHealth>> => {
+    return apiClient.get('/admin/health');
   },
 
-  /**
-   * Deactivate user
-   */
-  async deactivateUser(id: string, reason?: string): Promise<void> {
-    await apiClient.post(`/admin/users/${id}/deactivate`, { reason });
+  // Admin Management
+  createAdmin: (data: CreateAdminData): Promise<APIResponse<{ admin: AdminUser; message: string }>> => {
+    return apiClient.post('/admin/admins', data);
   },
 
-  /**
-   * Reactivate user
-   */
-  async reactivateUser(id: string): Promise<void> {
-    await apiClient.post(`/admin/users/${id}/reactivate`);
+  getAllAdmins: (): Promise<APIResponse<{ admins: AdminUser[] }>> => {
+    return apiClient.get('/admin/admins');
   },
 
-  /**
-   * Delete user
-   */
-  async deleteUser(id: string): Promise<void> {
-    await apiClient.delete(`/admin/users/${id}`);
+  getAdminById: (id: string): Promise<APIResponse<{ admin: AdminUser }>> => {
+    return apiClient.get(`/admin/admins/${id}`);
   },
 
-  /**
-   * Get system analytics
-   */
-  async getAnalytics(params?: {
-    period?: '24h' | '7d' | '30d' | '90d';
-    startDate?: string;
-    endDate?: string;
-  }): Promise<SystemAnalytics> {
-    const response = await apiClient.get<SystemAnalytics>(
-      API_ENDPOINTS.admin.analytics,
-      { params }
-    );
-    return response.data;
+  updateAdmin: (id: string, data: UpdateAdminData): Promise<APIResponse<{ admin: AdminUser; message: string }>> => {
+    return apiClient.put(`/admin/admins/${id}`, data);
   },
 
-  /**
-   * Get audit logs
-   */
-  async getAuditLogs(params?: {
-    page?: number;
-    limit?: number;
-    userId?: string;
-    action?: string;
-    startDate?: string;
-    endDate?: string;
-  }): Promise<
-    PaginatedResponse<{
-      id: string;
-      userId: string;
-      action: string;
-      resource: string;
-      details: any;
-      ipAddress: string;
-      userAgent: string;
-      timestamp: string;
-    }>
-  > {
-    const response = await apiClient.get(API_ENDPOINTS.admin.auditLogs, {
-      params,
-    });
-    return response.data;
+  deleteAdmin: (id: string): Promise<APIResponse<void>> => {
+    return apiClient.delete(`/admin/admins/${id}`);
   },
 
-  /**
-   * Get audit logs for specific user
-   */
-  async getUserAuditLogs(
-    userId: string,
-    params?: {
-      page?: number;
-      limit?: number;
-      action?: string;
-      startDate?: string;
-      endDate?: string;
-    }
-  ): Promise<any> {
-    const response = await apiClient.get(`/admin/audit-logs/user/${userId}`, {
-      params,
-    });
-    return response.data;
+  // User Management
+  getAllUsers: (page = 1, limit = 20): Promise<APIResponse<{ users: UserListItem[]; pagination: any }>> => {
+    return apiClient.get('/admin/users', { params: { page, limit } });
   },
 
-  /**
-   * Get security audit logs
-   */
-  async getSecurityLogs(params?: {
-    page?: number;
-    limit?: number;
-    severity?: 'low' | 'medium' | 'high' | 'critical';
-    startDate?: string;
-    endDate?: string;
-  }): Promise<any> {
-    const response = await apiClient.get('/admin/audit-logs/security', {
-      params,
-    });
-    return response.data;
+  getUserById: (id: string): Promise<APIResponse<{ user: UserListItem }>> => {
+    return apiClient.get(`/admin/users/${id}`);
   },
 
-  /**
-   * Create admin user
-   */
-  async createAdmin(adminData: {
-    email: string;
-    name: string;
-    password: string;
-    permissions: string[];
-  }): Promise<User> {
-    const response = await apiClient.post<User>('/admin/admins', adminData);
-    return response.data;
+  deactivateUser: (id: string, reason: string): Promise<APIResponse<{ message: string }>> => {
+    return apiClient.post(`/admin/users/${id}/deactivate`, { reason });
   },
 
-  /**
-   * Get all admin users
-   */
-  async getAdmins(params?: {
-    page?: number;
-    limit?: number;
-    search?: string;
-  }): Promise<PaginatedResponse<User>> {
-    const response = await apiClient.get<PaginatedResponse<User>>(
-      '/admin/admins',
-      { params }
-    );
-    return response.data;
+  // Audit Logs
+  getAuditLogs: (limit = 100): Promise<APIResponse<{ logs: AuditLog[]; total: number }>> => {
+    return apiClient.get('/admin/audit-logs', { params: { limit } });
   },
 
-  /**
-   * Update admin user
-   */
-  async updateAdmin(id: string, updates: Partial<User>): Promise<User> {
-    const response = await apiClient.put<User>(`/admin/admins/${id}`, updates);
-    return response.data;
+  getUserAuditLogs: (userId: string, limit = 50): Promise<APIResponse<{ logs: AuditLog[]; userId: string; total: number }>> => {
+    return apiClient.get(`/admin/audit-logs/user/${userId}`, { params: { limit } });
   },
 
-  /**
-   * Delete admin user
-   */
-  async deleteAdmin(id: string): Promise<void> {
-    await apiClient.delete(`/admin/admins/${id}`);
+  getSecurityLogs: (limit = 100): Promise<APIResponse<{ logs: AuditLog[]; total: number }>> => {
+    return apiClient.get('/admin/audit-logs/security', { params: { limit } });
   },
 
-  /**
-   * Get system configuration
-   */
-  async getConfig(): Promise<any> {
-    const response = await apiClient.get('/admin/config');
-    return response.data;
-  },
-
-  /**
-   * Update system configuration
-   */
-  async updateConfig(config: any): Promise<any> {
-    const response = await apiClient.put('/admin/config', config);
-    return response.data;
-  },
-
-  /**
-   * Get system metrics
-   */
-  async getMetrics(): Promise<{
-    cpu: number;
-    memory: number;
-    disk: number;
-    network: { in: number; out: number };
-    activeConnections: number;
-    requestsPerMinute: number;
-  }> {
-    const response = await apiClient.get('/admin/metrics');
-    return response.data;
-  },
-
-  /**
-   * Perform system maintenance tasks
-   */
-  async performMaintenance(task: 'cleanup' | 'optimize' | 'backup'): Promise<{
-    success: boolean;
-    message: string;
-    details?: any;
-  }> {
-    const response = await apiClient.post('/admin/maintenance', { task });
-    return response.data;
+  // Analytics
+  getAnalyticsOverview: (): Promise<APIResponse<{
+    overview: {
+      totalUsers: number;
+      totalUrls: number;
+      totalClicks: number;
+      cacheHitRate: number;
+    };
+    trends: {
+      newUsersThisMonth: number;
+      newUrlsThisMonth: number;
+      clicksToday: number;
+      clicksThisWeek: number;
+    };
+    topCountries: Array<{ country: string; clicks: number }>;
+    topDevices: Array<{ device: string; clicks: number }>;
+  }>> => {
+    return apiClient.get('/admin/analytics/overview');
   },
 };

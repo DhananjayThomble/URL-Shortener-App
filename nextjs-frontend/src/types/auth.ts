@@ -5,6 +5,7 @@ export interface User {
   isEmailVerified: boolean;
   role: 'user' | 'admin';
   customDomain?: CustomDomain;
+  lastLoginAt?: string;
   createdAt: string;
   updatedAt: string;
 }

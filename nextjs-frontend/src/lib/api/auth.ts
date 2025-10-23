@@ -189,4 +189,11 @@ export const authAPI = {
   async resendEmailVerification(): Promise<void> {
     await apiClient.post('/auth/resend-verification');
   },
+
+  /**
+   * Change password
+   */
+  async changePassword(data: { currentPassword: string; newPassword: string }): Promise<void> {
+    await apiClient.post('/auth/change-password', data);
+  },
 };
