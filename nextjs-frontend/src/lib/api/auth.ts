@@ -121,7 +121,7 @@ export const authAPI = {
   async refreshToken(refreshToken: string): Promise<TokenResponse> {
     const response = await apiClient.post<TokenResponse>(
       API_ENDPOINTS.auth.refresh,
-      { refreshToken }
+      { refresh_token: refreshToken }
     );
     return response.data;
   },
@@ -130,21 +130,21 @@ export const authAPI = {
    * Logout user (invalidate current session)
    */
   async logout(refreshToken: string): Promise<void> {
-    await apiClient.post(API_ENDPOINTS.auth.logout, { refreshToken });
+    await apiClient.post(API_ENDPOINTS.auth.logout, { refresh_token: refreshToken });
   },
 
   /**
    * Logout from all devices (invalidate all sessions)
    */
   async logoutAll(refreshToken: string): Promise<void> {
-    await apiClient.post(API_ENDPOINTS.auth.logout, { refreshToken });
+    await apiClient.post('/auth/logout-all', { refresh_token: refreshToken });
   },
 
   /**
    * Get current user profile
    */
   async getProfile(): Promise<User> {
-    const response = await apiClient.get<User>(API_ENDPOINTS.auth.profile);
+    const response = await apiClient.post<User>(API_ENDPOINTS.auth.profile);
     return response.data;
   },
 
@@ -153,7 +153,7 @@ export const authAPI = {
    */
   async updateProfile(updates: Partial<User>): Promise<User> {
     const response = await apiClient.patch<User>(
-      API_ENDPOINTS.auth.profile,
+      '/users/profile',
       updates
     );
     return response.data;

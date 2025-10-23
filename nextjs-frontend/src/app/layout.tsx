@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+// import { Inter } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
 
-const inter = Inter({ subsets: ['latin'] });
+// const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'SnapURL - URL Shortener',
@@ -62,7 +62,7 @@ export default function RootLayout({
         {/* <link rel="apple-touch-icon" href="/apple-touch-icon.png" /> */}
         <link rel="manifest" href="/manifest.json" />
       </head>
-      <body className={inter.className} suppressHydrationWarning>
+      <body suppressHydrationWarning>
         <Providers>
           {children}
         </Providers>

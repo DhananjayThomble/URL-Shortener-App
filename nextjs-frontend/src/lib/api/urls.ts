@@ -47,7 +47,7 @@ export const urlAPI = {
    * Update an existing URL
    */
   async updateUrl(id: string, updates: UpdateURLData): Promise<URLData> {
-    const response = await apiClient.put<URLData>(
+    const response = await apiClient.patch<URLData>(
       API_ENDPOINTS.urls.update(id),
       updates
     );
