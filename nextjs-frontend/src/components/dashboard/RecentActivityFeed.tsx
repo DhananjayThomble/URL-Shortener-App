@@ -147,8 +147,9 @@ export const RecentActivityFeed: React.FC<RecentActivityFeedProps> = ({
     }
   };
 
-  const displayActivities = activities.slice(0, maxItems);
-  const hasMoreActivities = activities.length > maxItems;
+  const safeActivities = activities || mockActivities;
+  const displayActivities = safeActivities.slice(0, maxItems);
+  const hasMoreActivities = safeActivities.length > maxItems;
 
   return (
     <Card className={className}>
@@ -282,7 +283,7 @@ export const RecentActivityFeed: React.FC<RecentActivityFeedProps> = ({
         {hasMoreActivities && (
           <Box sx={{ p: 2, textAlign: 'center', borderTop: 1, borderColor: 'divider' }}>
             <Button onClick={onViewAll} size="small">
-              View {activities.length - maxItems} More Activities
+              View {safeActivities.length - maxItems} More Activities
             </Button>
           </Box>
         )}

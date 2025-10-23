@@ -147,7 +147,7 @@ export const UrlManagementDashboard: React.FC<UrlManagementDashboardProps> = ({
 
   // Get filtered URLs based on active tab
   const getFilteredUrls = () => {
-    let filtered = urls;
+    let filtered = urls || [];
     
     if (searchQuery) {
       filtered = filtered.filter(url => 
@@ -161,7 +161,7 @@ export const UrlManagementDashboard: React.FC<UrlManagementDashboardProps> = ({
   };
 
   const filteredUrls = getFilteredUrls();
-  const selectedUrlsData = urls.filter(url => selectedUrls.includes(url.id));
+  const selectedUrlsData = (urls || []).filter(url => selectedUrls.includes(url.id));
 
   return (
     <Box className={className}>
@@ -247,7 +247,7 @@ export const UrlManagementDashboard: React.FC<UrlManagementDashboardProps> = ({
               >
                 <Tab 
                   label={
-                    <Badge badgeContent={urls.length} color="primary" max={999}>
+                    <Badge badgeContent={(urls || []).length} color="primary" max={999}>
                       All URLs
                     </Badge>
                   } 
@@ -255,7 +255,7 @@ export const UrlManagementDashboard: React.FC<UrlManagementDashboardProps> = ({
                 />
                 <Tab 
                   label={
-                    <Badge badgeContent={urls.filter(u => u.isActive).length} color="success" max={999}>
+                    <Badge badgeContent={(urls || []).filter(u => u.isActive).length} color="success" max={999}>
                       Active
                     </Badge>
                   } 
@@ -263,7 +263,7 @@ export const UrlManagementDashboard: React.FC<UrlManagementDashboardProps> = ({
                 />
                 <Tab 
                   label={
-                    <Badge badgeContent={urls.filter(u => !u.isActive).length} color="warning" max={999}>
+                    <Badge badgeContent={(urls || []).filter(u => !u.isActive).length} color="warning" max={999}>
                       Inactive
                     </Badge>
                   } 

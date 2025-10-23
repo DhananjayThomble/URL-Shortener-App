@@ -130,8 +130,9 @@ export const TopPerformingUrls: React.FC<TopPerformingUrlsProps> = ({
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedUrl, setSelectedUrl] = useState<UrlPerformanceData | null>(null);
 
-  const displayUrls = urls.slice(0, maxItems);
-  const hasMoreUrls = urls.length > maxItems;
+  const safeUrls = urls || mockTopUrls;
+  const displayUrls = safeUrls.slice(0, maxItems);
+  const hasMoreUrls = safeUrls.length > maxItems;
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, url: UrlPerformanceData) => {
     event.stopPropagation();

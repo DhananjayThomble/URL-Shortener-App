@@ -400,14 +400,14 @@ export const useUrlStore = create<URLStore>()(
 
 // Selectors for computed values
 export const urlSelectors = {
-  getSelectedUrlsCount: (state: URLStore) => state.selectedUrls.length,
+  getSelectedUrlsCount: (state: URLStore) => state.selectedUrls?.length || 0,
   getIsAllSelected: (state: URLStore) => 
-    state.urls.length > 0 && state.selectedUrls.length === state.urls.length,
+    (state.urls?.length || 0) > 0 && state.selectedUrls.length === (state.urls?.length || 0),
   getIsPartiallySelected: (state: URLStore) => 
-    state.selectedUrls.length > 0 && state.selectedUrls.length < state.urls.length,
-  getFilteredUrlsCount: (state: URLStore) => state.urls.length,
-  getTotalUrlsCount: (state: URLStore) => state.pagination.total,
+    state.selectedUrls.length > 0 && state.selectedUrls.length < (state.urls?.length || 0),
+  getFilteredUrlsCount: (state: URLStore) => state.urls?.length || 0,
+  getTotalUrlsCount: (state: URLStore) => state.pagination?.total || 0,
   getHasNextPage: (state: URLStore) => 
-    state.pagination.page < state.pagination.totalPages,
-  getHasPrevPage: (state: URLStore) => state.pagination.page > 1,
+    (state.pagination?.page || 0) < (state.pagination?.totalPages || 0),
+  getHasPrevPage: (state: URLStore) => (state.pagination?.page || 0) > 1,
 };
