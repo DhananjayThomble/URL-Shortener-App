@@ -155,6 +155,15 @@ export class UrlsController {
     return this.urlsService.setUrlPassword(id, req.user.id, body.password);
   }
 
+  @Delete(':id/password')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Remove password protection from URL' })
+  @ApiResponse({ status: 200, description: 'Password protection removed successfully' })
+  async removePassword(@Param('id') id: string, @Request() req) {
+    return this.urlsService.setUrlPassword(id, req.user.id, null);
+  }
+
   @Put(':id/deactivate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

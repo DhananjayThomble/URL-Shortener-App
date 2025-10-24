@@ -172,7 +172,7 @@ export const createMockUrlStore = (urls = [mockUrl]) => ({
 export const waitForLoadingToFinish = () => 
   new Promise(resolve => setTimeout(resolve, 0))
 
-export const createMockApiResponse = <T>(data: T) => ({
+export const createMockApiResponse = <T,>(data: T) => ({
   data,
   success: true,
   message: 'Success',
