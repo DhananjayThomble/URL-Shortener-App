@@ -130,7 +130,7 @@ export const useUrlStore = create<URLStore>()(
             isCreating: false,
             pagination: {
               ...state.pagination,
-              total: state.pagination.total + 1,
+              total: (state.pagination?.total || 0) + 1,
             },
           }));
           
@@ -175,7 +175,7 @@ export const useUrlStore = create<URLStore>()(
             isDeleting: false,
             pagination: {
               ...state.pagination,
-              total: Math.max(0, state.pagination.total - 1),
+              total: Math.max(0, (state.pagination?.total || 0) - 1),
             },
           }));
         } catch (error) {
@@ -197,7 +197,7 @@ export const useUrlStore = create<URLStore>()(
             isDeleting: false,
             pagination: {
               ...state.pagination,
-              total: Math.max(0, state.pagination.total - ids.length),
+              total: Math.max(0, (state.pagination?.total || 0) - ids.length),
             },
           }));
         } catch (error) {
@@ -231,8 +231,8 @@ export const useUrlStore = create<URLStore>()(
         try {
           const state = get();
           const requestParams: URLListParams = {
-            page: state.pagination.page,
-            limit: state.pagination.limit,
+            page: state.pagination?.page || 1,
+            limit: state.pagination?.limit || 20,
             search: state.searchQuery || undefined,
             category: state.filters.category,
             sortBy: state.sortBy,
@@ -270,8 +270,8 @@ export const useUrlStore = create<URLStore>()(
       refreshUrls: async () => {
         const state = get();
         await get().fetchUrls({
-          page: state.pagination.page,
-          limit: state.pagination.limit,
+          page: state.pagination?.page || 1,
+          limit: state.pagination?.limit || 20,
         });
       },
 
@@ -390,7 +390,7 @@ export const useUrlStore = create<URLStore>()(
       partialize: (state: URLStore) => ({
         viewMode: state.viewMode,
         showFilters: state.showFilters,
-        pagination: { limit: state.pagination.limit },
+        pagination: { limit: state.pagination?.limit || 20 },
         sortBy: state.sortBy,
         sortOrder: state.sortOrder,
       }),

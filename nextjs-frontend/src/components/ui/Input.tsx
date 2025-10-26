@@ -32,7 +32,7 @@ export interface InputProps extends Omit<TextFieldProps, 'size' | 'variant'> {
 
 // Styled TextField with custom sizing
 const StyledTextField = styled(TextField, {
-  shouldForwardProp: (prop) => !['success'].includes(prop as string),
+  shouldForwardProp: (prop) => !['success', 'inputSize'].includes(prop as string),
 })<{ success?: boolean; inputSize?: InputSize }>(({ theme, success, inputSize }) => ({
   '& .MuiOutlinedInput-root': {
     borderRadius: tokens.borderRadius.lg,

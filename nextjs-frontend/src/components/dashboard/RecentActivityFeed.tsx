@@ -32,7 +32,7 @@ import {
   MoreVert,
   Link as LinkIcon,
 } from '@mui/icons-material';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns/formatDistanceToNow';
 import type { RecentActivity } from '@/types/analytics';
 
 interface RecentActivityFeedProps {
@@ -217,7 +217,7 @@ export const RecentActivityFeed: React.FC<RecentActivityFeedProps> = ({
                   <ListItemText
                     primary={
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                        <Typography variant="body2" fontWeight="medium">
+                        <Typography component="span" variant="body2" fontWeight="medium">
                           {getActivityTitle(activity)}
                         </Typography>
                         
@@ -233,13 +233,13 @@ export const RecentActivityFeed: React.FC<RecentActivityFeedProps> = ({
                     }
                     secondary={
                       <Box>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        <Typography component="div" variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                           {activity.description}
                         </Typography>
                         
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Schedule sx={{ fontSize: 14 }} />
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography component="span" variant="caption" color="text.secondary">
                             {formatDistanceToNow(new Date(activity.timestamp), { addSuffix: true })}
                           </Typography>
                           
