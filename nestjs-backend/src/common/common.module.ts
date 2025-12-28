@@ -15,10 +15,13 @@ import { GracefulShutdownService } from './services/graceful-shutdown.service';
 import { QueryOptimizationService } from './services/query-optimization.service';
 import { HttpCachingService } from './services/http-caching.service';
 import { PerformanceMonitoringService } from './services/performance-monitoring.service';
+import { IntegrationVerificationService } from './services/integration-verification.service';
+import { ProductionConfigService } from '../config/production-config.service';
 
 import { CacheController } from './controllers/cache.controller';
 import { MonitoringController } from './controllers/monitoring.controller';
 import { PerformanceController } from './controllers/performance.controller';
+import { IntegrationController } from './controllers/integration.controller';
 
 import { RequestTrackingInterceptor } from './interceptors/request-tracking.interceptor';
 import { HttpCacheInterceptor } from './interceptors/http-cache.interceptor';
@@ -37,7 +40,7 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     TypeOrmModule.forFeature([User]),
     MongooseModule.forFeature([{ name: Url.name, schema: UrlSchema }]),
   ],
-  controllers: [CacheController, MonitoringController, PerformanceController],
+  controllers: [CacheController, MonitoringController, PerformanceController, IntegrationController],
   providers: [
     LoggerService,
     EnhancedLoggerService,
@@ -56,6 +59,8 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     QueryOptimizationService,
     HttpCachingService,
     PerformanceMonitoringService,
+    IntegrationVerificationService,
+    ProductionConfigService,
   ],
   exports: [
     LoggerService,
@@ -75,6 +80,8 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     QueryOptimizationService,
     HttpCachingService,
     PerformanceMonitoringService,
+    IntegrationVerificationService,
+    ProductionConfigService,
   ],
 })
 export class CommonModule {}

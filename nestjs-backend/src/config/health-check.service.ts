@@ -48,8 +48,7 @@ export class HealthCheckService {
   constructor(
     @InjectConnection() private readonly postgresConnection: TypeOrmConnection,
     @InjectConnection() private readonly mongoConnection: MongooseConnection,
-    // Temporarily comment out Redis dependency to get the app running
-    // private readonly redisService: RedisService,
+    private readonly redisService: RedisService,
   ) {}
 
   async checkDatabaseHealth(): Promise<DatabaseHealthStatus> {

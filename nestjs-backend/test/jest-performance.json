@@ -1,0 +1,35 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "transformIgnorePatterns": [
+    "node_modules/(?!(nanoid)/)"
+  ],
+  "extensionsToTreatAsEsm": [".ts"],
+  "globals": {
+    "ts-jest": {
+      "useESM": true
+    }
+  },
+  "collectCoverageFrom": [
+    "src/**/*.(t|j)s"
+  ],
+  "coverageDirectory": "../coverage/performance",
+  "testTimeout": 300000,
+  "maxWorkers": 1,
+  "testPathIgnorePatterns": [
+    "/node_modules/",
+    "/dist/"
+  ],
+  "testMatch": [
+    "**/test/performance/**/*.spec.ts"
+  ],
+  "setupFilesAfterEnv": ["<rootDir>/test/setup.ts"],
+  "moduleDirectories": ["node_modules", "<rootDir>/src"],
+  "verbose": true,
+  "detectOpenHandles": true,
+  "forceExit": true
+}

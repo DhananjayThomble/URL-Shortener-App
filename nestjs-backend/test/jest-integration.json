@@ -1,11 +1,11 @@
 {
-  "displayName": "E2E Tests",
+  "displayName": "Integration Tests",
   "preset": "ts-jest",
   "testEnvironment": "node",
   "moduleFileExtensions": ["js", "json", "ts"],
   "rootDir": "..",
   "testMatch": [
-    "<rootDir>/test/e2e/**/*.e2e-spec.ts"
+    "<rootDir>/test/integration/**/*.integration.spec.ts"
   ],
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
@@ -29,14 +29,12 @@
     "!src/**/*.module.ts",
     "!src/main.ts"
   ],
-  "coverageDirectory": "coverage/e2e",
-  "testTimeout": 120000,
-  "setupFilesAfterEnv": ["<rootDir>/test/e2e-setup.ts"],
+  "coverageDirectory": "coverage/integration",
+  "testTimeout": 60000,
+  "setupFilesAfterEnv": ["<rootDir>/test/integration-setup.ts"],
   "moduleDirectories": ["node_modules", "<rootDir>/src"],
   "verbose": true,
   "clearMocks": true,
   "restoreMocks": true,
-  "maxWorkers": 1,
-  "forceExit": true,
-  "detectOpenHandles": true
+  "maxWorkers": 2
 }

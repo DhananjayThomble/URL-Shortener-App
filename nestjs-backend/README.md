@@ -181,11 +181,25 @@ npm run start:prod
 
 ## 📚 Documentation
 
+### Getting Started
+- [Developer Guide](./docs/DEVELOPER_GUIDE.md) - Comprehensive development guide and onboarding
+- [Onboarding Checklist](./docs/ONBOARDING_CHECKLIST.md) - Step-by-step onboarding for new developers
+- [FAQ](./docs/FAQ.md) - Frequently asked questions and answers
+
+### API Documentation
+- [API Usage Examples](./docs/API_USAGE_EXAMPLES.md) - Comprehensive API usage examples and SDKs
+- [Interactive API Docs](http://localhost:3000/docs) - Swagger/OpenAPI documentation (when running)
+
+### Operations & Deployment
 - [Production Readiness Guide](./PRODUCTION_READINESS.md) - Complete testing and validation
 - [Deployment Checklist](./DEPLOYMENT_CHECKLIST.md) - Step-by-step deployment guide
 - [Migration Guide](./docs/MIGRATION_GUIDE.md) - Express.js to NestJS migration
 - [Deployment Runbook](./docs/DEPLOYMENT_RUNBOOK.md) - Operations procedures
 - [Performance Optimization](./docs/PERFORMANCE_OPTIMIZATION.md) - Performance tuning
+
+### Troubleshooting & Support
+- [Troubleshooting Guide](./docs/TROUBLESHOOTING.md) - Common issues and solutions
+- [Modernization Complete](./MODERNIZATION_COMPLETE.md) - Feature completion status
 
 ## 🧪 Testing
 

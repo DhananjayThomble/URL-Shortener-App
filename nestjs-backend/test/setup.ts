@@ -15,17 +15,6 @@ process.env.NODE_ENV = 'test';
 // Increase test timeout for integration tests
 jest.setTimeout(30000);
 
-// Global test utilities
-declare global {
-  namespace jest {
-    interface Matchers<R> {
-      toBeValidUUID(): R;
-      toBeValidEmail(): R;
-      toBeValidUrl(): R;
-    }
-  }
-}
-
 // Custom Jest matchers
 expect.extend({
   toBeValidUUID(received: string) {
