@@ -15,6 +15,7 @@ import { CustomDomain } from './custom-domain.entity';
 export enum UserRole {
   USER = 'user',
   ADMIN = 'admin',
+  DEVELOPER = 'developer',
 }
 
 @Entity('users')

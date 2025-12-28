@@ -48,7 +48,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     const errorContext: ErrorContext = {
       requestId: request.headers['x-request-id'] as string || this.generateRequestId(),
-      userId: request['user']?.id,
+      userId: (request['user'] as any)?.id,
       userAgent: request.get('User-Agent'),
       ip: request.ip || request.connection.remoteAddress,
       method: request.method,
@@ -214,8 +214,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     return {
       type: 'mongodb_error',
       code: error.code,
-      codeName: error.codeName,
-      errmsg: error.errmsg,
+      codeName: (error as any).codeName,
+      errmsg: (error as any).errmsg,
     };
   }
 

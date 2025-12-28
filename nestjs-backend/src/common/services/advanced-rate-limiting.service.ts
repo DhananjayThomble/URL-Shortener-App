@@ -1,6 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
 
 export interface RateLimitConfig {
@@ -35,7 +34,7 @@ export class AdvancedRateLimitingService {
   private readonly logger = new Logger(AdvancedRateLimitingService.name);
 
   constructor(
-    @InjectRedis() private readonly redis: Redis,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly configService: ConfigService,
   ) {}
 

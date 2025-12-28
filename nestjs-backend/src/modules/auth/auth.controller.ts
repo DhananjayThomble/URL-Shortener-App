@@ -234,7 +234,7 @@ export class AuthController {
   @ApiBearerAuth()
   @RateLimit({ 
     configName: 'email-verification',
-    keyGenerator: (req) => `verify:${req.user?.id || req.ip}`,
+    keyGenerator: (req) => `verify:${(req.user as any)?.id || req.ip}`,
   })
   @ApiOperation({ summary: 'Send email verification' })
   @ApiResponse({ 

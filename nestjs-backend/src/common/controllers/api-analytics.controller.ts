@@ -23,12 +23,13 @@ import { EnhancedJwtAuthGuard } from '../../modules/auth/guards/enhanced-jwt-aut
 import { RolesGuard } from '../guards/roles.guard';
 import { Roles } from '../decorators/roles.decorator';
 import { RateLimit, RateLimitPresets } from '../guards/comprehensive-rate-limit.guard';
+import { UserRole } from '../../modules/users/entities/user.entity';
 
 @ApiTags('api-analytics')
 @Controller('api-analytics')
 @UseGuards(EnhancedJwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
-@Roles('admin', 'developer')
+@Roles(UserRole.ADMIN, UserRole.DEVELOPER)
 @RateLimit(RateLimitPresets.ANALYTICS)
 export class ApiAnalyticsController {
   constructor(

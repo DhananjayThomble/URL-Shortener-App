@@ -3,7 +3,7 @@ import { InjectConnection } from '@nestjs/typeorm';
 import { InjectConnection as InjectMongoConnection } from '@nestjs/mongoose';
 import { Connection as TypeOrmConnection } from 'typeorm';
 import { Connection as MongooseConnection } from 'mongoose';
-import { RedisService } from './redis.module';
+import { RedisService } from './redis.service';
 
 export interface DatabaseHealthStatus {
   postgresql: {
@@ -48,7 +48,8 @@ export class HealthCheckService {
   constructor(
     @InjectConnection() private readonly postgresConnection: TypeOrmConnection,
     @InjectConnection() private readonly mongoConnection: MongooseConnection,
-    private readonly redisService: RedisService,
+    // Temporarily comment out Redis dependency to get the app running
+    // private readonly redisService: RedisService,
   ) {}
 
   async checkDatabaseHealth(): Promise<DatabaseHealthStatus> {

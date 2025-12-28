@@ -256,73 +256,29 @@ export class CreateLinksSchema1703100000000 implements MigrationInterface {
       true,
     );
 
-    // Create indexes
-    await queryRunner.createIndex('links', new Index('IDX_links_short_code', ['short_code']));
-    await queryRunner.createIndex('links', new Index('IDX_links_user_id_created_at', ['user_id', 'created_at']));
-    await queryRunner.createIndex('links', new Index('IDX_links_user_id_is_active', ['user_id', 'is_active']));
-    await queryRunner.createIndex('links', new Index('IDX_links_expires_at', ['expires_at']));
+    // Create indexes using raw SQL for compatibility
+    await queryRunner.query(`CREATE INDEX "IDX_links_short_code" ON "links" ("short_code")`);
+    await queryRunner.query(`CREATE INDEX "IDX_links_user_id_created_at" ON "links" ("user_id", "created_at")`);
+    await queryRunner.query(`CREATE INDEX "IDX_links_user_id_is_active" ON "links" ("user_id", "is_active")`);
+    await queryRunner.query(`CREATE INDEX "IDX_links_expires_at" ON "links" ("expires_at")`);
 
-    await queryRunner.createIndex('geo_rules', new Index('IDX_geo_rules_link_id', ['link_id']));
+    await queryRunner.query(`CREATE INDEX "IDX_geo_rules_link_id" ON "geo_rules" ("link_id")`);
     
-    await queryRunner.createIndex('tags', new Index('IDX_tags_user_id', ['user_id']));
+    await queryRunner.query(`CREATE INDEX "IDX_tags_user_id" ON "tags" ("user_id")`);
     
-    await queryRunner.createIndex('link_tags', new Index('IDX_link_tags_link_id', ['link_id']));
-    await queryRunner.createIndex('link_tags', new Index('IDX_link_tags_tag_id', ['tag_id']));
+    await queryRunner.query(`CREATE INDEX "IDX_link_tags_link_id" ON "link_tags" ("link_id")`);
+    await queryRunner.query(`CREATE INDEX "IDX_link_tags_tag_id" ON "link_tags" ("tag_id")`);
 
     // Create unique constraints
-    await queryRunner.createIndex('tags', new Index('UQ_tags_user_id_name', ['user_id', 'name'], { isUnique: true }));
-    await queryRunner.createIndex('link_tags', new Index('UQ_link_tags_link_id_tag_id', ['link_id', 'tag_id'], { isUnique: true }));
+    await queryRunner.query(`CREATE UNIQUE INDEX "UQ_tags_user_id_name" ON "tags" ("user_id", "name")`);
+    await queryRunner.query(`CREATE UNIQUE INDEX "UQ_link_tags_link_id_tag_id" ON "link_tags" ("link_id", "tag_id")`);
 
-    // Create foreign keys
-    await queryRunner.createForeignKey(
-      'links',
-      new ForeignKey({
-        columnNames: ['user_id'],
-        referencedTableName: 'users',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      }),
-    );
-
-    await queryRunner.createForeignKey(
-      'geo_rules',
-      new ForeignKey({
-        columnNames: ['link_id'],
-        referencedTableName: 'links',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      }),
-    );
-
-    await queryRunner.createForeignKey(
-      'tags',
-      new ForeignKey({
-        columnNames: ['user_id'],
-        referencedTableName: 'users',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      }),
-    );
-
-    await queryRunner.createForeignKey(
-      'link_tags',
-      new ForeignKey({
-        columnNames: ['link_id'],
-        referencedTableName: 'links',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      }),
-    );
-
-    await queryRunner.createForeignKey(
-      'link_tags',
-      new ForeignKey({
-        columnNames: ['tag_id'],
-        referencedTableName: 'tags',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      }),
-    );
+    // Create foreign keys using raw SQL for compatibility
+    await queryRunner.query(`ALTER TABLE "links" ADD CONSTRAINT "FK_links_user_id" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE`);
+    await queryRunner.query(`ALTER TABLE "geo_rules" ADD CONSTRAINT "FK_geo_rules_link_id" FOREIGN KEY ("link_id") REFERENCES "links"("id") ON DELETE CASCADE`);
+    await queryRunner.query(`ALTER TABLE "tags" ADD CONSTRAINT "FK_tags_user_id" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE`);
+    await queryRunner.query(`ALTER TABLE "link_tags" ADD CONSTRAINT "FK_link_tags_link_id" FOREIGN KEY ("link_id") REFERENCES "links"("id") ON DELETE CASCADE`);
+    await queryRunner.query(`ALTER TABLE "link_tags" ADD CONSTRAINT "FK_link_tags_tag_id" FOREIGN KEY ("tag_id") REFERENCES "tags"("id") ON DELETE CASCADE`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

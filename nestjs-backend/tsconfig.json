@@ -17,11 +17,13 @@
     "strictBindCallApply": false,
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false,
+    "typeRoots": ["./node_modules/@types", "./types"],
     "paths": {
       "@/*": ["src/*"],
       "@/common/*": ["src/common/*"],
       "@/config/*": ["src/config/*"],
       "@/modules/*": ["src/modules/*"]
     }
-  }
+  },
+  "include": ["src/**/*", "types/**/*"]
 }

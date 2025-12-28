@@ -159,49 +159,15 @@ export class CreateBioPagesSchema1703200000000 implements MigrationInterface {
       true,
     );
 
-    // Create indexes
-    await queryRunner.createIndex(
-      'bio_pages',
-      new Index('IDX_bio_pages_username', ['username'], { isUnique: true }),
-    );
+    // Create indexes using raw SQL for compatibility
+    await queryRunner.query(`CREATE UNIQUE INDEX "IDX_bio_pages_username" ON "bio_pages" ("username")`);
+    await queryRunner.query(`CREATE INDEX "IDX_bio_pages_user_id" ON "bio_pages" ("user_id")`);
+    await queryRunner.query(`CREATE INDEX "IDX_bio_links_bio_page_id" ON "bio_links" ("bio_page_id")`);
+    await queryRunner.query(`CREATE INDEX "IDX_bio_links_position" ON "bio_links" ("bio_page_id", "position")`);
 
-    await queryRunner.createIndex(
-      'bio_pages',
-      new Index('IDX_bio_pages_user_id', ['user_id']),
-    );
-
-    await queryRunner.createIndex(
-      'bio_links',
-      new Index('IDX_bio_links_bio_page_id', ['bio_page_id']),
-    );
-
-    await queryRunner.createIndex(
-      'bio_links',
-      new Index('IDX_bio_links_position', ['bio_page_id', 'position']),
-    );
-
-    // Create foreign key constraints
-    await queryRunner.createForeignKey(
-      'bio_pages',
-      new ForeignKey({
-        columnNames: ['user_id'],
-        referencedColumnNames: ['id'],
-        referencedTableName: 'users',
-        onDelete: 'CASCADE',
-        name: 'FK_bio_pages_user_id',
-      }),
-    );
-
-    await queryRunner.createForeignKey(
-      'bio_links',
-      new ForeignKey({
-        columnNames: ['bio_page_id'],
-        referencedColumnNames: ['id'],
-        referencedTableName: 'bio_pages',
-        onDelete: 'CASCADE',
-        name: 'FK_bio_links_bio_page_id',
-      }),
-    );
+    // Create foreign key constraints using raw SQL for compatibility
+    await queryRunner.query(`ALTER TABLE "bio_pages" ADD CONSTRAINT "FK_bio_pages_user_id" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE`);
+    await queryRunner.query(`ALTER TABLE "bio_links" ADD CONSTRAINT "FK_bio_links_bio_page_id" FOREIGN KEY ("bio_page_id") REFERENCES "bio_pages"("id") ON DELETE CASCADE`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

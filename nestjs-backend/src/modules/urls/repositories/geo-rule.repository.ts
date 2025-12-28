@@ -58,7 +58,7 @@ export class GeoRuleRepository {
 
   async replaceRulesForLink(
     linkId: string,
-    newRules: Omit<GeoRule, 'id' | 'linkId' | 'createdAt'>[],
+    newRules: Pick<GeoRule, 'countryCode' | 'redirectUrl'>[],
   ): Promise<GeoRule[]> {
     // Delete existing rules
     await this.deleteByLinkId(linkId);

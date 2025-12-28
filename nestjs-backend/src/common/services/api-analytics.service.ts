@@ -1,5 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { InjectRedis } from '@nestjs-modules/ioredis';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import Redis from 'ioredis';
@@ -64,7 +63,7 @@ export class ApiAnalyticsService {
   private readonly logger = new Logger(ApiAnalyticsService.name);
 
   constructor(
-    @InjectRedis() private readonly redis: Redis,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
     // @InjectModel('ApiUsageEvent') private readonly apiUsageModel: Model<ApiUsageEventDocument>,
   ) {}
 

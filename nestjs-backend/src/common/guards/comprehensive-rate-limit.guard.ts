@@ -96,7 +96,7 @@ export class ComprehensiveRateLimitGuard implements CanActivate {
         method: request.method,
         statusCode: allowed ? 200 : 429,
         responseTime: 0, // Will be updated by response interceptor
-        userId: request['user']?.id,
+        userId: (request['user'] as any)?.id,
         userAgent: request.get('User-Agent'),
         ip: request.ip,
         apiVersion: request['apiVersion'],
@@ -127,7 +127,7 @@ export class ComprehensiveRateLimitGuard implements CanActivate {
           method: request.method,
           ip: request.ip,
           userAgent: request.get('User-Agent'),
-          userId: request['user']?.id,
+          userId: (request['user'] as any)?.id,
           totalHits: info.totalHits,
           maxRequests: config.maxRequests,
           resetTime: info.resetTime,
@@ -186,7 +186,7 @@ export class ComprehensiveRateLimitGuard implements CanActivate {
       return this.rateLimitService.generateKey(request, 'auth');
     } else if (this.isUserSpecificEndpoint(endpoint)) {
       // For user-specific endpoints, use user ID if available
-      const userId = request['user']?.id;
+      const userId = (request['user'] as any)?.id;
       if (userId) {
         return `user:${userId}:${method}:${endpoint}`;
       }

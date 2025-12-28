@@ -590,7 +590,7 @@ export class PerformanceMonitoringService implements OnModuleInit {
   private setupGCMonitoring(): void {
     if (global.gc) {
       const originalGC = global.gc;
-      global.gc = () => {
+      global.gc = async () => {
         const start = Date.now();
         const memBefore = process.memoryUsage().heapUsed;
         

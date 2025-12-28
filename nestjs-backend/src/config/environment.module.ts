@@ -64,6 +64,6 @@ export const environmentValidationFactory = (config: Record<string, unknown>) =>
     }),
   ],
   providers: [EnvironmentValidationService],
-  exports: [EnvironmentValidationService, ConfigService],
+  exports: [EnvironmentValidationService],
 })
 export class EnvironmentModule {}

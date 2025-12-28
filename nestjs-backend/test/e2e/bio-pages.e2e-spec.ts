@@ -98,4 +98,23 @@ describe('Bio Pages (e2e)', () => {
 
       // Create second user
       const secondUserData = TestDataFactory.createUser({
+        email: 'user2@example.com',
+        username: 'testuser2'
+      });
+
+      const secondUser = await userRepository.save(secondUserData);
+      const secondAccessToken = jwtService.sign({ 
+        sub: secondUser.id, 
+        email: secondUser.email 
+      });
+
+      // Try to create bio page with same username
+      await request(app.getHttpServer())
+        .post('/api/bio-pages')
+        .set('Authorization', `Bearer ${secondAccessToken}`)
+        .send(bioPageData)
+        .expect(409); // Conflict
+    });
+  });
+});
       

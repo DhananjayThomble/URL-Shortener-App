@@ -106,14 +106,14 @@ export abstract class OptimizedBaseRepository<T> {
   /**
    * Bulk insert with optimization
    */
-  async bulkInsertOptimized(entities: Partial<T>[], batchSize: number = 1000): Promise<void> {
+  async bulkInsertOptimized(entities: any[], batchSize: number = 1000): Promise<void> {
     const batches = this.chunkArray(entities, batchSize);
     
     for (const batch of batches) {
       await this.repository
         .createQueryBuilder()
         .insert()
-        .values(batch)
+        .values(batch as any)
         .execute();
     }
     
@@ -125,13 +125,13 @@ export abstract class OptimizedBaseRepository<T> {
    */
   async bulkUpdateOptimized(
     criteria: any,
-    updateData: Partial<T>,
+    updateData: any,
     batchSize: number = 1000,
   ): Promise<number> {
     const queryBuilder = this.repository
       .createQueryBuilder()
       .update()
-      .set(updateData)
+      .set(updateData as any)
       .where(criteria);
     
     const result = await queryBuilder.execute();
@@ -205,7 +205,8 @@ export abstract class OptimizedBaseRepository<T> {
     }
     
     if (options.relations) {
-      options.relations.forEach(relation => {
+      const relations = Array.isArray(options.relations) ? options.relations : Object.keys(options.relations);
+      relations.forEach(relation => {
         queryBuilder.leftJoinAndSelect(`${queryBuilder.alias}.${relation}`, relation);
       });
     }
@@ -226,7 +227,8 @@ export abstract class OptimizedBaseRepository<T> {
     }
     
     if (options.relations) {
-      options.relations.forEach(relation => {
+      const relations = Array.isArray(options.relations) ? options.relations : Object.keys(options.relations);
+      relations.forEach(relation => {
         queryBuilder.leftJoinAndSelect(`${queryBuilder.alias}.${relation}`, relation);
       });
     }
