@@ -24,6 +24,7 @@ describe('AuthService', () => {
     isEmailVerified: true,
     createdAt: new Date(),
     updatedAt: new Date(),
+    refreshTokens: [],
   };
 
   beforeEach(async () => {

@@ -15,6 +15,9 @@ import { AnalyticsAggregationService } from './services/analytics-aggregation.se
 // Controllers
 import { AnalyticsController } from './controllers/analytics.controller';
 
+// Auth module for guards
+import { AuthModule } from '../auth/auth.module';
+
 @Module({
   imports: [
     ConfigModule,
@@ -23,6 +26,7 @@ import { AnalyticsController } from './controllers/analytics.controller';
       { name: ClickEvent.name, schema: ClickEventSchema },
       { name: AnalyticsAggregation.name, schema: AnalyticsAggregationSchema },
     ]),
+    AuthModule,
   ],
   controllers: [AnalyticsController],
   providers: [

@@ -13,7 +13,7 @@ export const REDIS_SESSION_CLIENT = 'REDIS_SESSION_CLIENT';
   imports: [ConfigModule],
   providers: [
     RedisConfigService,
-    // Temporarily comment out RedisService to get the app running
+    // Temporarily disable RedisService to get the app running
     // RedisService,
     {
       provide: REDIS_CLIENT,

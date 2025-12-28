@@ -7,6 +7,12 @@ import { RefreshToken } from '../modules/users/entities/refresh-token.entity';
 import { CustomDomain } from '../modules/users/entities/custom-domain.entity';
 import { AdminUser } from '../modules/users/entities/admin-user.entity';
 import { AuditLog } from '../modules/users/entities/audit-log.entity';
+import { Link } from '../modules/urls/entities/link.entity';
+import { GeoRule } from '../modules/urls/entities/geo-rule.entity';
+import { Tag } from '../modules/urls/entities/tag.entity';
+import { LinkTag } from '../modules/urls/entities/link-tag.entity';
+import { BioPage } from '../modules/bio-pages/entities/bio-page.entity';
+import { BioLink } from '../modules/bio-pages/entities/bio-link.entity';
 import { RedisModule } from './redis.module';
 import { HealthCheckService } from './health-check.service';
 
@@ -26,7 +32,7 @@ import { HealthCheckService } from './health-check.service';
           username: configService.get('DATABASE_USERNAME', 'postgres'),
           password: configService.get('DATABASE_PASSWORD', 'password'),
           database: configService.get('DATABASE_NAME', 'url_shortener'),
-          entities: [User, RefreshToken, CustomDomain, AdminUser, AuditLog],
+          entities: [User, RefreshToken, CustomDomain, AdminUser, AuditLog, Link, GeoRule, Tag, LinkTag, BioPage, BioLink],
           migrations: [__dirname + '/../migrations/*{.ts,.js}'],
           migrationsRun: false,
           synchronize: !isProduction, // Only sync in development
@@ -119,13 +125,14 @@ import { HealthCheckService } from './health-check.service';
           // Replica set configuration
           replicaSet: configService.get('MONGO_REPLICA_SET'),
           
-          // Authentication
-          authSource: configService.get('MONGO_AUTH_SOURCE', 'admin'),
-          authMechanism: configService.get('MONGO_AUTH_MECHANISM', 'SCRAM-SHA-256'),
+          // Authentication - disable for development
+          authSource: isProduction ? configService.get('MONGO_AUTH_SOURCE', 'admin') : undefined,
+          authMechanism: isProduction ? configService.get('MONGO_AUTH_MECHANISM', 'SCRAM-SHA-256') : undefined,
           
           // SSL/TLS configuration for production
           ssl: isProduction ? configService.get('MONGO_SSL', 'false') === 'true' : false,
-          sslValidate: isProduction ? configService.get('MONGO_SSL_VALIDATE', 'true') === 'true' : false,
+          // sslValidate is deprecated, use tlsAllowInvalidCertificates instead
+          tlsAllowInvalidCertificates: isProduction ? configService.get('MONGO_SSL_VALIDATE', 'true') !== 'true' : true,
           sslCA: configService.get('MONGO_SSL_CA'),
           sslCert: configService.get('MONGO_SSL_CERT'),
           sslKey: configService.get('MONGO_SSL_KEY'),

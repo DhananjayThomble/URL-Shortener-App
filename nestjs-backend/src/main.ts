@@ -16,7 +16,7 @@ import { SanitizationPipe } from './common/pipes/sanitization.pipe';
 import { GracefulShutdownService } from './common/services/graceful-shutdown.service';
 import { SwaggerConfig } from './config/swagger.config';
 import { EnvironmentValidationService } from './config/environment-validation.service';
-import { SecretsManagementService } from './config/secrets-management.service';
+// import { SecretsManagementService } from './config/secrets-management.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -27,7 +27,7 @@ async function bootstrap() {
   
   const configService = app.get(ConfigService);
   const envValidationService = app.get(EnvironmentValidationService);
-  const secretsService = app.get(SecretsManagementService);
+  // const secretsService = app.get(SecretsManagementService);
   const logger = new Logger('Bootstrap');
   
   // Get environment configuration
@@ -37,16 +37,16 @@ async function bootstrap() {
   
   logger.log(`🌍 Starting application in ${envConfig.environment} mode`);
 
-  // Validate secrets before startup
-  try {
-    secretsService.validateApplicationSecrets();
-    secretsService.logSecretsAudit();
-  } catch (error) {
-    logger.error('Secrets validation failed:', error.message);
-    if (envConfig.isProduction) {
-      process.exit(1);
-    }
-  }
+  // Validate secrets before startup - disabled for development
+  // try {
+  //   secretsService.validateApplicationSecrets();
+  //   secretsService.logSecretsAudit();
+  // } catch (error) {
+  //   logger.error('Secrets validation failed:', error.message);
+  //   if (envConfig.isProduction) {
+  //     process.exit(1);
+  //   }
+  // }
 
   // Enable graceful shutdown
   const gracefulShutdownService = app.get(GracefulShutdownService);

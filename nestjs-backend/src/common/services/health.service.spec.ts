@@ -20,9 +20,13 @@ describe('HealthService', () => {
     };
 
     const mockModel = {
-      findOne: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      lean: jest.fn(),
+      findOne: jest.fn().mockReturnValue({
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      }),
+      countDocuments: jest.fn(),
+      aggregate: jest.fn(),
     };
 
     const mockCacheService = {
@@ -83,20 +87,30 @@ describe('HealthService', () => {
 
   describe('checkMongoHealth', () => {
     it('should return healthy status when MongoDB is accessible', async () => {
-      urlModel.lean.mockResolvedValue({});
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
 
       const result = await service.checkMongoHealth();
 
       expect(result.status).toBe('healthy');
       expect(result.responseTime).toBeGreaterThan(0);
       expect(urlModel.findOne).toHaveBeenCalled();
-      expect(urlModel.limit).toHaveBeenCalledWith(1);
-      expect(urlModel.lean).toHaveBeenCalled();
+      expect(mockChain.limit).toHaveBeenCalledWith(1);
+      expect(mockChain.limit().lean).toHaveBeenCalled();
     });
 
     it('should return unhealthy status when MongoDB is not accessible', async () => {
       const error = new Error('MongoDB connection failed');
-      urlModel.lean.mockRejectedValue(error);
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockRejectedValue(error),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
 
       const result = await service.checkMongoHealth();
 
@@ -148,7 +162,14 @@ describe('HealthService', () => {
     it('should return comprehensive health status', async () => {
       // Mock all health checks to be successful
       userRepository.query.mockResolvedValue([{ result: 1 }]);
-      urlModel.lean.mockResolvedValue({});
+      
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
+      
       cacheService.healthCheck.mockResolvedValue(true);
       cacheService.getStats.mockResolvedValue({
         memory: '10MB',
@@ -171,7 +192,14 @@ describe('HealthService', () => {
     it('should return unhealthy status when critical service fails', async () => {
       // Mock PostgreSQL to fail
       userRepository.query.mockRejectedValue(new Error('DB Error'));
-      urlModel.lean.mockResolvedValue({});
+      
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
+      
       cacheService.healthCheck.mockResolvedValue(true);
       cacheService.getStats.mockResolvedValue({
         memory: '10MB',
@@ -189,7 +217,14 @@ describe('HealthService', () => {
     it('should return degraded status when non-critical service fails', async () => {
       // Mock cache to fail but databases to succeed
       userRepository.query.mockResolvedValue([{ result: 1 }]);
-      urlModel.lean.mockResolvedValue({});
+      
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
+      
       cacheService.healthCheck.mockResolvedValue(false);
 
       const result = await service.getHealthStatus();
@@ -202,7 +237,14 @@ describe('HealthService', () => {
   describe('getSimpleHealth', () => {
     it('should return ok status when all services are healthy', async () => {
       userRepository.query.mockResolvedValue([{ result: 1 }]);
-      urlModel.lean.mockResolvedValue({});
+      
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
+      
       cacheService.healthCheck.mockResolvedValue(true);
 
       const result = await service.getSimpleHealth();
@@ -213,7 +255,14 @@ describe('HealthService', () => {
 
     it('should return error status when any service fails', async () => {
       userRepository.query.mockRejectedValue(new Error('DB Error'));
-      urlModel.lean.mockResolvedValue({});
+      
+      const mockChain = {
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({}),
+        }),
+      };
+      urlModel.findOne.mockReturnValue(mockChain);
+      
       cacheService.healthCheck.mockResolvedValue(true);
 
       const result = await service.getSimpleHealth();

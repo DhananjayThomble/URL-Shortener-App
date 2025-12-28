@@ -12,6 +12,7 @@ import { CacheService } from '../../common/services/cache.service';
 
 describe('AdminService', () => {
   let service: AdminService;
+  let module: TestingModule;
   let adminRepository: jest.Mocked<Repository<AdminUser>>;
   let userRepository: jest.Mocked<Repository<User>>;
   let auditLogService: jest.Mocked<AuditLogService>;

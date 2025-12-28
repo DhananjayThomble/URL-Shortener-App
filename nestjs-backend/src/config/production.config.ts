@@ -43,7 +43,8 @@ export default registerAs('production', () => ({
         w: 'majority',
         readPreference: 'primaryPreferred',
         ssl: process.env.MONGODB_SSL === 'true',
-        sslValidate: process.env.MONGODB_SSL_VALIDATE !== 'false',
+        // sslValidate is deprecated, use tlsAllowInvalidCertificates instead
+        tlsAllowInvalidCertificates: process.env.MONGODB_SSL_VALIDATE === 'false',
         sslCA: process.env.MONGODB_SSL_CA,
         sslCert: process.env.MONGODB_SSL_CERT,
         sslKey: process.env.MONGODB_SSL_KEY,

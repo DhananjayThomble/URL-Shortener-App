@@ -50,7 +50,7 @@ export class RedisConfigService {
       maxRetriesPerRequest: parseInt(this.configService.get('REDIS_MAX_RETRIES', '3'), 10),
       lazyConnect: this.configService.get('REDIS_LAZY_CONNECT', 'true') === 'true',
       enableReadyCheck: this.configService.get('REDIS_READY_CHECK', 'false') === 'true',
-      enableOfflineQueue: this.configService.get('REDIS_OFFLINE_QUEUE', 'false') === 'true',
+      enableOfflineQueue: this.configService.get('REDIS_OFFLINE_QUEUE', 'true') === 'true',
       connectTimeout: parseInt(this.configService.get('REDIS_CONNECT_TIMEOUT', '10000'), 10),
       commandTimeout: parseInt(this.configService.get('REDIS_COMMAND_TIMEOUT', '5000'), 10),
       family: parseInt(this.configService.get('REDIS_FAMILY', '4'), 10),

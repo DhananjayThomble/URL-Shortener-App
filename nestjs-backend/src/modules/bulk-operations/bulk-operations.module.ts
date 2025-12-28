@@ -18,6 +18,10 @@ import { LinkTag } from '../urls/entities/link-tag.entity';
 import { User } from '../users/entities/user.entity';
 
 import { BulkOperation, BulkOperationSchema } from './schemas/bulk-operation.schema';
+import { ClickEvent, ClickEventSchema } from '../analytics/schemas/click-event.schema';
+
+// Auth module for guards
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -26,7 +30,8 @@ import { BulkOperation, BulkOperationSchema } from './schemas/bulk-operation.sch
     
     // Mongoose schemas for MongoDB
     MongooseModule.forFeature([
-      { name: BulkOperation.name, schema: BulkOperationSchema }
+      { name: BulkOperation.name, schema: BulkOperationSchema },
+      { name: ClickEvent.name, schema: ClickEventSchema }
     ]),
     
     // Bull queues
@@ -36,6 +41,9 @@ import { BulkOperation, BulkOperationSchema } from './schemas/bulk-operation.sch
     BullModule.registerQueue({
       name: 'bulk-export',
     }),
+    
+    // Auth module for guards
+    AuthModule,
   ],
   controllers: [BulkOperationsController],
   providers: [
