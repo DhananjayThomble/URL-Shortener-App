@@ -32,38 +32,25 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        // Backend Development
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "firsttris.vscode-jest-runner",
         "ms-vscode.vscode-typescript-next",
-        
-        // Frontend Development
         "dsznajder.es7-react-js-snippets",
         "bradlc.vscode-tailwindcss",
-        
-        // Database Tools
         "mongodb.mongodb-vscode",
         "cweijan.vscode-postgresql-client2",
         "cweijan.vscode-redis-client",
-        
-        // GitHub Copilot
         "github.copilot",
         "github.copilot-chat",
-        
-        // API Development
         "humao.rest-client",
         "42crunch.vscode-openapi",
-        
-        // Utilities
         "ms-azuretools.vscode-docker",
         "eamodio.gitlens",
         "gruntfuggly.todo-tree",
         "wayou.vscode-todo-highlight",
         "aaron-bond.better-comments",
         "usernamehw.errorlens",
-        
-        // Additional Productivity
         "christian-kohler.path-intellisense",
         "formulahendry.auto-rename-tag",
         "mikestead.dotenv"
