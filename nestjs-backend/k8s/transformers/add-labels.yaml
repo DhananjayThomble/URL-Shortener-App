@@ -1,0 +1,20 @@
+apiVersion: builtin
+kind: LabelTransformer
+metadata:
+  name: add-production-labels
+labels:
+  environment: production
+  tier: backend
+  version: v1.0.0
+fieldSpecs:
+- path: metadata/labels
+  create: true
+- path: spec/selector/matchLabels
+  create: true
+  kind: Deployment
+- path: spec/selector/matchLabels
+  create: true
+  kind: StatefulSet
+- path: spec/selector/matchLabels
+  create: true
+  kind: Service

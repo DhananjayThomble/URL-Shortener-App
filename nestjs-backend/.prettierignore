@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Coverage reports
+coverage/
+
+# Test results
+test-results/
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env*
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Generated files
+*.generated.ts
+*.generated.js
+
+# Documentation
+docs/api/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+
+# Kubernetes
+k8s/

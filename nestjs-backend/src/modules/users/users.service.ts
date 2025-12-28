@@ -139,4 +139,30 @@ export class UsersService {
     const cacheKey = this.cacheService.generateUserCacheKey(id);
     await this.cacheService.del(cacheKey);
   }
+
+  async markEmailAsVerified(id: string): Promise<User> {
+    await this.usersRepository.update(id, {
+      isEmailVerified: true,
+      emailVerificationToken: null, // Clear the verification token
+    });
+
+    // Get updated user
+    const user = await this.usersRepository.findOne({
+      where: { id },
+      select: ['id', 'email', 'name', 'isEmailVerified', 'role', 'createdAt', 'updatedAt'],
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    // Update cache with verified user data
+    const cacheKey = this.cacheService.generateUserCacheKey(id);
+    await this.cacheService.set(cacheKey, user, 1800); // 30 minutes TTL
+
+    // Also invalidate user session cache to force refresh
+    await this.cacheService.invalidateUserSession(id);
+
+    return user;
+  }
 }

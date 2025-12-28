@@ -1,43 +1,71 @@
 # Multi-stage build for production optimization
-FROM node:18-alpine AS base
+# Use specific Node.js version for reproducible builds
+FROM node:20-alpine3.19 AS base
+
+# Set environment variables for optimization
+ENV NODE_ENV=production
+ENV NPM_CONFIG_LOGLEVEL=warn
+ENV NPM_CONFIG_COLOR=false
+
+# Install security updates and required packages
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+    libc6-compat \
+    dumb-init \
+    curl \
+    && rm -rf /var/cache/apk/*
+
+# Create app directory with proper permissions
+WORKDIR /app
 
 # Install dependencies only when needed
 FROM base AS deps
-# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk add --no-cache libc6-compat
-WORKDIR /app
 
-# Install dependencies based on the preferred package manager
-COPY package.json package-lock.json* ./
-RUN npm ci --only=production && npm cache clean --force
+# Copy package files
+COPY package.json package-lock.json ./
 
-# Rebuild the source code only when needed
+# Install production dependencies with optimizations
+RUN npm ci --only=production --no-audit --no-fund && \
+    npm cache clean --force && \
+    rm -rf ~/.npm
+
+# Build stage - install all dependencies and build
 FROM base AS builder
-WORKDIR /app
+
+# Copy production dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY package.json package-lock.json ./
 
 # Install all dependencies (including devDependencies) for building
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 
-# Build the application
-RUN npm run build
+# Copy source code
+COPY . .
 
-# Production image, copy all the files and run nest
+# Build the application with optimizations
+RUN npm run build && \
+    npm prune --production && \
+    npm cache clean --force && \
+    rm -rf ~/.npm
+
+# Production runtime stage
 FROM base AS runner
-WORKDIR /app
 
-# Create a non-root user
-RUN addgroup --system --gid 1001 nestjs
-RUN adduser --system --uid 1001 nestjs
+# Create non-root user with specific UID/GID for security
+RUN addgroup --system --gid 1001 nestjs && \
+    adduser --system --uid 1001 --ingroup nestjs nestjs
 
-# Copy the built application
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/tmp && \
+    chown -R nestjs:nestjs /app
 
-# Create logs directory
-RUN mkdir -p logs && chown -R nestjs:nestjs logs
+# Copy built application and production dependencies
+COPY --from=builder --chown=nestjs:nestjs /app/dist ./dist
+COPY --from=builder --chown=nestjs:nestjs /app/node_modules ./node_modules
+COPY --from=builder --chown=nestjs:nestjs /app/package.json ./package.json
+
+# Copy health check script
+COPY --chown=nestjs:nestjs healthcheck.js ./
 
 # Switch to non-root user
 USER nestjs
@@ -45,9 +73,20 @@ USER nestjs
 # Expose the port the app runs on
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3000/health/simple || exit 1
+# Add labels for better container management
+LABEL maintainer="SnapURL Team" \
+      version="1.0.0" \
+      description="NestJS URL Shortener Backend" \
+      org.opencontainers.image.source="https://github.com/your-org/url-shortener" \
+      org.opencontainers.image.title="NestJS URL Shortener" \
+      org.opencontainers.image.description="Enterprise-grade URL shortener backend built with NestJS"
 
-# Start the application
-CMD ["node", "dist/main.js"]
+# Health check with custom script for better reliability
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node healthcheck.js || exit 1
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start the application with optimized Node.js flags
+CMD ["node", "--max-old-space-size=512", "--optimize-for-size", "dist/main.js"]

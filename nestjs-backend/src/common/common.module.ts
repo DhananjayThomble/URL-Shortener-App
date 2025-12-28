@@ -12,12 +12,19 @@ import { HealthService } from './services/health.service';
 import { MetricsService } from './services/metrics.service';
 import { EmailService } from './services/email.service';
 import { GracefulShutdownService } from './services/graceful-shutdown.service';
+import { QueryOptimizationService } from './services/query-optimization.service';
+import { HttpCachingService } from './services/http-caching.service';
+import { PerformanceMonitoringService } from './services/performance-monitoring.service';
 
 import { CacheController } from './controllers/cache.controller';
 import { MonitoringController } from './controllers/monitoring.controller';
+import { PerformanceController } from './controllers/performance.controller';
 
 import { RequestTrackingInterceptor } from './interceptors/request-tracking.interceptor';
+import { HttpCacheInterceptor } from './interceptors/http-cache.interceptor';
+import { PerformanceMonitoringInterceptor } from './interceptors/performance-monitoring.interceptor';
 import { TracingMiddleware } from './middleware/tracing.middleware';
+import { StaticCacheMiddleware } from './middleware/static-cache.middleware';
 
 // Import entities and schemas for health checks
 import { User } from '../modules/users/entities/user.entity';
@@ -30,7 +37,7 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     TypeOrmModule.forFeature([User]),
     MongooseModule.forFeature([{ name: Url.name, schema: UrlSchema }]),
   ],
-  controllers: [CacheController, MonitoringController],
+  controllers: [CacheController, MonitoringController, PerformanceController],
   providers: [
     LoggerService,
     EnhancedLoggerService,
@@ -41,8 +48,14 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     MetricsService,
     EmailService,
     RequestTrackingInterceptor,
+    HttpCacheInterceptor,
+    PerformanceMonitoringInterceptor,
     TracingMiddleware,
+    StaticCacheMiddleware,
     GracefulShutdownService,
+    QueryOptimizationService,
+    HttpCachingService,
+    PerformanceMonitoringService,
   ],
   exports: [
     LoggerService,
@@ -54,8 +67,14 @@ import { Url, UrlSchema } from '../modules/urls/schemas/url.schema';
     MetricsService,
     EmailService,
     RequestTrackingInterceptor,
+    HttpCacheInterceptor,
+    PerformanceMonitoringInterceptor,
     TracingMiddleware,
+    StaticCacheMiddleware,
     GracefulShutdownService,
+    QueryOptimizationService,
+    HttpCachingService,
+    PerformanceMonitoringService,
   ],
 })
 export class CommonModule {}

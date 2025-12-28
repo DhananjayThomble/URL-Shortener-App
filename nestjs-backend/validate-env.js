@@ -1,239 +1,370 @@
 #!/usr/bin/env node
 
-const colors = require('colors');
+/**
+ * Environment validation script
+ * Run this script to validate environment configuration before deployment
+ */
+
+const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// Load environment variables
-require('dotenv').config();
+// ANSI color codes for console output
+const colors = {
+  reset: '\x1b[0m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m',
+};
 
-console.log('🔍 Environment Configuration Validation'.bold.cyan);
-console.log('====================================='.cyan);
-
-let hasErrors = false;
-let hasWarnings = false;
-
-function logError(message) {
-  console.log(`❌ ERROR: ${message}`.red);
-  hasErrors = true;
+function log(message, color = 'white') {
+  console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
-function logWarning(message) {
-  console.log(`⚠️  WARNING: ${message}`.yellow);
-  hasWarnings = true;
+function logHeader(message) {
+  log(`\n${'='.repeat(60)}`, 'cyan');
+  log(`${message}`, 'cyan');
+  log(`${'='.repeat(60)}`, 'cyan');
 }
 
 function logSuccess(message) {
-  console.log(`✅ ${message}`.green);
+  log(`✅ ${message}`, 'green');
+}
+
+function logWarning(message) {
+  log(`⚠️  ${message}`, 'yellow');
+}
+
+function logError(message) {
+  log(`❌ ${message}`, 'red');
 }
 
 function logInfo(message) {
-  console.log(`ℹ️  ${message}`.blue);
+  log(`ℹ️  ${message}`, 'blue');
 }
 
-// Required environment variables
-const requiredVars = [
-  {
-    name: 'DATABASE_URL',
-    description: 'PostgreSQL connection string',
-    example: 'postgresql://user:password@localhost:5432/dbname'
-  },
-  {
-    name: 'MONGODB_URI',
-    description: 'MongoDB connection string',
-    example: 'mongodb://localhost:27017/urlshortener'
-  },
-  {
-    name: 'REDIS_URL',
-    description: 'Redis connection string',
-    example: 'redis://localhost:6379'
-  },
-  {
-    name: 'JWT_SECRET',
-    description: 'JWT signing secret (should be long and random)',
-    example: 'your-super-secret-jwt-key-at-least-32-characters'
-  },
-  {
-    name: 'JWT_REFRESH_SECRET',
-    description: 'JWT refresh token secret',
-    example: 'your-refresh-token-secret-different-from-jwt-secret'
-  }
-];
-
-// Optional but recommended variables
-const recommendedVars = [
-  {
-    name: 'NODE_ENV',
-    description: 'Environment mode',
-    example: 'production',
-    defaultValue: 'development'
-  },
-  {
-    name: 'PORT',
-    description: 'Application port',
-    example: '3000',
-    defaultValue: '3000'
-  },
-  {
-    name: 'API_PREFIX',
-    description: 'API route prefix',
-    example: 'api/v1',
-    defaultValue: 'api/v1'
-  },
-  {
-    name: 'BASE_URL',
-    description: 'Application base URL',
-    example: 'https://your-domain.com',
-    defaultValue: 'http://localhost:3000'
-  },
-  {
-    name: 'CORS_ORIGIN',
-    description: 'Allowed CORS origins',
-    example: 'https://your-frontend.com,https://admin.your-domain.com',
-    defaultValue: '*'
-  }
-];
-
-console.log('\n📋 Required Environment Variables:'.bold);
-console.log('==================================');
-
-requiredVars.forEach(variable => {
-  const value = process.env[variable.name];
+/**
+ * Check if required files exist
+ */
+function checkRequiredFiles() {
+  logHeader('Checking Required Files');
   
-  if (!value) {
-    logError(`${variable.name} is not set`);
-    logInfo(`   Description: ${variable.description}`);
-    logInfo(`   Example: ${variable.example}`);
+  const requiredFiles = [
+    'package.json',
+    'src/main.ts',
+    'src/app.module.ts',
+    'src/config/environment.module.ts',
+    'src/config/environment-validation.service.ts',
+    'src/config/environment-configs.ts',
+    'src/config/secrets-management.service.ts',
+  ];
+  
+  let allFilesExist = true;
+  
+  for (const file of requiredFiles) {
+    if (fs.existsSync(file)) {
+      logSuccess(`${file} exists`);
+    } else {
+      logError(`${file} is missing`);
+      allFilesExist = false;
+    }
+  }
+  
+  return allFilesExist;
+}
+
+/**
+ * Check environment files
+ */
+function checkEnvironmentFiles() {
+  logHeader('Checking Environment Files');
+  
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  const envFiles = [
+    '.env.example',
+    `.env.${nodeEnv}`,
+    '.env.local',
+    '.env',
+  ];
+  
+  let hasValidEnvFile = false;
+  
+  for (const file of envFiles) {
+    if (fs.existsSync(file)) {
+      logSuccess(`${file} exists`);
+      hasValidEnvFile = true;
+    } else {
+      logWarning(`${file} not found`);
+    }
+  }
+  
+  if (!hasValidEnvFile) {
+    logError('No environment files found');
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Validate TypeScript compilation
+ */
+function validateTypeScript() {
+  logHeader('Validating TypeScript Compilation');
+  
+  try {
+    execSync('npx tsc --noEmit', { stdio: 'pipe' });
+    logSuccess('TypeScript compilation successful');
+    return true;
+  } catch (error) {
+    logError('TypeScript compilation failed');
+    log(error.stdout?.toString() || error.message, 'red');
+    return false;
+  }
+}
+
+/**
+ * Check dependencies
+ */
+function checkDependencies() {
+  logHeader('Checking Dependencies');
+  
+  try {
+    const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    const requiredDeps = [
+      '@nestjs/common',
+      '@nestjs/config',
+      '@nestjs/core',
+      'joi',
+      'class-validator',
+      'class-transformer',
+    ];
+    
+    let allDepsPresent = true;
+    
+    for (const dep of requiredDeps) {
+      if (packageJson.dependencies?.[dep] || packageJson.devDependencies?.[dep]) {
+        logSuccess(`${dep} is installed`);
+      } else {
+        logError(`${dep} is missing`);
+        allDepsPresent = false;
+      }
+    }
+    
+    return allDepsPresent;
+  } catch (error) {
+    logError('Failed to read package.json');
+    return false;
+  }
+}
+
+/**
+ * Test environment validation service
+ */
+function testEnvironmentValidation() {
+  logHeader('Testing Environment Validation');
+  
+  try {
+    // Create a temporary test script
+    const testScript = `
+      const { EnvironmentValidationService } = require('./dist/config/environment-validation.service');
+      const { ConfigService } = require('@nestjs/config');
+      
+      const mockConfig = {
+        NODE_ENV: 'test',
+        PORT: '3000',
+        DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
+        DATABASE_HOST: 'localhost',
+        DATABASE_PORT: '5432',
+        DATABASE_USERNAME: 'test',
+        DATABASE_PASSWORD: 'testpassword',
+        DATABASE_NAME: 'test',
+        MONGODB_URI: 'mongodb://localhost:27017/test',
+        MONGODB_HOST: 'localhost',
+        MONGODB_PORT: '27017',
+        MONGODB_DATABASE: 'test',
+        REDIS_URL: 'redis://localhost:6379',
+        REDIS_HOST: 'localhost',
+        REDIS_PORT: '6379',
+        REDIS_DB: '0',
+        JWT_SECRET: 'test-jwt-secret-with-sufficient-length',
+        JWT_REFRESH_SECRET: 'test-refresh-secret-with-sufficient-length',
+        SESSION_SECRET: 'test-session-secret-with-sufficient-length',
+        BASE_URL: 'http://localhost:3000',
+        FRONTEND_URL: 'http://localhost:3001',
+        LOG_LEVEL: 'info',
+        BCRYPT_SALT_ROUNDS: '10',
+        RATE_LIMIT_TTL: '60000',
+        RATE_LIMIT_MAX: '100',
+        CACHE_TTL_URL: '3600',
+        CACHE_TTL_SESSION: '900',
+        CACHE_TTL_ANALYTICS: '300',
+      };
+      
+      const configService = new ConfigService(mockConfig);
+      const validationService = new EnvironmentValidationService(configService);
+      
+      try {
+        const result = validationService.validate(mockConfig);
+        console.log('✅ Environment validation test passed');
+        process.exit(0);
+      } catch (error) {
+        console.error('❌ Environment validation test failed:', error.message);
+        process.exit(1);
+      }
+    `;
+    
+    // First, build the project
+    execSync('npm run build', { stdio: 'pipe' });
+    
+    // Write and execute test script
+    fs.writeFileSync('temp-validation-test.js', testScript);
+    execSync('node temp-validation-test.js', { stdio: 'inherit' });
+    fs.unlinkSync('temp-validation-test.js');
+    
+    logSuccess('Environment validation service test passed');
+    return true;
+  } catch (error) {
+    logError('Environment validation service test failed');
+    log(error.message, 'red');
+    
+    // Clean up temp file if it exists
+    if (fs.existsSync('temp-validation-test.js')) {
+      fs.unlinkSync('temp-validation-test.js');
+    }
+    
+    return false;
+  }
+}
+
+/**
+ * Check Docker configuration
+ */
+function checkDockerConfiguration() {
+  logHeader('Checking Docker Configuration');
+  
+  const dockerFiles = [
+    'Dockerfile',
+    'docker-compose.yml',
+    'docker-compose.dev.yml',
+    'docker-compose.prod.yml',
+    '.dockerignore',
+  ];
+  
+  let allDockerFilesExist = true;
+  
+  for (const file of dockerFiles) {
+    if (fs.existsSync(file)) {
+      logSuccess(`${file} exists`);
+    } else {
+      logWarning(`${file} not found`);
+      if (file === 'Dockerfile') {
+        allDockerFilesExist = false;
+      }
+    }
+  }
+  
+  return allDockerFilesExist;
+}
+
+/**
+ * Check Kubernetes configuration
+ */
+function checkKubernetesConfiguration() {
+  logHeader('Checking Kubernetes Configuration');
+  
+  const k8sDir = 'k8s';
+  
+  if (!fs.existsSync(k8sDir)) {
+    logWarning('k8s directory not found');
+    return false;
+  }
+  
+  const requiredK8sFiles = [
+    'namespace.yaml',
+    'configmap.yaml',
+    'secrets.yaml',
+    'app-deployment.yaml',
+    'postgres.yaml',
+    'mongodb.yaml',
+    'redis.yaml',
+  ];
+  
+  let allK8sFilesExist = true;
+  
+  for (const file of requiredK8sFiles) {
+    const filePath = path.join(k8sDir, file);
+    if (fs.existsSync(filePath)) {
+      logSuccess(`k8s/${file} exists`);
+    } else {
+      logWarning(`k8s/${file} not found`);
+      allK8sFilesExist = false;
+    }
+  }
+  
+  return allK8sFilesExist;
+}
+
+/**
+ * Main validation function
+ */
+async function main() {
+  log('🚀 Starting Environment Validation', 'magenta');
+  log(`Environment: ${process.env.NODE_ENV || 'development'}`, 'blue');
+  
+  const checks = [
+    { name: 'Required Files', fn: checkRequiredFiles },
+    { name: 'Environment Files', fn: checkEnvironmentFiles },
+    { name: 'Dependencies', fn: checkDependencies },
+    { name: 'TypeScript Compilation', fn: validateTypeScript },
+    { name: 'Environment Validation Service', fn: testEnvironmentValidation },
+    { name: 'Docker Configuration', fn: checkDockerConfiguration },
+    { name: 'Kubernetes Configuration', fn: checkKubernetesConfiguration },
+  ];
+  
+  const results = [];
+  
+  for (const check of checks) {
+    try {
+      const result = await check.fn();
+      results.push({ name: check.name, passed: result });
+    } catch (error) {
+      logError(`${check.name} check failed: ${error.message}`);
+      results.push({ name: check.name, passed: false });
+    }
+  }
+  
+  // Summary
+  logHeader('Validation Summary');
+  
+  const passed = results.filter(r => r.passed).length;
+  const total = results.length;
+  
+  results.forEach(result => {
+    if (result.passed) {
+      logSuccess(`${result.name}: PASSED`);
+    } else {
+      logError(`${result.name}: FAILED`);
+    }
+  });
+  
+  log(`\nOverall: ${passed}/${total} checks passed`, passed === total ? 'green' : 'red');
+  
+  if (passed === total) {
+    logSuccess('🎉 All validation checks passed! Environment is ready for deployment.');
+    process.exit(0);
   } else {
-    // Additional validation for specific variables
-    if (variable.name === 'JWT_SECRET' && value.length < 32) {
-      logWarning(`${variable.name} should be at least 32 characters long for security`);
-    } else if (variable.name === 'JWT_REFRESH_SECRET' && value === process.env.JWT_SECRET) {
-      logWarning(`${variable.name} should be different from JWT_SECRET`);
-    } else if (variable.name.includes('URL') && !value.match(/^(mongodb|postgresql|redis):\/\//)) {
-      logWarning(`${variable.name} format may be incorrect`);
-    } else {
-      logSuccess(`${variable.name} is set`);
-    }
+    logError('❌ Some validation checks failed. Please fix the issues before deployment.');
+    process.exit(1);
   }
-});
-
-console.log('\n📋 Recommended Environment Variables:'.bold);
-console.log('====================================');
-
-recommendedVars.forEach(variable => {
-  const value = process.env[variable.name];
-  
-  if (!value) {
-    logWarning(`${variable.name} is not set (will use default: ${variable.defaultValue})`);
-    logInfo(`   Description: ${variable.description}`);
-    logInfo(`   Example: ${variable.example}`);
-  } else {
-    logSuccess(`${variable.name} is set: ${value}`);
-  }
-});
-
-// Check for .env file
-console.log('\n📄 Environment File Check:'.bold);
-console.log('==========================');
-
-const envFiles = ['.env', '.env.local', '.env.production'];
-let envFileFound = false;
-
-envFiles.forEach(filename => {
-  const filePath = path.join(process.cwd(), filename);
-  if (fs.existsSync(filePath)) {
-    logSuccess(`${filename} file found`);
-    envFileFound = true;
-  }
-});
-
-if (!envFileFound) {
-  logWarning('No .env files found. Make sure environment variables are set via other means.');
 }
 
-// Check Node.js version
-console.log('\n🚀 Runtime Environment:'.bold);
-console.log('======================');
-
-const nodeVersion = process.version;
-const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0]);
-
-if (majorVersion >= 18) {
-  logSuccess(`Node.js version: ${nodeVersion} (supported)`);
-} else if (majorVersion >= 16) {
-  logWarning(`Node.js version: ${nodeVersion} (minimum supported, recommend 18+)`);
-} else {
-  logError(`Node.js version: ${nodeVersion} (unsupported, requires 16+)`);
-}
-
-// Check if in production mode
-const isProduction = process.env.NODE_ENV === 'production';
-if (isProduction) {
-  logSuccess('Running in production mode');
-  
-  // Additional production checks
-  if (process.env.JWT_SECRET && process.env.JWT_SECRET.includes('example')) {
-    logError('JWT_SECRET appears to be a default/example value in production');
-  }
-  
-  if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('localhost')) {
-    logWarning('DATABASE_URL points to localhost in production mode');
-  }
-} else {
-  logInfo(`Running in ${process.env.NODE_ENV || 'development'} mode`);
-}
-
-// Security checks
-console.log('\n🔒 Security Configuration:'.bold);
-console.log('=========================');
-
-const securityVars = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'SESSION_SECRET'];
-securityVars.forEach(varName => {
-  const value = process.env[varName];
-  if (value) {
-    if (value.length < 32) {
-      logWarning(`${varName} should be at least 32 characters for security`);
-    } else if (value.includes('secret') || value.includes('password') || value.includes('123')) {
-      logWarning(`${varName} appears to contain common words - use a random string`);
-    } else {
-      logSuccess(`${varName} appears to be properly configured`);
-    }
-  }
-});
-
-// Database connection format validation
-console.log('\n🗄️  Database Configuration:'.bold);
-console.log('==========================');
-
-const dbConnections = [
-  { name: 'DATABASE_URL', protocol: 'postgresql' },
-  { name: 'MONGODB_URI', protocol: 'mongodb' },
-  { name: 'REDIS_URL', protocol: 'redis' }
-];
-
-dbConnections.forEach(({ name, protocol }) => {
-  const url = process.env[name];
-  if (url) {
-    if (url.startsWith(`${protocol}://`)) {
-      logSuccess(`${name} format appears correct`);
-    } else {
-      logError(`${name} should start with ${protocol}://`);
-    }
-  }
-});
-
-// Summary
-console.log('\n📊 Validation Summary:'.bold);
-console.log('=====================');
-
-if (hasErrors) {
-  console.log('❌ Configuration has ERRORS that must be fixed before deployment'.red.bold);
+// Run validation
+main().catch(error => {
+  logError(`Validation script failed: ${error.message}`);
   process.exit(1);
-} else if (hasWarnings) {
-  console.log('⚠️  Configuration has warnings - review before production deployment'.yellow.bold);
-  process.exit(0);
-} else {
-  console.log('✅ Configuration looks good!'.green.bold);
-  process.exit(0);
-}
+});

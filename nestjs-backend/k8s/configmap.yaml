@@ -1,0 +1,187 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: url-shortener
+    app.kubernetes.io/component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  API_PREFIX: "api/v1"
+  APP_VERSION: "1.0.0"
+  
+  # Database Configuration
+  DATABASE_HOST: "postgres-service"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "url_shortener_prod"
+  MONGODB_HOST: "mongodb-service"
+  MONGODB_PORT: "27017"
+  MONGODB_DATABASE: "url_shortener_prod"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_KEY_PREFIX: "urlshortener:prod:"
+  
+  # JWT Configuration
+  JWT_EXPIRES_IN: "15m"
+  JWT_REFRESH_EXPIRES_IN: "7d"
+  JWT_ADMIN_EXPIRES_IN: "8h"
+  
+  # Security Configuration
+  BCRYPT_SALT_ROUNDS: "12"
+  
+  # Cache Configuration
+  CACHE_TTL_URL: "3600"
+  CACHE_TTL_SESSION: "900"
+  CACHE_TTL_ANALYTICS: "300"
+  CACHE_TTL_METADATA: "86400"
+  CACHE_TTL_POPULAR: "1800"
+  CACHE_TTL_DEFAULT: "3600"
+  CACHE_ENABLE_COMPRESSION: "true"
+  CACHE_ENABLE_WARMING: "true"
+  CACHE_AUTO_OPTIMIZE: "true"
+  CACHE_MAX_KEY_LENGTH: "250"
+  CACHE_MAX_VALUE_SIZE: "1048576"
+  
+  # Rate Limiting Configuration
+  RATE_LIMIT_TTL: "60000"
+  RATE_LIMIT_MAX: "100"
+  RATE_LIMIT_AUTH_TTL: "900000"
+  RATE_LIMIT_AUTH_MAX: "5"
+  RATE_LIMIT_URL_CREATION_TTL: "60000"
+  RATE_LIMIT_URL_CREATION_MAX: "10"
+  RATE_LIMIT_URL_ACCESS_TTL: "60000"
+  RATE_LIMIT_URL_ACCESS_MAX: "100"
+  
+  # Performance Configuration
+  ENABLE_COMPRESSION: "true"
+  ENABLE_HELMET: "true"
+  ENABLE_CORS: "true"
+  MAX_REQUEST_SIZE: "10mb"
+  REQUEST_TIMEOUT: "30000"
+  
+  # Monitoring Configuration
+  ENABLE_METRICS: "true"
+  ENABLE_HEALTH_CHECKS: "true"
+  ENABLE_DISTRIBUTED_TRACING: "true"
+  METRICS_ENDPOINT_ENABLED: "true"
+  HEALTH_CHECK_TIMEOUT: "5000"
+  ENABLE_PROMETHEUS_TRACING: "true"
+  PROMETHEUS_METRICS_PORT: "9090"
+  
+  # Feature Flags
+  ENABLE_ANALYTICS: "true"
+  ENABLE_CUSTOM_DOMAINS: "true"
+  ENABLE_LINK_IN_BIO: "true"
+  ENABLE_PASSWORD_PROTECTION: "true"
+  ENABLE_EXPIRATION: "true"
+  ENABLE_BULK_OPERATIONS: "true"
+  
+  # Security Headers
+  HSTS_MAX_AGE: "31536000"
+  CSP_POLICY: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+  
+  # Database Pool Configuration
+  DB_POOL_MIN: "2"
+  DB_POOL_MAX: "10"
+  DB_POOL_IDLE_TIMEOUT: "30000"
+  DB_POOL_ACQUIRE_TIMEOUT: "60000"
+  
+  # Graceful Shutdown Configuration
+  SHUTDOWN_TIMEOUT: "10000"
+  KEEP_ALIVE_TIMEOUT: "5000"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: config
+data:
+  POSTGRES_DB: "url_shortener_prod"
+  POSTGRES_USER: "urlshortener_user"
+  PGDATA: "/var/lib/postgresql/data/pgdata"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-config
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: config
+data:
+  MONGO_INITDB_DATABASE: "url_shortener_prod"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: config
+data:
+  redis.conf: |
+    # Redis configuration for Kubernetes
+    bind 0.0.0.0
+    port 6379
+    timeout 0
+    tcp-keepalive 300
+    
+    # General
+    daemonize no
+    supervised no
+    loglevel notice
+    databases 16
+    
+    # Snapshotting
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # Memory management
+    maxmemory 512mb
+    maxmemory-policy allkeys-lru
+    maxmemory-samples 5
+    
+    # Append only file
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    aof-load-truncated yes
+    aof-use-rdb-preamble yes
+    
+    # Slow log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Advanced config
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    list-max-ziplist-size -2
+    list-compress-depth 0
+    set-max-intset-entries 512
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    activerehashing yes
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+    hz 10
+    dynamic-hz yes
+    aof-rewrite-incremental-fsync yes
+    rdb-save-incremental-fsync yes

@@ -9,11 +9,21 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 // import { ApiKeyStrategy } from './strategies/api-key.strategy';
 import { UsersModule } from '../users/users.module';
+import { RedisModule } from '../../config/redis.module';
+import { EnhancedJwtService } from './services/enhanced-jwt.service';
+import { EmailVerificationService } from './services/email-verification.service';
+import { PasswordResetService } from './services/password-reset.service';
+import { RateLimitingService } from './services/rate-limiting.service';
+import { EnhancedRateLimitGuard } from './guards/enhanced-rate-limit.guard';
+import { SanitizationPipe } from './pipes/sanitization.pipe';
+import { CommonModule } from '../../common/common.module';
 
 @Module({
   imports: [
     UsersModule,
     PassportModule,
+    RedisModule,
+    CommonModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -26,7 +36,25 @@ import { UsersModule } from '../users/users.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, LocalStrategy, JwtStrategy], // ApiKeyStrategy
-  exports: [AuthService],
+  providers: [
+    AuthService, 
+    LocalStrategy, 
+    JwtStrategy, 
+    EnhancedJwtService, 
+    EmailVerificationService, 
+    PasswordResetService,
+    RateLimitingService,
+    EnhancedRateLimitGuard,
+    SanitizationPipe,
+  ], // ApiKeyStrategy
+  exports: [
+    AuthService, 
+    EnhancedJwtService, 
+    EmailVerificationService, 
+    PasswordResetService,
+    RateLimitingService,
+    EnhancedRateLimitGuard,
+    SanitizationPipe,
+  ],
 })
 export class AuthModule {}

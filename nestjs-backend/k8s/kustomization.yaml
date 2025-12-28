@@ -1,0 +1,75 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: url-shortener
+  namespace: url-shortener
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: url-shortener
+  app.kubernetes.io/part-of: url-shortener-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to include
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - postgres.yaml
+  - mongodb.yaml
+  - redis.yaml
+  - app-deployment.yaml
+  - hpa.yaml
+  - ingress.yaml
+  - monitoring.yaml
+
+# Images to use (can be overridden per environment)
+images:
+  - name: nestjs-url-shortener
+    newTag: latest
+
+# ConfigMap generator for environment-specific configs
+configMapGenerator:
+  - name: app-environment-config
+    literals:
+      - ENVIRONMENT=production
+      - CLUSTER_NAME=url-shortener-prod
+      - DEPLOYMENT_DATE=$(date +%Y-%m-%d)
+
+# Secret generator for sensitive data
+secretGenerator:
+  - name: app-runtime-secrets
+    literals:
+      - RUNTIME_SECRET=$(openssl rand -base64 32)
+
+# Patches for environment-specific customizations
+patchesStrategicMerge:
+  - patches/production-resources.yaml
+
+# JSON patches for specific modifications
+patchesJson6902:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: url-shortener-app
+    path: patches/deployment-replicas.yaml
+
+# Namespace for all resources
+namespace: url-shortener
+
+# Name prefix for all resources
+namePrefix: prod-
+
+# Name suffix for all resources
+# nameSuffix: -v1
+
+# Replicas for deployments
+replicas:
+  - name: url-shortener-app
+    count: 3
+
+# Resource transformers
+transformers:
+  - transformers/add-labels.yaml

@@ -1,0 +1,252 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: url-shortener-platform
+spec:
+  serviceName: mongodb-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/component: database
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+      - name: mongodb
+        image: mongo:6-jammy
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 27017
+          name: mongodb
+        env:
+        - name: MONGO_INITDB_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: mongodb-config
+              key: MONGO_INITDB_DATABASE
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_INITDB_ROOT_USERNAME
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGO_INITDB_ROOT_PASSWORD
+        volumeMounts:
+        - name: mongodb-storage
+          mountPath: /data/db
+        - name: mongodb-config-volume
+          mountPath: /etc/mongod.conf
+          subPath: mongod.conf
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        command:
+        - mongod
+        - --config
+        - /etc/mongod.conf
+        - --profile=1
+        - --slowms=1000
+        livenessProbe:
+          exec:
+            command:
+            - mongo
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 6
+        readinessProbe:
+          exec:
+            command:
+            - mongo
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 6
+      volumes:
+      - name: mongodb-storage
+        persistentVolumeClaim:
+          claimName: mongodb-pvc
+      - name: mongodb-config-volume
+        configMap:
+          name: mongodb-config-file
+      - name: init-scripts
+        configMap:
+          name: mongodb-init-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 27017
+    targetPort: 27017
+    protocol: TCP
+    name: mongodb
+  selector:
+    app.kubernetes.io/name: mongodb
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-config-file
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: config
+data:
+  mongod.conf: |
+    # MongoDB configuration for Kubernetes
+    storage:
+      dbPath: /data/db
+      journal:
+        enabled: true
+      wiredTiger:
+        engineConfig:
+          cacheSizeGB: 1
+          journalCompressor: snappy
+          directoryForIndexes: false
+        collectionConfig:
+          blockCompressor: snappy
+        indexConfig:
+          prefixCompression: true
+    
+    systemLog:
+      destination: file
+      logAppend: true
+      path: /var/log/mongodb/mongod.log
+      logRotate: rename
+      verbosity: 0
+    
+    net:
+      port: 27017
+      bindIp: 0.0.0.0
+      maxIncomingConnections: 65536
+      wireObjectCheck: true
+      ipv6: false
+    
+    processManagement:
+      timeZoneInfo: /usr/share/zoneinfo
+    
+    security:
+      authorization: enabled
+    
+    operationProfiling:
+      slowOpThresholdMs: 1000
+      mode: slowOp
+    
+    setParameter:
+      enableLocalhostAuthBypass: false
+      authenticationMechanisms: SCRAM-SHA-1,SCRAM-SHA-256
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-init-scripts
+  namespace: url-shortener
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: config
+data:
+  init-mongo.js: |
+    // MongoDB initialization script for Kubernetes
+    db = db.getSiblingDB('url_shortener_prod');
+    
+    // Create collections with validation
+    db.createCollection('clicks', {
+      validator: {
+        $jsonSchema: {
+          bsonType: 'object',
+          required: ['linkId', 'userId', 'clickedAt', 'ipHash'],
+          properties: {
+            linkId: {
+              bsonType: 'string',
+              description: 'Link ID is required and must be a string'
+            },
+            userId: {
+              bsonType: 'string',
+              description: 'User ID is required and must be a string'
+            },
+            clickedAt: {
+              bsonType: 'date',
+              description: 'Click timestamp is required and must be a date'
+            },
+            ipHash: {
+              bsonType: 'string',
+              description: 'IP hash is required and must be a string'
+            }
+          }
+        }
+      }
+    });
+    
+    // Create indexes for clicks collection
+    db.clicks.createIndex({ linkId: 1, clickedAt: -1 });
+    db.clicks.createIndex({ userId: 1, clickedAt: -1 });
+    db.clicks.createIndex({ clickedAt: -1 });
+    db.clicks.createIndex({ country: 1 });
+    db.clicks.createIndex({ device: 1 });
+    db.clicks.createIndex({ browser: 1 });
+    db.clicks.createIndex({ sessionId: 1 });
+    
+    // Create analytics aggregations collection
+    db.createCollection('analytics_aggregations');
+    db.analytics_aggregations.createIndex({ linkId: 1, period: 1, date: -1 });
+    db.analytics_aggregations.createIndex({ userId: 1, period: 1, date: -1 });
+    db.analytics_aggregations.createIndex({ date: -1 });
+    
+    // Create bulk operations collection
+    db.createCollection('bulk_operations');
+    db.bulk_operations.createIndex({ userId: 1, createdAt: -1 });
+    db.bulk_operations.createIndex({ status: 1 });
+    db.bulk_operations.createIndex({ type: 1 });
+    
+    print('MongoDB initialization completed successfully');

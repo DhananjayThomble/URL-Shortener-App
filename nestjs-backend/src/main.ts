@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import * as compression from 'compression';
 
@@ -9,11 +8,15 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { RequestTrackingInterceptor } from './common/interceptors/request-tracking.interceptor';
+import { ApiVersioningInterceptor } from './common/interceptors/api-versioning.interceptor';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { CustomValidationPipe } from './common/pipes/validation.pipe';
 import { SanitizationPipe } from './common/pipes/sanitization.pipe';
 import { GracefulShutdownService } from './common/services/graceful-shutdown.service';
+import { SwaggerConfig } from './config/swagger.config';
+import { EnvironmentValidationService } from './config/environment-validation.service';
+import { SecretsManagementService } from './config/secrets-management.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -23,51 +26,75 @@ async function bootstrap() {
   });
   
   const configService = app.get(ConfigService);
+  const envValidationService = app.get(EnvironmentValidationService);
+  const secretsService = app.get(SecretsManagementService);
   const logger = new Logger('Bootstrap');
-  const isProduction = configService.get('NODE_ENV') === 'production';
+  
+  // Get environment configuration
+  const envConfig = envValidationService.getEnvironmentConfig();
+  const securityConfig = envValidationService.getSecurityConfig();
+  const featureFlags = envValidationService.getFeatureFlags();
+  
+  logger.log(`🌍 Starting application in ${envConfig.environment} mode`);
+
+  // Validate secrets before startup
+  try {
+    secretsService.validateApplicationSecrets();
+    secretsService.logSecretsAudit();
+  } catch (error) {
+    logger.error('Secrets validation failed:', error.message);
+    if (envConfig.isProduction) {
+      process.exit(1);
+    }
+  }
 
   // Enable graceful shutdown
   const gracefulShutdownService = app.get(GracefulShutdownService);
   app.enableShutdownHooks();
 
-  // Security middleware
-  app.use(helmet({
-    contentSecurityPolicy: isProduction ? {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'"],
-        imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'"],
-        fontSrc: ["'self'"],
-        objectSrc: ["'none'"],
-        mediaSrc: ["'self'"],
-        frameSrc: ["'none'"],
-      },
-    } : false,
-    hsts: isProduction ? {
-      maxAge: 31536000,
-      includeSubDomains: true,
-      preload: true,
-    } : false,
-  }));
+  // Security middleware (only if enabled)
+  if (featureFlags.helmet) {
+    app.use(helmet({
+      contentSecurityPolicy: envConfig.isProduction ? {
+        directives: {
+          defaultSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'"],
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          mediaSrc: ["'self'"],
+          frameSrc: ["'none'"],
+        },
+      } : false,
+      hsts: envConfig.isProduction ? {
+        maxAge: securityConfig.headers.hstsMaxAge,
+        includeSubDomains: true,
+        preload: true,
+      } : false,
+    }));
+  }
 
-  app.use(compression({
-    filter: (req, res) => {
-      if (req.headers['x-no-compression']) {
-        return false;
-      }
-      return compression.filter(req, res);
-    },
-    level: 6,
-    threshold: 1024,
-  }));
+  // Compression middleware (only if enabled)
+  if (featureFlags.compression) {
+    app.use(compression({
+      filter: (req, res) => {
+        if (req.headers['x-no-compression']) {
+          return false;
+        }
+        return compression.filter(req, res);
+      },
+      level: 6,
+      threshold: 1024,
+    }));
+  }
 
   // Global configuration
-  app.setGlobalPrefix(configService.get('API_PREFIX', 'api/v1'));
+  app.setGlobalPrefix(configService.get('apiPrefix', 'api/v1'));
   
   // Trust proxy in production (for proper IP detection behind load balancer)
-  if (isProduction) {
+  if (envConfig.isProduction) {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
 
@@ -82,60 +109,54 @@ async function bootstrap() {
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
     app.get(RequestTrackingInterceptor),
+    new ApiVersioningInterceptor(),
   );
 
-  // CORS configuration
-  const corsOrigins = configService.get('CORS_ORIGIN', 'http://localhost:3001').split(',');
-  app.enableCors({
-    origin: isProduction ? corsOrigins : true,
-    credentials: configService.get('CORS_CREDENTIALS', 'true') === 'true',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Trace-ID'],
-    exposedHeaders: ['X-Request-ID', 'X-Trace-ID'],
-  });
-
-  // Swagger documentation (disabled in production for security)
-  if (!isProduction) {
-    const config = new DocumentBuilder()
-      .setTitle('URL Shortener API')
-      .setDescription('Enterprise URL Shortener built with NestJS')
-      .setVersion(configService.get('APP_VERSION', '1.0.0'))
-      .addBearerAuth()
-      .addTag('auth', 'Authentication endpoints')
-      .addTag('urls', 'URL management endpoints')
-      .addTag('users', 'User management endpoints')
-      .addTag('admin', 'Admin endpoints')
-      .addTag('analytics', 'Analytics endpoints')
-      .addTag('monitoring', 'Health checks and metrics')
-      .addTag('cache', 'Cache management')
-      .addServer(configService.get('BASE_URL', 'http://localhost:3000'))
-      .build();
-
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('docs', app, document, {
-      swaggerOptions: {
-        persistAuthorization: true,
-        displayRequestDuration: true,
-      },
+  // CORS configuration (only if enabled)
+  if (featureFlags.cors) {
+    const corsOrigin = securityConfig.cors.origin;
+    app.enableCors({
+      origin: envConfig.isProduction ? corsOrigin : true,
+      credentials: securityConfig.cors.credentials,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Trace-ID'],
+      exposedHeaders: ['X-Request-ID', 'X-Trace-ID'],
     });
   }
 
-  // Configure timeouts
-  const server = await app.listen(configService.get('PORT', 3000));
-  server.keepAliveTimeout = configService.get('KEEP_ALIVE_TIMEOUT', 5000);
-  server.headersTimeout = configService.get('KEEP_ALIVE_TIMEOUT', 5000) + 1000;
+  // Enhanced Swagger documentation (only if enabled)
+  if (featureFlags.swagger) {
+    SwaggerConfig.setup(app, configService);
+  }
 
-  const port = configService.get('PORT', 3000);
-  const baseUrl = configService.get('BASE_URL', `http://localhost:${port}`);
+  // Configure timeouts
+  const port = configService.get('port', 3000);
+  const server = await app.listen(port);
   
+  const performanceConfig = configService.get('performance', {});
+  server.keepAliveTimeout = performanceConfig.keepAliveTimeout || 5000;
+  server.headersTimeout = (performanceConfig.keepAliveTimeout || 5000) + 1000;
+
+  const baseUrl = configService.get('baseUrl', `http://localhost:${port}`);
+  
+  // Startup logging
   logger.log(`🚀 Application is running on: ${baseUrl}`);
-  logger.log(`🌍 Environment: ${configService.get('NODE_ENV', 'development')}`);
+  logger.log(`🌍 Environment: ${envConfig.environment}`);
   logger.log(`📊 Health checks: ${baseUrl}/health`);
-  logger.log(`📈 Metrics: ${baseUrl}/metrics`);
   
-  if (!isProduction) {
+  if (featureFlags.metrics) {
+    logger.log(`📈 Metrics: ${baseUrl}/metrics`);
+  }
+  
+  if (featureFlags.swagger && !envConfig.isProduction) {
     logger.log(`📚 API Documentation: ${baseUrl}/docs`);
   }
+
+  // Log feature flags status
+  logger.log('🎛️  Feature flags:');
+  Object.entries(featureFlags).forEach(([key, value]) => {
+    logger.log(`   ${key}: ${value ? '✅' : '❌'}`);
+  });
 
   // Log startup completion
   logger.log('✅ Application startup completed successfully');

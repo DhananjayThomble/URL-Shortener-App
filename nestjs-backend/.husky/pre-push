@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Run tests before pushing
+echo "🧪 Running tests before push..."
+npm run test:ci
+
+# Check for TypeScript compilation errors
+echo "🔍 Checking TypeScript compilation..."
+npm run build
+
+echo "✅ Pre-push checks passed!"

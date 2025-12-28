@@ -12,6 +12,9 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { CacheService } from '../../common/services/cache.service';
 import { EmailService } from '../../common/services/email.service';
+import { EnhancedJwtService } from './services/enhanced-jwt.service';
+import { EmailVerificationService } from './services/email-verification.service';
+import { PasswordResetService } from './services/password-reset.service';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +27,9 @@ export class AuthService {
     private configService: ConfigService,
     private cacheService: CacheService,
     private emailService: EmailService,
+    private enhancedJwtService: EnhancedJwtService,
+    private emailVerificationService: EmailVerificationService,
+    private passwordResetService: PasswordResetService,
   ) { }
 
   async validateUser(email: string, password: string): Promise<User | null> {
@@ -70,22 +76,17 @@ export class AuthService {
 
       this.logger.debug(`User validated successfully: ${user.id}`);
 
-      const payload = {
+      // Generate token pair using enhanced JWT service
+      const tokenPair = await this.enhancedJwtService.generateTokenPair({
         sub: user.id,
         email: user.email,
-        role: user.role
-      };
-
-      const accessToken = this.jwtService.sign(payload);
-      const refreshToken = this.jwtService.sign(payload, {
-        secret: this.configService.get('JWT_REFRESH_SECRET'),
-        expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN', '7d'),
+        role: user.role,
       });
 
       this.logger.debug(`Tokens generated for user: ${user.id}`);
 
-      // Store refresh token in database
-      await this.refreshTokenService.createRefreshToken(user.id, refreshToken);
+      // Store refresh token in database (for additional security layer)
+      await this.refreshTokenService.createRefreshToken(user.id, tokenPair.refreshToken);
 
       // Cache user session data for quick access
       const sessionData = {
@@ -101,8 +102,10 @@ export class AuthService {
       this.logger.log(`Login successful for user: ${user.email}`);
 
       return {
-        access_token: accessToken,
-        refresh_token: refreshToken,
+        access_token: tokenPair.accessToken,
+        refresh_token: tokenPair.refreshToken,
+        expires_at: tokenPair.accessTokenExpires,
+        refresh_expires_at: tokenPair.refreshTokenExpires,
         user: sessionData,
       };
     } catch (error) {
@@ -116,34 +119,77 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto) {
-    const existingUser = await this.usersService.findByEmail(registerDto.email);
-    if (existingUser) {
-      throw new UnauthorizedException('User already exists');
+    try {
+      const existingUser = await this.usersService.findByEmail(registerDto.email);
+      if (existingUser) {
+        throw new UnauthorizedException('User already exists');
+      }
+
+      const hashedPassword = await this.hashPassword(registerDto.password);
+      const user = await this.usersService.create({
+        ...registerDto,
+        passwordHash: hashedPassword,
+      });
+
+      // Send verification email
+      try {
+        await this.emailVerificationService.sendVerificationEmail(user.id, user.email);
+        this.logger.log(`Verification email sent to new user: ${user.email}`);
+      } catch (emailError) {
+        this.logger.warn(`Failed to send verification email to ${user.email}:`, emailError.message);
+        // Don't fail registration if email sending fails
+      }
+
+      // Generate tokens for immediate login
+      const tokenPair = await this.enhancedJwtService.generateTokenPair({
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      // Store refresh token in database
+      await this.refreshTokenService.createRefreshToken(user.id, tokenPair.refreshToken);
+
+      // Cache user session data
+      const sessionData = {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        lastLogin: new Date(),
+      };
+
+      await this.cacheService.cacheUserSession(user.id, sessionData, 900); // 15 minutes TTL
+
+      this.logger.log(`User registered successfully: ${user.email}`);
+
+      return {
+        access_token: tokenPair.accessToken,
+        refresh_token: tokenPair.refreshToken,
+        expires_at: tokenPair.accessTokenExpires,
+        refresh_expires_at: tokenPair.refreshTokenExpires,
+        user: sessionData,
+        message: 'Registration successful. Please check your email to verify your account.',
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      this.logger.error(`Registration error for ${registerDto.email}:`, error.stack);
+      throw new InternalServerErrorException('Registration failed. Please try again.');
     }
-
-    const hashedPassword = await this.hashPassword(registerDto.password);
-    const user = await this.usersService.create({
-      ...registerDto,
-      passwordHash: hashedPassword,
-    });
-
-    return this.login({ email: user.email, password: registerDto.password });
   }
 
   async refreshToken(refreshToken: string) {
     try {
-      const payload = this.jwtService.verify(refreshToken, {
-        secret: this.configService.get('JWT_REFRESH_SECRET'),
-      });
+      // Use enhanced JWT service to refresh token
+      const result = await this.enhancedJwtService.refreshAccessToken(refreshToken);
 
-      const user = await this.usersService.findById(payload.sub);
-      if (!user) {
-        throw new UnauthorizedException('Invalid refresh token');
-      }
-
-      // Validate refresh token in database
+      // Validate refresh token in database as additional security layer
+      const payload = await this.enhancedJwtService.verifyToken(refreshToken, 'refresh');
       const isValidToken = await this.refreshTokenService.validateRefreshToken(
-        user.id,
+        payload.sub,
         refreshToken,
       );
 
@@ -151,32 +197,44 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
-      const newPayload = {
-        sub: user.id,
-        email: user.email,
-        role: user.role
-      };
-
       return {
-        access_token: this.jwtService.sign(newPayload),
+        access_token: result.accessToken,
+        expires_at: result.accessTokenExpires,
       };
     } catch (error) {
+      this.logger.warn(`Refresh token failed: ${error.message}`);
       throw new UnauthorizedException('Invalid refresh token');
     }
   }
 
-  async logout(userId: string, refreshToken: string): Promise<void> {
-    await this.refreshTokenService.revokeRefreshToken(userId, refreshToken);
+  async logout(userId: string, refreshToken?: string): Promise<void> {
+    // Blacklist all user tokens using enhanced JWT service
+    await this.enhancedJwtService.blacklistAllUserTokens(userId);
+
+    // Also revoke refresh tokens in database
+    if (refreshToken) {
+      await this.refreshTokenService.revokeRefreshToken(userId, refreshToken);
+    } else {
+      await this.refreshTokenService.revokeAllUserTokens(userId);
+    }
 
     // Clear user session from cache
     await this.cacheService.invalidateUserSession(userId);
+
+    this.logger.log(`User logged out: ${userId}`);
   }
 
   async logoutAll(userId: string): Promise<void> {
+    // Blacklist all user tokens
+    await this.enhancedJwtService.blacklistAllUserTokens(userId);
+    
+    // Revoke all refresh tokens in database
     await this.refreshTokenService.revokeAllUserTokens(userId);
 
     // Clear all user-related cache data
     await this.cacheService.invalidateUserCache(userId);
+
+    this.logger.log(`All sessions logged out for user: ${userId}`);
   }
 
   async hashPassword(password: string): Promise<string> {
@@ -222,73 +280,11 @@ export class AuthService {
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<{ message: string }> {
-    try {
-      this.logger.debug(`Password reset requested for: ${forgotPasswordDto.email}`);
-
-      const user = await this.usersService.findByEmail(forgotPasswordDto.email);
-      if (!user) {
-        // Don't reveal if email exists or not for security
-        this.logger.warn(`Password reset requested for non-existent email: ${forgotPasswordDto.email}`);
-        return { message: 'If the email exists, a password reset link has been sent.' };
-      }
-
-      // Generate secure reset token
-      const resetToken = this.generateResetToken();
-      const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
-
-      // Save reset token to user
-      await this.usersService.updatePasswordResetToken(user.id, resetToken, resetExpires);
-
-      // Send reset email
-      await this.emailService.sendPasswordResetEmail(user.email, resetToken);
-
-      this.logger.log(`Password reset email sent to: ${user.email}`);
-      return { message: 'If the email exists, a password reset link has been sent.' };
-    } catch (error) {
-      this.logger.error(`Error in forgotPassword for ${forgotPasswordDto.email}:`, error.stack);
-      throw new InternalServerErrorException('Failed to process password reset request. Please try again.');
-    }
+    return this.passwordResetService.requestPasswordReset(forgotPasswordDto.email);
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
-    try {
-      this.logger.debug(`Password reset attempt with token: ${resetPasswordDto.token.substring(0, 8)}...`);
-
-      const user = await this.usersService.findByPasswordResetToken(resetPasswordDto.token);
-      if (!user) {
-        this.logger.warn(`Invalid reset token used: ${resetPasswordDto.token.substring(0, 8)}...`);
-        throw new UnauthorizedException('Invalid or expired reset token');
-      }
-
-      // Check if token is expired
-      if (!user.passwordResetExpires || user.passwordResetExpires < new Date()) {
-        this.logger.warn(`Expired reset token used for user: ${user.email}`);
-        throw new UnauthorizedException('Invalid or expired reset token');
-      }
-
-      // Hash new password
-      const hashedPassword = await this.hashPassword(resetPasswordDto.newPassword);
-
-      // Update password and clear reset token
-      await this.usersService.updatePassword(user.id, hashedPassword);
-      await this.usersService.clearPasswordResetToken(user.id);
-
-      // Invalidate all refresh tokens for security
-      await this.refreshTokenService.revokeAllUserTokens(user.id);
-
-      // Clear user session cache
-      await this.cacheService.invalidateUserCache(user.id);
-
-      this.logger.log(`Password reset successful for user: ${user.email}`);
-      return { message: 'Password has been reset successfully. Please log in with your new password.' };
-    } catch (error) {
-      if (error instanceof UnauthorizedException) {
-        throw error;
-      }
-
-      this.logger.error(`Error in resetPassword:`, error.stack);
-      throw new InternalServerErrorException('Failed to reset password. Please try again.');
-    }
+    return this.passwordResetService.resetPassword(resetPasswordDto.token, resetPasswordDto.newPassword);
   }
 
   private generateResetToken(): string {
@@ -331,7 +327,8 @@ export class AuthService {
       // Update password
       await this.usersService.updatePassword(user.id, hashedPassword);
 
-      // Invalidate all refresh tokens for security
+      // Blacklist all user tokens and invalidate refresh tokens for security
+      await this.enhancedJwtService.blacklistAllUserTokens(user.id);
       await this.refreshTokenService.revokeAllUserTokens(user.id);
 
       // Clear user session cache
@@ -347,5 +344,34 @@ export class AuthService {
       this.logger.error(`Error in changePassword:`, error.stack);
       throw new InternalServerErrorException('Failed to change password. Please try again.');
     }
+  }
+
+  /**
+   * Blacklist a specific token
+   */
+  async blacklistToken(token: string): Promise<void> {
+    await this.enhancedJwtService.blacklistToken(token);
+    this.logger.debug('Token blacklisted successfully');
+  }
+
+  /**
+   * Get active tokens for a user
+   */
+  async getUserActiveTokens(userId: string) {
+    return this.enhancedJwtService.getUserActiveTokens(userId);
+  }
+
+  /**
+   * Verify password reset token
+   */
+  async verifyResetToken(token: string) {
+    return this.passwordResetService.verifyResetToken(token);
+  }
+
+  /**
+   * Get password reset status for an email
+   */
+  async getPasswordResetStatus(email: string) {
+    return this.passwordResetService.getResetStatus(email);
   }
 }

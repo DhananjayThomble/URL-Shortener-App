@@ -1,36 +1,171 @@
 version: '3.8'
 
+# Development-only services for local development
 services:
-  # Development databases only
+  # PostgreSQL Database for Development
   postgres:
     image: postgres:15-alpine
+    container_name: postgres-dev-only
     environment:
       POSTGRES_DB: url_shortener_dev
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     ports:
       - "5432:5432"
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
+      - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c log_statement=all
+      -c log_destination=stderr
+      -c log_min_duration_statement=0
+      -c shared_preload_libraries=pg_stat_statements
 
+  # MongoDB Database for Development
   mongo:
     image: mongo:7-jammy
+    container_name: mongodb-dev-only
     environment:
       MONGO_INITDB_DATABASE: url_shortener_dev
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
     ports:
       - "27017:27017"
     volumes:
       - mongo_dev_data:/data/db
+      - ./scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/url_shortener_dev --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    command: >
+      mongod
+      --profile=2
+      --slowms=100
+      --logpath=/var/log/mongodb/mongod.log
+      --logappend
 
+  # Redis Cache for Development
   redis:
     image: redis:7-alpine
+    container_name: redis-dev-only
     ports:
       - "6379:6379"
     volumes:
       - redis_dev_data:/data
-    command: redis-server --appendonly yes
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - dev-network
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf --loglevel verbose
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Test Database - Separate PostgreSQL instance for testing
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: postgres-test
+    environment:
+      POSTGRES_DB: url_shortener_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Test MongoDB - Separate MongoDB instance for testing
+  mongo-test:
+    image: mongo:7-jammy
+    container_name: mongodb-test
+    environment:
+      MONGO_INITDB_DATABASE: url_shortener_test
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_test_data:/data/db
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/url_shortener_test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # Test Redis - Separate Redis instance for testing
+  redis-test:
+    image: redis:7-alpine
+    container_name: redis-test
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_test_data:/data
+    networks:
+      - dev-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes --loglevel verbose
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # MailHog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog-dev
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - dev-network
+    restart: unless-stopped
 
 volumes:
   postgres_dev_data:
+    driver: local
   mongo_dev_data:
+    driver: local
   redis_dev_data:
+    driver: local
+  postgres_test_data:
+    driver: local
+  mongo_test_data:
+    driver: local
+  redis_test_data:
+    driver: local
+
+networks:
+  dev-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
