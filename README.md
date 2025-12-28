@@ -1,21 +1,31 @@
 # SnapURL: The Beginner-Friendly URL Shortener
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/DhananjayThomble/URL-Shortener-App?quickstart=1)
+
 SnapURL is an open-source URL shortener web application and chrome-extension. It simplifies the process of converting long URLs into short and shareable links.
+
+> **🚀 Quick Start with Codespaces**: Click the badge above for a fully configured development environment in 90 seconds - no local setup required! [Learn more](./.devcontainer/README.md)
 
 ## 📚 Documentation
 
 This repository contains comprehensive documentation for developers and AI coding tools:
 
-- **[Frontend Documentation](./nextjs-frontend/README.md)** - Complete Next.js 15 frontend guide
+- **[Frontend Documentation](./frontend/README.md)** - Complete React + Vite frontend guide
   - Setup instructions, environment configuration, API integration
   - Component architecture, state management, routing
   - Testing, deployment, and troubleshooting
   
-- **[Backend Documentation](./nestjs-backend/README.md)** - Complete NestJS 10 backend guide
+- **[Backend Documentation](./backend/README.md)** - Complete NestJS 10 backend guide
   - Setup instructions, database architecture, API endpoints
   - Security features, monitoring, testing
   - Deployment guides (Docker, AWS, Heroku)
   - Comprehensive troubleshooting section
+
+- **[Codespaces Guide](./.devcontainer/README.md)** - GitHub Codespaces development
+  - One-click development environment setup
+  - Full Docker stack with all services
+  - VS Code extensions and configurations
+  - Database access and development workflows
 
 ## 📋 Quick Links
 
@@ -102,7 +112,7 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
 - Helmet.js - Security headers
 - class-validator - Request validation
 
-**See [Backend README](./nestjs-backend/README.md) for complete tech stack details.**
+**See [Backend README](./backend/README.md) for complete tech stack details.**
 
 ### Frontend (Next.js)
 
@@ -123,7 +133,7 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
 - React Hook Form - Form management
 - Zod - Schema validation
 
-**See [Frontend README](./nextjs-frontend/README.md) for complete tech stack details.**
+**See [Frontend README](./frontend/README.md) for complete tech stack details.**
 
 ### Chrome Extension
 
@@ -135,7 +145,7 @@ We have exciting plans to enhance SnapURL in the future, making it even more rob
 
 ```
 URL-Shortener-App/
-├── nextjs-frontend/          # Next.js 15 frontend application
+├── frontend/          # Next.js 15 frontend application
 │   ├── src/
 │   │   ├── app/             # Next.js App Router pages
 │   │   ├── components/      # Reusable React components
@@ -148,7 +158,7 @@ URL-Shortener-App/
 │   ├── package.json
 │   └── README.md            # 📖 Comprehensive frontend documentation
 │
-├── nestjs-backend/           # NestJS 10 backend API
+├── backend/           # NestJS 10 backend API
 │   ├── src/
 │   │   ├── modules/         # Feature modules
 │   │   │   ├── auth/       # Authentication (JWT, email verification)
@@ -180,9 +190,9 @@ URL-Shortener-App/
 
 ### Key Directories
 
-- **`nextjs-frontend/`**: Complete Next.js frontend with Material-UI, Tailwind, and TypeScript. Includes authentication, URL management, analytics dashboard, and QR code generation.
+- **`frontend/`**: Complete Next.js frontend with Material-UI, Tailwind, and TypeScript. Includes authentication, URL management, analytics dashboard, and QR code generation.
 
-- **`nestjs-backend/`**: Enterprise-grade NestJS API with hybrid database architecture (PostgreSQL, MongoDB, Redis). Implements JWT authentication, RBAC, rate limiting, and comprehensive monitoring.
+- **`backend/`**: Enterprise-grade NestJS API with hybrid database architecture (PostgreSQL, MongoDB, Redis). Implements JWT authentication, RBAC, rate limiting, and comprehensive monitoring.
 
 - **`chrome-extension/`**: Browser extension for quick URL shortening directly from any webpage.
 
@@ -190,7 +200,26 @@ For detailed documentation on each component, see their respective README files.
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### Option 1: GitHub Codespaces (Fastest - Recommended)
+
+**Zero setup required!** Get a fully configured cloud development environment in 90 seconds:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/DhananjayThomble/URL-Shortener-App?quickstart=1)
+
+**What's included:**
+- ✅ Full Docker stack (PostgreSQL, MongoDB, Redis, Backend API)
+- ✅ All npm dependencies pre-installed
+- ✅ VS Code extensions configured
+- ✅ Environment files auto-generated
+- ✅ Admin tools (pgAdmin, Mongo Express, Redis Commander)
+
+**See the [Codespaces Guide](./.devcontainer/README.md) for complete documentation.**
+
+---
+
+### Option 2: Local Setup
+
+#### Prerequisites
 
 Before you begin, ensure you have:
 
@@ -203,7 +232,7 @@ Before you begin, ensure you have:
 
 ### Quick Start (Using Docker - Recommended)
 
-The fastest way to get the entire application running:
+The fastest way to get the entire application running locally:
 
 ```bash
 # Clone the repository
@@ -211,12 +240,12 @@ git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
 cd URL-Shortener-App
 
 # Start backend with Docker (includes all databases)
-cd nestjs-backend
+cd backend
 docker-compose up -d
 cd ..
 
 # Install and start frontend
-cd nextjs-frontend
+cd frontend
 npm install
 npm run dev
 ```
@@ -240,7 +269,7 @@ cd URL-Shortener-App
 #### 2. Setup Backend
 
 ```bash
-cd nestjs-backend
+cd backend
 
 # Install dependencies
 npm install
@@ -258,12 +287,12 @@ npm run start:dev
 
 **Backend will run on http://localhost:3000**
 
-See [Backend README](./nestjs-backend/README.md) for detailed setup instructions.
+See [Backend README](./backend/README.md) for detailed setup instructions.
 
 #### 3. Setup Frontend
 
 ```bash
-cd nextjs-frontend
+cd frontend
 
 # Install dependencies
 npm install
@@ -278,7 +307,7 @@ npm run dev
 
 **Frontend will run on http://localhost:3001**
 
-See [Frontend README](./nextjs-frontend/README.md) for detailed setup instructions.
+See [Frontend README](./frontend/README.md) for detailed setup instructions.
 
 #### 4. Setup Chrome Extension (Optional)
 
@@ -333,14 +362,14 @@ The application is deployed on:
 
 For detailed deployment instructions:
 
-- **Backend Deployment**: See [Backend README - Deployment Section](./nestjs-backend/README.md#-building--deployment)
+- **Backend Deployment**: See [Backend README - Deployment Section](./backend/README.md#-building--deployment)
   - Docker deployment
   - AWS EC2 setup
   - Heroku deployment
   - DigitalOcean App Platform
   - CI/CD pipeline setup
 
-- **Frontend Deployment**: See [Frontend README - Deployment Section](./nextjs-frontend/README.md#-building--deployment)
+- **Frontend Deployment**: See [Frontend README - Deployment Section](./frontend/README.md#-building--deployment)
   - Vercel deployment
   - Netlify deployment
   - Docker deployment
@@ -371,8 +400,8 @@ SnapURL welcomes contributions from the community! Whether you're fixing bugs, a
 
 ### Component-Specific Guidelines
 
-- **Frontend**: See [Frontend Contributing Guide](./nextjs-frontend/README.md#-contributing)
-- **Backend**: See [Backend Contributing Guide](./nestjs-backend/README.md#-contributing)
+- **Frontend**: See [Frontend Contributing Guide](./frontend/README.md#-contributing)
+- **Backend**: See [Backend Contributing Guide](./backend/README.md#-contributing)
 
 ### Areas Where You Can Help
 
@@ -388,8 +417,8 @@ SnapURL welcomes contributions from the community! Whether you're fixing bugs, a
 ## 📚 Additional Resources
 
 - **Documentation**:
-  - [Frontend README](./nextjs-frontend/README.md) - Complete frontend guide
-  - [Backend README](./nestjs-backend/README.md) - Complete backend guide
+  - [Frontend README](./frontend/README.md) - Complete frontend guide
+  - [Backend README](./backend/README.md) - Complete backend guide
   - [Wiki](https://github.com/DhananjayThomble/URL-Shortener-App/wiki) - Project wiki
   
 - **Development**:

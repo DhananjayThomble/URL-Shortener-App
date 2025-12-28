@@ -1,0 +1,153 @@
+{
+  "name": "SnapURL 2.0 - Full Stack",
+  "dockerComposeFile": "../backend/docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/app",
+  "runServices": [
+    "postgres",
+    "mongo",
+    "redis",
+    "app",
+    "mongo-express",
+    "pgadmin",
+    "redis-commander",
+    "prometheus"
+  ],
+  
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "firsttris.vscode-jest-runner",
+        "ms-vscode.vscode-typescript-next",
+        "dsznajder.es7-react-js-snippets",
+        "bradlc.vscode-tailwindcss",
+        "mongodb.mongodb-vscode",
+        "cweijan.vscode-postgresql-client2",
+        "cweijan.vscode-redis-client",
+        "github.copilot",
+        "github.copilot-chat",
+        "humao.rest-client",
+        "42crunch.vscode-openapi",
+        "ms-azuretools.vscode-docker",
+        "eamodio.gitlens",
+        "gruntfuggly.todo-tree",
+        "wayou.vscode-todo-highlight",
+        "aaron-bond.better-comments",
+        "usernamehw.errorlens",
+        "christian-kohler.path-intellisense",
+        "formulahendry.auto-rename-tag",
+        "mikestead.dotenv"
+      ],
+      
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "typescript.enablePromptUseWorkspaceTsdk": true,
+        "files.exclude": {
+          "**/node_modules": true,
+          "**/dist": true,
+          "**/.next": true
+        },
+        "search.exclude": {
+          "**/node_modules": true,
+          "**/dist": true,
+          "**/.next": true
+        },
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "git.autofetch": true,
+        "git.confirmSync": false
+      }
+    }
+  },
+
+  "forwardPorts": [
+    3000,
+    5173,
+    5432,
+    27017,
+    6379,
+    8080,
+    8081,
+    8082,
+    9090,
+    9091
+  ],
+
+  "portsAttributes": {
+    "3000": {
+      "label": "Backend API",
+      "onAutoForward": "notify",
+      "visibility": "public"
+    },
+    "5173": {
+      "label": "Frontend Vite",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "5432": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    },
+    "27017": {
+      "label": "MongoDB",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    },
+    "6379": {
+      "label": "Redis",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    },
+    "8080": {
+      "label": "pgAdmin",
+      "onAutoForward": "notify",
+      "visibility": "public"
+    },
+    "8081": {
+      "label": "Mongo Express",
+      "onAutoForward": "notify",
+      "visibility": "public"
+    },
+    "8082": {
+      "label": "Redis Commander",
+      "onAutoForward": "notify",
+      "visibility": "public"
+    },
+    "9090": {
+      "label": "Prometheus Metrics",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    },
+    "9091": {
+      "label": "Prometheus UI",
+      "onAutoForward": "notify",
+      "visibility": "public"
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+
+  "remoteUser": "nestjs"
+}
