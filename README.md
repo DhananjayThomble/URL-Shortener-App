@@ -1,39 +1,73 @@
 # SnapURL: The Beginner-Friendly URL Shortener
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/DhananjayThomble/URL-Shortener-App?quickstart=1)
+[![GitHub Stars](https://img.shields.io/github/stars/DhananjayThomble/URL-Shortener-App?style=social)](https://github.com/DhananjayThomble/URL-Shortener-App/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](./CHANGELOG.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-SnapURL is an open-source URL shortener web application and chrome-extension. It simplifies the process of converting long URLs into short and shareable links.
+SnapURL is a modern, enterprise-grade URL shortener built with NestJS v10 and React. It simplifies the process of converting long URLs into short, shareable links with advanced analytics and security features.
 
 > **🚀 Quick Start with Codespaces**: Click the badge above for a fully configured development environment in 90 seconds - no local setup required! [Learn more](./.devcontainer/README.md)
 
-## 📚 Documentation
+## 🏗️ Architecture Overview
 
-This repository contains comprehensive documentation for developers and AI coding tools:
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                      SnapURL 2.0 Architecture                      │
+└────────────────────────────────────────────────────────────────────┘
 
-- **[Frontend Documentation](./frontend/README.md)** - Complete React + Vite frontend guide
-  - Setup instructions, environment configuration, API integration
-  - Component architecture, state management, routing
-  - Testing, deployment, and troubleshooting
-  
-- **[Backend Documentation](./backend/README.md)** - Complete NestJS 10 backend guide
-  - Setup instructions, database architecture, API endpoints
-  - Security features, monitoring, testing
-  - Deployment guides (Docker, AWS, Heroku)
-  - Comprehensive troubleshooting section
+ ┌─────────────┐         ┌──────────────┐         ┌─────────────┐
+ │   Browser   │ ◄─────► │   Frontend   │ ◄─────► │   Backend   │
+ │   Clients   │  HTTPS  │ React + Vite │   API   │  NestJS 10  │
+ └─────────────┘         └──────────────┘         └──────┬──────┘
+                                                          │
+                         ┌────────────────────────────────┤
+                         │                │               │
+                    ┌────▼─────┐    ┌────▼────┐    ┌────▼────┐
+                    │PostgreSQL│    │ MongoDB │    │  Redis  │
+                    │  Users   │    │  URLs   │    │  Cache  │
+                    └──────────┘    └─────────┘    └─────────┘
 
-- **[Codespaces Guide](./.devcontainer/README.md)** - GitHub Codespaces development
-  - One-click development environment setup
-  - Full Docker stack with all services
-  - VS Code extensions and configurations
-  - Database access and development workflows
+Key Components:
+• Frontend:  React 19 + Vite + TypeScript + Tailwind CSS
+• Backend:   NestJS 10 + TypeScript + Node.js 18+
+• Databases: PostgreSQL (users) + MongoDB (URLs) + Redis (cache)
+• Deploy:    Netlify (frontend) + AWS EC2 (backend)
+```
+
+## 📚 Documentation Hub
+
+### 📖 Core Documentation (`docs/`)
+
+Comprehensive guides for developers and AI coding tools:
+
+| Document | Description |
+|----------|-------------|
+| **[Architecture](./docs/ARCHITECTURE.md)** | System architecture, component breakdown, data flow |
+| **[API Reference](./docs/API.md)** | Complete API endpoints, authentication, rate limits |
+| **[Development](./docs/DEVELOPMENT.md)** | Workflow, branch strategy, component-specific guidelines |
+| **[Deployment](./docs/DEPLOYMENT.md)** | Production deployment guides (AWS, Netlify, Docker) |
+| **[Security](./docs/SECURITY.md)** | Security practices, vulnerability reporting |
+| **[Database](./docs/DATABASE.md)** | PostgreSQL, MongoDB, Redis architecture and management |
+| **[Testing](./docs/TESTING.md)** | Unit, integration, E2E testing strategies |
+| **[Troubleshooting](./docs/TROUBLESHOOTING.md)** | Common issues and solutions |
+| **[Chrome Extension](./docs/CHROME_EXTENSION.md)** | Browser extension specification |
+
+### 🎯 Component Documentation
+
+- **[Frontend Documentation](./frontend/README.md)** - Complete React + Vite guide with setup, architecture, and deployment
+- **[Backend Documentation](./backend/README.md)** - Complete NestJS 10 guide with API docs, security, and monitoring
+- **[Codespaces Guide](./.devcontainer/README.md)** - One-click development environment with full Docker stack
 
 ## 📋 Quick Links
 
-- **Live Application**: [https://app.snapurl.in](https://app.snapurl.in)
-- **API Documentation**: [https://snapurl.in/doc](https://snapurl.in/doc)
-- **Chrome Extension**: Available in the `chrome-extension/` directory
-- **Contributing Guide**: [CONTRIBUTING.md](./CONTRIBUTING.md)
-- **Code of Conduct**: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+| Category | Links |
+|----------|-------|
+| **Application** | [Live App](https://app.snapurl.in) • [API Docs](https://snapurl.in/doc) |
+| **Documentation** | [Architecture](./docs/ARCHITECTURE.md) • [API](./docs/API.md) • [Development](./docs/DEVELOPMENT.md) • [Deployment](./docs/DEPLOYMENT.md) |
+| **Community** | [Contributing](./CONTRIBUTING.md) • [Code of Conduct](./CODE_OF_CONDUCT.md) • [Roadmap](./ROADMAP.md) |
+| **Resources** | [Security Policy](./SECURITY.md) • [Changelog](./CHANGELOG.md) • [License](./LICENSE) |
 
 ## Features
 
@@ -53,43 +87,35 @@ This repository contains comprehensive documentation for developers and AI codin
 - Export Generated URLs to Excel file.
 - Chrome extension for URL shortening.
 
-## Future Plans
+## 🚀 Roadmap
 
-We have exciting plans to enhance SnapURL in the future, making it even more robust and user-friendly. Our upcoming features include:
+See [ROADMAP.md](./ROADMAP.md) for detailed 2025 quarterly goals and long-term vision.
 
-### User Profile Enhancements
-- [ ] **User Profile Visibility**: Choose whether your profile is public or private.
-- [ ] **User Profile Page**: Display user's name, profile picture, bio, and a summary of their URL activity.
-- [ ] **User Analytics**: View statistics for the links shared, including total clicks and views.
+### 2025 Q1 Highlights
+- [ ] Chrome Extension MVP
+- [ ] Progressive Web App (PWA)
+- [ ] API Rate Limit Dashboard
 
-### Advanced URL Management
-- [x] **Categories for Short URLs**: Organize shortened links into categories for better management.
-- [ ] **Bundled URLs**: Group multiple URLs into a single bundled link for easy sharing.
-- [ ] **Password Protection**: Add password protection to specific URLs for added security.
+### 2025 Q2 Highlights
+- [ ] Custom Domain Support
+- [ ] Bundled URLs
+- [ ] Link Expiration
+- [ ] Password-Protected URLs
 
-### Analytics and Reporting
-- [ ] **User Analytics Dashboard**: Provide users with an analytics dashboard to monitor their URL performance.
-- [ ] **User Notifications**: Notify users when their URLs reach a certain number of clicks or other milestones.
-- [ ] **Link Expiry**: Allow users to set an expiration date for their URLs.
-
-### Integration and Sharing
-- [x] **Browser Extensions**: Develop browser extensions for quick URL shortening and management.
-- [ ] **Custom Domains**: Enable users to use custom domains for branded short URLs.
-
-### Enhanced User Experience
-- [ ] **User Feedback System**: Implement a feedback system to collect user opinions and suggestions.
-- [ ] **Mobile Apps**
-- [ ] **Multi-Language Support**: Localize SnapURL for users worldwide.
-- [ ] **Dark Mode**: Introduce a dark mode option for the user interface.
-
-### Additional Feature Ideas
-- [x] **QR Code Generation**: Generate QR codes for shortened URLs for easy mobile sharing.
-- [ ] **Social Media Sharing**: Add one-click sharing to popular social media platforms.
-- [ ] **Link Preview Thumbnails**: Display link previews with thumbnails for better user experience.
-- [ ] **Bookmark Management**: Help users organize and manage their bookmarked URLs.
-- [ ] **URL Commenting**: Allow users to add comments to URLs for context.
+[View Complete Roadmap →](./ROADMAP.md)
 
 ## Tech Stack
+
+### 📊 Technology Overview
+
+| Layer | Technologies |
+|-------|-------------|
+| **Frontend** | React 19 • Vite • TypeScript • Tailwind CSS • Radix UI • TanStack Query • Zustand |
+| **Backend** | NestJS 10 • Node.js 18+ • TypeScript 5 • Passport.js • Winston |
+| **Databases** | PostgreSQL 15 • MongoDB 6 • Redis 7 |
+| **DevOps** | Docker • Docker Compose • GitHub Actions • PM2 • Nginx |
+| **Cloud** | AWS EC2 • Netlify • MongoDB Atlas • Redis Cloud |
+| **Monitoring** | Winston • CloudWatch • Prometheus • Health Checks |
 
 ### Backend (NestJS)
 
@@ -199,6 +225,36 @@ URL-Shortener-App/
 For detailed documentation on each component, see their respective README files.
 
 ## 🚀 Getting Started
+
+### Choose Your Setup Method
+
+```
+Which development environment suits you best?
+
+┌─────────────────────────────────────────────────────┐
+│       Do you want cloud-based development?          │
+└─────────────────┬───────────────────────────────────┘
+                  │
+         ┌────────┴─────────┐
+         │                  │
+        YES                NO
+         │                  │
+    ┌────▼────┐        ┌────▼─────────────────┐
+    │Codespace│        │ Local Development    │
+    │(90 sec) │        └──────┬───────────────┘
+    └─────────┘               │
+         │             ┌──────┴──────┐
+         │             │             │
+         │        ┌────▼────┐   ┌────▼────┐
+         │        │ Docker  │   │ Manual  │
+         │        │(5 min)  │   │(15 min) │
+         │        └─────────┘   └─────────┘
+         │
+    [Best Choice]   [Recommended]  [Advanced]
+    - Zero setup    - Full control  - Custom setup
+    - Cloud IDE     - Local env     - Understanding
+    - Auto config   - Reproducible  - Each service
+```
 
 ### Option 1: GitHub Codespaces (Fastest - Recommended)
 
