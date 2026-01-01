@@ -18,6 +18,7 @@
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false,
     "typeRoots": ["./node_modules/@types", "./types"],
+    "types": ["jest", "node"],
     "paths": {
       "@/*": ["src/*"],
       "@/common/*": ["src/common/*"],
@@ -25,5 +26,5 @@
       "@/modules/*": ["src/modules/*"]
     }
   },
-  "include": ["src/**/*", "types/**/*"]
+  "include": ["src/**/*", "types/**/*", "test/**/*"]
 }
