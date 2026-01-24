@@ -57,27 +57,37 @@ export class URLService {
       // Add pagination parameters
       if (params.page) queryParams.append('page', params.page.toString());
       if (params.limit) queryParams.append('limit', params.limit.toString());
-      if (params.sortBy) queryParams.append('sortBy', params.sortBy);
-      if (params.order) queryParams.append('order', params.order);
       
       // Add filtering parameters
-      if (params.search) queryParams.append('search', params.search);
       if (params.isActive !== undefined) queryParams.append('isActive', params.isActive.toString());
       if (params.category) queryParams.append('category', params.category);
-      
-      // Add tag filtering
-      if (params.tags && params.tags.length > 0) {
-        params.tags.forEach(tag => queryParams.append('tags', tag));
-      }
-      if (params.tagOperator) queryParams.append('tagOperator', params.tagOperator);
 
       const queryString = queryParams.toString();
       const endpoint = queryString ? `${this.baseEndpoint}?${queryString}` : this.baseEndpoint;
       
-      const response = await apiClient.get<PaginatedResponse<URL>>(endpoint);
+      const response = await apiClient.get<{ urls: URL[]; total: number } | PaginatedResponse<URL>>(endpoint);
       
       if (response.success && response.data) {
-        return response.data;
+        if ('data' in response.data && 'pagination' in response.data) {
+          return response.data;
+        }
+
+        const page = params.page ?? 1;
+        const limit = params.limit ?? 10;
+        const total = response.data.total ?? 0;
+        const pages = limit > 0 ? Math.ceil(total / limit) : 0;
+
+        return {
+          data: response.data.urls,
+          pagination: {
+            total,
+            page,
+            limit,
+            pages,
+            hasNext: page < pages,
+            hasPrev: page > 1,
+          },
+        };
       } else {
         console.error('Failed to fetch URLs:', response.error);
         return null;

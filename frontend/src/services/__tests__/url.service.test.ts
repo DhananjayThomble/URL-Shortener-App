@@ -90,7 +90,7 @@ describe('URLService', () => {
   describe('getURLs', () => {
     it('should successfully fetch URLs with default parameters', async () => {
       const mockResponse = {
-        data: [
+        urls: [
           {
             id: '1',
             shortCode: 'abc123',
@@ -104,14 +104,7 @@ describe('URLService', () => {
             updatedAt: '2023-01-01T00:00:00Z'
           }
         ],
-        pagination: {
-          total: 1,
-          page: 1,
-          limit: 10,
-          pages: 1,
-          hasNext: false,
-          hasPrev: false
-        }
+        total: 1
       };
 
       mockApiClient.get.mockResolvedValue({
@@ -122,28 +115,36 @@ describe('URLService', () => {
       const result = await urlService.getURLs();
 
       expect(mockApiClient.get).toHaveBeenCalledWith('/urls');
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual({
+        data: mockResponse.urls,
+        pagination: {
+          total: 1,
+          page: 1,
+          limit: 10,
+          pages: 1,
+          hasNext: false,
+          hasPrev: false
+        }
+      });
     });
 
     it('should build query parameters correctly', async () => {
       const params: URLListParams = {
         page: 2,
         limit: 20,
-        search: 'test',
         isActive: true,
-        tags: ['tag1', 'tag2'],
-        tagOperator: 'AND'
+        category: 'marketing'
       };
 
       mockApiClient.get.mockResolvedValue({
         success: true,
-        data: { data: [], pagination: { total: 0, page: 1, limit: 10, pages: 0, hasNext: false, hasPrev: false } }
+        data: { urls: [], total: 0 }
       });
 
       await urlService.getURLs(params);
 
       expect(mockApiClient.get).toHaveBeenCalledWith(
-        '/urls?page=2&limit=20&search=test&isActive=true&tags=tag1&tags=tag2&tagOperator=AND'
+        '/urls?page=2&limit=20&isActive=true&category=marketing'
       );
     });
   });
