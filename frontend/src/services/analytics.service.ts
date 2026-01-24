@@ -10,32 +10,29 @@ import {
   AnalyticsData,
   DashboardAnalytics,
   RealTimeAnalytics,
-  RealTimeUpdate
 } from './api/dto';
 import { APIResponse } from './api/types';
 
 export class AnalyticsService {
   private readonly baseEndpoint = '/analytics';
-  private wsConnections: Map<string, WebSocket> = new Map();
-  private reconnectAttempts: Map<string, number> = new Map();
-  private maxReconnectAttempts = 5;
-  private baseReconnectDelay = 1000; // 1 second
+  private pollingIntervals: Map<string, number> = new Map();
+  private pollingIntervalMs = 15000;
 
   /**
    * Get analytics data for a specific URL
    */
-  async getURLAnalytics(urlId: string, params: AnalyticsParams = {}): Promise<AnalyticsData | null> {
+  async getURLAnalytics(linkId: string, params: AnalyticsParams = {}): Promise<AnalyticsData | null> {
     try {
       const queryParams = new URLSearchParams();
       
-      if (params.startDate) queryParams.append('startDate', params.startDate);
-      if (params.endDate) queryParams.append('endDate', params.endDate);
-      if (params.granularity) queryParams.append('granularity', params.granularity);
+      if (params.limit) queryParams.append('limit', params.limit.toString());
+      if (params.offset) queryParams.append('offset', params.offset.toString());
+      queryParams.append('linkId', linkId);
 
       const queryString = queryParams.toString();
       const endpoint = queryString 
-        ? `${this.baseEndpoint}/urls/${urlId}?${queryString}` 
-        : `${this.baseEndpoint}/urls/${urlId}`;
+        ? `${this.baseEndpoint}/link/${linkId}/stats?${queryString}` 
+        : `${this.baseEndpoint}/link/${linkId}/stats`;
       
       const response = await apiClient.get<AnalyticsData>(endpoint);
       
@@ -85,9 +82,17 @@ export class AnalyticsService {
   /**
    * Get real-time analytics for a URL
    */
-  async getRealTimeAnalytics(urlId: string): Promise<RealTimeAnalytics | null> {
+  async getRealTimeAnalytics(linkId?: string): Promise<RealTimeAnalytics | null> {
     try {
-      const response = await apiClient.get<RealTimeAnalytics>(`${this.baseEndpoint}/real-time`);
+      const queryParams = new URLSearchParams();
+      if (linkId) queryParams.append('linkId', linkId);
+
+      const queryString = queryParams.toString();
+      const endpoint = queryString 
+        ? `${this.baseEndpoint}/real-time?${queryString}`
+        : `${this.baseEndpoint}/real-time`;
+
+      const response = await apiClient.get<RealTimeAnalytics>(endpoint);
       
       if (response.success && response.data) {
         return response.data;
@@ -133,98 +138,43 @@ export class AnalyticsService {
   }
 
   /**
-   * Subscribe to real-time analytics updates via WebSocket
+   * Subscribe to real-time analytics updates via polling
    */
-  subscribeToRealTime(urlId: string, callback: (data: RealTimeUpdate) => void): () => void {
-    const wsKey = `realtime-${urlId}`;
-    
-    // Close existing connection if any
-    this.unsubscribeFromRealTime(wsKey);
+  subscribeToRealTime(linkId: string | null, callback: (data: RealTimeAnalytics) => void): () => void {
+    const pollKey = `realtime-${linkId ?? 'dashboard'}`;
 
-    try {
-      const baseURL = apiClient.getBaseURL();
-      const wsURL = baseURL.replace(/^http/, 'ws') + `/analytics/ws/${urlId}`;
-      
-      const ws = new WebSocket(wsURL);
-      this.wsConnections.set(wsKey, ws);
-      this.reconnectAttempts.set(wsKey, 0);
+    this.unsubscribeFromRealTime(pollKey);
 
-      ws.onopen = () => {
-        console.log(`WebSocket connected for URL ${urlId}`);
-        this.reconnectAttempts.set(wsKey, 0);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data: RealTimeUpdate = JSON.parse(event.data);
-          callback(data);
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log(`WebSocket closed for URL ${urlId}:`, event.code, event.reason);
-        this.wsConnections.delete(wsKey);
-        
-        // Attempt reconnection if not manually closed
-        if (event.code !== 1000) {
-          this.handleReconnection(wsKey, urlId, callback);
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error(`WebSocket error for URL ${urlId}:`, error);
-      };
-
-      // Return unsubscribe function
-      return () => this.unsubscribeFromRealTime(wsKey);
-    } catch (error) {
-      console.error('Error creating WebSocket connection:', error);
-      return () => {};
-    }
-  }
-
-  /**
-   * Handle WebSocket reconnection with exponential backoff
-   */
-  private handleReconnection(wsKey: string, urlId: string, callback: (data: RealTimeUpdate) => void): void {
-    const attempts = this.reconnectAttempts.get(wsKey) || 0;
-    
-    if (attempts >= this.maxReconnectAttempts) {
-      console.error(`Max reconnection attempts reached for ${wsKey}`);
-      return;
-    }
-
-    const delay = this.baseReconnectDelay * Math.pow(2, attempts);
-    this.reconnectAttempts.set(wsKey, attempts + 1);
-
-    console.log(`Attempting to reconnect ${wsKey} in ${delay}ms (attempt ${attempts + 1})`);
-    
-    setTimeout(() => {
-      if (!this.wsConnections.has(wsKey)) {
-        this.subscribeToRealTime(urlId, callback);
+    const poll = async () => {
+      const data = await this.getRealTimeAnalytics(linkId ?? undefined);
+      if (data) {
+        callback(data);
       }
-    }, delay);
+    };
+
+    poll();
+    const intervalId = window.setInterval(poll, this.pollingIntervalMs);
+    this.pollingIntervals.set(pollKey, intervalId);
+
+    return () => this.unsubscribeFromRealTime(pollKey);
   }
 
   /**
    * Unsubscribe from real-time updates
    */
-  private unsubscribeFromRealTime(wsKey: string): void {
-    const ws = this.wsConnections.get(wsKey);
-    if (ws) {
-      ws.close(1000, 'Manual disconnect');
-      this.wsConnections.delete(wsKey);
-      this.reconnectAttempts.delete(wsKey);
+  private unsubscribeFromRealTime(pollKey: string): void {
+    const intervalId = this.pollingIntervals.get(pollKey);
+    if (intervalId) {
+      window.clearInterval(intervalId);
+      this.pollingIntervals.delete(pollKey);
     }
   }
 
   /**
    * Subscribe to dashboard real-time updates
    */
-  subscribeToDashboardRealTime(callback: (data: RealTimeUpdate) => void): () => void {
-    return this.subscribeToRealTime('dashboard', callback);
+  subscribeToDashboardRealTime(callback: (data: RealTimeAnalytics) => void): () => void {
+    return this.subscribeToRealTime(null, callback);
   }
 
   /**
@@ -325,14 +275,13 @@ export class AnalyticsService {
   }
 
   /**
-   * Clean up all WebSocket connections
+   * Clean up all polling intervals
    */
   cleanup(): void {
-    this.wsConnections.forEach((ws, key) => {
-      this.unsubscribeFromRealTime(key);
+    this.pollingIntervals.forEach((intervalId) => {
+      window.clearInterval(intervalId);
     });
-    this.wsConnections.clear();
-    this.reconnectAttempts.clear();
+    this.pollingIntervals.clear();
   }
 }
 

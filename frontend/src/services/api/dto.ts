@@ -169,9 +169,8 @@ export interface Tag {
 // ============================================================================
 
 export interface AnalyticsParams {
-  startDate?: string;
-  endDate?: string;
-  granularity?: 'hour' | 'day' | 'week' | 'month';
+  limit?: number;
+  offset?: number;
 }
 
 export interface DashboardAnalyticsParams {
