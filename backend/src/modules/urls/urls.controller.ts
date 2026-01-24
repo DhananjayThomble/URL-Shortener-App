@@ -20,6 +20,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { UrlsService } from './urls.service';
 import { CreateUrlDto } from './dto/create-url.dto';
 import { UpdateUrlDto } from './dto/update-url.dto';
+import { QRCodeOptionsDto } from './dto/qr-code-options.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('urls')
@@ -190,6 +191,20 @@ export class UrlsController {
   async getPopular(@Request() req, @Query('limit') limit = 10) {
     return this.urlsService.getPopularUrls(req.user.id, +limit);
   }
+
+  @Post(':id/qr-code')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Generate a QR code for a URL' })
+  @ApiResponse({ status: 200, description: 'QR code generated successfully' })
+  @ApiResponse({ status: 404, description: 'URL not found' })
+  async generateQrCode(
+    @Param('id') id: string,
+    @Body() options: QRCodeOptionsDto,
+    @Request() req,
+  ) {
+    return this.urlsService.generateQrCode(id, req.user.id, options);
+  }
 }
 
 // Separate controller for public URL redirection
@@ -264,4 +279,3 @@ export class RedirectController {
     return { valid: isValid };
   }
 }
-

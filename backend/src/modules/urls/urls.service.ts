@@ -1,15 +1,18 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { nanoid } from 'nanoid';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
+import * as QRCode from 'qrcode';
 
 import { Url, UrlDocument } from './schemas/url.schema';
 import { ClickAnalytics, ClickAnalyticsDocument } from './schemas/click-analytics.schema';
 import { UrlStats, UrlStatsDocument } from './schemas/url-stats.schema';
 import { CreateUrlDto } from './dto/create-url.dto';
 import { UpdateUrlDto } from './dto/update-url.dto';
+import { QRCodeOptionsDto } from './dto/qr-code-options.dto';
 import { CacheService } from '../../common/services/cache.service';
 import { AuditLogService } from '../users/services/audit-log.service';
 
@@ -23,6 +26,7 @@ export class UrlsService {
     @InjectModel(UrlStats.name) private urlStatsModel: Model<UrlStatsDocument>,
     private cacheService: CacheService,
     private auditLogService: AuditLogService,
+    private configService: ConfigService,
   ) {}
 
   async create(createUrlDto: CreateUrlDto, userId: string): Promise<UrlDocument> {
@@ -313,6 +317,41 @@ export class UrlsService {
         geoDistribution: geoAnalytics,
         deviceDistribution: deviceAnalytics,
       },
+    };
+  }
+
+  async generateQrCode(
+    id: string,
+    userId: string,
+    options: QRCodeOptionsDto = {},
+  ): Promise<{ qrCodeUrl: string; format: string; size: number }> {
+    const url = await this.findOne(id, userId);
+    const baseUrl = this.configService.get<string>('baseUrl', 'http://localhost:3000');
+    const shortUrl = new URL(`/r/${url.shortCode}`, baseUrl).toString();
+    const format = options.format ?? 'png';
+    const size = options.size ?? 256;
+
+    const qrOptions: QRCode.QRCodeToDataURLOptions & QRCode.QRCodeToStringOptions = {
+      errorCorrectionLevel: options.errorCorrectionLevel ?? 'M',
+      margin: options.margin ?? 2,
+      color: options.color,
+      width: size,
+    };
+
+    let qrCodeUrl: string;
+
+    if (format === 'svg') {
+      const svg = await QRCode.toString(shortUrl, { ...qrOptions, type: 'svg' });
+      const encodedSvg = Buffer.from(svg).toString('base64');
+      qrCodeUrl = `data:image/svg+xml;base64,${encodedSvg}`;
+    } else {
+      qrCodeUrl = await QRCode.toDataURL(shortUrl, qrOptions);
+    }
+
+    return {
+      qrCodeUrl,
+      format,
+      size,
     };
   }
 
