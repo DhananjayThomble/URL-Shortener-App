@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { 
   Link2, Zap, Settings2, Copy, Check, ExternalLink, Trash2, Loader2, 
-  QrCode, Smartphone, Tag, X, ChevronDown, Plus, Search
+  QrCode, X, Search
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLinks, LinkWithClicks } from "@/hooks/useURLs";
@@ -17,30 +17,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 
 export const LinkShortener = () => {
   const [url, setUrl] = useState("");
   const [customAlias, setCustomAlias] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [creating, setCreating] = useState(false);
-  
-  // Smart routing
-  const [iosUrl, setIosUrl] = useState("");
-  const [androidUrl, setAndroidUrl] = useState("");
-  
-  // UTM params
-  const [utmSource, setUtmSource] = useState("");
-  const [utmMedium, setUtmMedium] = useState("");
-  const [utmCampaign, setUtmCampaign] = useState("");
-  
-  // Retargeting
-  const [metaPixelId, setMetaPixelId] = useState("");
-  const [googleAnalyticsId, setGoogleAnalyticsId] = useState("");
   
   // Tags
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -66,13 +48,6 @@ export const LinkShortener = () => {
     const result = await createLink({
       originalUrl: url,
       customAlias: customAlias || undefined,
-      iosUrl: iosUrl || undefined,
-      androidUrl: androidUrl || undefined,
-      utmSource: utmSource || undefined,
-      utmMedium: utmMedium || undefined,
-      utmCampaign: utmCampaign || undefined,
-      metaPixelId: metaPixelId || undefined,
-      googleAnalyticsId: googleAnalyticsId || undefined,
       tagIds: selectedTags,
     });
     setCreating(false);
@@ -81,13 +56,6 @@ export const LinkShortener = () => {
       toast.success("Link created successfully!");
       setUrl("");
       setCustomAlias("");
-      setIosUrl("");
-      setAndroidUrl("");
-      setUtmSource("");
-      setUtmMedium("");
-      setUtmCampaign("");
-      setMetaPixelId("");
-      setGoogleAnalyticsId("");
       setSelectedTags([]);
     }
   };
@@ -159,121 +127,6 @@ export const LinkShortener = () => {
                   />
                 </div>
               </div>
-
-              {/* Smart Device Routing */}
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-between">
-                    <span className="flex items-center gap-2">
-                      <Smartphone className="w-4 h-4" />
-                      Smart Device Routing
-                    </span>
-                    <ChevronDown className="w-4 h-4" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-3 pt-3">
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">iOS URL (App Store)</label>
-                    <Input
-                      type="url"
-                      placeholder="https://apps.apple.com/..."
-                      value={iosUrl}
-                      onChange={(e) => setIosUrl(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">Android URL (Play Store)</label>
-                    <Input
-                      type="url"
-                      placeholder="https://play.google.com/..."
-                      value={androidUrl}
-                      onChange={(e) => setAndroidUrl(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-
-              {/* UTM Builder */}
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-between">
-                    <span className="flex items-center gap-2">
-                      <Tag className="w-4 h-4" />
-                      UTM Parameters
-                    </span>
-                    <ChevronDown className="w-4 h-4" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="grid grid-cols-3 gap-3 pt-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Source</label>
-                    <Input
-                      type="text"
-                      placeholder="twitter"
-                      value={utmSource}
-                      onChange={(e) => setUtmSource(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Medium</label>
-                    <Input
-                      type="text"
-                      placeholder="social"
-                      value={utmMedium}
-                      onChange={(e) => setUtmMedium(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Campaign</label>
-                    <Input
-                      type="text"
-                      placeholder="summer24"
-                      value={utmCampaign}
-                      onChange={(e) => setUtmCampaign(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-
-              {/* Retargeting Pixels */}
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-between">
-                    <span className="flex items-center gap-2">
-                      <Zap className="w-4 h-4" />
-                      Retargeting Pixels
-                    </span>
-                    <ChevronDown className="w-4 h-4" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="grid grid-cols-2 gap-3 pt-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Meta Pixel ID</label>
-                    <Input
-                      type="text"
-                      placeholder="123456789"
-                      value={metaPixelId}
-                      onChange={(e) => setMetaPixelId(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Google Analytics ID</label>
-                    <Input
-                      type="text"
-                      placeholder="G-XXXXXXXX"
-                      value={googleAnalyticsId}
-                      onChange={(e) => setGoogleAnalyticsId(e.target.value)}
-                      variant="glass"
-                    />
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
 
               {/* Tags */}
               {tags.length > 0 && (
@@ -347,12 +200,6 @@ const LinkItem = ({ link, onDelete, onShowQR }: LinkItemProps) => {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="font-mono text-foreground font-medium truncate">{shortUrl}</p>
-            {link.ios_url && (
-              <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs">iOS</span>
-            )}
-            {link.android_url && (
-              <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs">Android</span>
-            )}
           </div>
           <p className="text-sm text-muted-foreground truncate">{link.original_url}</p>
         </div>
