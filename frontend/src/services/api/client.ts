@@ -78,15 +78,40 @@ export class APIClient {
     try {
       const response = await axios.post(
         `${this.config.baseURL}/auth/refresh`,
-        { refreshToken: this.authTokens.refreshToken }
+        { refresh_token: this.authTokens.refreshToken }
       );
 
-      if (response.data.success && response.data.data.tokens) {
-        this.setAuthTokens(response.data.data.tokens);
-        this.saveTokensToStorage(response.data.data.tokens);
-      } else {
+      const { access_token, expires_at } = response.data as {
+        access_token?: string;
+        expires_at?: string | number | Date;
+      };
+
+      if (!access_token) {
         throw new Error('Token refresh failed');
       }
+
+      let expiresAtMs: number | null = null;
+      if (expires_at instanceof Date) {
+        expiresAtMs = expires_at.getTime();
+      } else if (typeof expires_at === 'string') {
+        const parsed = Date.parse(expires_at);
+        expiresAtMs = Number.isNaN(parsed) ? null : parsed;
+      } else if (typeof expires_at === 'number') {
+        expiresAtMs = expires_at > 1e12 ? expires_at : expires_at * 1000;
+      }
+
+      const expiresIn = expiresAtMs
+        ? Math.max(0, Math.floor((expiresAtMs - Date.now()) / 1000))
+        : this.authTokens.expiresIn;
+
+      const updatedTokens: AuthTokens = {
+        accessToken: access_token,
+        refreshToken: this.authTokens.refreshToken,
+        expiresIn,
+      };
+
+      this.setAuthTokens(updatedTokens);
+      this.saveTokensToStorage(updatedTokens);
     } catch (error) {
       this.clearAuthTokens();
       throw error;
