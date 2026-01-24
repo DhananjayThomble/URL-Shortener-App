@@ -49,7 +49,7 @@ const response = await apiClient.get('/health');
 Add to your `.env` file:
 
 ```env
-VITE_NESTJS_API_URL="http://localhost:3000/api"
+VITE_NESTJS_API_URL="http://localhost:3000/api/v1"
 ```
 
 ### Authentication

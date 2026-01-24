@@ -71,6 +71,9 @@ try {
       const match = envContent.match(/VITE_NESTJS_API_URL\s*=\s*"([^"]+)"/);
       if (match) {
         console.log(`   URL: ${match[1]}`);
+        if (!match[1].includes('/api/v1')) {
+          console.log('⚠️  Expected VITE_NESTJS_API_URL to include /api/v1 for health checks.');
+        }
       }
     } else {
       console.log('❌ VITE_NESTJS_API_URL missing from .env');
