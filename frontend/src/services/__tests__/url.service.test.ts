@@ -31,13 +31,11 @@ describe('URLService', () => {
       const mockURL: URL = {
         id: '1',
         shortCode: 'abc123',
-        shortUrl: 'http://localhost:3000/abc123',
         originalUrl: 'https://example.com',
-        customAlias: 'test-url',
-        title: 'Test URL',
-        description: 'Test description',
+        customBackHalf: 'test-url',
+        category: 'test',
         tags: [],
-        clickCount: 0,
+        visitCount: 0,
         isActive: true,
         userId: 'user123',
         createdAt: '2023-01-01T00:00:00Z',
@@ -94,10 +92,9 @@ describe('URLService', () => {
           {
             id: '1',
             shortCode: 'abc123',
-            shortUrl: 'http://localhost:3000/abc123',
             originalUrl: 'https://example.com',
             tags: [],
-            clickCount: 5,
+            visitCount: 5,
             isActive: true,
             userId: 'user123',
             createdAt: '2023-01-01T00:00:00Z',
@@ -153,10 +150,9 @@ describe('URLService', () => {
       const mockURL: URL = {
         id: '1',
         shortCode: 'abc123',
-        shortUrl: 'http://localhost:3000/abc123',
         originalUrl: 'https://example.com',
         tags: [],
-        clickCount: 5,
+        visitCount: 5,
         isActive: true,
         userId: 'user123',
         createdAt: '2023-01-01T00:00:00Z',
@@ -193,19 +189,19 @@ describe('URLService', () => {
   describe('updateURL', () => {
     it('should successfully update a URL', async () => {
       const updateData = {
-        title: 'Updated Title',
-        isActive: false
+        customBackHalf: 'updated-url',
+        category: 'updated-category'
       };
 
       const mockUpdatedURL: URL = {
         id: '1',
         shortCode: 'abc123',
-        shortUrl: 'http://localhost:3000/abc123',
         originalUrl: 'https://example.com',
-        title: 'Updated Title',
+        customBackHalf: 'updated-url',
+        category: 'updated-category',
         tags: [],
-        clickCount: 5,
-        isActive: false,
+        visitCount: 5,
+        isActive: true,
         userId: 'user123',
         createdAt: '2023-01-01T00:00:00Z',
         updatedAt: '2023-01-01T00:00:00Z'

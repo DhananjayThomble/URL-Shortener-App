@@ -18,15 +18,10 @@ import { toast } from "sonner";
 export interface CreateURLParams {
   originalUrl: string;
   customAlias?: string;
-  title?: string;
-  iosUrl?: string;
-  androidUrl?: string;
-  utmSource?: string;
-  utmMedium?: string;
-  utmCampaign?: string;
-  metaPixelId?: string;
-  googleAnalyticsId?: string;
   tagIds?: string[];
+  category?: string;
+  expiresAt?: string;
+  customDomain?: string;
 }
 
 export interface UseURLsResult {
@@ -116,22 +111,9 @@ export const useURLs = (initialParams: URLListParams = {}): UseURLsResult => {
       const createRequest: CreateUrlRequest = {
         originalUrl: params.originalUrl,
         customBackHalf: params.customAlias,
-        ...(params.title && { title: params.title }),
-        ...(params.iosUrl && { iosUrl: params.iosUrl }),
-        ...(params.androidUrl && { androidUrl: params.androidUrl }),
-        ...(params.utmSource || params.utmMedium || params.utmCampaign) && {
-          utmParameters: {
-            utm_source: params.utmSource,
-            utm_medium: params.utmMedium,
-            utm_campaign: params.utmCampaign,
-          }
-        },
-        ...(params.metaPixelId || params.googleAnalyticsId) && {
-          trackingPixels: {
-            metaPixelId: params.metaPixelId,
-            googleAnalyticsId: params.googleAnalyticsId,
-          }
-        },
+        ...(params.category && { category: params.category }),
+        ...(params.expiresAt && { expiresAt: params.expiresAt }),
+        ...(params.customDomain && { customDomain: params.customDomain }),
         ...(params.tagIds && params.tagIds.length > 0) && {
           tags: params.tagIds.map(id => ({ name: id, value: id }))
         }
@@ -216,23 +198,12 @@ export const useLinks = () => {
       user_id: url.userId,
       original_url: url.originalUrl,
       short_code: url.shortCode,
-      custom_alias: url.customAlias,
-      title: url.title,
+      custom_alias: url.customBackHalf,
       is_active: url.isActive,
       expires_at: url.expiresAt,
-      ios_url: url.iosUrl,
-      android_url: url.androidUrl,
-      utm_source: url.utmParameters?.utm_source,
-      utm_medium: url.utmParameters?.utm_medium,
-      utm_campaign: url.utmParameters?.utm_campaign,
-      utm_term: url.utmParameters?.utm_term,
-      utm_content: url.utmParameters?.utm_content,
-      meta_pixel_id: url.trackingPixels?.metaPixelId,
-      google_analytics_id: url.trackingPixels?.googleAnalyticsId,
-      tiktok_pixel_id: url.trackingPixels?.tiktokPixelId,
       created_at: url.createdAt,
       updated_at: url.updatedAt,
-      clicks_count: url.clickCount
+      clicks_count: url.visitCount
     }));
   }, [urls]);
 
@@ -240,14 +211,10 @@ export const useLinks = () => {
   const createLinkCompat = async (params: {
     originalUrl: string;
     customAlias?: string;
-    iosUrl?: string;
-    androidUrl?: string;
-    utmSource?: string;
-    utmMedium?: string;
-    utmCampaign?: string;
-    metaPixelId?: string;
-    googleAnalyticsId?: string;
     tagIds?: string[];
+    category?: string;
+    expiresAt?: string;
+    customDomain?: string;
   }) => {
     return await createURL(params);
   };

@@ -58,52 +58,13 @@ export interface CreateUrlRequest {
   customDomain?: string;
 }
 
-export interface UTMParameters {
-  utm_source?: string;
-  utm_medium?: string;
-  utm_campaign?: string;
-  utm_term?: string;
-  utm_content?: string;
-}
-
-export interface TrackingPixels {
-  metaPixelId?: string;
-  googleAnalyticsId?: string;
-  tiktokPixelId?: string;
-}
-
-export interface GeoTargetingRule {
-  countryCode: string;
-  redirectUrl: string;
-}
-
-export interface EnhancedCreateUrlRequest {
-  originalUrl: string;
-  customAlias?: string;
-  title?: string;
-  expiresAt?: string; // ISO date string
-  password?: string;
-  passwordHint?: string;
-  iosUrl?: string;
-  androidUrl?: string;
-  utmParameters?: UTMParameters;
-  trackingPixels?: TrackingPixels;
-  geoTargetingRules?: GeoTargetingRule[];
-}
-
 export interface UpdateUrlRequest {
   originalUrl?: string;
-  customAlias?: string;
-  title?: string;
+  customBackHalf?: string;
+  category?: string;
   expiresAt?: string; // ISO date string
-  password?: string;
-  passwordHint?: string;
-  iosUrl?: string;
-  androidUrl?: string;
-  utmParameters?: UTMParameters;
-  trackingPixels?: TrackingPixels;
-  geoTargetingRules?: GeoTargetingRule[];
-  isActive?: boolean;
+  tags?: TagDto[];
+  customDomain?: string;
 }
 
 // ============================================================================
@@ -134,22 +95,14 @@ export interface AuthResponse {
 export interface URL {
   id: string;
   shortCode: string;
-  shortUrl: string;
   originalUrl: string;
-  customAlias?: string;
-  title?: string;
-  description?: string;
+  customBackHalf?: string;
+  category?: string;
   tags: TagDto[];
-  clickCount: number;
+  visitCount: number;
   isActive: boolean;
   expiresAt?: string;
-  password?: string;
-  passwordHint?: string;
-  iosUrl?: string;
-  androidUrl?: string;
-  utmParameters?: UTMParameters;
-  trackingPixels?: TrackingPixels;
-  geoTargetingRules?: GeoTargetingRule[];
+  customDomain?: string;
   userId: string;
   createdAt: string;
   updatedAt: string;
