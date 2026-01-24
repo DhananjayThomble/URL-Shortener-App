@@ -328,7 +328,7 @@ class AuthServiceImpl implements AuthService {
     try {
       const response = await apiClient.post('/auth/reset-password', {
         token,
-        password: newPassword,
+        newPassword,
       });
 
       if (response.success) {
