@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { analyticsService } from '@/services/analytics.service';
-import { RealTimeUpdate, RealTimeAnalytics } from '@/services/api/dto';
+import { RealTimeAnalytics } from '@/services/api/dto';
 import { useAuth } from './useAuth';
 
 export interface UseRealTimeAnalyticsOptions {
   urlId?: string;
   enabled?: boolean;
-  onUpdate?: (update: RealTimeUpdate) => void;
+  onUpdate?: (data: RealTimeAnalytics) => void;
 }
 
 export const useRealTimeAnalytics = (options: UseRealTimeAnalyticsOptions = {}) => {
@@ -17,34 +17,11 @@ export const useRealTimeAnalytics = (options: UseRealTimeAnalyticsOptions = {}) 
   const [loading, setLoading] = useState(true);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  const handleRealTimeUpdate = useCallback((update: RealTimeUpdate) => {
-    // Update real-time data based on the update
-    setRealTimeData(prev => {
-      if (!prev) return prev;
+  const handleRealTimeUpdate = useCallback((data: RealTimeAnalytics) => {
+    setRealTimeData(data);
 
-      const newData = { ...prev };
-      
-      if (update.type === 'click') {
-        newData.activeVisitors = Math.max(0, newData.activeVisitors);
-        newData.recentClicks = [
-          {
-            timestamp: update.data.timestamp,
-            country: update.data.country,
-            device: update.data.device,
-            referrer: update.data.referrer,
-          },
-          ...newData.recentClicks.slice(0, 9) // Keep only last 10 clicks
-        ];
-      } else if (update.type === 'visitor') {
-        newData.activeVisitors += 1;
-      }
-
-      return newData;
-    });
-
-    // Call external update handler if provided
     if (onUpdate) {
-      onUpdate(update);
+      onUpdate(data);
     }
   }, [onUpdate]);
 
@@ -64,13 +41,12 @@ export const useRealTimeAnalytics = (options: UseRealTimeAnalyticsOptions = {}) 
         setRealTimeData(initialData);
       }
 
-      // Subscribe to real-time updates (temporarily disabled until WebSocket is implemented)
-      // const unsubscribe = urlId
-      //   ? analyticsService.subscribeToRealTime(urlId, handleRealTimeUpdate)
-      //   : analyticsService.subscribeToDashboardRealTime(handleRealTimeUpdate);
+      const unsubscribe = urlId
+        ? analyticsService.subscribeToRealTime(urlId, handleRealTimeUpdate)
+        : analyticsService.subscribeToDashboardRealTime(handleRealTimeUpdate);
 
-      // unsubscribeRef.current = unsubscribe;
-      setIsConnected(true); // Simulate connection for now
+      unsubscribeRef.current = unsubscribe;
+      setIsConnected(true);
     } catch (error) {
       console.error('Error connecting to real-time analytics:', error);
       setIsConnected(false);
@@ -162,41 +138,45 @@ export const useAnalyticsNotifications = () => {
 export const useRealTimeAnalyticsWithNotifications = (options: UseRealTimeAnalyticsOptions = {}) => {
   const { addNotification } = useAnalyticsNotifications();
   const previousClickCount = useRef<number>(0);
+  const seenClickIds = useRef<Set<string>>(new Set());
 
-  const handleUpdateWithNotifications = useCallback((update: RealTimeUpdate) => {
-    // Handle milestone notifications
-    if (update.type === 'click') {
-      const currentCount = previousClickCount.current + 1;
-      previousClickCount.current = currentCount;
+  const handleUpdateWithNotifications = useCallback((data: RealTimeAnalytics) => {
+    const clickIds = new Set(
+      data.recentClicks.map(click =>
+        `${click.timestamp}-${click.country}-${click.device}-${click.referrer ?? ''}`,
+      ),
+    );
 
-      // Check for milestones
+    const newClicks = Array.from(clickIds).filter(id => !seenClickIds.current.has(id));
+    if (newClicks.length > 0) {
+      newClicks.forEach(id => seenClickIds.current.add(id));
+      previousClickCount.current += newClicks.length;
+      const currentCount = previousClickCount.current;
+
       const milestones = [10, 50, 100, 500, 1000, 5000, 10000];
       if (milestones.includes(currentCount)) {
         addNotification({
           type: 'milestone',
           title: 'Milestone Reached!',
           message: `Your link has reached ${currentCount.toLocaleString()} clicks!`,
-          data: { clicks: currentCount, urlId: update.data.urlId }
+          data: { clicks: currentCount, urlId: options.urlId }
         });
       }
 
-      // Detect traffic spikes (simplified logic)
-      // In a real implementation, you'd compare against historical averages
       if (currentCount > 0 && currentCount % 20 === 0) {
         addNotification({
           type: 'spike',
           title: 'Traffic Spike Detected',
           message: `Increased activity detected on your link`,
-          data: { urlId: update.data.urlId }
+          data: { urlId: options.urlId }
         });
       }
     }
 
-    // Call original handler if provided
     if (options.onUpdate) {
-      options.onUpdate(update);
+      options.onUpdate(data);
     }
-  }, [addNotification, options.onUpdate]);
+  }, [addNotification, options.onUpdate, options.urlId]);
 
   return useRealTimeAnalytics({
     ...options,
