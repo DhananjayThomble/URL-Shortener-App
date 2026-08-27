@@ -11,6 +11,11 @@ package-lock.json linguist-generated=true -diff
 # Generated migrations are reviewed as SQL, not authored by hand.
 packages/database/drizzle/*.sql linguist-generated=true
 
+# Drizzle's snapshot metadata is ~8k lines of machine output that exists so
+# the next migration can be diffed against it. It has to be committed, but
+# nobody reviews it.
+packages/database/drizzle/meta/*.json linguist-generated=true -diff
+
 *.png binary
 *.jpg binary
 *.ico binary
