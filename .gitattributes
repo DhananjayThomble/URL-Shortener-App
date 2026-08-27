@@ -1,0 +1,16 @@
+# Normalise line endings so the repo is identical regardless of who cloned it.
+* text=auto eol=lf
+
+# Shell scripts must keep LF or they will not run.
+*.sh text eol=lf
+
+# Lockfiles are generated — collapse them in diffs and reviews.
+pnpm-lock.yaml linguist-generated=true -diff
+package-lock.json linguist-generated=true -diff
+
+# Generated migrations are reviewed as SQL, not authored by hand.
+packages/database/drizzle/*.sql linguist-generated=true
+
+*.png binary
+*.jpg binary
+*.ico binary
