@@ -1,0 +1,26 @@
+{
+  "name": "@snapurl/worker",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Rollups, the projection outbox, retention pruning and webhook delivery. Each job is a pure function so Lambda and the local loop share one implementation.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --env-file=.env --watch dist/main.js",
+    "start": "node --env-file=.env dist/main.js",
+    "once": "node --env-file=.env dist/main.js --once",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@snapurl/contract": "workspace:*",
+    "@snapurl/database": "workspace:*",
+    "@snapurl/domain": "workspace:*",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}
