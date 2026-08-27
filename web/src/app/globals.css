@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+/* ============================================================
+   SnapURL design tokens.
+
+   Ported 1:1 from the approved prototype. Three theme states are
+   supported: an explicit data-theme="light" / "dark" stamp, and the
+   default un-stamped state where only prefers-color-scheme applies.
+   Never declare a colour only inside a media or [data-theme] block.
+
+   The accent triplet is overwritten at runtime by ThemeProvider when
+   the viewer picks a different accent in Settings > Appearance.
+   ============================================================ */
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wash: var(--accent-wash);
+  --color-chart-2: var(--chart-2);
+  --color-teal: var(--teal);
+  --color-amber: var(--amber);
+  --color-good: var(--green);
+  --color-bad: var(--red);
+  --color-violet: var(--violet);
+  --color-wash-good: var(--wash-green);
+  --color-wash-warn: var(--wash-amber);
+  --color-wash-bad: var(--wash-red);
+  --color-wash-teal: var(--wash-teal);
+
+  --font-display: Archivo, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-token: var(--radius);
+  --radius-token-sm: var(--radius-sm);
+}
+
+:root {
+  --ground: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #f7f9fb;
+  --surface-3: #e9edf2;
+  --surface-4: #dfe5ec;
+  --line: #dce2ea;
+  --line-2: #c6cfda;
+  --ink: #0c1219;
+  --ink-2: #4a5766;
+  --ink-3: #7b8899;
+  --accent: #1f5fd4;
+  --accent-2: #1a4fb0;
+  --accent-ink: #ffffff;
+  --accent-wash: rgb(31 95 212 / 0.1);
+  --chart-2: #5a6b80;
+  --teal: #0b6e80;
+  --amber: #98650a;
+  --green: #15803d;
+  --red: #b21f26;
+  --violet: #5b4bc4;
+  --wash-green: rgb(21 128 61 / 0.11);
+  --wash-amber: rgb(152 101 10 / 0.13);
+  --wash-red: rgb(178 31 38 / 0.1);
+  --wash-teal: rgb(11 110 128 / 0.1);
+  --shadow-1: 0 1px 2px rgb(12 18 25 / 0.06);
+  --shadow-2: 0 1px 2px rgb(12 18 25 / 0.05), 0 10px 26px -14px rgb(12 18 25 / 0.3);
+  --shadow-3: 0 24px 60px -20px rgb(12 18 25 / 0.35);
+  --radius: 9px;
+  --radius-sm: 6px;
+  --density: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #070a0e;
+    --surface: #10161e;
+    --surface-2: #151c25;
+    --surface-3: #1b232e;
+    --surface-4: #242e3b;
+    --line: #212b37;
+    --line-2: #33404f;
+    --ink: #e9eef4;
+    --ink-2: #a3b1c0;
+    --ink-3: #6c7a8c;
+    --accent: #6fa8ff;
+    --accent-2: #8fbdff;
+    --accent-ink: #06152b;
+    --accent-wash: rgb(111 168 255 / 0.14);
+    --chart-2: #8b9bb0;
+    --teal: #49bcd1;
+    --amber: #e0a93b;
+    --green: #57d68b;
+    --red: #ff7b7b;
+    --violet: #9c8cff;
+    --wash-green: rgb(87 214 139 / 0.13);
+    --wash-amber: rgb(224 169 59 / 0.13);
+    --wash-red: rgb(255 123 123 / 0.12);
+    --wash-teal: rgb(73 188 209 / 0.13);
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5);
+    --shadow-2: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 30px -16px rgb(0 0 0 / 0.9);
+    --shadow-3: 0 28px 70px -20px rgb(0 0 0 / 0.95);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #070a0e;
+  --surface: #10161e;
+  --surface-2: #151c25;
+  --surface-3: #1b232e;
+  --surface-4: #242e3b;
+  --line: #212b37;
+  --line-2: #33404f;
+  --ink: #e9eef4;
+  --ink-2: #a3b1c0;
+  --ink-3: #6c7a8c;
+  --accent: #6fa8ff;
+  --accent-2: #8fbdff;
+  --accent-ink: #06152b;
+  --accent-wash: rgb(111 168 255 / 0.14);
+  --chart-2: #8b9bb0;
+  --teal: #49bcd1;
+  --amber: #e0a93b;
+  --green: #57d68b;
+  --red: #ff7b7b;
+  --violet: #9c8cff;
+  --wash-green: rgb(87 214 139 / 0.13);
+  --wash-amber: rgb(224 169 59 / 0.13);
+  --wash-red: rgb(255 123 123 / 0.12);
+  --wash-teal: rgb(73 188 209 / 0.13);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-2: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 30px -16px rgb(0 0 0 / 0.9);
+  --shadow-3: 0 28px 70px -20px rgb(0 0 0 / 0.95);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  margin: 0;
+  text-wrap: balance;
+  letter-spacing: -0.015em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Grid and flex children default to min-width:auto, which lets wide tables
+   push their track open and scroll the whole page sideways. */
+.grid > *,
+.flex > * {
+  min-width: 0;
+}
+
+:root.reduce-motion *,
+:root.reduce-motion *::before,
+:root.reduce-motion *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
