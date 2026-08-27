@@ -1,0 +1,137 @@
+name: Verify
+
+# Runs on every pull request, and on main so the default branch always has a
+# known-good signal. Nothing here writes to the repository.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Type-check, build, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # Must match docker-compose.yml — the schema uses uuidv7(), which is
+        # native in Postgres 18 and does not exist in 17.
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: snapurl
+          POSTGRES_PASSWORD: snapurl
+          POSTGRES_DB: snapurl
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U snapurl -d snapurl"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgres://snapurl:snapurl@localhost:5433/snapurl
+      DATABASE_SSL: "false"
+      NODE_ENV: test
+      # Throwaway values. Real deployments read these from SSM Parameter Store;
+      # these exist only so the apps will boot in CI.
+      JWT_ACCESS_SECRET: ci-access-secret-not-used-anywhere-real-0000
+      JWT_REFRESH_SECRET: ci-refresh-secret-not-used-anywhere-real-000
+      WEB_ORIGIN: http://localhost:3000
+      DEFAULT_DOMAIN: localhost:3002
+      REDIRECT_ORIGIN: http://localhost:3002
+      MAIL_TRANSPORT: outbox
+      # The smoke suites make several hundred requests in a couple of minutes.
+      # The production default of 120/min would throttle them and fail the run
+      # for a reason that has nothing to do with the change under test.
+      THROTTLE_LIMIT: "100000"
+      LOG_LEVEL: warn
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile fails if pnpm-lock.yaml disagrees with any
+      # package.json, which catches a dependency added without committing the
+      # lockfile.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm type-check
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      # Proves the migrations apply to an empty database, not just to whatever
+      # state a developer's machine happens to be in.
+      - name: Migrate
+        run: pnpm db:migrate
+
+      - name: Start the API and redirect service
+        run: |
+          # PORT is set per-process, not on the step: a step-level PORT would
+          # apply to both and the second service would fail to bind.
+          PORT=3001 node apps/api/dist/main.js > /tmp/api.log 2>&1 &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+          PORT=3002 node apps/redirect/dist/main.js > /tmp/redirect.log 2>&1 &
+          echo "REDIRECT_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for both to be healthy
+        run: |
+          # Poll rather than sleep: a fixed delay is either too short on a slow
+          # runner or wasted time on a fast one.
+          for name in "api:3001/api/v1/health" "redirect:3002/health"; do
+            label="${name%%:*}"; url="http://localhost:${name#*:}"
+            for i in $(seq 1 40); do
+              if curl -fsS "$url" >/dev/null 2>&1; then
+                echo "$label is up"; break
+              fi
+              if [ "$i" = "40" ]; then
+                echo "::error::$label did not become healthy within 40s"
+                echo "--- api.log ---";      tail -50 /tmp/api.log      || true
+                echo "--- redirect.log ---"; tail -50 /tmp/redirect.log || true
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Smoke — dashboard API
+        run: bash scripts/smoke.sh
+
+      - name: Smoke — redirect path
+        run: bash scripts/smoke-redirect.sh
+
+      # Without this a failed smoke run shows only which assertion failed, not
+      # the server-side reason for it.
+      - name: Service logs
+        if: failure()
+        run: |
+          echo "--- api ---";      tail -200 /tmp/api.log      || true
+          echo "--- redirect ---"; tail -200 /tmp/redirect.log || true
+
+      - name: Stop services
+        if: always()
+        run: kill "$API_PID" "$REDIRECT_PID" 2>/dev/null || true

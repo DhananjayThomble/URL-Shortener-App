@@ -6,9 +6,9 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node --env-file=.env --watch dist/main.js",
-    "start": "node --env-file=.env dist/main.js",
-    "once": "node --env-file=.env dist/main.js --once",
+    "dev": "node --env-file-if-exists=.env --watch dist/main.js",
+    "start": "node --env-file-if-exists=.env dist/main.js",
+    "once": "node --env-file-if-exists=.env dist/main.js --once",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

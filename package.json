@@ -2,21 +2,22 @@
   "name": "snapurl",
   "version": "2.0.0",
   "private": true,
-  "description": "SnapURL — short links, dynamic QR codes and cookieless analytics.",
+  "description": "SnapURL \u2014 short links, dynamic QR codes and cookieless analytics.",
   "packageManager": "pnpm@11.24.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
     "dev:web": "pnpm --filter snapurl-web dev",
     "dev:api": "pnpm --filter @snapurl/api dev",
     "dev:redirect": "pnpm --filter @snapurl/redirect dev",
     "dev:worker": "pnpm --filter @snapurl/worker dev",
-
     "build": "pnpm -r build",
-    "type-check": "pnpm -r type-check",
-    "test": "pnpm -r test",
+    "build:packages": "pnpm --filter \"./packages/*\" build",
+    "type-check": "pnpm build:packages && pnpm -r type-check",
+    "test": "pnpm build:packages && pnpm -r test",
     "lint": "pnpm -r lint",
-
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:generate": "pnpm --filter @snapurl/database generate",
@@ -24,7 +25,6 @@
     "db:seed": "pnpm --filter @snapurl/database seed",
     "db:studio": "pnpm --filter @snapurl/database studio",
     "db:reset": "docker compose down -v && docker compose up -d postgres && pnpm db:migrate && pnpm db:seed",
-
     "v1:backend": "cd backend && npm start",
     "v1:frontend": "cd frontend && npm start"
   },
