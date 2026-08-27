@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1787833258694,
+      "tag": "0000_awesome_wallow",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787847182548,
+      "tag": "0001_system_domains",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787847648772,
+      "tag": "0002_rollup_marker",
+      "breakpoints": true
+    }
+  ]
+}

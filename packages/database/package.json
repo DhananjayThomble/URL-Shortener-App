@@ -1,0 +1,41 @@
+{
+  "name": "@snapurl/database",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Drizzle schema, migrations and repositories. The only package that knows SQL.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "generate": "drizzle-kit generate",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "studio": "drizzle-kit studio",
+    "import-v1": "tsx scripts/import-v1.ts"
+  },
+  "dependencies": {
+    "@snapurl/contract": "workspace:*",
+    "@snapurl/domain": "workspace:*",
+    "drizzle-orm": "^0.44.6",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "argon2": "^0.44.0",
+    "drizzle-kit": "^0.31.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

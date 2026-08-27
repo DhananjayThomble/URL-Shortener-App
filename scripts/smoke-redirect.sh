@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Exercises the redirect hot path against a running API + redirect service.
+#   usage: bash scripts/smoke-redirect.sh
+set -uo pipefail
+
+API="${API:-http://localhost:3001/api/v1}"
+RD="${RD:-http://localhost:3002}"
+RUN="x$(date +%s)"
+EMAIL="redirect-$(date +%s)@example.com"
+PASS="a-long-enough-password-123"
+PASSES=0; FAILS=0
+
+ok()  { PASSES=$((PASSES+1)); echo "  PASS  $1"; }
+bad() { FAILS=$((FAILS+1));  echo "  FAIL  $1"; echo "        $2"; }
+
+# loc <path> [extra curl args...] -> prints "STATUS|LOCATION"
+loc() {
+  local path="$1"; shift
+  curl -s -o /dev/null -D - "$RD/$path" "$@" 2>/dev/null \
+    | awk 'BEGIN{s="";l=""} /^HTTP/{s=$2} tolower($1)=="location:"{l=$2} END{gsub(/\r/,"",l); print s"|"l}'
+}
+
+expect() { # expect <label> <expected> <actual>
+  if [ "$3" = "$2" ]; then ok "$1"; else bad "$1" "expected [$2], got [$3]"; fi
+}
+contains() {
+  if echo "$3" | grep -q "$2"; then ok "$1"; else bad "$1" "got [$3]"; fi
+}
+
+echo "== setup =="
+S=$(curl -s -X POST "$API/auth/register" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Redirect Tester\",\"email\":\"$EMAIL\",\"password\":\"$PASS\"}")
+ACCESS=$(echo "$S" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).accessToken||""')
+[ -n "$ACCESS" ] && ok "registered a workspace" || bad "register" "$S"
+
+mklink() { curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d "$1"; }
+
+mklink "{\"destination\":\"https://example.com/plain\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-plain\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/utm\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-utm\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true,\"utm\":{\"source\":\"newsletter\",\"campaign\":\"spring\"}}" >/dev/null
+mklink "{\"destination\":\"https://example.com/noforward\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-noforward\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":false,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/perm\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-perm\",\"tags\":[],\"redirectType\":\"301\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/locked\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-locked\",\"password\":\"hunter2\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"2020-01-01T00:00:00.000Z\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/rest\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-geo\",\"tags\":[],\"redirectType\":\"302\",\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true,\"rules\":[{\"id\":\"r-in\",\"when\":{\"country\":\"IN\"},\"then\":\"https://example.in/store\"},{\"id\":\"r-ios\",\"when\":{\"device\":\"ios\"},\"then\":\"https://apps.apple.com/app\"}]}" >/dev/null
+ok "created seven links"
+
+echo
+echo "== basic redirect =="
+expect "302 to the destination" "302|https://example.com/plain" "$(loc "$RUN-plain")"
+expect "unknown slug is 404"    "404|"                          "$(loc "$RUN-nope")"
+
+echo
+echo "== the 301 hazard =="
+R=$(curl -s -o /dev/null -D - "$RD/$RUN-plain" | tr -d '\r')
+contains "302 sends no-store (destinations can change)" "no-store" "$R"
+R=$(curl -s -o /dev/null -D - "$RD/$RUN-perm" | tr -d '\r')
+contains "301 is capped at 5 minutes, not forever" "max-age=300" "$R"
+expect "301 uses status 301" "301|https://example.com/perm" "$(loc "$RUN-perm")"
+
+echo
+echo "== query and UTM =="
+contains "query string is forwarded" "a=1" "$(loc "$RUN-plain?a=1")"
+expect "forwardQuery=false drops it" "302|https://example.com/noforward" "$(loc "$RUN-noforward?a=1")"
+contains "stored UTM is appended" "utm_source=newsletter" "$(loc "$RUN-utm")"
+contains "click-time UTM wins over stored" "utm_source=twitter" "$(loc "$RUN-utm?utm_source=twitter")"
+
+echo
+echo "== routing chain =="
+contains "India goes to the India store" "example.in" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: IN')"
+contains "iOS goes to the App Store" "apps.apple.com" "$(loc "$RUN-geo" -H 'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')"
+contains "everyone else gets the default" "example.com/rest" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: FR')"
+
+echo
+echo "== gates =="
+contains "expired link uses expiresTo (G5)" "example.com/moved" "$(loc "$RUN-expired")"
+contains "locked link is sent to unlock (G3)" "unlock=1" "$(loc "$RUN-locked")"
+TOKEN=$(curl -s -X POST "$API/public/links/$RUN-locked/unlock" -H 'Content-Type: application/json' \
+  -d '{"password":"hunter2"}' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).unlockToken||""')
+contains "unlock token opens the link (G3)" "example.com/locked" "$(loc "$RUN-locked?k=$TOKEN")"
+contains "a token for another link is refused" "unlock=1" "$(loc "$RUN-locked?k=not-a-real-token")"
+
+echo
+echo "== the + preview convention =="
+contains "trailing + goes to the trust page" "/p/$RUN-plain" "$(loc "$RUN-plain%2B")"
+
+echo
+echo "== privacy =="
+if docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc "\d click_events" 2>/dev/null | grep -qi '^ip\b'; then
+  bad "click_events stores no IP" "an ip column exists"
+else ok "click_events has no ip column"; fi
+HASHES=$(docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc \
+  "select count(distinct visitor_hash) from click_events where link_id in (select id from links where slug like '$RUN%')" 2>/dev/null | tr -d '[:space:]')
+[ -n "$HASHES" ] && ok "clicks recorded with visitor hashes ($HASHES distinct)" || bad "click recording" "no rows"
+
+echo
+echo "----------------------------------------"
+echo "  $PASSES passed, $FAILS failed"
+echo "----------------------------------------"
+[ "$FAILS" -eq 0 ]

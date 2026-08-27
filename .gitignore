@@ -16,3 +16,11 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+.next
+# SnapURL 2.0 monorepo
+.env
+.env.local
+!.env.example
+dist/
+logs/
+*.tsbuildinfo
