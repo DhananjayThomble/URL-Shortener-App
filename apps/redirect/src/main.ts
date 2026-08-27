@@ -1,0 +1,221 @@
+import Fastify from "fastify";
+import jwt from "jsonwebtoken";
+import { createDatabase } from "@snapurl/database";
+import {
+  REDIRECT_STATUS,
+  buildDestination,
+  cacheHeadersFor,
+  evaluateRouting,
+  isBot,
+  parseBrowser,
+  parseDevice,
+  parseLanguage,
+  parseOs,
+  parseReferrerHost,
+  visitorHash,
+} from "@snapurl/domain";
+import { PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
+import { PostgresClickSink, type ClickSink } from "./click-sink.js";
+import { DailySaltCache } from "./salt.js";
+
+/* ============================================================
+   The redirect service.
+
+   Plain Fastify, not NestJS. The architecture argument was that
+   the hot path should carry the least of any app here, and a DI
+   container, decorators and reflect-metadata are exactly the kind
+   of weight that shows up in a Lambda cold start for no benefit
+   on a service with three routes.
+
+   Everything it needs is imported from @snapurl/domain, which the
+   API also imports — so the routing chain that decides where a
+   visitor lands has exactly one implementation.
+   ============================================================ */
+
+const PORT = Number(process.env.PORT ?? 3002);
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
+const JWT_SECRET = process.env.JWT_ACCESS_SECRET ?? "";
+const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+
+const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustProxy: true });
+const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: 5 });
+
+const resolver: LinkResolver = new PostgresLinkResolver(db);
+const clicks: ClickSink = new PostgresClickSink(db);
+const salts = new DailySaltCache(db);
+
+app.get("/health", async () => ({ status: "ok" }));
+
+app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
+  const rawSlug = request.params.slug;
+  const host = (request.headers["x-forwarded-host"] as string) ?? request.headers.host ?? "";
+
+  /* The "+" suffix convention from the landing page: anyone can add + to a
+     link to see where it goes before clicking. It is a redirect to the trust
+     page rather than a render, so the preview lives entirely in the frontend. */
+  if (rawSlug.endsWith("+")) {
+    return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug.slice(0, -1))}`, 302);
+  }
+
+  const link = await resolver.resolve(host, rawSlug);
+
+  if (!link) {
+    const domain = await resolver.resolveDomain(host);
+    if (domain?.notFoundRedirect) return reply.redirect(domain.notFoundRedirect, 302);
+    return reply.code(404).type("text/plain").send("No such link.");
+  }
+
+  const userAgent = (request.headers["user-agent"] as string) ?? "";
+  const blocked = gateFor(link);
+
+  if (blocked) {
+    // Blocked clicks are still recorded — "how many people hit an expired
+    // link" is exactly the number that tells someone to go renew it.
+    void record(link, request, userAgent, blocked, null, null);
+
+    if (blocked === "expired" && link.expiresTo) return reply.redirect(link.expiresTo, 302);
+    if (blocked === "flagged") {
+      return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug)}?warning=unsafe`, 302);
+    }
+    return reply
+      .code(410)
+      .type("text/plain")
+      .send(blocked === "click_limit" ? "This link has reached its click limit." : "This link has expired.");
+  }
+
+  /* G3 — password-protected links.
+
+     The unlock token is issued by the API after it checks the password. It is
+     bound to this link id and lives five minutes, so it cannot be replayed
+     against a different link or kept in a bookmark. */
+  if (link.hasPassword) {
+    const token = (request.query as { k?: string } | undefined)?.k;
+    if (!token || !isValidUnlockToken(token, link.id)) {
+      return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug)}?unlock=1`, 302);
+    }
+  }
+
+  const salt = await salts.today();
+  const hash = visitorHash({ dailySalt: salt, ip: request.ip, userAgent, linkId: link.id });
+
+  const decision = evaluateRouting(link.rules, link.destination, {
+    // CloudFront hands us the country for free and accurate at country level,
+    // which is all the contract reports. No GeoIP database to ship.
+    country: ((request.headers["cloudfront-viewer-country"] as string) ?? "").toUpperCase() || null,
+    device: parseDevice(userAgent),
+    language: parseLanguage(request.headers["accept-language"] as string),
+    visitorHash: hash,
+  });
+
+  const destination = buildDestination({
+    destination: decision.destination,
+    incomingQuery: request.url.split("?")[1] ?? null,
+    forwardQuery: link.forwardQuery,
+    utm: link.utm,
+  });
+
+  void record(link, request, userAgent, null, decision.matchedRuleId, decision.variant, hash);
+
+  for (const [header, value] of Object.entries(cacheHeadersFor(link.redirectType))) {
+    void reply.header(header, value);
+  }
+  if (link.hideReferrer) void reply.header("Referrer-Policy", "no-referrer");
+
+  return reply.redirect(destination, REDIRECT_STATUS[link.redirectType]);
+});
+
+app.get("/", async (request, reply) => {
+  const host = (request.headers["x-forwarded-host"] as string) ?? request.headers.host ?? "";
+  const domain = await resolver.resolveDomain(host);
+  if (domain?.rootRedirect) return reply.redirect(domain.rootRedirect, 302);
+  return reply.code(404).type("text/plain").send("Nothing here.");
+});
+
+/** Everything that stops a click short of the destination, in the order the
+ *  visitor would care about. */
+function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "flagged" | null {
+  if (link.archived) return "archived";
+  if (link.safeBrowsingStatus === "flagged") return "flagged";
+  if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) return "expired";
+  /* The count is the last rollup's, not a live one, so a hard cap can be
+     overshot by a handful under concurrency. A synchronous read-modify-write
+     here would cost more latency than the accuracy is worth. */
+  if (link.clickLimit != null && link.clicks >= link.clickLimit) return "click_limit";
+  return null;
+}
+
+function isValidUnlockToken(token: string, linkId: string): boolean {
+  try {
+    const claims = jwt.verify(token, JWT_SECRET) as { sub?: string; purpose?: string };
+    return claims.purpose === "unlock" && claims.sub === linkId;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Push the click and do not await it.
+ *
+ * The redirect must not get slower because analytics is having a bad day. A
+ * failure here is logged and dropped — a lost click is a worse outcome than a
+ * slow redirect only if you are the one counting clicks, and the visitor is not.
+ */
+function record(
+  link: ResolvedLink,
+  request: { ip: string; headers: Record<string, unknown> },
+  userAgent: string,
+  blockedReason: string | null,
+  matchedRuleId: string | null,
+  variant: string | null,
+  precomputedHash?: string,
+) {
+  void (async () => {
+    try {
+      const salt = await salts.today();
+      const hash =
+        precomputedHash ?? visitorHash({ dailySalt: salt, ip: request.ip, userAgent, linkId: link.id });
+
+      await clicks.record({
+        linkId: link.id,
+        workspaceId: link.workspaceId,
+        occurredAt: new Date(),
+        visitorHash: hash,
+        country: ((request.headers["cloudfront-viewer-country"] as string) ?? "").toUpperCase().slice(0, 2) || null,
+        device: parseDevice(userAgent),
+        browser: parseBrowser(userAgent),
+        os: parseOs(userAgent),
+        referrerHost: parseReferrerHost(request.headers.referer as string),
+        // A QR scan arrives with no referrer and a mobile UA. Imperfect, and
+        // the honest alternative — a ?qr marker the printer must remember to
+        // add — is worse because it silently under-counts.
+        isQr: !request.headers.referer && parseDevice(userAgent) !== "desktop",
+        isBot: isBot(userAgent),
+        blockedReason,
+        matchedRuleId,
+        variant,
+      });
+    } catch (err) {
+      app.log.warn({ err, linkId: link.id }, "failed to record click");
+    }
+  })();
+}
+
+async function main() {
+  if (!JWT_SECRET) {
+    app.log.warn("JWT_ACCESS_SECRET is not set — password-protected links cannot be unlocked.");
+  }
+  await app.listen({ port: PORT, host: "0.0.0.0" });
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, async () => {
+    await app.close();
+    await close();
+    process.exit(0);
+  });
+}
+
+main().catch((err) => {
+  app.log.error(err, "redirect service failed to start");
+  process.exit(1);
+});
