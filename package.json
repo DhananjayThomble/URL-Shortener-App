@@ -1,29 +1,39 @@
 {
-  "name": "url-shortener-app",
-  "version": "1.0.0",
-  "description": "A URL Shortener Web Application",
-  "main": "index.js",
+  "name": "snapurl",
+  "version": "2.0.0",
+  "private": true,
+  "description": "SnapURL — short links, dynamic QR codes and cookieless analytics.",
+  "packageManager": "pnpm@11.24.0",
+  "engines": { "node": ">=22" },
   "scripts": {
-    "install-frontend": "cd frontend && npm install",
-    "install-backend": "cd backend && npm install",
-    "install": "npm run install-frontend && npm run install-backend",
-    "backend": "cd backend && npm start",
-    "frontend": "cd frontend && npm start",
-    "start": "npm-run-all --parallel backend frontend",
-    "build-frontend": "cd frontend && npm run build ",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm --filter snapurl-web dev",
+    "dev:api": "pnpm --filter @snapurl/api dev",
+    "dev:redirect": "pnpm --filter @snapurl/redirect dev",
+    "dev:worker": "pnpm --filter @snapurl/worker dev",
+
+    "build": "pnpm -r build",
+    "type-check": "pnpm -r type-check",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:generate": "pnpm --filter @snapurl/database generate",
+    "db:migrate": "pnpm --filter @snapurl/database migrate",
+    "db:seed": "pnpm --filter @snapurl/database seed",
+    "db:studio": "pnpm --filter @snapurl/database studio",
+    "db:reset": "docker compose down -v && docker compose up -d postgres && pnpm db:migrate && pnpm db:seed",
+
+    "v1:backend": "cd backend && npm start",
+    "v1:frontend": "cd frontend && npm start"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DhananjayThomble/URL-Shortener-App.git"
   },
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/DhananjayThomble/URL-Shortener-App/issues"
-  },
-  "homepage": "https://github.com/DhananjayThomble/URL-Shortener-App#readme",
+  "license": "MIT",
   "devDependencies": {
-    "npm-run-all": "^4.1.5"
+    "typescript": "^5.7.3"
   }
 }
