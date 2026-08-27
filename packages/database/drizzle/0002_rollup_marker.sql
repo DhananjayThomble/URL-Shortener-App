@@ -1,0 +1,2 @@
+ALTER TABLE "click_events" ADD COLUMN "rolled_up_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "click_events_pending_idx" ON "click_events" USING btree ("occurred_at") WHERE "click_events"."rolled_up_at" is null;
