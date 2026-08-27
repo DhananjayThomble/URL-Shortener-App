@@ -6,8 +6,8 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "nest build",
-    "dev": "node --env-file=.env --watch dist/main.js",
-    "start": "node --env-file=.env dist/main.js",
+    "dev": "node --env-file-if-exists=.env --watch dist/main.js",
+    "start": "node --env-file-if-exists=.env dist/main.js",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "dev:nest": "nest start --watch"

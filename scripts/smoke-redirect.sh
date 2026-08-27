@@ -13,6 +13,16 @@ PASSES=0; FAILS=0
 ok()  { PASSES=$((PASSES+1)); echo "  PASS  $1"; }
 bad() { FAILS=$((FAILS+1));  echo "  FAIL  $1"; echo "        $2"; }
 
+# Reach the database whichever way this environment allows: psql directly when
+# the client is installed (CI, where Postgres is a service container), or
+# through the Compose container (local development).
+DB_URL="${DATABASE_URL:-postgres://snapurl:snapurl@localhost:5433/snapurl}"
+if command -v psql >/dev/null 2>&1; then
+  dbq() { psql "$DB_URL" -tAc "$1" 2>/dev/null; }
+else
+  dbq() { docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
+fi
+
 # loc <path> [extra curl args...] -> prints "STATUS|LOCATION"
 loc() {
   local path="$1"; shift
@@ -85,11 +95,10 @@ contains "trailing + goes to the trust page" "/p/$RUN-plain" "$(loc "$RUN-plain%
 
 echo
 echo "== privacy =="
-if docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc "\d click_events" 2>/dev/null | grep -qi '^ip\b'; then
+if dbq "select column_name from information_schema.columns where table_name='click_events' and column_name='ip'" | grep -q .; then
   bad "click_events stores no IP" "an ip column exists"
 else ok "click_events has no ip column"; fi
-HASHES=$(docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc \
-  "select count(distinct visitor_hash) from click_events where link_id in (select id from links where slug like '$RUN%')" 2>/dev/null | tr -d '[:space:]')
+HASHES=$(dbq "select count(distinct visitor_hash) from click_events where link_id in (select id from links where slug like '$RUN%')" | tr -d '[:space:]')
 [ -n "$HASHES" ] && ok "clicks recorded with visitor hashes ($HASHES distinct)" || bad "click recording" "no rows"
 
 echo

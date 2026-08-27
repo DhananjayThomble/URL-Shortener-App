@@ -1,5 +1,9 @@
 name: Auto Format Code with Prettier
-# This action automatically formats code with Prettier when a push is made to the main branch.
+# Formats the v1 backend/ and frontend/ directories when a push is made to main.
+#
+# Scope note: this does NOT cover web/, apps/ or packages/ — v2 has no Prettier
+# configuration yet, and adding one would produce a diff touching every file.
+# Tracked separately. Pull requests are verified by verify.yml.
 
 on:
   push:
@@ -16,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v2
         with:
-          node-version: "14.x"
+          node-version: "22.x"
 
       - name: Install dependencies
         run: npm install --prefix backend && npm install --prefix frontend
