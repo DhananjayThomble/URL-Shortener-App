@@ -306,6 +306,57 @@ live, so it always showed zero while the conversions page reported hundreds. Two
 screens contradicting each other is worse than either being wrong alone — it teaches
 someone to distrust both. Analytics now counts the conversions table directly.
 
+### Config is resolved at deploy time, not at cold start
+
+**The constraint:** the Lambdas sit in isolated subnets with no NAT, because a NAT
+gateway costs more per month than everything else in the stack combined. Nothing in
+there can call the SSM or Secrets Manager API without an interface VPC endpoint, at
+about $7/month each — roughly half the database bill, per endpoint, to move a value
+from one place the account owner can read into another place the account owner can
+read.
+
+**What I did instead:** CloudFormation resolves both stores at deploy time.
+Ordinary config comes from SSM Parameter Store (`/snapurl/<stage>/*`, free at
+standard tier), and the three secrets — the database password and the two JWT
+signing keys — are *generated* into Secrets Manager by the stack, so no human ever
+chooses them and no secret value is ever typed into this repository or baked into a
+container image. The images carry no configuration at all, which is what makes the
+same image deployable to any stage.
+
+**What it costs:** changing a value takes a redeploy rather than taking effect on
+the next cold start. For a signing key that is the right shape anyway — rotating one
+invalidates every token it signed, so it is a deliberate operation. For a log level
+it is mildly annoying. The upgrade path is one interface endpoint and a runtime
+lookup, and the day it becomes worth $7/month is the day someone else has console
+access to this account.
+
+**The one thing this does not do** is hide a value from anyone who can read a
+Lambda's configuration. That was already true of the database password before this
+change, and it is the same trade, made once, for the same reason.
+
+### `cdk synth` was staging its own output into itself
+
+**Found by:** running it. The stack merged in #246 did not synthesise at all.
+
+`DockerImageCode.fromImageAsset(repoRoot)` stages the repository into
+`infra/cdk.out/asset.<hash>/` — a directory inside the repository it is staging. With
+nothing excluding it, each asset copied the previous asset's output, and the third one
+died with `ENAMETOOLONG` after nesting the path forty times.
+
+`.dockerignore` already existed and excluded everything else the build does not need;
+it simply predates the CDK stack and had never heard of `cdk.out`. Adding it there is
+half the fix. The other half is repeating the exclusion on the asset itself, and the
+reason is worth writing down because it is not guessable: CDK builds one ordered
+pattern list from `.dockerignore` first and the asset's own `exclude` second, and the
+**last matching pattern wins**. `.dockerignore` ends with a re-include for
+`.env.example`, which was enough to pull those files back out of the excluded
+directory and start the recursion again — one `.env.example` deep per level. Listing
+the exclusion on the asset puts it after that negation, which is the only ordering
+that holds.
+
+Verified by synthesising twice from clean: three assets, 1.4 MB each, identical
+across runs, and the nested `cdk.out` directories left empty.
+
 ---
 
 ## Part 5 — Open questions for you

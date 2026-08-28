@@ -2,6 +2,17 @@
 # a smaller context uploads faster, and node_modules from the host would
 # shadow the ones the image installs for its own platform.
 **/node_modules
+# infra/ stages this whole directory as a Lambda image asset, and the staging
+# output lands in infra/cdk.out — inside the directory being staged. Without
+# these, each asset copies the previous one's output into itself and `cdk synth`
+# dies with ENAMETOOLONG after nesting the path forty-odd times.
+#
+# Both lines are needed: one for the directory, one for what is under it. The
+# stack repeats the same exclusion on the asset itself, because CDK reads this
+# file first and the last matching pattern wins — the `.env.example` re-include
+# below would otherwise pull those files back out of a directory excluded here.
+cdk.out
+**/cdk.out/**
 **/dist
 **/.next
 **/.turbo

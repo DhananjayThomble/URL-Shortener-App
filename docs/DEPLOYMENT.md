@@ -149,9 +149,47 @@ nothing at runtime depends on it.
 ```bash
 cd infra
 npx cdk bootstrap                    # once per account/region
-npx cdk synth                        # builds the images, writes the template
-npx cdk deploy -c webOrigin=https://your-app.vercel.app
+
+# Once per stage: write this stage's configuration to Parameter Store.
+../infra/bin/put-parameters.sh /snapurl/prod https://your-app.vercel.app https://snap.to
+
+npx cdk synth                        # writes the template
+npx cdk deploy                       # builds and pushes the images, then deploys
 ```
+
+There is no secret in that command. The database password and both JWT signing
+keys are generated into Secrets Manager by the stack itself.
+
+### Configuration
+
+Two stores, split on whether reading a value is harmful.
+
+| | Where | What is in it |
+| --- | --- | --- |
+| Config | SSM Parameter Store, `/snapurl/<stage>/*` | origins, default domain, log level, mail settings, throttle limits |
+| Secrets | Secrets Manager, generated | database password, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` |
+
+Both are resolved by CloudFormation **at deploy time** and land in the Lambda's
+environment. Neither is baked into a container image — the images are built
+from the repository alone and contain no configuration, so the same image is
+deployable to any stage. [DECISIONS.md](./DECISIONS.md) has the reasoning and
+what it costs; the short version is that reading either at cold start needs an
+interface VPC endpoint at ~$7/month, because there is no NAT.
+
+The stack has no defaults for the parameters. A missing one fails the deploy
+naming the parameter, which is a better time to find out than the first
+request; `infra/bin/put-parameters.sh` writes all eight in one command, and
+re-running it after editing a value is how a config change is made. The change
+takes effect on the next `cdk deploy`.
+
+`-c webOrigin=...` and `-c redirectOrigin=...` still work and take precedence,
+for a one-off deploy against a preview URL without editing the stored value and
+remembering to put it back.
+
+Two JWT keys, not one, because `apps/api/src/config/env.ts` requires two: if a
+single key signed both tokens, a stolen access token could be replayed as a
+refresh token and never expire. That is $0.80/month in Secrets Manager, about
+5% of what the database costs.
 
 ### What it creates
 
@@ -194,12 +232,12 @@ Postgres via `PostgresClickSink`.
 
 It does mean two things:
 
-1. **The database password is passed as a Lambda environment variable.**
-   Reading it from Secrets Manager at cold start would need an interface VPC
-   endpoint (~$7/month, about 45% of the database cost) to hide a password from
-   the only person who can read a Lambda's configuration anyway. That trade
-   changes the moment anyone else has console access to the account; the fix is
-   one endpoint and a runtime lookup.
+1. **Config and secrets are resolved at deploy time, not at cold start.**
+   Reading either from inside the VPC would need an interface endpoint
+   (~$7/month, about 45% of the database cost) to hide a value from the only
+   person who can read a Lambda's configuration anyway. That trade changes the
+   moment anyone else has console access to the account; the fix is one
+   endpoint and a runtime lookup. See Configuration above.
 
 2. **Google Safe Browsing cannot be called.** It is off by default already
    (see [DECISIONS.md](./DECISIONS.md) A10). Turning it on in this topology
@@ -225,15 +263,27 @@ long-running process calls on its interval.
 
 ### What is verified, and what is not
 
-**Verified:** the stack type-checks and synthesises, all three images build,
-and the container images pass both smoke suites (72 assertions) under
-`docker compose --profile full`.
+**Verified:** the stack type-checks, synthesises with zero validation
+violations, and produces a template in which every secret is a CloudFormation
+dynamic reference rather than a literal. The container images build and pass
+both smoke suites (72 assertions) under `docker compose --profile full`.
 
 **Not verified:** an actual deployment. Deploying costs real money in a real
 account, so nobody has run `cdk deploy` against this stack yet. Treat the first
-deploy as a test, and expect to find something — cold-start behaviour, the
-adapter's readiness check, and RDS connection limits under concurrency are the
-three most likely candidates.
+deploy as a test.
+
+Two of the three things that were most likely to break on it have since been
+dealt with, and are worth knowing about because both were silent:
+
+- **The adapter's readiness check.** Its default path is `/`, which the API does
+  not serve — everything is under `/api/v1` — so every cold start waited out the
+  readiness timeout before serving a request. Both web Lambdas now name their own
+  health endpoint.
+- **RDS connection limits.** `DATABASE_POOL_MAX` was set on all three functions
+  but only the API read it; the redirect service and worker had 5 and 4
+  hardcoded. On a `db.t4g.micro`, five connections per concurrent Lambda
+  instance exhausts the server quickly. Both now honour the variable, keeping
+  their previous values as the default for the long-running process.
 
 The shape it should take, and the cost constraints that dictate it, are
 recorded in [DECISIONS.md](./DECISIONS.md). The single most important one:

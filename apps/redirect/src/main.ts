@@ -37,8 +37,14 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@loc
 const JWT_SECRET = process.env.JWT_ACCESS_SECRET ?? "";
 const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 
+/* Five is right for a long-running process serving many requests at once. It
+   is wrong on Lambda, where each instance handles one request at a time and
+   the pool just multiplies idle connections against a db.t4g.micro's small
+   max_connections — so the deployment sets this to 1. */
+const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
+
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustProxy: true });
-const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: 5 });
+const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: POOL_MAX });
 
 const resolver: LinkResolver = new PostgresLinkResolver(db);
 const clicks: ClickSink = new PostgresClickSink(db);

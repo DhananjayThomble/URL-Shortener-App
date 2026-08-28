@@ -18,7 +18,11 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@loc
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
 const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3600);
 
-export const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: 4 });
+/* Four for the long-running process; the scheduled Lambda sets this to 1,
+   where every extra connection is idle and counted against RDS's limit. */
+const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 4);
+
+export const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: POOL_MAX });
 const projection = new NoProjection();
 
 /** Runs often: this is the loop that makes the dashboards current. */
