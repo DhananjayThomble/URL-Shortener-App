@@ -28,10 +28,10 @@ pnpm dev:web        # :3000  the dashboard
 
 `pnpm db:reset` wipes and rebuilds from scratch.
 
-To point the frontend at the real API instead of its fixtures, set
-`NEXT_PUBLIC_USE_FIXTURES=false` in `web/.env.local`. That is the only change
-the frontend needs — the fixture adapter and the real client share one call
-signature, which is what makes an endpoint-at-a-time cutover possible.
+The frontend talks to the real API by default. To work on it without a backend
+running, set `NEXT_PUBLIC_USE_FIXTURES=true` in `web/.env.local`. That is the
+only change needed either way — the fixture adapter and the real client share
+one call signature, which is what made an endpoint-at-a-time cutover possible.
 
 ## What is where
 

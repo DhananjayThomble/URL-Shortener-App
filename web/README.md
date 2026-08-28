@@ -19,11 +19,11 @@ Then open http://localhost:3000.
 | Variable | What it does |
 | --- | --- |
 | `NEXT_PUBLIC_API_URL` | Base URL of the NestJS API. Defaults to `http://localhost:3001/api/v1`. |
-| `NEXT_PUBLIC_USE_FIXTURES` | `true` serves the UI from in-repo fixtures so the frontend runs before the API exists. Set to `false` to go over the wire. |
+| `NEXT_PUBLIC_USE_FIXTURES` | Opt-in, default off. `true` serves the UI from in-repo fixtures so the frontend runs with no API. Leave unset to go over the wire. A production build rejects `true`. |
 
 ## Wiring it to NestJS
 
-Set `NEXT_PUBLIC_USE_FIXTURES=false` and point `NEXT_PUBLIC_API_URL` at the API.
+Point `NEXT_PUBLIC_API_URL` at the API; fixtures are already off by default.
 Nothing else changes — the fixture adapter and the real client share one call
 signature.
 

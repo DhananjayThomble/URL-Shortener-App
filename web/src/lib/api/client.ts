@@ -7,13 +7,26 @@ import { z } from "zod";
    are deliberately no Next.js route handlers in this project — if
    you find yourself wanting one, the endpoint belongs in NestJS.
 
-   While the backend is still being built, NEXT_PUBLIC_USE_FIXTURES
-   routes the same calls to src/lib/api/fixtures.ts. Flip the env var
-   to false and every call goes over the wire unchanged.
+   Setting NEXT_PUBLIC_USE_FIXTURES=true routes the same calls to
+   src/lib/api/fixtures.ts instead, for frontend work with no backend
+   running. It is opt-in: unset means the real API.
    ============================================================ */
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
-export const USE_FIXTURES = process.env.NEXT_PUBLIC_USE_FIXTURES !== "false";
+
+/* Fixtures are opt-IN.
+ *
+ * This used to read `!== "false"`, which meant any deploy that forgot the
+ * variable served src/lib/api/fixtures.ts — roughly 480 lines of invented
+ * workspaces, links and analytics — as though it were production data. The
+ * site looked entirely functional, which is exactly what made it dangerous:
+ * there was no symptom to notice.
+ *
+ * Defaulting off inverts the failure. Forget the variable now and the app
+ * calls the real API and fails visibly if it isn't there, which is a problem
+ * someone can actually see and fix. next.config.ts additionally refuses to
+ * complete a production build with fixtures switched on. */
+export const USE_FIXTURES = process.env.NEXT_PUBLIC_USE_FIXTURES === "true";
 
 const TOKEN_KEY = "snapurl.accessToken";
 const REFRESH_KEY = "snapurl.refreshToken";

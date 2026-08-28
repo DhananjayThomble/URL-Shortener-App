@@ -58,14 +58,16 @@ seeded login.
 
 ### The frontend runs without a backend
 
-`NEXT_PUBLIC_USE_FIXTURES` defaults to **on**
+`NEXT_PUBLIC_USE_FIXTURES` is opt-in and defaults to **off**
 ([`web/src/lib/api/client.ts`](./web/src/lib/api/client.ts)), so `pnpm dev:web`
-serves the whole dashboard from `web/src/lib/api/fixtures.ts` with no API and no
-database running.
+talks to the real API. Set it to `"true"` in `web/.env.local` to serve the whole
+dashboard from `web/src/lib/api/fixtures.ts` with no API and no database
+running — useful for frontend-only work.
 
-Worth knowing before you add a hook: a hook without a matching fixture will
-appear to work and be entirely fake. Set `NEXT_PUBLIC_USE_FIXTURES=false` in
-`web/.env.local` to talk to the real API.
+Worth knowing before you add a hook: while fixtures are on, a hook without a
+matching fixture will appear to work and be entirely fake. That is why the
+default is off, and why a production build with fixtures enabled fails outright
+rather than shipping invented data.
 
 ## Checks
 

@@ -444,9 +444,9 @@ function previewFor(slug: string): PublicLinkPreview {
    against them cannot be reviewed at all. Seeded from the constants above
    and reset by a page reload.
 
-   USE_FIXTURES defaults to ON (client.ts), so a hook added without a case
-   below throws rather than silently returning nothing — which is the
-   failure this file exists to make loud.
+   When fixtures are on, a hook added without a case below throws rather
+   than silently returning nothing — which is the failure this file exists
+   to make loud.
    ============================================================ */
 const linkStore: Link[] = [...LINKS];
 const domainStore: Domain[] = [...DOMAINS];
