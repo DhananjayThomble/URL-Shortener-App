@@ -2,12 +2,15 @@
 
 import { PageHead } from "@/components/app-shell";
 import { Funnel, Sparkline } from "@/components/charts";
-import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Segmented, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
 import { useConversions } from "@/lib/api/hooks";
+import type { AnalyticsRange } from "@snapurl/contract";
+import { useState } from "react";
 import { full, inr, pct } from "@/lib/utils";
 
 export default function ConversionsPage() {
-  const { data, isLoading, isError, error, refetch } = useConversions();
+  const [range, setRange] = useState<AnalyticsRange>("30d");
+  const { data, isLoading, isError, error, refetch } = useConversions(range);
 
   return (
     <>
@@ -16,7 +19,17 @@ export default function ConversionsPage() {
         sub="Which links actually produced revenue — not which produced clicks."
         actions={
           <>
-            <Button>Last 30 days ▾</Button>
+            <Segmented<AnalyticsRange>
+              value={range}
+              onChange={setRange}
+              options={[
+                { value: "24h", label: "24h" },
+                  { value: "7d", label: "7d" },
+                  { value: "30d", label: "30d" },
+                  { value: "90d", label: "90d" },
+                  { value: "12m", label: "12m" },
+              ]}
+            />
             <Button>Define an event</Button>
             <Button variant="primary">Install tracking</Button>
           </>

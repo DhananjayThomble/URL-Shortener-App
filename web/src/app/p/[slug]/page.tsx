@@ -1,15 +1,45 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { Button, Chip, ErrorState, Skeleton } from "@/components/ui";
-import { useLinkPreview } from "@/lib/api/hooks";
+import { useParams, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { Button, Chip, ErrorState, Field, Input, Skeleton } from "@/components/ui";
+import { useLinkPreview, useUnlockLink } from "@/lib/api/hooks";
 import { formatDate, relativeDate } from "@/lib/utils";
+
+/** shortUrl is "domain/slug" with no scheme; localhost is the dev redirect. */
+function withUnlockKey(shortUrl: string, token: string): string {
+  const scheme = /^(localhost|127\.0\.0\.1)/.test(shortUrl) ? "http" : "https";
+  const url = new URL(/^https?:\/\//.test(shortUrl) ? shortUrl : `${scheme}://${shortUrl}`);
+  url.searchParams.set("k", token);
+  return url.toString();
+}
 
 /* The public trust page. Anyone can reach it by adding "+" to a short link;
    the redirect service rewrites that to /p/<slug>. No auth, no cookies. */
 export default function LinkPreviewPage() {
   const { slug } = useParams<{ slug: string }>();
+  /* G3 — the redirect service bounces a password-protected link here as
+     ?unlock=1 and waits for the visitor to come back with ?k=<token>. The
+     page ignored the parameter entirely, so those links were unreachable:
+     the redirect sent people to a page that offered no way to continue. */
+  const unlockRequested = useSearchParams().get("unlock") === "1";
   const { data, isLoading, isError, error, refetch } = useLinkPreview(slug);
+  const unlock = useUnlockLink(slug);
+
+  const [password, setPassword] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function submitPassword() {
+    if (!password) return;
+    try {
+      const { unlockToken } = await unlock.mutateAsync({ password });
+      // The token is bound to this link and expires in five minutes, so it is
+      // handed straight back to the redirect rather than kept anywhere.
+      window.location.href = withUnlockKey(data!.shortUrl, unlockToken);
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
 
   return (
     <div className="max-w-[560px] mx-auto px-6 pt-[60px] pb-20">
@@ -93,6 +123,33 @@ export default function LinkPreviewPage() {
                 </div>
               ))}
             </div>
+
+            {unlockRequested ? (
+              <div className="px-6 pt-[18px] pb-[6px]">
+                <Field
+                  label="This link is password protected"
+                  help="Ask whoever shared it for the password. We check it on the server and never store it in your browser."
+                  error={problem ?? undefined}
+                >
+                  <Input
+                    type="password"
+                    value={password}
+                    autoFocus
+                    placeholder="Password"
+                    onChange={(e) => { setPassword(e.target.value); setProblem(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") void submitPassword(); }}
+                  />
+                </Field>
+                <Button
+                  variant="primary"
+                  className="justify-center w-full mt-3"
+                  onClick={submitPassword}
+                  disabled={unlock.isPending || !password}
+                >
+                  {unlock.isPending ? "Checking…" : "Unlock and continue"}
+                </Button>
+              </div>
+            ) : null}
 
             <div className="px-6 pt-[18px] pb-[22px] flex flex-col gap-[9px]">
               <a
