@@ -1,0 +1,22 @@
+{
+  "name": "@snapurl/infra",
+  "version": "3.0.0",
+  "private": true,
+  "description": "AWS CDK stack. Not part of the runtime — nothing in apps/ or packages/ imports this.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "aws-cdk": "^2.1029.4",
+    "aws-cdk-lib": "^2.221.0",
+    "constructs": "^10.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

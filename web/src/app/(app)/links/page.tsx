@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { LinkRow } from "@/components/links/link-row";
 import { Button, Card, EmptyState, ErrorState, Input, Skeleton, Tabs } from "@/components/ui";
-import { useDomains, useLinks } from "@/lib/api/hooks";
+import { useDomains, useExportLinks, useLinks } from "@/lib/api/hooks";
 import type { ListLinksQuery } from "@snapurl/contract";
 import { cn, full } from "@/lib/utils";
 
@@ -21,6 +21,7 @@ const SELECT_CLASS =
 
 export default function LinksPage() {
   const [filter, setFilter] = useState<ListLinksQuery["status"]>("all");
+  const exportLinks = useExportLinks();
   const [view, setView] = useState<"list" | "grid">("list");
 
   /* All four were implemented in LinksService.list and had no way in from the
@@ -90,11 +91,21 @@ export default function LinksPage() {
         }
         actions={
           <>
-            <Button>Export</Button>
-            <Button>Bulk create</Button>
+            {/* Exports whatever the current filter shows, not always everything —
+                otherwise "Export" after filtering to Expiring would quietly hand
+                back the full workspace. */}
+            <Button onClick={() => void exportLinks.run(filter)} disabled={exportLinks.exporting}>
+              {exportLinks.exporting ? "Preparing…" : "Export CSV"}
+            </Button>
           </>
         }
       />
+
+      {exportLinks.error ? (
+        <p className="text-[12.5px] text-bad mb-2" role="alert">
+          {exportLinks.error}
+        </p>
+      ) : null}
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <div className="flex gap-2">

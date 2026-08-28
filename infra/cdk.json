@@ -1,0 +1,11 @@
+{
+  "app": "npx tsx bin/snapurl.ts",
+  "watch": { "include": ["**"], "exclude": ["README.md", "cdk*.json", "node_modules"] },
+  "context": {
+    "@aws-cdk/core:newStyleStackSynthesis": true,
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "_comment_checkSecretUsage": "Off deliberately: the DB password is passed to the Lambdas as an environment variable. See the reasoning in lib/snapurl-stack.ts.",
+    "@aws-cdk/core:checkSecretUsage": false,
+    "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true
+  }
+}

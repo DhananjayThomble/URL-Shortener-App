@@ -143,8 +143,97 @@ all — its liveness shows up in what it writes to the rollup tables.
 
 ## Backend → AWS
 
-Not yet implemented. There is no CDK stack and no deploy pipeline; the
-container images above are the prerequisite for one.
+`infra/` is a CDK v2 stack. Nothing in `apps/` or `packages/` imports it, and
+nothing at runtime depends on it.
+
+```bash
+cd infra
+npx cdk bootstrap                    # once per account/region
+npx cdk synth                        # builds the images, writes the template
+npx cdk deploy -c webOrigin=https://your-app.vercel.app
+```
+
+### What it creates
+
+| | |
+| --- | --- |
+| VPC | 2 AZs, public + isolated subnets, **zero NAT gateways** |
+| RDS | PostgreSQL 18, `db.t4g.micro`, single-AZ, 20 GB gp3, isolated subnets |
+| API | Lambda (container image) behind an HTTP API |
+| Redirect | Lambda (container image) behind CloudFront |
+| Worker | Lambda, invoked once a minute by EventBridge |
+
+### The cost model, which dictates every choice above
+
+The account is on the free tier introduced in **July 2025**: $100 in credits,
+valid 12 months, and **no 750-hour RDS allowance** — that was part of the old
+12-month tier and does not apply to accounts created since.
+
+At this workload Lambda, CloudFront and SSM sit inside always-free tiers that
+never expire. **Postgres is roughly 92% of the bill**, about $15/month, so
+$100 covers roughly six months.
+
+Two decisions follow from that, and both are worth understanding before
+changing anything:
+
+**No NAT gateway.** A NAT costs ~$32/month before a byte moves — more than
+everything else in this stack combined, including the database. The standard
+"put RDS in a private subnet" tutorial creates one without mentioning it. The
+subnets here are `PRIVATE_ISOLATED`, not `PRIVATE_WITH_EGRESS`, because the
+latter implies a NAT.
+
+**Lambda, not Fargate.** Three Fargate tasks behind an ALB would be roughly
+$58/month against Lambda's ~$0 — the credits would be gone in under two months.
+
+### Two consequences of having no NAT
+
+Lambdas in isolated subnets can reach the database and nothing else. That is
+fine, because the application needs nothing else — there is no AWS SDK anywhere
+in `apps/` or `packages/`, and the redirect service writes clicks straight to
+Postgres via `PostgresClickSink`.
+
+It does mean two things:
+
+1. **The database password is passed as a Lambda environment variable.**
+   Reading it from Secrets Manager at cold start would need an interface VPC
+   endpoint (~$7/month, about 45% of the database cost) to hide a password from
+   the only person who can read a Lambda's configuration anyway. That trade
+   changes the moment anyone else has console access to the account; the fix is
+   one endpoint and a runtime lookup.
+
+2. **Google Safe Browsing cannot be called.** It is off by default already
+   (see [DECISIONS.md](./DECISIONS.md) A10). Turning it on in this topology
+   requires egress, which means a NAT or a proxy.
+
+### Why the images are containers, not zip bundles
+
+The Lambda images share every build stage with the container images verified
+locally by `docker compose --profile full`. What runs in Lambda is the same
+compiled output whose smoke suite passed, rather than a separately-bundled
+approximation of it.
+
+The API and redirect service use the **AWS Lambda Web Adapter**, an extension
+that speaks the Lambda runtime API on one side and plain HTTP on the other.
+That means neither application contains a single line of Lambda-specific code —
+the image starts the same Fastify server compose runs, and the adapter
+translates. The alternative (`@fastify/aws-lambda`) would have required
+refactoring both entrypoints for a runtime that cannot be tested locally.
+
+The worker has no HTTP surface for an adapter to translate, so it uses AWS's
+own Node base image and a handler that calls the same two functions the
+long-running process calls on its interval.
+
+### What is verified, and what is not
+
+**Verified:** the stack type-checks and synthesises, all three images build,
+and the container images pass both smoke suites (72 assertions) under
+`docker compose --profile full`.
+
+**Not verified:** an actual deployment. Deploying costs real money in a real
+account, so nobody has run `cdk deploy` against this stack yet. Treat the first
+deploy as a test, and expect to find something — cold-start behaviour, the
+adapter's readiness check, and RDS connection limits under concurrency are the
+three most likely candidates.
 
 The shape it should take, and the cost constraints that dictate it, are
 recorded in [DECISIONS.md](./DECISIONS.md). The single most important one:

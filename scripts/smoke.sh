@@ -195,6 +195,28 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== csv export =="
+
+HDRS=$(curl -s -D - -o /tmp/smoke-export.csv "$API/links/export" -H "Authorization: Bearer $ACCESS")
+echo "$HDRS" | grep -qi "text/csv"   && ok "export returns text/csv"   || bad "export content type" "$(echo "$HDRS" | head -1)"
+
+echo "$HDRS" | grep -qi "content-disposition: attachment"   && ok "export is sent as a download"   || bad "export content-disposition" "missing attachment header"
+
+head -1 /tmp/smoke-export.csv | grep -q "^short_url,destination"   && ok "export has a header row"   || bad "export header row" "$(head -1 /tmp/smoke-export.csv)"
+
+grep -q "$RUN" /tmp/smoke-export.csv   && ok "export contains the links created by this run"   || bad "export contents" "no row matching $RUN"
+
+ALL=$(curl -s "$API/links/export" -H "Authorization: Bearer $ACCESS" | wc -l)
+ARCHIVED=$(curl -s "$API/links/export?status=archived" -H "Authorization: Bearer $ACCESS" | wc -l)
+[ "$ALL" -gt "$ARCHIVED" ]   && ok "export respects the status filter ($((ALL-1)) all vs $((ARCHIVED-1)) archived)"   || bad "export filter" "all=$ALL archived=$ARCHIVED"
+
+# /links/export must not be routed as /links/:id -- Nest matches in declaration
+# order, so a misplaced route turns this into a 404 for a link named "export".
+echo "$HDRS" | head -1 | grep -q "200"   && ok "/links/export is not matched as a link id"   || bad "route order" "$(echo "$HDRS" | head -1)"
+
+rm -f /tmp/smoke-export.csv
+
+echo
 echo "----------------------------------------"
 echo "  $PASSES passed, $FAILS failed"
 echo "----------------------------------------"
