@@ -22,6 +22,13 @@
       "when": 1787847648772,
       "tag": "0002_rollup_marker",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787931698295,
+      "tag": "0003_scheduled_activation",
+      "breakpoints": true
     }
   ]
 }

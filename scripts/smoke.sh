@@ -195,6 +195,30 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== scheduled activation =="
+BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"destination\":\"https://example.com/launch\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-sched\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/teaser\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}")
+check "a future activatesAt reports status scheduled" '"status":"scheduled"' "$BODY"
+check "activatesAt is readable back, not write-only"  '"activatesAt":"2099-01-01' "$BODY"
+check "scheduledTo is readable back too"              '"scheduledTo":"https://example.com/teaser"' "$BODY"
+
+BODY=$(curl -s "$API/links?status=scheduled" -H "Authorization: Bearer $ACCESS")
+check "?status=scheduled finds it" "$RUN-sched" "$BODY"
+
+# The filter that is easy to get wrong: deriveStatus ranks scheduled above
+# active, so a link that is not live yet must not appear under Active.
+BODY=$(curl -s "$API/links?status=active" -H "Authorization: Bearer $ACCESS")
+if echo "$BODY" | grep -q "$RUN-sched"; then
+  bad "?status=active excludes a not-yet-live link" "$(echo "$BODY" | head -c 200)"
+else
+  ok "?status=active excludes a not-yet-live link"
+fi
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"destination\":\"https://example.com/impossible\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-impossible\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"expiresAt\":\"2030-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}")
+status "a window that closes before it opens is refused" "400" "$CODE" ""
+
+echo
 echo "== csv export =="
 
 HDRS=$(curl -s -D - -o /tmp/smoke-export.csv "$API/links/export" -H "Authorization: Bearer $ACCESS")

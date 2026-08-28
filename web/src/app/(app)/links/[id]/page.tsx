@@ -96,7 +96,7 @@ export default function LinkDetailPage() {
               <span className="text-ink-3 font-normal">{l.domain}/</span>
               {l.slug}
             </span>
-            <Chip tone={l.status === "active" ? "good" : l.status === "expired" ? "bad" : "warn"} dot>
+            <Chip tone={l.status === "active" ? "good" : l.status === "expired" ? "bad" : l.status === "archived" ? "default" : "warn"} dot>
               {l.status[0].toUpperCase() + l.status.slice(1)}
             </Chip>
             {l.rules.some((r) => r.weight) ? <Chip tone="teal">A/B running</Chip> : null}

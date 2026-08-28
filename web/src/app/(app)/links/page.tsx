@@ -11,6 +11,7 @@ import { cn, full } from "@/lib/utils";
 const FILTERS = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
+  { value: "scheduled", label: "Scheduled" },
   { value: "expiring", label: "Expiring" },
   { value: "expired", label: "Expired" },
   { value: "archived", label: "Archived" },

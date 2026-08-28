@@ -77,6 +77,13 @@ export const links = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     /** G5 — was write-only, so it could be set once and never read or corrected. */
     expiresTo: text("expires_to"),
+    /* The mirror of expires_at: when the link starts working. Null means it
+       already does. Nothing runs to flip it — status is derived from the clock
+       on every read, so a link scheduled for Friday goes live on Friday
+       whether or not a process was alive to notice. */
+    activatesAt: timestamp("activates_at", { withTimezone: true }),
+    /** Where a click lands before activates_at. Null means a plain "not yet" page. */
+    scheduledTo: text("scheduled_to"),
     clickLimit: integer("click_limit"),
 
     /** G3 — argon2id, same as a user password. Null means no password. */
@@ -125,6 +132,10 @@ export const links = pgTable(
     index("links_workspace_created_idx").on(t.workspaceId, t.createdAt.desc(), t.id.desc()),
     index("links_workspace_tags_idx").using("gin", t.tags),
     index("links_expires_idx").on(t.expiresAt).where(sql`${t.expiresAt} is not null`),
+    /* Same shape as the expiry index and for the same reason: the scheduled
+       filter scans on this column, and the overwhelming majority of links
+       never set it. */
+    index("links_activates_idx").on(t.activatesAt).where(sql`${t.activatesAt} is not null`),
   ],
 );
 

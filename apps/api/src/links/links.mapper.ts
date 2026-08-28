@@ -12,6 +12,8 @@ export interface LinkRow {
   redirectType: string;
   expiresAt: Date | null;
   expiresTo: string | null;
+  activatesAt: Date | null;
+  scheduledTo: string | null;
   clickLimit: number | null;
   passwordHash: string | null;
   forwardQuery: boolean;
@@ -88,6 +90,7 @@ export function toLinkDto(
     status: deriveStatus({
       archivedAt: row.archivedAt,
       expiresAt: row.expiresAt,
+      activatesAt: row.activatesAt,
       clickLimit: row.clickLimit,
       clicks: row.clicks,
     }),
@@ -97,6 +100,8 @@ export function toLinkDto(
     rules: rules.map(toRoutingRule),
     expiresAt: row.expiresAt?.toISOString() ?? null,
     expiresTo: row.expiresTo,
+    activatesAt: row.activatesAt?.toISOString() ?? null,
+    scheduledTo: row.scheduledTo,
     clickLimit: row.clickLimit,
     // The hash itself never leaves the database — only whether one exists.
     passwordProtected: Boolean(row.passwordHash),

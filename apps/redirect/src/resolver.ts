@@ -23,6 +23,8 @@ export interface ResolvedLink {
   rules: RoutingRule[];
   expiresAt: Date | null;
   expiresTo: string | null;
+  activatesAt: Date | null;
+  scheduledTo: string | null;
   clickLimit: number | null;
   clicks: number;
   hasPassword: boolean;
@@ -97,6 +99,8 @@ export class PostgresLinkResolver implements LinkResolver {
       })),
       expiresAt: row.link.expiresAt,
       expiresTo: row.link.expiresTo,
+      activatesAt: row.link.activatesAt,
+      scheduledTo: row.link.scheduledTo,
       clickLimit: row.link.clickLimit,
       clicks: row.link.clicks,
       hasPassword: Boolean(row.link.passwordHash),

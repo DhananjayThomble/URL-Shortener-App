@@ -74,9 +74,22 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
     void record(link, request, userAgent, blocked, null, null);
 
     if (blocked === "expired" && link.expiresTo) return reply.redirect(link.expiresTo, 302);
+    if (blocked === "scheduled" && link.scheduledTo) return reply.redirect(link.scheduledTo, 302);
     if (blocked === "flagged") {
       return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug)}?warning=unsafe`, 302);
     }
+
+    /* 404, not 410, and not 503.
+       410 means "was here, is gone", which is the opposite of a link that has
+       not started yet. 503 would invite crawlers to hammer it and reads as an
+       outage on our side. As far as the world is concerned this slug does not
+       resolve yet, which is what 404 says. Retry-After carries the date for
+       anything that cares to look. */
+    if (blocked === "scheduled") {
+      if (link.activatesAt) void reply.header("Retry-After", link.activatesAt.toUTCString());
+      return reply.code(404).type("text/plain").send("This link is not live yet.");
+    }
+
     return reply
       .code(410)
       .type("text/plain")
@@ -132,8 +145,13 @@ app.get("/", async (request, reply) => {
 });
 
 /** Everything that stops a click short of the destination, in the order the
- *  visitor would care about. */
-function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "flagged" | null {
+ *  visitor would care about.
+ *
+ *  The order after "flagged" is the same one `deriveStatus` uses, so what the
+ *  dashboard says about a link and what a visitor to it experiences cannot
+ *  disagree: a link that has already expired reports expired even if it also
+ *  has an activation date still ahead of it. */
+function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
   if (link.archived) return "archived";
   if (link.safeBrowsingStatus === "flagged") return "flagged";
   if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) return "expired";
@@ -141,6 +159,11 @@ function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "
      overshot by a handful under concurrency. A synchronous read-modify-write
      here would cost more latency than the accuracy is worth. */
   if (link.clickLimit != null && link.clicks >= link.clickLimit) return "click_limit";
+  /* Nothing schedules this. The row carries a date and every request compares
+     it against the clock, so the link starts working at exactly that moment
+     with no job having to fire — which is the whole point of storing a date
+     rather than a flag someone has to flip. */
+  if (link.activatesAt && link.activatesAt.getTime() > Date.now()) return "scheduled";
   return null;
 }
 
