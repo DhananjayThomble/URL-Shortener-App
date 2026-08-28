@@ -26,11 +26,13 @@ present. If your change contradicts one, say so rather than quietly reversing it
 does not exist in 17. `docker-compose.yml` pins the version and maps it to port
 **5433**, not 5432.
 
-**`USE_FIXTURES` defaults to ON.** `web/src/lib/api/client.ts` routes every
-frontend call to `web/src/lib/api/fixtures.ts` unless
-`NEXT_PUBLIC_USE_FIXTURES` is explicitly `"false"`. **A hook added without a
-matching fixture will appear to work and be entirely fake.** If you add a
-mutation, add its fixture in the same change.
+**`USE_FIXTURES` is opt-IN and defaults to OFF.** `web/src/lib/api/client.ts`
+talks to the real API unless `NEXT_PUBLIC_USE_FIXTURES` is explicitly `"true"`,
+in which case every call is served from `web/src/lib/api/fixtures.ts` instead.
+**A hook added without a matching fixture will appear to work and be entirely
+fake when fixtures are on.** If you add a mutation, add its fixture in the same
+change. A production build with fixtures enabled is rejected by
+`web/next.config.ts`.
 
 **`pnpm lint` fails.** `web/package.json` declares `eslint .` with no eslint
 config and no eslint dependency. Do not run it and do not fix it in passing —

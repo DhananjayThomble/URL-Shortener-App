@@ -56,6 +56,9 @@ jobs:
       # for a reason that has nothing to do with the change under test.
       THROTTLE_LIMIT: "100000"
       LOG_LEVEL: warn
+      # CI builds the frontend to prove it compiles, not to serve it. Without
+      # this, next.config.ts correctly refuses to build without a real API URL.
+      SNAPURL_ALLOW_UNCONFIGURED_BUILD: "true"
 
     steps:
       - uses: actions/checkout@v4
