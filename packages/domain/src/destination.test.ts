@@ -96,6 +96,39 @@ describe("deriveStatus", () => {
   it("stays active below the click limit", () => {
     expect(deriveStatus({ clickLimit: 500, clicks: 499 }, now)).toBe("active");
   });
+
+  it("reports scheduled before the activation date", () => {
+    expect(deriveStatus({ activatesAt: "2026-06-20T12:00:00Z" }, now)).toBe("scheduled");
+  });
+
+  it("goes live on the activation date with nothing having run", () => {
+    // The same row, read a moment either side of its activation time.
+    const link = { activatesAt: "2026-06-15T12:00:00Z" };
+    expect(deriveStatus(link, new Date("2026-06-15T11:59:59Z"))).toBe("scheduled");
+    expect(deriveStatus(link, new Date("2026-06-15T12:00:00Z"))).toBe("active");
+  });
+
+  it("prefers expired over scheduled when the window closed before it opened", () => {
+    expect(
+      deriveStatus({ activatesAt: "2026-06-20T12:00:00Z", expiresAt: "2026-06-14T12:00:00Z" }, now),
+    ).toBe("expired");
+  });
+
+  it("prefers scheduled over expiring", () => {
+    // Not live yet, and due to expire inside the seven-day window. "Expiring"
+    // would be true and useless — it has not started.
+    expect(
+      deriveStatus({ activatesAt: "2026-06-16T12:00:00Z", expiresAt: "2026-06-19T12:00:00Z" }, now),
+    ).toBe("scheduled");
+  });
+
+  it("reports archived above scheduled", () => {
+    expect(deriveStatus({ archivedAt: now, activatesAt: "2026-06-20T12:00:00Z" }, now)).toBe("archived");
+  });
+
+  it("ignores an unparseable activation date rather than reporting scheduled forever", () => {
+    expect(deriveStatus({ activatesAt: "not a date" }, now)).toBe("active");
+  });
 });
 
 describe("cacheHeadersFor", () => {

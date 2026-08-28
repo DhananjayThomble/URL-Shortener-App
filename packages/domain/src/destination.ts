@@ -55,16 +55,36 @@ export function buildDestination(opts: DestinationOptions): string {
   return url.toString();
 }
 
+/** Accepts what the database and the API both hand it, without either converting. */
+function asDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /**
  * Derive the status the dashboard shows.
  *
- * "expiring" is a UI affordance rather than a stored state — it means "this
- * will expire within seven days and you probably want to know". Computing it
- * rather than storing it means it can never go stale.
+ * None of these are stored. "expiring" means "this will expire within seven
+ * days and you probably want to know"; "scheduled" means "this does not work
+ * yet". Computing both rather than storing them means neither can go stale,
+ * and — the point of the scheduled case — that a link set to go live on Friday
+ * goes live on Friday with nothing having to run.
+ *
+ * The order matters where two could apply at once:
+ *
+ * - **archived** first, because it is the one state a person set by hand.
+ * - **expired** before **scheduled**, because "will never work" is a more
+ *   useful thing to be told than "does not work yet". A link whose window has
+ *   already closed before it opened is a mistake, and the API rejects it on
+ *   write, but a row can still get there by having its expiry brought forward.
+ * - **scheduled** before **expiring**, because a link that is not live yet is
+ *   not usefully described by how soon it will stop being live.
  */
 export function deriveStatus(link: {
   archivedAt?: Date | string | null;
   expiresAt?: Date | string | null;
+  activatesAt?: Date | string | null;
   clickLimit?: number | null;
   clicks?: number;
 }, now: Date = new Date()): LinkStatus {
@@ -72,16 +92,46 @@ export function deriveStatus(link: {
 
   if (link.clickLimit != null && (link.clicks ?? 0) >= link.clickLimit) return "expired";
 
-  if (link.expiresAt) {
-    const expires = link.expiresAt instanceof Date ? link.expiresAt : new Date(link.expiresAt);
-    if (!Number.isNaN(expires.getTime())) {
-      if (expires.getTime() <= now.getTime()) return "expired";
-      const sevenDays = 7 * 24 * 60 * 60 * 1000;
-      if (expires.getTime() - now.getTime() <= sevenDays) return "expiring";
-    }
+  const expires = asDate(link.expiresAt);
+  if (expires && expires.getTime() <= now.getTime()) return "expired";
+
+  const activates = asDate(link.activatesAt);
+  if (activates && activates.getTime() > now.getTime()) return "scheduled";
+
+  if (expires) {
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    if (expires.getTime() - now.getTime() <= sevenDays) return "expiring";
   }
 
   return "active";
+}
+
+/**
+ * Check that a link's live window makes sense.
+ *
+ * Returns the problems, empty when there are none — the same shape as
+ * `validateRoutingChain`, so a caller can concatenate them and raise once.
+ *
+ * There is only one rule, and it is worth enforcing rather than leaving to
+ * `deriveStatus` to describe afterwards: a window that closes before it opens
+ * means a link that can never work. `deriveStatus` reports that honestly as
+ * "expired", but by then someone has already printed the QR code.
+ *
+ * A start date in the past is deliberately allowed. It reads as "this went
+ * live then", it is what editing an old link naturally produces, and refusing
+ * it would make the field unusable the moment the clock passes a value the
+ * form was opened with.
+ */
+export function validateSchedule(
+  activatesAt: Date | string | null | undefined,
+  expiresAt: Date | string | null | undefined,
+): string[] {
+  const activates = asDate(activatesAt);
+  const expires = asDate(expiresAt);
+  if (activates && expires && activates.getTime() >= expires.getTime()) {
+    return ["A link cannot be scheduled to start after it expires."];
+  }
+  return [];
 }
 
 /**

@@ -11,7 +11,7 @@ import { z } from "zod";
 export const RedirectType = z.enum(["301", "302", "307"]);
 export type RedirectType = z.infer<typeof RedirectType>;
 
-export const LinkStatus = z.enum(["active", "expiring", "expired", "archived"]);
+export const LinkStatus = z.enum(["active", "scheduled", "expiring", "expired", "archived"]);
 export type LinkStatus = z.infer<typeof LinkStatus>;
 
 export const DeviceType = z.enum(["ios", "android", "desktop", "mobile"]);
@@ -50,6 +50,24 @@ export const Link = z.object({
   expiresAt: z.string().nullable().optional(),
   /** G5 — was write-only on CreateLinkInput, so it could never be read back or edited. */
   expiresTo: z.string().nullable().optional(),
+  /**
+   * When the link starts working. Null means "already live".
+   *
+   * The mirror of `expiresAt`, and like it, nothing runs to make it happen:
+   * `deriveStatus` computes the status from the clock every time it is asked,
+   * so a link scheduled for Friday goes live on Friday whether or not any
+   * process was alive to notice.
+   */
+  activatesAt: z.string().nullable().optional(),
+  /**
+   * Where a click lands *before* `activatesAt`.
+   *
+   * Named for the status rather than the field, which is the only reading that
+   * stays straight: a link in status `scheduled` sends clicks to `scheduledTo`,
+   * one in status `expired` sends them to `expiresTo`. Null means the visitor
+   * gets a plain "not live yet" page instead.
+   */
+  scheduledTo: z.string().nullable().optional(),
   clickLimit: z.number().nullable().optional(),
   passwordProtected: z.boolean().default(false),
   forwardQuery: z.boolean().default(true),
@@ -100,6 +118,8 @@ export const CreateLinkInput = z.object({
   rules: z.array(RoutingRule).default([]),
   expiresAt: z.string().nullable().optional(),
   expiresTo: z.string().nullable().optional(),
+  activatesAt: z.string().nullable().optional(),
+  scheduledTo: z.string().nullable().optional(),
   clickLimit: z.number().nullable().optional(),
   password: z.string().nullable().optional(),
   forwardQuery: z.boolean().default(true),
@@ -158,7 +178,7 @@ export const LinkList = z.object({
 export type LinkList = z.infer<typeof LinkList>;
 
 export const ListLinksQuery = z.object({
-  status: z.enum(["all", "active", "expiring", "expired", "archived"]).default("all"),
+  status: z.enum(["all", "active", "scheduled", "expiring", "expired", "archived"]).default("all"),
   search: z.string().optional(),
   tag: z.string().optional(),
   folder: z.string().optional(),

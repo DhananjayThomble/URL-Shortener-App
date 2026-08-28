@@ -40,6 +40,8 @@ describeDb("LinksService.list", () => {
     expired: `l${stamp}-expired`,
     limited: `l${stamp}-limited`,
     archived: `l${stamp}-archived`,
+    scheduled: `l${stamp}-scheduled`,
+    lapsed: `l${stamp}-lapsed`,
   };
 
   const inDays = (n: number) => new Date(Date.now() + n * 86_400_000);
@@ -47,6 +49,7 @@ describeDb("LinksService.list", () => {
   async function addLink(opts: {
     slug: string;
     expiresAt?: Date | null;
+    activatesAt?: Date | null;
     clickLimit?: number | null;
     clicks?: number;
     archived?: boolean;
@@ -62,6 +65,7 @@ describeDb("LinksService.list", () => {
         slug: opts.slug,
         destination: `https://example.com/${opts.slug}`,
         expiresAt: opts.expiresAt ?? null,
+        activatesAt: opts.activatesAt ?? null,
         clickLimit: opts.clickLimit ?? null,
         clicks: opts.clicks ?? 0,
         archivedAt: opts.archived ? new Date() : null,
@@ -94,7 +98,17 @@ describeDb("LinksService.list", () => {
 
     // Distinct created_at values, oldest first, so the keyset ordering is
     // deterministic rather than depending on insert timing.
-    await addLink({ slug: slugs.archived, archived: true, createdAt: new Date(stamp - 5000) });
+    await addLink({ slug: slugs.archived, archived: true, createdAt: new Date(stamp - 7000) });
+    /* A window that closed before it opened. deriveStatus ranks expired above
+       scheduled, and the SQL filter has to agree — this is the row that catches
+       it if it stops agreeing. */
+    await addLink({
+      slug: slugs.lapsed,
+      activatesAt: inDays(10),
+      expiresAt: inDays(-2),
+      createdAt: new Date(stamp - 6000),
+    });
+    await addLink({ slug: slugs.scheduled, activatesAt: inDays(5), createdAt: new Date(stamp - 5000) });
     await addLink({ slug: slugs.limited, clickLimit: 10, clicks: 10, createdAt: new Date(stamp - 4000) });
     await addLink({ slug: slugs.expired, expiresAt: inDays(-1), createdAt: new Date(stamp - 3000) });
     await addLink({ slug: slugs.expiring, expiresAt: inDays(3), createdAt: new Date(stamp - 2000) });
@@ -115,7 +129,7 @@ describeDb("LinksService.list", () => {
   describe("derived status filters", () => {
     it("returns everything except archived links by default", async () => {
       const result = await service.list(workspaceId, query());
-      expect(result.total).toBe(4);
+      expect(result.total).toBe(6);
       expect(slugsOf(result)).not.toContain(slugs.archived);
     });
 
@@ -150,19 +164,37 @@ describeDb("LinksService.list", () => {
       expect(slugsOf(result)).toEqual([slugs.active]);
     });
 
+    it("treats a link before its activation date as scheduled, not active", async () => {
+      const scheduled = await service.list(workspaceId, query({ status: "scheduled" }));
+      const active = await service.list(workspaceId, query({ status: "active" }));
+
+      expect(slugsOf(scheduled)).toEqual([slugs.scheduled]);
+      expect(slugsOf(active)).not.toContain(slugs.scheduled);
+    });
+
+    it("reports a link that expired before it activated as expired, not scheduled", async () => {
+      const expired = await service.list(workspaceId, query({ status: "expired" }));
+      const scheduled = await service.list(workspaceId, query({ status: "scheduled" }));
+
+      expect(slugsOf(expired)).toContain(slugs.lapsed);
+      expect(slugsOf(scheduled)).not.toContain(slugs.lapsed);
+    });
+
     it("never puts a link in two derived buckets at once", async () => {
-      // Every non-archived link belongs to exactly one of the three, or the
+      // Every non-archived link belongs to exactly one of the four, or the
       // status tabs would double-count and their totals would not add up.
       const buckets = await Promise.all(
-        (["active", "expiring", "expired"] as const).map((status) => service.list(workspaceId, query({ status }))),
+        (["active", "scheduled", "expiring", "expired"] as const).map((status) =>
+          service.list(workspaceId, query({ status })),
+        ),
       );
       const seen = buckets.flatMap(slugsOf);
       expect(new Set(seen).size).toBe(seen.length);
-      expect(seen).toHaveLength(4);
+      expect(seen).toHaveLength(6);
     });
 
     it("excludes archived links from every derived bucket", async () => {
-      for (const status of ["active", "expiring", "expired"] as const) {
+      for (const status of ["active", "scheduled", "expiring", "expired"] as const) {
         const result = await service.list(workspaceId, query({ status }));
         expect(slugsOf(result)).not.toContain(slugs.archived);
       }
@@ -193,7 +225,7 @@ describeDb("LinksService.list", () => {
       expect(page.items).toHaveLength(2);
       expect(page.nextCursor).toBeTruthy();
       // total is the size of the whole filtered set, not of the page.
-      expect(page.total).toBe(4);
+      expect(page.total).toBe(6);
     });
 
     it("walks every row exactly once, with no gap and no repeat", async () => {
@@ -203,7 +235,7 @@ describeDb("LinksService.list", () => {
       const seen: string[] = [];
       let cursor: string | undefined;
 
-      for (let guard = 0; guard < 10; guard++) {
+      for (let guard = 0; guard < 20; guard++) {
         const page: { items: Array<{ slug: string }>; nextCursor?: string | null } = await service.list(
           workspaceId,
           query({ limit: 1, ...(cursor ? { cursor } : {}) }),
@@ -213,14 +245,14 @@ describeDb("LinksService.list", () => {
         cursor = page.nextCursor;
       }
 
-      expect(seen).toHaveLength(4);
-      expect(new Set(seen).size).toBe(4);
+      expect(seen).toHaveLength(6);
+      expect(new Set(seen).size).toBe(6);
       expect(seen).not.toContain(slugs.archived);
     });
 
     it("returns no cursor on the last page", async () => {
       const page = await service.list(workspaceId, query({ limit: 50 }));
-      expect(page.items).toHaveLength(4);
+      expect(page.items).toHaveLength(6);
       expect(page.nextCursor ?? null).toBeNull();
     });
 
@@ -228,18 +260,34 @@ describeDb("LinksService.list", () => {
       // A cursor carries position, not the query. Paging a filtered list must
       // not quietly widen back to everything on page two.
       const first = await service.list(workspaceId, query({ status: "expired", limit: 1 }));
-      expect(first.total).toBe(2);
+      expect(first.total).toBe(3);
       expect(first.nextCursor).toBeTruthy();
 
-      const second = await service.list(workspaceId, query({ status: "expired", limit: 1, cursor: first.nextCursor! }));
-      const across = [...slugsOf(first), ...slugsOf(second)];
-      expect(across.sort()).toEqual([slugs.expired, slugs.limited].sort());
-      expect(second.nextCursor ?? null).toBeNull();
+      const across = [...slugsOf(first)];
+      let cursor = first.nextCursor!;
+      for (let guard = 0; guard < 10; guard++) {
+        const page: { items: Array<{ slug: string }>; nextCursor?: string | null } = await service.list(
+          workspaceId,
+          query({ status: "expired", limit: 1, cursor }),
+        );
+        across.push(...slugsOf(page));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+
+      expect(across.sort()).toEqual([slugs.expired, slugs.limited, slugs.lapsed].sort());
     });
 
     it("orders newest first", async () => {
       const result = await service.list(workspaceId, query());
-      expect(slugsOf(result)).toEqual([slugs.active, slugs.expiring, slugs.expired, slugs.limited]);
+      expect(slugsOf(result)).toEqual([
+        slugs.active,
+        slugs.expiring,
+        slugs.expired,
+        slugs.limited,
+        slugs.scheduled,
+        slugs.lapsed,
+      ]);
     });
   });
 

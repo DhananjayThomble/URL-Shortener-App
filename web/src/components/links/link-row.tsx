@@ -9,6 +9,10 @@ import { cn, compact, copy, faviconFor, formatDate, relativeDate } from "@/lib/u
 
 const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; label: (l: Link) => string }> = {
   active: { tone: "good", label: () => "Active" },
+  scheduled: {
+    tone: "warn",
+    label: (l) => (l.activatesAt ? `Live ${formatDate(l.activatesAt)}` : "Scheduled"),
+  },
   expiring: { tone: "warn", label: (l) => (l.clickLimit ? `${compact(l.clicks)} of ${compact(l.clickLimit)} clicks used` : "Expiring") },
   expired: { tone: "bad", label: (l) => (l.expiresAt ? `Expired ${formatDate(l.expiresAt)}` : "Expired") },
   archived: { tone: "default", label: () => "Archived" },
@@ -28,7 +32,16 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
 
   const meta = [
     `${link.redirectType} ${link.redirectType === "301" ? "permanent" : "temporary"}`,
-    link.expiresAt ? `Expires ${formatDate(link.expiresAt)}` : link.clickLimit ? `Expires after ${compact(link.clickLimit)} clicks` : "Never expires",
+    /* A link that has not started yet is described by when it starts. Leading
+       with "Never expires" on something that does not work yet reads as though
+       it does. */
+    link.status === "scheduled" && link.activatesAt
+      ? `Goes live ${formatDate(link.activatesAt)}`
+      : link.expiresAt
+        ? `Expires ${formatDate(link.expiresAt)}`
+        : link.clickLimit
+          ? `Expires after ${compact(link.clickLimit)} clicks`
+          : "Never expires",
     link.passwordProtected ? "Password protected" : null,
     link.deepLink ? "Deep linking on" : null,
     link.hideReferrer ? "Referrer hidden" : null,

@@ -263,6 +263,26 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
               <>
                 <Controller
                   control={control}
+                  name="activatesAt"
+                  render={({ field }) => (
+                    <Toggle
+                      checked={Boolean(field.value)}
+                      onChange={(v) => field.onChange(v ? new Date(Date.now() + 7 * 864e5).toISOString() : null)}
+                      title="Go live on a date"
+                      description="The short link exists straight away — print it, share it — but does not carry anyone to the destination until then."
+                    />
+                  )}
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="Go live on">
+                    <Input type="date" {...register("activatesAt")} />
+                  </Field>
+                  <Field label="Until then, send visitors to" help="Leave blank and they get a plain 'not live yet' page.">
+                    <Input {...register("scheduledTo")} placeholder="acme.com/coming-soon" className="font-mono text-[12.5px]" />
+                  </Field>
+                </div>
+                <Controller
+                  control={control}
                   name="expiresAt"
                   render={({ field }) => (
                     <Toggle

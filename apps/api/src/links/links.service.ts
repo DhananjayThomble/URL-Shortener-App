@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable, Logger, Not
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
 import type { CreateLinkInput, Link, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
-import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain } from "@snapurl/domain";
+import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
@@ -46,6 +46,17 @@ export class LinksService {
     const now = new Date().toISOString();
     const inSevenDays = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
+    /* Every branch below has to agree with deriveStatus, which is the only
+       thing that decides what the dashboard prints. Its precedence is
+       archived > expired > scheduled > expiring > active, so "scheduled" has
+       to be excluded from expiring and active rather than merely not selected
+       — otherwise a link that is not live yet shows up under a tab that says
+       it is. Symmetrically, `scheduled` carries `notExpired`: a link whose
+       expiry passed before its start date is expired, not pending. */
+    const notExpired = sql`(${links.expiresAt} is null or ${links.expiresAt} > ${now}::timestamptz)
+        and (${links.clickLimit} is null or ${links.clicks} < ${links.clickLimit})`;
+    const notScheduled = sql`(${links.activatesAt} is null or ${links.activatesAt} <= ${now}::timestamptz)`;
+
     if (query.status === "archived") {
       filters.push(sql`${links.archivedAt} is not null`);
     } else {
@@ -54,14 +65,18 @@ export class LinksService {
         filters.push(
           sql`(${links.expiresAt} <= ${now}::timestamptz or (${links.clickLimit} is not null and ${links.clicks} >= ${links.clickLimit}))`,
         );
+      } else if (query.status === "scheduled") {
+        filters.push(sql`${links.activatesAt} > ${now}::timestamptz`, notExpired);
       } else if (query.status === "expiring") {
         filters.push(
           sql`${links.expiresAt} > ${now}::timestamptz and ${links.expiresAt} <= ${inSevenDays}::timestamptz`,
+          notScheduled,
         );
       } else if (query.status === "active") {
         filters.push(
           sql`(${links.expiresAt} is null or ${links.expiresAt} > ${inSevenDays}::timestamptz)
               and (${links.clickLimit} is null or ${links.clicks} < ${links.clickLimit})`,
+          notScheduled,
         );
       }
     }
@@ -130,7 +145,10 @@ export class LinksService {
   async create(workspaceId: string, actor: Actor, input: CreateLinkInput): Promise<Link> {
     const domain = await this.resolveDomain(workspaceId, input.domain);
 
-    const problems = validateRoutingChain(input.rules);
+    const problems = [
+      ...validateRoutingChain(input.rules),
+      ...validateSchedule(input.activatesAt, input.expiresAt),
+    ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
 
     if (input.slug) {
@@ -164,6 +182,8 @@ export class LinksService {
               redirectType: input.redirectType,
               expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
               expiresTo: input.expiresTo ?? null,
+              activatesAt: input.activatesAt ? new Date(input.activatesAt) : null,
+              scheduledTo: input.scheduledTo ?? null,
               clickLimit: input.clickLimit ?? null,
               passwordHash,
               forwardQuery: input.forwardQuery,
@@ -227,10 +247,17 @@ export class LinksService {
   async update(workspaceId: string, id: string, actor: Actor, input: UpdateLinkInput): Promise<Link> {
     const existing = await this.get(workspaceId, id);
 
-    if (input.rules) {
-      const problems = validateRoutingChain(input.rules);
-      if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
-    }
+    /* Both windows have to be checked against what the row will look like
+       afterwards, not against the patch: sending only `expiresAt` can still
+       close a window that an existing `activatesAt` opens later. */
+    const problems = [
+      ...(input.rules ? validateRoutingChain(input.rules) : []),
+      ...validateSchedule(
+        input.activatesAt !== undefined ? input.activatesAt : existing.activatesAt,
+        input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt,
+      ),
+    ];
+    if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (input.destination !== undefined) {
@@ -246,6 +273,8 @@ export class LinksService {
     if (input.redirectType !== undefined) patch.redirectType = input.redirectType;
     if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     if (input.expiresTo !== undefined) patch.expiresTo = input.expiresTo ?? null;
+    if (input.activatesAt !== undefined) patch.activatesAt = input.activatesAt ? new Date(input.activatesAt) : null;
+    if (input.scheduledTo !== undefined) patch.scheduledTo = input.scheduledTo ?? null;
     if (input.clickLimit !== undefined) patch.clickLimit = input.clickLimit ?? null;
     if (input.forwardQuery !== undefined) patch.forwardQuery = input.forwardQuery;
     if (input.deepLink !== undefined) patch.deepLink = input.deepLink;
@@ -345,7 +374,7 @@ export class LinksService {
   async *exportCsv(workspaceId: string, query: ListLinksQuery): AsyncGenerator<string> {
     const columns = [
       "short_url", "destination", "title", "status", "clicks", "unique_clicks",
-      "tags", "folder", "redirect_type", "password_protected", "expires_at",
+      "tags", "folder", "redirect_type", "password_protected", "activates_at", "expires_at",
       "safe_browsing", "created_at", "created_by",
     ];
     yield `${columns.join(",")}\n`;
@@ -367,6 +396,7 @@ export class LinksService {
           link.folder ?? "",
           link.redirectType,
           link.passwordProtected,
+          link.activatesAt ?? "",
           link.expiresAt ?? "",
           link.safeBrowsing.status,
           link.createdAt,

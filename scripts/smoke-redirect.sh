@@ -51,8 +51,11 @@ mklink "{\"destination\":\"https://example.com/noforward\",\"domain\":\"localhos
 mklink "{\"destination\":\"https://example.com/perm\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-perm\",\"tags\":[],\"redirectType\":\"301\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 mklink "{\"destination\":\"https://example.com/locked\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-locked\",\"password\":\"hunter2\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"2020-01-01T00:00:00.000Z\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-scheduled-bare\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 mklink "{\"destination\":\"https://example.com/rest\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-geo\",\"tags\":[],\"redirectType\":\"302\",\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true,\"rules\":[{\"id\":\"r-in\",\"when\":{\"country\":\"IN\"},\"then\":\"https://example.in/store\"},{\"id\":\"r-ios\",\"when\":{\"device\":\"ios\"},\"then\":\"https://apps.apple.com/app\"}]}" >/dev/null
-ok "created seven links"
+ok "created ten links"
 
 echo
 echo "== basic redirect =="
@@ -83,6 +86,11 @@ contains "everyone else gets the default" "example.com/rest" "$(loc "$RUN-geo" -
 echo
 echo "== gates =="
 contains "expired link uses expiresTo (G5)" "example.com/moved" "$(loc "$RUN-expired")"
+contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "$RUN-scheduled")"
+# 404 rather than 410: nothing is gone, it has not started. And no fallback
+# configured must not fall through to the destination.
+expect "not-yet-live link with no fallback is 404" "404|" "$(loc "$RUN-scheduled-bare")"
+expect "a past activation date is simply live" "302|https://example.com/already" "$(loc "$RUN-activated")"
 contains "locked link is sent to unlock (G3)" "unlock=1" "$(loc "$RUN-locked")"
 TOKEN=$(curl -s -X POST "$API/public/links/$RUN-locked/unlock" -H 'Content-Type: application/json' \
   -d '{"password":"hunter2"}' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).unlockToken||""')
