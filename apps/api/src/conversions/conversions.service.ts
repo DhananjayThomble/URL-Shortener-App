@@ -1,13 +1,16 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import { and, clickDaily, conversions, desc, eq, gte, links, lt, sql, workspaces, type Database } from "@snapurl/database";
 import type { ConversionsReport, RecordConversionInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { recordActivity, type Actor } from "../common/activity.js";
 
 const RANGE_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
 
 @Injectable()
 export class ConversionsService {
   constructor(@Inject(DB) private readonly db: Database) {}
+
+  private readonly logger = new Logger(ConversionsService.name);
 
   async report(workspaceId: string, range = "30d"): Promise<ConversionsReport> {
     const days = RANGE_DAYS[range] ?? 30;
@@ -91,7 +94,7 @@ export class ConversionsService {
     };
   }
 
-  async record(workspaceId: string, input: RecordConversionInput) {
+  async record(workspaceId: string, actor: Actor, input: RecordConversionInput) {
     let linkId = input.linkId ?? null;
     if (!linkId && input.slug) {
       const [link] = await this.db
@@ -126,6 +129,35 @@ export class ConversionsService {
       })
       .onConflictDoNothing()
       .returning();
+
+    /* Only on a real insert.
+
+       onConflictDoNothing is what makes the ingest idempotent, and a customer
+       retrying a timed-out delivery is the case it exists for. Emitting the
+       webhook regardless would undo that on the way out: the retry books no
+       second conversion but still tells every subscriber a second sale
+       happened.
+
+       No audit entry here, unlike the other four call sites. The audit log is
+       a human-readable list of administrative actions, and conversion ingest
+       is machine traffic that can run to thousands a day — writing it here
+       would bury the member and link entries the page exists to show. */
+    if (row) {
+      await recordActivity(this.db, this.logger, {
+        workspaceId,
+        actor,
+        webhookEvent: "conversion.recorded",
+        targetType: "conversion",
+        targetId: row.id,
+        metadata: {
+          kind: input.kind,
+          name: input.name,
+          linkId,
+          valueMinor: input.valueMinor,
+          currency: (input.currency ?? workspace?.currency ?? "INR").toUpperCase(),
+        },
+      });
+    }
 
     return { id: row?.id ?? null, recorded: Boolean(row) };
   }
