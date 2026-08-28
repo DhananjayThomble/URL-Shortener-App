@@ -45,9 +45,6 @@ export default function LinkPreviewPage() {
               <h2 className="text-[19px] font-bold">
                 {data.safeBrowsing === "clean" ? "This link is safe to open" : "We couldn't fully verify this link"}
               </h2>
-              <p className="mt-[7px] mb-0 text-[13.5px] text-ink-2">
-                Checked against Google Safe Browsing {relativeDate(data.scannedAt)}.
-              </p>
             </div>
 
             <div className="px-6 py-[18px] bg-surface-2 border-b border-line">
