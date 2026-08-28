@@ -1,7 +1,7 @@
 "use client";
 
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Table, TableWrap, Td, Th, Toggle } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from "@/lib/api/hooks";
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
 import { useState } from "react";
@@ -33,7 +33,6 @@ const ROLE_OPTIONS: { value: MemberRole; label: string }[] = [...INVITE_ROLES, {
 export default function TeamPage() {
   const { data: members, isLoading } = useMembers();
   const { data: audit } = useAudit();
-  const [requireSso, setRequireSso] = useState(true);
 
   const invite = useInviteMember();
   const changeRole = useChangeMemberRole();
@@ -257,39 +256,6 @@ export default function TeamPage() {
         </Card>
 
         <div className="flex flex-col gap-3.5">
-          <Card>
-            <CardHeader title="Single sign-on" right={<Chip tone="good">Free on every plan</Chip>} />
-            <CardBody className="flex flex-col gap-3">
-              <p className="m-0 text-[13px] text-ink-2">
-                SAML and OIDC are included. Everyone else charges enterprise rates for this — we don&apos;t.
-              </p>
-              <div className="flex items-center gap-[11px] px-3 py-[10px] border border-line rounded-[var(--radius-sm)]">
-                <span className="w-7 h-7 rounded-[7px] bg-surface-3 grid place-items-center shrink-0">◈</span>
-                <div className="flex-1 min-w-0">
-                  <b className="block text-[13px] font-semibold">Okta</b>
-                  <span className="block text-[11px] text-ink-3 font-mono">SAML 2.0 · acme.okta.com</span>
-                </div>
-                <Chip tone="good" dot>
-                  Connected
-                </Chip>
-              </div>
-              <div className="flex items-center gap-[11px] px-3 py-[10px] border border-line rounded-[var(--radius-sm)]">
-                <span className="w-7 h-7 rounded-[7px] bg-surface-3 grid place-items-center shrink-0">◈</span>
-                <div className="flex-1 min-w-0">
-                  <b className="block text-[13px] font-semibold">Google Workspace</b>
-                  <span className="block text-[11px] text-ink-3 font-mono">OIDC</span>
-                </div>
-                <Button size="sm">Connect</Button>
-              </div>
-              <Toggle
-                checked={requireSso}
-                onChange={setRequireSso}
-                title="Require SSO for everyone"
-                description="Password sign-in is disabled for @acme.com addresses."
-              />
-            </CardBody>
-          </Card>
-
           <Card>
             <CardHeader title="Recent activity" right={<Button size="sm" variant="ghost">Full log</Button>} />
             <CardBody className="flex flex-col gap-2.5 text-[12.5px]">

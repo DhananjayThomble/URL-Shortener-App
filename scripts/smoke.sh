@@ -155,6 +155,27 @@ check "api key authenticates" '"total"' "$(curl -s "$API/links" -H "Authorizatio
 check "api key scope is enforced" 'scope' "$(curl -s "$API/analytics" -H "Authorization: Bearer $APIKEY")"
 
 echo
+echo "== audit trail =="
+# Both subsystems were fully built and never invoked: enqueueEvent had zero
+# call sites, and only the three member actions ever wrote an audit row. The
+# team page's claim that every action is logged was false.
+#
+# The stored key is "link.created"; describe() renders it into a sentence
+# before it leaves the API, so these assert what a reader actually sees.
+AUDIT=$(curl -s "$API/audit" -H "Authorization: Bearer $ACCESS")
+check "creating a link writes an audit entry" "Created ${RUN}-one" "$AUDIT"
+check "editing a link writes an audit entry" "Edited ${RUN}-one" "$AUDIT"
+check "the audit entry names the actor" "$EMAIL" "$AUDIT"
+
+# Deletion is the one that matters most after the fact — the row it describes
+# is gone, so the audit entry is the only remaining record of it.
+BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"destination\":\"https://example.com/doomed\",\"domain\":\"localhost:3002\",\"slug\":\"${RUN}-doomed\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}")
+DOOMED_ID=$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id || ""')
+curl -s -o /dev/null -X DELETE "$API/links/$DOOMED_ID" -H "Authorization: Bearer $ACCESS"
+check "deleting a link writes an audit entry" "Deleted ${RUN}-doomed" "$(curl -s "$API/audit" -H "Authorization: Bearer $ACCESS")"
+
+echo
 echo "== G6: two-factor =="
 BODY=$(curl -s -X POST "$API/auth/2fa/setup" -H "Authorization: Bearer $ACCESS")
 check "2FA setup returns an otpauth URI (G6)" 'otpauth://totp' "$BODY"
