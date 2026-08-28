@@ -218,6 +218,9 @@ importers:
       '@snapurl/contract':
         specifier: workspace:*
         version: link:../packages/contract
+      '@snapurl/domain':
+        specifier: workspace:*
+        version: link:../packages/domain
       '@tanstack/react-query':
         specifier: ^5.90.5
         version: 5.102.5(react@19.1.0)

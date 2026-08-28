@@ -3,8 +3,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { Button, Chip, Field, Input, SectionLabel, Segmented, Toggle } from "@/components/ui";
+import { Button, Field, Input, SectionLabel, Segmented, Toggle } from "@/components/ui";
 import { QrPreview } from "@/components/qr/qr-preview";
+import { RoutingRulesEditor } from "@/components/links/routing-rules-editor";
 import { useCreateLink, useDomains } from "@/lib/api/hooks";
 import { CreateLinkInput, type CreateLinkFormValues, type RedirectType } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -199,18 +200,17 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                 >
                   <div />
                 </Field>
-                <div className="flex flex-col gap-[9px]">
-                  <RuleRow when="If country is India" to="acme.in/spring" />
-                  <RuleRow when="If device is iOS" to="apps.apple.com/acme" />
-                  <RuleRow when="If device is Android" to="play.google.com/acme" />
-                  <RuleRow when="Everything else" to={destination || "your destination"} fallback badge="A/B 50-50" />
-                  <button
-                    type="button"
-                    className="px-3 py-2 border border-dashed border-line-2 rounded-[var(--radius-sm)] text-ink-3 text-[12px] hover:border-accent hover:text-accent"
-                  >
-                    ＋ Add rule
-                  </button>
-                </div>
+                <Controller
+                  control={control}
+                  name="rules"
+                  render={({ field }) => (
+                    <RoutingRulesEditor
+                      value={field.value ?? []}
+                      onChange={field.onChange}
+                      fallbackDestination={destination}
+                    />
+                  )}
+                />
 
                 <SectionLabel>Redirect behaviour</SectionLabel>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -430,32 +430,5 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
         </form>
       </aside>
     </>
-  );
-}
-
-function RuleRow({
-  when,
-  to,
-  fallback,
-  badge,
-}: {
-  when: string;
-  to: string;
-  fallback?: boolean;
-  badge?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-[9px] px-3 py-2 rounded-[var(--radius-sm)] border justify-between",
-        fallback ? "border-dashed border-line-2 bg-transparent" : "border-line bg-surface",
-      )}
-    >
-      <span className="text-[12px] text-ink-2">{when}</span>
-      <div className="flex items-center gap-2">
-        {badge ? <Chip tone="accent">{badge}</Chip> : null}
-        <span className="font-mono text-[11.5px] text-teal truncate max-w-[200px]">{to}</span>
-      </div>
-    </div>
   );
 }
