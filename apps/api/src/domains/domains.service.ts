@@ -1,13 +1,16 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { and, domains, eq, links, sql, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { recordActivity, type Actor } from "../common/activity.js";
 
 @Injectable()
 export class DomainsService {
   constructor(@Inject(DB) private readonly db: Database) {}
+
+  private readonly logger = new Logger(DomainsService.name);
 
   async list(workspaceId: string): Promise<Domain[]> {
     const rows = await this.db
@@ -68,7 +71,7 @@ export class DomainsService {
    * domain we have not proved control of is how a shared-hosting provider ends
    * up issuing certificates for other people's names.
    */
-  async verify(workspaceId: string, id: string): Promise<Domain> {
+  async verify(workspaceId: string, id: string, actor: Actor): Promise<Domain> {
     const [row] = await this.db
       .select()
       .from(domains)
@@ -104,6 +107,16 @@ export class DomainsService {
       .set({ status: "live", verifiedAt: new Date(), updatedAt: new Date() })
       .where(eq(domains.id, id))
       .returning();
+
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "domain.verified",
+      webhookEvent: "domain.verified",
+      targetType: "domain",
+      targetId: id,
+      metadata: { domain: row.domain },
+    });
 
     return this.toDto(updated!, 0);
   }

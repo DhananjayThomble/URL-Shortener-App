@@ -188,15 +188,6 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                   <Input {...register("comment")} placeholder="What is this link for? Your team will thank you." />
                 </Field>
 
-                <SectionLabel>Safety</SectionLabel>
-                <div className="flex items-center gap-[11px] px-[13px] py-3 bg-wash-good rounded-[var(--radius-sm)]">
-                  <span className="text-good text-[15px]">🛡</span>
-                  <div className="text-[12.5px] text-good leading-[1.5]">
-                    <b>Destination will be scanned on save.</b>
-                    <br />
-                    <span className="text-ink-2">Checked against Google Safe Browsing before the link goes live.</span>
-                  </div>
-                </div>
               </>
             )}
 

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
 import type { CreateLinkInput, Link, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
@@ -6,6 +6,7 @@ import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingCh
 import { DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
+import { recordActivity, type Actor } from "../common/activity.js";
 import {
   SPARKLINE_DAYS,
   buildSparkline,
@@ -25,6 +26,8 @@ export class LinksService {
     private readonly safeBrowsing: SafeBrowsingService,
   ) {}
 
+  private readonly logger = new Logger(LinksService.name);
+
   async list(workspaceId: string, query: ListLinksQuery) {
     const filters = [eq(links.workspaceId, workspaceId)];
 
@@ -32,8 +35,16 @@ export class LinksService {
        them from expires_at and the click count, so they can never go stale.
        That means the filter has to be expressed in SQL rather than compared
        against a column. */
-    const now = new Date();
-    const inSevenDays = new Date(now.getTime() + 7 * 86_400_000);
+    /* ISO strings, not Date objects.
+
+       These are interpolated into raw `sql` fragments below, and a raw
+       fragment binds its parameter without the column's type mapper — so
+       postgres-js receives a Date it cannot serialise and throws
+       ERR_INVALID_ARG_TYPE before the query reaches Postgres. Every request
+       for ?status=active, expiring or expired failed this way. The explicit
+       ::timestamptz cast keeps the comparison typed on the SQL side. */
+    const now = new Date().toISOString();
+    const inSevenDays = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
     if (query.status === "archived") {
       filters.push(sql`${links.archivedAt} is not null`);
@@ -41,13 +52,15 @@ export class LinksService {
       filters.push(isNull(links.archivedAt));
       if (query.status === "expired") {
         filters.push(
-          sql`(${links.expiresAt} <= ${now} or (${links.clickLimit} is not null and ${links.clicks} >= ${links.clickLimit}))`,
+          sql`(${links.expiresAt} <= ${now}::timestamptz or (${links.clickLimit} is not null and ${links.clicks} >= ${links.clickLimit}))`,
         );
       } else if (query.status === "expiring") {
-        filters.push(sql`${links.expiresAt} > ${now} and ${links.expiresAt} <= ${inSevenDays}`);
+        filters.push(
+          sql`${links.expiresAt} > ${now}::timestamptz and ${links.expiresAt} <= ${inSevenDays}::timestamptz`,
+        );
       } else if (query.status === "active") {
         filters.push(
-          sql`(${links.expiresAt} is null or ${links.expiresAt} > ${inSevenDays})
+          sql`(${links.expiresAt} is null or ${links.expiresAt} > ${inSevenDays}::timestamptz)
               and (${links.clickLimit} is null or ${links.clicks} < ${links.clickLimit})`,
         );
       }
@@ -70,7 +83,11 @@ export class LinksService {
     const paged = [...filters];
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
     if (cursor) {
-      paged.push(sql`(${links.createdAt}, ${links.id}) < (${cursor.createdAt}, ${cursor.id})`);
+      // Same reason as the window bounds above: a Date bound into a raw
+      // fragment never reaches Postgres, so every ?cursor= request threw.
+      paged.push(
+        sql`(${links.createdAt}, ${links.id}) < (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id}::uuid)`,
+      );
     }
 
     // One extra row tells us whether there is another page without a second query.
@@ -110,7 +127,7 @@ export class LinksService {
     return dto!;
   }
 
-  async create(workspaceId: string, userId: string | null, input: CreateLinkInput): Promise<Link> {
+  async create(workspaceId: string, actor: Actor, input: CreateLinkInput): Promise<Link> {
     const domain = await this.resolveDomain(workspaceId, input.domain);
 
     const problems = validateRoutingChain(input.rules);
@@ -157,7 +174,7 @@ export class LinksService {
               safeBrowsingCheckedAt: scan.checkedAt,
               utm: input.utm ?? null,
               social: input.social ?? null,
-              createdBy: userId,
+              createdBy: actor.userId,
             })
             .returning();
 
@@ -177,7 +194,20 @@ export class LinksService {
 
           await this.enqueueProjection(tx, row!.id, "upsert");
           return row!.id;
-        }).then((id) => this.get(workspaceId, id));
+        })
+          .then((id) => this.get(workspaceId, id))
+          .then(async (link) => {
+            await recordActivity(this.db, this.logger, {
+              workspaceId,
+              actor,
+              auditAction: "link.created",
+              webhookEvent: "link.created",
+              targetType: "link",
+              targetId: link.id,
+              metadata: { slug: link.slug, domain: link.domain, destination: link.destination },
+            });
+            return link;
+          });
       } catch (err) {
         if (isUniqueViolation(err)) {
           if (input.slug) {
@@ -194,7 +224,7 @@ export class LinksService {
 
   /* G1 — PATCH did not exist, yet editing a destination is the entire promise
      behind "print it once, change where it points forever". */
-  async update(workspaceId: string, id: string, input: UpdateLinkInput): Promise<Link> {
+  async update(workspaceId: string, id: string, actor: Actor, input: UpdateLinkInput): Promise<Link> {
     const existing = await this.get(workspaceId, id);
 
     if (input.rules) {
@@ -255,13 +285,31 @@ export class LinksService {
       await this.enqueueProjection(tx, id, "upsert");
     });
 
-    void existing;
-    return this.get(workspaceId, id);
+    const updated = await this.get(workspaceId, id);
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "link.updated",
+      webhookEvent: "link.updated",
+      targetType: "link",
+      targetId: id,
+      metadata: {
+        slug: updated.slug,
+        domain: updated.domain,
+        // The old destination is the field anyone auditing an edit is looking
+        // for: "where did this QR code point before someone changed it?"
+        from: existing.destination,
+        to: updated.destination,
+      },
+    });
+    return updated;
   }
 
-  async remove(workspaceId: string, id: string): Promise<void> {
+  async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
+    // The slug is read before the delete because it is the only thing that
+    // makes the audit entry and the webhook payload mean anything afterwards.
     const [row] = await this.db
-      .select({ id: links.id })
+      .select({ id: links.id, slug: links.slug })
       .from(links)
       .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
       .limit(1);
@@ -270,6 +318,16 @@ export class LinksService {
     await this.db.transaction(async (tx) => {
       await this.enqueueProjection(tx, id, "delete");
       await tx.delete(links).where(eq(links.id, id));
+    });
+
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "link.deleted",
+      webhookEvent: "link.deleted",
+      targetType: "link",
+      targetId: id,
+      metadata: { slug: row.slug },
     });
   }
 
