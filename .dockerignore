@@ -1,0 +1,24 @@
+# Everything the build does not need. Keeping this tight matters twice over:
+# a smaller context uploads faster, and node_modules from the host would
+# shadow the ones the image installs for its own platform.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+.git
+.github
+.claude
+.idea
+.vscode
+designs
+docs
+web
+*.md
+!README.md
+**/.env
+**/.env.*
+!**/.env.example
+**/*.tsbuildinfo
+**/coverage
+**/logs
+.gh-token

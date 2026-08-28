@@ -1,5 +1,15 @@
-# Local dependencies for SnapURL 2.0.
-# Postgres is on 5433, not 5432 — 5432 is already taken on this machine.
+# Local dependencies, and optionally the whole stack.
+#
+#   docker compose up -d postgres        just the database (what `pnpm db:up` does)
+#   docker compose --profile full up -d  database + api + redirect + worker
+#
+# The default is the database alone, because day-to-day development runs the
+# apps from source with `pnpm dev:*` for hot reload. The `full` profile exists
+# to prove the container images actually work — it is the closest thing to a
+# deployment you can run on a laptop.
+
+name: snapurl
+
 services:
   postgres:
     image: postgres:18-alpine
@@ -10,6 +20,8 @@ services:
       POSTGRES_PASSWORD: snapurl
       POSTGRES_DB: snapurl
     ports:
+      # 5433 on the host because 5432 is commonly already taken. Inside the
+      # compose network the containers still reach it on 5432.
       - "5433:5432"
     volumes:
       - snapurl-pgdata:/var/lib/postgresql
@@ -18,6 +30,90 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      args:
+        APP: api
+    image: snapurl-api:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      # `postgres:5432`, not localhost:5433 — inside the compose network the
+      # service name is the hostname and the port is the container's own.
+      DATABASE_URL: postgres://snapurl:snapurl@postgres:5432/snapurl
+      # Throwaway local values. Real deployments read these from SSM Parameter
+      # Store; nothing here is a secret worth protecting.
+      JWT_ACCESS_SECRET: local-compose-access-secret-000000000000
+      JWT_REFRESH_SECRET: local-compose-refresh-secret-00000000000
+      WEB_ORIGIN: http://localhost:3000
+      DEFAULT_DOMAIN: localhost:3002
+      REDIRECT_ORIGIN: http://localhost:3002
+      MAIL_TRANSPORT: outbox
+      LOG_LEVEL: info
+    ports:
+      - "3001:3001"
+    healthcheck:
+      # The probe lives here rather than in the Dockerfile: all three images
+      # share one Dockerfile but have different (or no) HTTP surfaces.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  redirect:
+    profiles: ["full"]
+    build:
+      context: .
+      args:
+        APP: redirect
+    image: snapurl-redirect:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      DATABASE_URL: postgres://snapurl:snapurl@postgres:5432/snapurl
+      # Must match the API's. The redirect service verifies unlock tokens that
+      # the API signed, so a mismatch silently breaks password-protected links.
+      JWT_ACCESS_SECRET: local-compose-access-secret-000000000000
+      WEB_ORIGIN: http://localhost:3000
+      LOG_LEVEL: info
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    profiles: ["full"]
+    build:
+      context: .
+      args:
+        APP: worker
+    image: snapurl-worker:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://snapurl:snapurl@postgres:5432/snapurl
+      LOG_LEVEL: info
+    # No healthcheck and no ports: the worker serves no HTTP. Its liveness is
+    # visible in what it writes to the rollup tables, not in a probe.
 
 volumes:
   snapurl-pgdata:

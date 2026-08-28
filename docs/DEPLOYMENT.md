@@ -84,10 +84,67 @@ simplest honest answer is to point previews at a staging API.
 
 ---
 
+## Backend → containers
+
+All three services build into production images from a single `Dockerfile`,
+selected with a build argument:
+
+```bash
+docker build --build-arg APP=api      -t snapurl-api .
+docker build --build-arg APP=redirect -t snapurl-redirect .
+docker build --build-arg APP=worker   -t snapurl-worker .
+```
+
+Roughly 60 MB each. They run as the non-root `node` user, contain no build
+tools, no pnpm and no sources — only compiled output and production
+dependencies.
+
+### Why one Dockerfile instead of three
+
+The three apps share a workspace, a lockfile and most of their build. Three
+near-identical Dockerfiles would drift apart the first time one of them
+changed. The genuinely interesting part — pruning a pnpm workspace down to one
+deployable app — is identical for all three.
+
+That pruning is `pnpm deploy --legacy --filter @snapurl/<app> --prod`. It
+rewrites the workspace links (`@snapurl/contract` and friends) into real
+directories, so the image runs with no knowledge that a workspace ever existed.
+`--legacy` is required because pnpm 10+ otherwise expects
+`inject-workspace-packages=true`, which this workspace does not use.
+
+### Running the whole stack locally
+
+```bash
+docker compose --profile full up -d
+```
+
+Database, API, redirect service and worker, wired together. The default
+(`docker compose up -d postgres`) is still the database alone, because
+day-to-day work runs the apps from source with `pnpm dev:*` for hot reload.
+
+The `full` profile is the closest thing to a deployment you can run on a
+laptop, and it is how the images get verified: both smoke suites — 72
+assertions — pass against it.
+
+Two details worth noting if you write your own compose or task definition:
+
+- Inside the network the database is `postgres:5432`, not `localhost:5433`.
+  The host port mapping exists because 5432 is usually already taken.
+- `JWT_ACCESS_SECRET` **must match** between the API and the redirect service.
+  The redirect verifies unlock tokens the API signed, so a mismatch breaks
+  password-protected links silently and nothing else.
+
+Health probes live in the compose file rather than the Dockerfile, because the
+three images share one Dockerfile but have different HTTP surfaces: the API is
+`/api/v1/health`, the redirect service is `/health`, and the worker has none at
+all — its liveness shows up in what it writes to the rollup tables.
+
+---
+
 ## Backend → AWS
 
-Not yet implemented. There is no CDK stack, no container image and no deploy
-pipeline.
+Not yet implemented. There is no CDK stack and no deploy pipeline; the
+container images above are the prerequisite for one.
 
 The shape it should take, and the cost constraints that dictate it, are
 recorded in [DECISIONS.md](./DECISIONS.md). The single most important one:
