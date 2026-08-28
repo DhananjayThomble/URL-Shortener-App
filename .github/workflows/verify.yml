@@ -81,13 +81,13 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Unit tests
-        run: pnpm test
-
       # Proves the migrations apply to an empty database, not just to whatever
       # state a developer's machine happens to be in.
       - name: Migrate
         run: pnpm db:migrate
+
+      - name: Unit tests
+        run: pnpm test
 
       - name: Start the API and redirect service
         run: |
