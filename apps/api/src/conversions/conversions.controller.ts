@@ -3,6 +3,7 @@ import { RecordConversionInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Scope, type RequestActor } from "../auth/auth.guard.js";
 import { ConversionsService } from "./conversions.service.js";
+import { toActor } from "../common/activity.js";
 
 @Controller("conversions")
 export class ConversionsController {
@@ -20,6 +21,6 @@ export class ConversionsController {
   @Scope("conversions:write")
   @HttpCode(201)
   record(@Actor() actor: RequestActor, @Body(zodBody(RecordConversionInput)) input: RecordConversionInput) {
-    return this.conversions.record(actor.workspaceId, input);
+    return this.conversions.record(actor.workspaceId, toActor(actor), input);
   }
 }
