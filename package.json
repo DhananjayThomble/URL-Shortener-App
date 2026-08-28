@@ -24,9 +24,7 @@
     "db:migrate": "pnpm --filter @snapurl/database migrate",
     "db:seed": "pnpm --filter @snapurl/database seed",
     "db:studio": "pnpm --filter @snapurl/database studio",
-    "db:reset": "docker compose down -v && docker compose up -d postgres && pnpm db:migrate && pnpm db:seed",
-    "v1:backend": "cd backend && npm start",
-    "v1:frontend": "cd frontend && npm start"
+    "db:reset": "docker compose down -v && docker compose up -d postgres && pnpm db:migrate && pnpm db:seed"
   },
   "repository": {
     "type": "git",
