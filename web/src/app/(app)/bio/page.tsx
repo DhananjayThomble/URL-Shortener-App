@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, CardBody, CardHeader, Chip, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
-import { useBioPages } from "@/lib/api/hooks";
+import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { useBioPages, useDeleteBioPage, useDomains, useUpsertBioPage } from "@/lib/api/hooks";
+import type { BioPage, UpsertBioPageInput } from "@snapurl/contract";
 import { full } from "@/lib/utils";
 
 const BLOCK_ICON: Record<string, string> = {
@@ -14,11 +15,82 @@ const BLOCK_ICON: Record<string, string> = {
   social: "◈",
 };
 
+/* PUT /bio-pages replaces the whole page, so publishing has to send the blocks
+   back with it. Sending only the status would silently empty the page. */
+function toInput(page: BioPage, over: Partial<UpsertBioPageInput> = {}): UpsertBioPageInput {
+  return {
+    domain: page.domain,
+    slug: page.slug,
+    status: page.status,
+    profile: { name: page.profile.name, bio: page.profile.bio },
+    blocks: page.blocks.map((b) => ({
+      id: b.id,
+      kind: b.kind,
+      title: b.title,
+      subtitle: b.subtitle ?? null,
+      metric: b.metric ?? null,
+      locked: b.locked,
+    })),
+    ...over,
+  };
+}
+
 export default function BioPagesPage() {
   const { data, isLoading } = useBioPages();
+  const { data: domains } = useDomains();
+  const upsert = useUpsertBioPage();
+  const remove = useDeleteBioPage();
+
   const pages = data ?? [];
   const [editing, setEditing] = useState(0);
   const page = pages[editing];
+
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({ domain: "", slug: "", name: "" });
+  const [problem, setProblem] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  async function create() {
+    const domain = draft.domain || domains?.[0]?.domain || "";
+    if (!domain || !draft.slug.trim() || !draft.name.trim()) {
+      setProblem("A page needs a domain, a back-half and a display name.");
+      return;
+    }
+    try {
+      await upsert.mutateAsync({
+        domain,
+        slug: draft.slug.trim(),
+        status: "draft",
+        profile: { name: draft.name.trim(), bio: "" },
+        blocks: [],
+      });
+      setDraft({ domain: "", slug: "", name: "" });
+      setCreating(false);
+      setProblem(null);
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
+
+  async function setStatus(target: BioPage, status: "live" | "draft") {
+    setProblem(null);
+    try {
+      await upsert.mutateAsync(toInput(target, { status }));
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
+
+  async function destroy(id: string) {
+    setProblem(null);
+    try {
+      await remove.mutateAsync(id);
+      setEditing(0);
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+    setConfirming(null);
+  }
 
   return (
     <>
@@ -28,10 +100,62 @@ export default function BioPagesPage() {
         actions={
           <>
             <Button>Templates</Button>
-            <Button variant="primary">＋ New page</Button>
+            <Button variant="primary" onClick={() => { setCreating((v) => !v); setProblem(null); }}>
+              {creating ? "Cancel" : "＋ New page"}
+            </Button>
           </>
         }
       />
+
+      {problem ? (
+        <Card className="mb-3.5 border-bad">
+          <CardBody className="text-[13px] text-bad">{problem}</CardBody>
+        </Card>
+      ) : null}
+
+      {creating ? (
+        <Card className="mb-3.5">
+          <CardHeader title="New bio page" />
+          <CardBody className="flex flex-col gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label="Domain">
+                <select
+                  className="px-[11px] py-[7px] bg-surface border border-line-2 rounded-[var(--radius-sm)] text-[13px] w-full"
+                  value={draft.domain || domains?.[0]?.domain || ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, domain: e.target.value }))}
+                >
+                  {(domains ?? []).map((d) => (
+                    <option key={d.id} value={d.domain}>
+                      {d.domain}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Back-half">
+                <Input
+                  value={draft.slug}
+                  placeholder="yourname"
+                  className="font-mono text-[12.5px]"
+                  onChange={(e) => { setDraft((d) => ({ ...d, slug: e.target.value })); setProblem(null); }}
+                />
+              </Field>
+              <Field label="Display name">
+                <Input
+                  value={draft.name}
+                  placeholder="Acme Growth"
+                  onChange={(e) => { setDraft((d) => ({ ...d, name: e.target.value })); setProblem(null); }}
+                />
+              </Field>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="primary" onClick={create} disabled={upsert.isPending}>
+                {upsert.isPending ? "Creating…" : "Create as draft"}
+              </Button>
+              <Button onClick={() => { setCreating(false); setProblem(null); }}>Cancel</Button>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
         <div className="flex flex-col gap-3.5">
@@ -68,10 +192,26 @@ export default function BioPagesPage() {
                             {p.status === "live" ? "Live" : "Draft"}
                           </Chip>
                         </Td>
-                        <Td className="text-right">
-                          <Button size="sm" variant="ghost" onClick={() => setEditing(i)}>
-                            Edit
-                          </Button>
+                        <Td className="text-right whitespace-nowrap">
+                          {confirming === p.id ? (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                                Keep
+                              </Button>
+                              <Button size="sm" variant="danger" onClick={() => destroy(p.id)} disabled={remove.isPending}>
+                                Delete
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => setEditing(i)}>
+                                Edit
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setConfirming(p.id); setProblem(null); }}>
+                                Delete
+                              </Button>
+                            </>
+                          )}
                         </Td>
                       </tr>
                     ))}
@@ -95,8 +235,13 @@ export default function BioPagesPage() {
                 right={
                   <>
                     <Button size="sm">Theme</Button>
-                    <Button size="sm" variant="primary">
-                      Publish
+                    <Button
+                      size="sm"
+                      variant={page.status === "live" ? "default" : "primary"}
+                      disabled={upsert.isPending}
+                      onClick={() => setStatus(page, page.status === "live" ? "draft" : "live")}
+                    >
+                      {upsert.isPending ? "Saving…" : page.status === "live" ? "Unpublish" : "Publish"}
                     </Button>
                   </>
                 }

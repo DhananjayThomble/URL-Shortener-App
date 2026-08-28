@@ -1,26 +1,81 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { LinkRow } from "@/components/links/link-row";
-import { Button, Card, EmptyState, ErrorState, Skeleton, Tabs } from "@/components/ui";
-import { useLinks } from "@/lib/api/hooks";
+import { Button, Card, EmptyState, ErrorState, Input, Skeleton, Tabs } from "@/components/ui";
+import { useDomains, useLinks } from "@/lib/api/hooks";
+import type { ListLinksQuery } from "@snapurl/contract";
 import { cn, full } from "@/lib/utils";
 
 const FILTERS = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
   { value: "expiring", label: "Expiring" },
+  { value: "expired", label: "Expired" },
   { value: "archived", label: "Archived" },
 ] as const;
 
+const SELECT_CLASS =
+  "inline-flex items-center px-[10px] py-[5px] bg-surface border border-line-2 rounded-full text-[12.5px] text-ink-2 hover:border-ink-3 hover:text-ink";
+
 export default function LinksPage() {
-  const [filter, setFilter] = useState<string>("all");
+  const [filter, setFilter] = useState<ListLinksQuery["status"]>("all");
   const [view, setView] = useState<"list" | "grid">("list");
-  const { data, isLoading, isError, error, refetch } = useLinks(filter);
+
+  /* All four were implemented in LinksService.list and had no way in from the
+     UI: the domain, tag and folder chips were decorative buttons and there was
+     no search box at all. */
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [domain, setDomain] = useState("");
+  const [tag, setTag] = useState("");
+  const [folder, setFolder] = useState("");
+
+  /* Cursor pages, kept as a stack. G4 chose a cursor over an offset because
+     links are created continuously, so there is deliberately no "jump to page
+     7" — a cursor cannot serve one. Back and forward is what it can do. */
+  const [stack, setStack] = useState<string[]>([]);
+  const cursor = stack[stack.length - 1];
+
+  // Typing shouldn't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Any change to what is being asked for invalidates the page position.
+  useEffect(() => {
+    setStack([]);
+  }, [filter, debounced, domain, tag, folder]);
+
+  const query = useMemo(
+    () => ({
+      status: filter,
+      ...(debounced ? { search: debounced } : {}),
+      ...(domain ? { domain } : {}),
+      ...(tag ? { tag } : {}),
+      ...(folder ? { folder } : {}),
+      ...(cursor ? { cursor } : {}),
+    }),
+    [filter, debounced, domain, tag, folder, cursor],
+  );
+
+  const { data, isLoading, isFetching, isError, error, refetch } = useLinks(query);
+  const { data: domains } = useDomains();
 
   const links = data?.items ?? [];
-  const visible = filter === "all" ? links : links.filter((l) => l.status === filter);
+
+  // No endpoint enumerates tags or folders, so the options come from what is
+  // on the page. Enough to reach them; not a complete list of what exists.
+  const tags = useMemo(() => [...new Set(links.flatMap((l) => l.tags))].sort(), [links]);
+  const folders = useMemo(
+    () => [...new Set(links.map((l) => l.folder).filter((f): f is string => Boolean(f)))].sort(),
+    [links],
+  );
+
+  const filtered = Boolean(debounced || domain || tag || folder || filter !== "all");
+  const page = stack.length + 1;
 
   return (
     <>
@@ -28,9 +83,9 @@ export default function LinksPage() {
         title="Links"
         sub={
           data
-            ? `${full(data.total)} links across 3 domains · ${full(
+            ? `${full(data.total)} links across ${domains?.length ?? 0} domains · ${full(
                 links.reduce((a, l) => a + l.clicks, 0),
-              )} clicks in the last 30 days`
+              )} clicks on this page`
             : "Loading…"
         }
         actions={
@@ -59,15 +114,54 @@ export default function LinksPage() {
             </button>
           ))}
         </div>
+
         <span className="w-px h-[22px] bg-line" />
-        {["◈ Domain", "⌗ Tags", "▤ Folder"].map((l) => (
-          <button
-            key={l}
-            className="inline-flex items-center gap-[6px] px-[10px] py-[5px] bg-surface border border-line-2 rounded-full text-[12.5px] text-ink-2 hover:border-ink-3 hover:text-ink"
+
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search back-halves and destinations"
+          className="w-[260px] max-w-full"
+          aria-label="Search links"
+        />
+
+        <select className={SELECT_CLASS} value={domain} onChange={(e) => setDomain(e.target.value)} aria-label="Filter by domain">
+          <option value="">◈ Any domain</option>
+          {(domains ?? []).map((d) => (
+            <option key={d.id} value={d.domain}>
+              {d.domain}
+            </option>
+          ))}
+        </select>
+
+        <select className={SELECT_CLASS} value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Filter by tag">
+          <option value="">⌗ Any tag</option>
+          {tags.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+
+        <select className={SELECT_CLASS} value={folder} onChange={(e) => setFolder(e.target.value)} aria-label="Filter by folder">
+          <option value="">▤ Any folder</option>
+          {folders.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+
+        {filtered ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { setFilter("all"); setSearch(""); setDomain(""); setTag(""); setFolder(""); }}
           >
-            {l}
-          </button>
-        ))}
+            Clear
+          </Button>
+        ) : null}
+
         <div className="ml-auto">
           <Tabs
             value={view}
@@ -90,24 +184,46 @@ export default function LinksPage() {
             <Skeleton key={i} className="h-[68px]" />
           ))}
         </div>
-      ) : visible.length === 0 ? (
+      ) : links.length === 0 ? (
         <Card>
           <EmptyState
             icon="⛓"
             title="No links here yet"
             body={
-              filter === "all"
-                ? "Create your first link and it'll show up here with its click history."
-                : `Nothing matches the "${filter}" filter right now.`
+              filtered
+                ? "Nothing matches those filters. Clear them to see everything again."
+                : "Create your first link and it'll show up here with its click history."
             }
           />
         </Card>
       ) : (
-        <div className={cn(view === "grid" ? "grid grid-cols-1 xl:grid-cols-2 gap-2" : "flex flex-col gap-2")}>
-          {visible.map((link, i) => (
-            <LinkRow key={link.id} link={link} defaultOpen={i === 0 && view === "list"} />
-          ))}
-        </div>
+        <>
+          {/* The server applies every filter above, so the list is rendered as
+              returned. Filtering again here would have hidden rows from a page
+              that was already the correct page. */}
+          <div className={cn(view === "grid" ? "grid grid-cols-1 xl:grid-cols-2 gap-2" : "flex flex-col gap-2")}>
+            {links.map((link, i) => (
+              <LinkRow key={link.id} link={link} defaultOpen={i === 0 && view === "list"} />
+            ))}
+          </div>
+
+          {stack.length > 0 || data?.nextCursor ? (
+            <div className="flex items-center gap-2 mt-3">
+              <Button disabled={stack.length === 0 || isFetching} onClick={() => setStack((s) => s.slice(0, -1))}>
+                ← Previous
+              </Button>
+              <span className="text-[12px] text-ink-3">
+                Page {page} of {full(data?.total ?? 0)} links
+              </span>
+              <Button
+                disabled={!data?.nextCursor || isFetching}
+                onClick={() => data?.nextCursor && setStack((s) => [...s, data.nextCursor!])}
+              >
+                {isFetching ? "Loading…" : "Next →"}
+              </Button>
+            </div>
+          ) : null}
+        </>
       )}
     </>
   );

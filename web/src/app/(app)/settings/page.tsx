@@ -1,19 +1,69 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { ACCENTS, useAppearance, type Mode } from "@/components/theme/theme-provider";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
-import { useWorkspace } from "@/lib/api/hooks";
-import type { RedirectType } from "@/lib/api/types";
+import { useUpdateWorkspace, useWorkspace } from "@/lib/api/hooks";
+import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn, compact } from "@/lib/utils";
+
+/* Retention is offered as three choices but stored as a number of years, so
+   "Forever" has to land on something. 100 is the contract's maximum and is
+   past the lifetime of any link anyone is planning for. */
+const FOREVER_YEARS = 100;
+const retentionValue = (years: number) => (years >= FOREVER_YEARS ? "forever" : String(years));
+
+type Draft = Pick<
+  Workspace,
+  "name" | "slug" | "defaultDomain" | "defaultRedirect" | "retentionYears" | "cookielessAnalytics" | "scanOnCreate" | "publicPreviews"
+>;
+
+const draftOf = (ws: Workspace): Draft => ({
+  name: ws.name,
+  slug: ws.slug,
+  defaultDomain: ws.defaultDomain,
+  defaultRedirect: ws.defaultRedirect,
+  retentionYears: ws.retentionYears,
+  cookielessAnalytics: ws.cookielessAnalytics,
+  scanOnCreate: ws.scanOnCreate,
+  publicPreviews: ws.publicPreviews,
+});
 
 export default function SettingsPage() {
   const { data: ws, isLoading } = useWorkspace();
   const appearance = useAppearance();
-  const [redirect, setRedirect] = useState<RedirectType>("302");
-  const [privacy, setPrivacy] = useState({ cookieless: true, scan: true, previews: true });
-  const [retention, setRetention] = useState("3");
+  const save = useUpdateWorkspace();
+
+  /* Every control below used to be uncontrolled -- defaultValue with no
+     onChange and no submit -- so each edit survived exactly until the next
+     reload and then silently reverted. The form is now held here and sent
+     with the Save button. */
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  // Seeded once the workspace arrives, and re-seeded if it is refetched while
+  // there is nothing unsaved to lose.
+  useEffect(() => {
+    if (ws && draft === null) setDraft(draftOf(ws));
+  }, [ws, draft]);
+
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => {
+    setProblem(null);
+    setDraft((d) => (d ? { ...d, [key]: value } : d));
+  };
+
+  const dirty = Boolean(ws && draft && JSON.stringify(draft) !== JSON.stringify(draftOf(ws)));
+
+  async function submit() {
+    if (!draft) return;
+    try {
+      await save.mutateAsync(draft);
+      setProblem(null);
+    } catch (err) {
+      setProblem((err as Error).message);
+    }
+  }
 
   const usedPct = ws ? Math.min(100, Math.round((ws.clicksUsed / ws.clicksIncluded) * 100)) : 0;
 
@@ -26,25 +76,37 @@ export default function SettingsPage() {
           <Card>
             <CardHeader title="Workspace" />
             <CardBody className="flex flex-col gap-3.5">
-              {isLoading ? (
+              {isLoading || !draft ? (
                 <Skeleton className="h-[180px]" />
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Field label="Name">
-                      <Input defaultValue={ws?.name} />
+                      <Input value={draft.name} onChange={(e) => set("name", e.target.value)} />
                     </Field>
-                    <Field label="Slug">
-                      <Input defaultValue={ws?.slug} className="font-mono text-[12.5px]" />
+                    <Field label="Slug" help="Lowercase letters, numbers and dashes.">
+                      <Input
+                        value={draft.slug}
+                        onChange={(e) => set("slug", e.target.value)}
+                        className="font-mono text-[12.5px]"
+                      />
                     </Field>
                   </div>
                   <Field label="Default domain">
-                    <Input defaultValue={ws?.defaultDomain} className="font-mono text-[12.5px]" />
+                    <Input
+                      value={draft.defaultDomain}
+                      onChange={(e) => set("defaultDomain", e.target.value)}
+                      className="font-mono text-[12.5px]"
+                    />
                   </Field>
-                  <Field label="Default redirect type" help="Applies to new links. Any link can override it.">
+                  <Field
+                    label="Default redirect type"
+                    help="Applies to new links. Any link can override it."
+                    error={problem ?? undefined}
+                  >
                     <Segmented<RedirectType>
-                      value={redirect}
-                      onChange={setRedirect}
+                      value={draft.defaultRedirect}
+                      onChange={(v) => set("defaultRedirect", v)}
                       options={[
                         { value: "301", label: "301" },
                         { value: "302", label: "302" },
@@ -52,6 +114,16 @@ export default function SettingsPage() {
                       ]}
                     />
                   </Field>
+                  <div className="flex items-center gap-2">
+                    <Button variant="primary" onClick={submit} disabled={!dirty || save.isPending}>
+                      {save.isPending ? "Saving…" : "Save changes"}
+                    </Button>
+                    {dirty ? (
+                      <Button onClick={() => setDraft(ws ? draftOf(ws) : null)}>Discard</Button>
+                    ) : (
+                      <span className="text-[12px] text-ink-3">{save.isSuccess ? "Saved." : "No unsaved changes."}</span>
+                    )}
+                  </div>
                 </>
               )}
             </CardBody>
@@ -141,27 +213,27 @@ export default function SettingsPage() {
             <CardHeader title="Privacy & data" />
             <CardBody className="flex flex-col gap-3">
               <Toggle
-                checked={privacy.cookieless}
-                onChange={(v) => setPrivacy((p) => ({ ...p, cookieless: v }))}
+                checked={draft?.cookielessAnalytics ?? true}
+                onChange={(v) => set("cookielessAnalytics", v)}
                 title="Cookieless analytics"
                 description="Visitors are counted server-side with a daily-rotating hash. Nothing is stored on their device."
               />
               <Toggle
-                checked={privacy.scan}
-                onChange={(v) => setPrivacy((p) => ({ ...p, scan: v }))}
+                checked={draft?.scanOnCreate ?? true}
+                onChange={(v) => set("scanOnCreate", v)}
                 title="Scan destinations on create"
-                description="Checks every new link against Google Safe Browsing."
+                description="Checks every new link against Google Safe Browsing. Needs GOOGLE_SAFE_BROWSING_API_KEY to be set."
               />
               <Toggle
-                checked={privacy.previews}
-                onChange={(v) => setPrivacy((p) => ({ ...p, previews: v }))}
+                checked={draft?.publicPreviews ?? true}
+                onChange={(v) => set("publicPreviews", v)}
                 title="Allow public link previews"
                 description="Anyone can add + to a link to see where it goes first."
               />
-              <Field label="Click data retention">
+              <Field label="Click data retention" help="Rollups are kept regardless; this is how long the raw click rows live.">
                 <Segmented
-                  value={retention}
-                  onChange={setRetention}
+                  value={retentionValue(draft?.retentionYears ?? 3)}
+                  onChange={(v) => set("retentionYears", v === "forever" ? FOREVER_YEARS : Number(v))}
                   options={[
                     { value: "1", label: "1 year" },
                     { value: "3", label: "3 years" },

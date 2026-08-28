@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
-import { Button, Card, CardBody, CardHeader, ErrorState, Skeleton, Tabs, Tile } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, ErrorState, Segmented, Skeleton, Tabs, Tile } from "@/components/ui";
 import { useAnalytics } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { compact, full, pct } from "@/lib/utils";
@@ -20,7 +20,19 @@ export default function AnalyticsPage() {
         sub="No cookies set · click data never sold · 3 years retention"
         actions={
           <>
-            <Button>Last 30 days ▾</Button>
+            {/* Was a dead "Last 30 days ▾" button, so 24h, 7d, 90d and 12m
+                were unreachable even though the API serves all five. */}
+            <Segmented<AnalyticsRange>
+              value={range}
+              onChange={setRange}
+              options={[
+                { value: "24h", label: "24h" },
+                  { value: "7d", label: "7d" },
+                  { value: "30d", label: "30d" },
+                  { value: "90d", label: "90d" },
+                  { value: "12m", label: "12m" },
+              ]}
+            />
             <Button>Schedule report</Button>
             <Button variant="primary">Export CSV</Button>
           </>
