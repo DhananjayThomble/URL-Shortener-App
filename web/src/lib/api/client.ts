@@ -84,6 +84,15 @@ type RequestOptions = {
   signal?: AbortSignal;
   /** Skip the Authorization header (login, register, public preview). */
   anonymous?: boolean;
+  /**
+   * Let the request outlive the page that started it.
+   *
+   * Sign-out fires `POST /auth/logout` and immediately navigates to /login.
+   * Without this the browser is free to cancel the in-flight request, and the
+   * refresh token silently stays valid — the exact bug the logout call exists
+   * to fix, reintroduced by a race. `keepalive` tells the browser to finish it.
+   */
+  keepalive?: boolean;
 };
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -121,6 +130,7 @@ async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOp
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: opts.signal,
+    keepalive: opts.keepalive,
   });
 
   // One transparent refresh-and-retry on expiry.
