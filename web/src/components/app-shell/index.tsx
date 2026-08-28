@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui";
-import { useWorkspace } from "@/lib/api/hooks";
+import { useLogout, useMe, useWorkspace } from "@/lib/api/hooks";
 import { cn, compact } from "@/lib/utils";
 
 const NAV: { group: string; items: { href: string; label: string; icon: string; count?: keyof Counts }[] }[] = [
@@ -108,7 +108,6 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
 }
 
 export function Topbar({ onCreate }: { onCreate: () => void }) {
-  const { data: ws } = useWorkspace();
   return (
     <div className="flex items-center gap-3 px-[22px] h-14 border-b border-line bg-surface sticky top-0 z-20">
       <button
@@ -129,10 +128,95 @@ export function Topbar({ onCreate }: { onCreate: () => void }) {
         <Button size="sm" variant="ghost" className="hidden sm:inline-flex">
           Import from Bitly
         </Button>
-        <span className="w-[29px] h-[29px] rounded-full bg-teal text-white grid place-items-center text-[11.5px] font-bold shrink-0">
-          {ws?.initials ? "DT" : "··"}
-        </span>
+        <AccountMenu />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The avatar, and the only way to sign out of the app.
+ *
+ * Until now there was no sign-out control anywhere in the product — the hook
+ * existed with zero call sites, so a signed-in user had no way to leave except
+ * clearing site data.
+ */
+function AccountMenu() {
+  const { data: me } = useMe();
+  const { data: ws } = useWorkspace();
+  const logout = useLogout();
+  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+
+  // Close on outside click and on Escape. Both listeners are only attached
+  // while the menu is open, so a closed menu costs nothing.
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const signOut = () => {
+    setOpen(false);
+    logout();
+    router.replace("/login");
+  };
+
+  const initials = me?.initials ?? ws?.initials ?? "··";
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={me ? `Account menu for ${me.name}` : "Account menu"}
+        className="w-[29px] h-[29px] rounded-full bg-teal text-white grid place-items-center text-[11.5px] font-bold shrink-0 hover:opacity-90 transition-opacity"
+      >
+        {initials}
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-[calc(100%+7px)] min-w-[196px] bg-surface border border-line rounded-[var(--radius-sm)] shadow-lg py-[5px] z-30"
+        >
+          {me ? (
+            <div className="px-[11px] py-[7px] border-b border-line mb-[4px]">
+              <div className="text-[12.5px] font-semibold truncate">{me.name}</div>
+              <div className="text-[11.5px] text-ink-3 truncate">{me.email}</div>
+            </div>
+          ) : null}
+          <Link
+            href="/settings"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-[11px] py-[6px] text-[13px] text-ink-2 hover:bg-surface-3 hover:text-ink transition-colors"
+          >
+            Settings
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={signOut}
+            className="w-full text-left px-[11px] py-[6px] text-[13px] text-ink-2 hover:bg-surface-3 hover:text-ink transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

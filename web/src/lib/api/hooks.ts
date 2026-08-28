@@ -139,9 +139,34 @@ export function useRegister() {
   });
 }
 
+/**
+ * Sign out, on the server as well as in this tab.
+ *
+ * Clearing localStorage alone left the refresh token valid for its full
+ * 30-day life, so anyone who had captured it kept access after the user
+ * believed they had signed out. `POST /auth/logout` revokes the whole token
+ * family server-side.
+ *
+ * The request is deliberately not awaited: a network failure must not trap
+ * someone in a session they asked to leave. Local state is cleared either way,
+ * and an unrevoked token expires on its own — the failure mode is the old
+ * behaviour, not something worse.
+ */
 export function useLogout() {
   const qc = useQueryClient();
-  return () => {
+  return (allDevices = false) => {
+    const refreshToken = tokens.refresh;
+    if (refreshToken) {
+      void request("/auth/logout", z.undefined(), {
+        method: "POST",
+        body: { refreshToken, allDevices },
+        // The access token may already have expired by the time someone clicks
+        // sign out; the refresh token in the body is the credential here.
+        anonymous: true,
+      }).catch(() => {
+        /* Already leaving. Nothing useful to show the user. */
+      });
+    }
     tokens.clear();
     qc.clear();
   };
