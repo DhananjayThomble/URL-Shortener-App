@@ -180,13 +180,13 @@ export class AnalyticsService {
   }
 }
 
-function iso(d: Date): string {
+export function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
 /** The previous window is the same length immediately before, so a 30-day
  *  delta compares against the 30 days before that, not against a calendar month. */
-function windowFor(days: number) {
+export function windowFor(days: number) {
   const start = new Date();
   start.setUTCHours(0, 0, 0, 0);
   start.setUTCDate(start.getUTCDate() - days + 1);
@@ -196,14 +196,14 @@ function windowFor(days: number) {
 }
 
 /** Growing from zero is reported as +100%, not as infinity. */
-function percentChange(before: number, after: number): number {
+export function percentChange(before: number, after: number): number {
   if (before === 0) return after === 0 ? 0 : 100;
   return Math.round(((after - before) / before) * 1000) / 10;
 }
 
 /** Zero-fill missing days so the chart's x-axis is continuous — a gap would
  *  otherwise be drawn as a straight line between two distant points. */
-function fillSeries(rows: TimeseriesPoint[], start: Date, days: number): TimeseriesPoint[] {
+export function fillSeries(rows: TimeseriesPoint[], start: Date, days: number): TimeseriesPoint[] {
   const byDate = new Map(rows.map((r) => [r.date, r]));
   const out: TimeseriesPoint[] = [];
   for (let i = 0; i < days; i++) {
