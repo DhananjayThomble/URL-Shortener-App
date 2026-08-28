@@ -1,182 +1,105 @@
-# SnapURL: The Beginner-Friendly URL Shortener
-SnapURL is an open-source URL shortener web application and chrome-extension. It simplifies the process of converting long URLs into short and shareable links.
+# SnapURL
 
-## Features
+Short links, dynamic QR codes and cookieless analytics.
 
-- User signup and login.
-- Email verification for added security.
-- Password reset via email.
-- Robust password hashing with Bcrypt.
-- Automated email notifications for account creation and password resets.
-- URL shortening with randomly generated 10-character strings.
-- Visit count tracking for shortened URLs.
-- User-specific lists of generated URLs.
-- Deletion of shortened URLs.
-- Secure API authentication using JSON Web Tokens (JWT).
-- Express Rate Limit for API rate limiting.
-- Cross-Origin Resource Sharing (CORS) enabled.
-- API documentation powered by Swagger.
-- Export Generated URLs to Excel file.
-- Chrome extension for URL shortening.
+A pnpm workspace on Node 22: a NestJS dashboard API, a separate Fastify service
+for the redirect hot path, a background worker, a Next.js dashboard, and four
+shared packages that keep them agreeing with each other.
 
-## Future Plans
+- **How to run it locally:** [docs/BACKEND.md](./docs/BACKEND.md)
+- **Why it is built this way:** [docs/DECISIONS.md](./docs/DECISIONS.md)
+- **How to contribute:** [CONTRIBUTING.md](./CONTRIBUTING.md)
 
-We have exciting plans to enhance SnapURL in the future, making it even more robust and user-friendly. Our upcoming features include:
+---
 
-### User Profile Enhancements
-- [ ] **User Profile Visibility**: Choose whether your profile is public or private.
-- [ ] **User Profile Page**: Display user's name, profile picture, bio, and a summary of their URL activity.
-- [ ] **User Analytics**: View statistics for the links shared, including total clicks and views.
+## Layout
 
-### Advanced URL Management
-- [x] **Categories for Short URLs**: Organize shortened links into categories for better management.
-- [ ] **Bundled URLs**: Group multiple URLs into a single bundled link for easy sharing.
-- [ ] **Password Protection**: Add password protection to specific URLs for added security.
+Seven workspace projects, listed in [`pnpm-workspace.yaml`](./pnpm-workspace.yaml).
 
-### Analytics and Reporting
-- [ ] **User Analytics Dashboard**: Provide users with an analytics dashboard to monitor their URL performance.
-- [ ] **User Notifications**: Notify users when their URLs reach a certain number of clicks or other milestones.
-- [ ] **Link Expiry**: Allow users to set an expiration date for their URLs.
+| Path | What it is |
+| --- | --- |
+| `apps/api` | NestJS 11 on Fastify. 40 routes across 11 controllers — the whole dashboard surface. |
+| `apps/redirect` | Plain Fastify, deliberately not NestJS. Resolves `(host, slug)` and redirects. Nothing else lives here, because everything here is on the hot path. |
+| `apps/worker` | Rollups, the projection outbox and webhook delivery — `apps/worker/src/jobs/`. |
+| `packages/contract` | zod schemas. The single source of truth for every payload; imported by both `apps/api` and `web/`. |
+| `packages/domain` | Pure logic: routing-chain evaluation, slug generation, visitor hashing. No I/O, no framework. |
+| `packages/database` | Drizzle schema (21 tables), migrations and seed. |
+| `web` | Next.js 15 App Router, React 19, Tailwind v4, TanStack Query. |
 
-### Integration and Sharing
-- [x] **Browser Extensions**: Develop browser extensions for quick URL shortening and management.
-- [ ] **Custom Domains**: Enable users to use custom domains for branded short URLs.
+The two rules that hold it together: the contract package is the only place a
+payload shape is defined, and `packages/domain` is imported by both the API that
+validates a routing chain and the redirect service that executes it — so there
+is exactly one implementation of where a visitor lands.
 
-### Enhanced User Experience
-- [ ] **User Feedback System**: Implement a feedback system to collect user opinions and suggestions.
-- [ ] **Mobile Apps**
-- [ ] **Multi-Language Support**: Localize SnapURL for users worldwide.
-- [ ] **Dark Mode**: Introduce a dark mode option for the user interface.
+## Quick start
 
-### Additional Feature Ideas
-- [x] **QR Code Generation**: Generate QR codes for shortened URLs for easy mobile sharing.
-- [ ] **Social Media Sharing**: Add one-click sharing to popular social media platforms.
-- [ ] **Link Preview Thumbnails**: Display link previews with thumbnails for better user experience.
-- [ ] **Bookmark Management**: Help users organize and manage their bookmarked URLs.
-- [ ] **URL Commenting**: Allow users to add comments to URLs for context.
-
-## Tech Stack
-
-### Backend
-
-- Node.js
-- Express.js
-- MongoDB
-- Bcrypt
-- Cors
-- EJS (for email templates)
-- Express-rate-limit
-- JSON Web Tokens (JWT)
-- Mongoose
-- Nanoid
-- Passport
-- Passport-jwt
-- Swagger UI Express
-- Yamljs
-
-### Frontend
-
-- React.js
-- Axios
-- Prettier
-- React-bootstrap
-- Material-ui
-- React-dom
-- React-icons
-- React-router-dom
-- React-toastify
-
-## Deployment
-
-- The Node.js backend is hosted on the AWS EC2 running Ubuntu and managed using PM2. [API Documentation](https://snapurl.in/doc)
-
-- The React frontend is hosted on Netlify. The URL for the frontend is: https://app.snapurl.in
-
-- The API documentation is generated using Swagger. The URL for the API documentation
-  is: https://snapurl.in/doc
-
-## Prerequisites
-
-- Node.js and npm installed on your local machine
-- A MongoDB database
-
-## Getting Started
-
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
-    ```
-2. Install the dependencies:
-    ```bash
-    cd ./URL-Shortener-App
-    npm install
-    ```
-
-3. Goto the backend directory
-
-4. Create a .env file in the backend directory and add the following environment variables:
-    ```bash
-    DB_URL=<your-mongodb-database-url>
-    JWT_SECRET=<your-jwt-secret>
-    SESSION_SECRET=<your-session-secret>
-    PORT=4001
-    BASE_URL=http://localhost:4001
-    SHORT_URL_PREFIX=http://localhost:4001/u 
-    EMAIL_HOST=<your-email-host>, e.g. smtp.gmail.com
-    EMAIL_PORT=<your-email-port>, e.g. 587
-    EMAIL_HOST_USER=<your-email-host-user>, e.g. john@gmail.com
-    EMAIL_HOST_PASSWORD=<your-email-host-password>, e.g. btvpykqmgtrpeukj
-    FRONTEND_URL=<your-frontend-webapp-url>
-    ```
-
-    Example .env file:
-      ```bash
-      DB_URL=mongodb+srv://<username>:<password>@<cluster-url>/<database-name>?retryWrites=true&w=majority
-      JWT_SECRET=secret
-      SESSION_SECRET=secret
-      PORT=4001
-      BASE_URL=http://localhost:4001
-      SHORT_URL_PREFIX=http://localhost:4001/u
-      EMAIL_HOST=smtp.gmail.com
-      EMAIL_PORT=587
-      EMAIL_HOST_USER=john@gmail.com
-      EMAIL_HOST_PASSWORD=btvpykqmgtrpeukj
-      FRONTEND_URL=https://app.snapurl.in
-      ```
-
-    You can get your MongoDB database URL from [here](https://www.mongodb.com/cloud/atlas).
-    
-    You can get your Email Host, Email Port, Email Host User and Email Host Password from your email service provider. 
-    You can even use your **Gmail** account for this. If you have enabled 2-step verification for your gmail account, you will need to generate an app password. you can find more information about this [here](https://support.google.com/accounts/answer/185833?hl=en).
-    
-    Contact me if you need help with this.
-
-
-5. Goto the frontend directory:
-
-6. Create a .env file in the frontend directory and add the following environment variables:
 ```bash
-VITE_API_ENDPOINT=http://localhost:4001
+pnpm install
+pnpm build
+pnpm test
 ```
 
-7. Start both backend and the frontend server from the root directory
+That is enough to build and test everything; none of it needs a database.
+
+Running the apps does need one. Postgres **18** specifically — the schema calls
+`uuidv7()`, which is native in 18 and does not exist in 17 — on port **5433**,
+which is what [`docker-compose.yml`](./docker-compose.yml) provides:
+
 ```bash
-npm start
+pnpm db:up          # Postgres 18 on :5433
+pnpm db:migrate
+pnpm db:seed
+pnpm dev            # all three apps
+pnpm dev:web        # the dashboard, separately
 ```
-8. Open http://localhost:4001/doc to view the API documentation.
-9. To view the frontend, check the terminal for the URL.
 
-## Contributing
+[docs/BACKEND.md](./docs/BACKEND.md) has the full sequence, the ports, and the
+seeded login.
 
-SnapURL is a welcoming community for all contributors. Feel free to open an issue or submit a pull request! Your feedback and contributions are always welcome as we continue to grow and improve
+### The frontend runs without a backend
 
-## Additional Resources
-- **Wiki**: Explore our [Wiki](https://github.com/DhananjayThomble/URL-Shortener-App/wiki) to learn more about the project.
-- **Milestones**: Check out our [Milestones](https://github.com/DhananjayThomble/URL-Shortener-App/milestones) to see what we are working on.
+`NEXT_PUBLIC_USE_FIXTURES` defaults to **on**
+([`web/src/lib/api/client.ts`](./web/src/lib/api/client.ts)), so `pnpm dev:web`
+serves the whole dashboard from `web/src/lib/api/fixtures.ts` with no API and no
+database running.
+
+Worth knowing before you add a hook: a hook without a matching fixture will
+appear to work and be entirely fake. Set `NEXT_PUBLIC_USE_FIXTURES=false` in
+`web/.env.local` to talk to the real API.
+
+## Checks
+
+These four are what CI runs, in this order
+([`.github/workflows/verify.yml`](./.github/workflows/verify.yml)):
+
+```bash
+pnpm install --frozen-lockfile
+pnpm type-check     # builds packages first, then checks all 7 projects
+pnpm build
+pnpm test
+```
+
+CI then applies the migrations to an empty Postgres 18, starts the API and the
+redirect service, and runs `scripts/smoke.sh` and `scripts/smoke-redirect.sh`
+against them.
+
+Some tests need a database and skip without one. They run in CI, which sets
+`DATABASE_URL`; locally they run after `pnpm db:up && pnpm db:migrate`.
+
+> **`pnpm lint` does not work.** `web/package.json` declares `eslint .` with no
+> eslint config and no eslint dependency. Fixing it means adding both and
+> producing a repo-wide diff, so it is left alone deliberately rather than
+> half-done.
+
+## Requirements
+
+| | |
+| --- | --- |
+| Node | 22+ (`engines` in [`package.json`](./package.json)) |
+| pnpm | 11.24.0 (`packageManager`, so corepack picks it up) |
+| Postgres | 18, on 5433 — not 17, and not the default port |
+| Docker | only for the database |
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-Enjoy your journey with SnapURL! 🚀
-
+[MIT](./LICENSE).
