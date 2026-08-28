@@ -163,6 +163,10 @@ export function useLogout() {
         // The access token may already have expired by the time someone clicks
         // sign out; the refresh token in the body is the credential here.
         anonymous: true,
+        // We navigate to /login immediately after this call. Without keepalive
+        // the browser may cancel it mid-flight and the token stays valid —
+        // reintroducing the exact bug this call exists to fix.
+        keepalive: true,
       }).catch(() => {
         /* Already leaving. Nothing useful to show the user. */
       });
