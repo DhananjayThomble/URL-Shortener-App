@@ -5,10 +5,11 @@ import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
 import { Button, Card, CardBody, CardHeader, ErrorState, Skeleton, Tabs, Tile } from "@/components/ui";
 import { useAnalytics } from "@/lib/api/hooks";
+import type { AnalyticsRange } from "@snapurl/contract";
 import { compact, full, pct } from "@/lib/utils";
 
 export default function AnalyticsPage() {
-  const [range, setRange] = useState("30d");
+  const [range, setRange] = useState<AnalyticsRange>("30d");
   const [series, setSeries] = useState<"clicks" | "both">("both");
   const { data, isLoading, isError, error, refetch } = useAnalytics(range);
 
