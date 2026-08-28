@@ -6,10 +6,20 @@ import type {
   AuthSession,
   BioPage,
   ConversionsReport,
+  CreatedApiKey,
+  CreatedWebhook,
   Domain,
   Link,
   Member,
+  MemberRole,
   PublicLinkPreview,
+  RecordConversionInput,
+  TotpRecoveryCodes,
+  TotpSetup,
+  UnlockLinkResult,
+  UpdateLinkInput,
+  UpdateWorkspaceInput,
+  UpsertBioPageInput,
   Webhook,
   Workspace,
 } from "./types";
@@ -49,6 +59,7 @@ export const WORKSPACE: Workspace = {
   cookielessAnalytics: true,
   scanOnCreate: true,
   publicPreviews: true,
+  currency: "INR",
 };
 
 export const LINKS: Link[] = [
@@ -385,6 +396,7 @@ export const BIO_PAGES: BioPage[] = [
 ];
 
 export const CONVERSIONS: ConversionsReport = {
+  currency: "INR",
   totals: { clicks: 412908, leads: 28104, signups: 12440, paid: 1882, revenue: 3140000 },
   deltas: { clicks: 22.6, leads: 14.2, signups: -2.4, paid: 8.1, revenue: 11.9 },
   events: [
@@ -424,8 +436,43 @@ function previewFor(slug: string): PublicLinkPreview {
   };
 }
 
-/** Mutations write here so the UI behaves like a real app during review. */
-const created: Link[] = [];
+/* ============================================================
+   Mutable stores.
+
+   Fixtures are a working in-memory app rather than static JSON: a create,
+   edit or delete has to be visible on the next render, or a flow built
+   against them cannot be reviewed at all. Seeded from the constants above
+   and reset by a page reload.
+
+   USE_FIXTURES defaults to ON (client.ts), so a hook added without a case
+   below throws rather than silently returning nothing — which is the
+   failure this file exists to make loud.
+   ============================================================ */
+const linkStore: Link[] = [...LINKS];
+const domainStore: Domain[] = [...DOMAINS];
+const memberStore: Member[] = [...MEMBERS];
+const apiKeyStore: ApiKey[] = [...API_KEYS];
+const webhookStore: Webhook[] = [...WEBHOOKS];
+const bioStore: BioPage[] = [...BIO_PAGES];
+const auditStore: AuditEntry[] = [...AUDIT];
+
+const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+/* Only the member actions write audit entries, because only the member actions
+   write them in the real API today. Logging link or domain changes here would
+   make the fixtures claim a capability the backend does not have yet. */
+function recordAudit(action: string) {
+  auditStore.unshift({ id: uid("aud"), at: new Date().toISOString(), actor: SESSION.user.name, action });
+}
+
+function findLink(idOrSlug: string) {
+  return linkStore.find((l) => l.id === idOrSlug || l.slug === idOrSlug);
+}
+
+function removeById<T extends { id: string }>(store: T[], id: string) {
+  const i = store.findIndex((row) => row.id === id);
+  if (i >= 0) store.splice(i, 1);
+}
 
 function match(path: string) {
   const [clean] = path.split("?");
@@ -444,14 +491,33 @@ export async function fixtureRequest<T>(
 
   let data: unknown;
 
+  /* ---- auth ---- */
   if (m(/^\/auth\/(login|register)$/)) data = SESSION;
   else if (m(/^\/auth\/me$/)) data = SESSION.user;
-  else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
+  else if (m(/^\/auth\/logout$/)) data = undefined;
+  else if (m(/^\/auth\/2fa\/setup$/)) {
+    data = {
+      otpauthUri: `otpauth://totp/SnapURL:${SESSION.user.email}?secret=JBSWY3DPEHPK3PXP&issuer=SnapURL`,
+      secret: "JBSWY3DPEHPK3PXP",
+    } satisfies TotpSetup;
+  } else if (m(/^\/auth\/2fa\/enable$/)) {
+    // Ten codes, shown once. Fixed strings so a reviewer can see the shape.
+    data = {
+      recoveryCodes: Array.from({ length: 10 }, (_, i) => `${1000 + i * 137}-${7300 - i * 91}`),
+    } satisfies TotpRecoveryCodes;
+  } else if (m(/^\/auth\/2fa\/verify$/)) data = SESSION;
+  else if (m(/^\/auth\/2fa\/disable$/)) data = undefined;
+  /* ---- workspace ---- */
+  else if (m(/^\/workspaces\/current$/) && method === "PATCH") {
+    Object.assign(WORKSPACE, opts.body as UpdateWorkspaceInput);
+    data = WORKSPACE;
+  } else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
+  /* ---- links ---- */
   else if (m(/^\/links$/) && method === "POST") {
     const body = opts.body as { destination: string; domain: string; slug?: string };
     const link: Link = {
       ...LINKS[0],
-      id: `lnk_${Date.now()}`,
+      id: uid("lnk"),
       slug: body.slug || Math.random().toString(36).slice(2, 9),
       domain: body.domain,
       destination: body.destination,
@@ -465,23 +531,204 @@ export async function fixtureRequest<T>(
       createdAt: new Date().toISOString(),
       createdBy: SESSION.user.name,
     };
-    created.unshift(link);
+    linkStore.unshift(link);
     data = link;
-  } else if (m(/^\/links\/[^/]+$/) && method === "DELETE") data = undefined;
-  else if (m(/^\/links\/([^/]+)$/)) {
-    const slug = m(/^\/links\/([^/]+)$/)![1];
-    data = [...created, ...LINKS].find((l) => l.id === slug || l.slug === slug) ?? LINKS[0];
-  } else if (m(/^\/links$/)) data = { items: [...created, ...LINKS], total: created.length + LINKS.length };
+  } else if (m(/^\/links\/([^/]+)$/) && method === "PATCH") {
+    const link = findLink(m(/^\/links\/([^/]+)$/)![1]);
+    if (!link) throw new Error(`No fixture link ${path}`);
+    const body = opts.body as UpdateLinkInput;
+    // `archived` is a status transition rather than a stored column.
+    const { archived, password, ...rest } = body;
+    Object.assign(link, rest);
+    if (archived !== undefined) link.status = archived ? "archived" : "active";
+    if (password !== undefined) link.passwordProtected = password !== null;
+    data = link;
+  } else if (m(/^\/links\/([^/]+)$/) && method === "DELETE") {
+    const link = findLink(m(/^\/links\/([^/]+)$/)![1]);
+    if (link) removeById(linkStore, link.id);
+    data = undefined;
+  } else if (m(/^\/links\/([^/]+)$/)) {
+    data = findLink(m(/^\/links\/([^/]+)$/)![1]) ?? LINKS[0];
+  } else if (m(/^\/links$/)) {
+    // Filtering is applied so the status tabs and the search box behave.
+    const params = new URLSearchParams(path.split("?")[1] ?? "");
+    const status = params.get("status");
+    const search = params.get("search")?.toLowerCase();
+    const tag = params.get("tag");
+    const domain = params.get("domain");
+    const folder = params.get("folder");
+    let items = linkStore;
+    if (status && status !== "all") items = items.filter((l) => l.status === status);
+    if (tag) items = items.filter((l) => l.tags.includes(tag));
+    if (domain) items = items.filter((l) => l.domain === domain);
+    if (folder) items = items.filter((l) => l.folder === folder);
+    if (search) {
+      items = items.filter((l) =>
+        [l.slug, l.destination, l.title ?? "", l.comment ?? ""].some((f) => f.toLowerCase().includes(search)),
+      );
+    }
+    // One page, so nextCursor is always null — enough to exercise the field
+    // without pretending the fixture set is big enough to paginate.
+    data = { items, total: items.length, nextCursor: null };
+  }
+  /* ---- analytics and conversions ---- */
   else if (m(/^\/analytics/)) data = ANALYTICS;
-  else if (m(/^\/domains$/)) data = DOMAINS;
-  else if (m(/^\/members$/)) data = MEMBERS;
-  else if (m(/^\/audit$/)) data = AUDIT;
-  else if (m(/^\/api-keys$/)) data = API_KEYS;
-  else if (m(/^\/webhooks$/)) data = WEBHOOKS;
-  else if (m(/^\/bio-pages$/)) data = BIO_PAGES;
-  else if (m(/^\/conversions/)) data = CONVERSIONS;
-  else if (m(/^\/public\/links\/([^/]+)\/preview$/)) data = previewFor(m(/^\/public\/links\/([^/]+)\/preview$/)![1]);
-  else throw new Error(`No fixture for ${method} ${path}. Add one in src/lib/api/fixtures.ts.`);
+  else if (m(/^\/conversions$/) && method === "POST") {
+    const body = opts.body as RecordConversionInput;
+    data = { id: uid("cnv"), recorded: Boolean(body.name) };
+  } else if (m(/^\/conversions/)) data = CONVERSIONS;
+  /* ---- domains ---- */
+  else if (m(/^\/domains$/) && method === "POST") {
+    const body = opts.body as { domain: string; rootRedirect?: string | null; notFoundRedirect?: string | null };
+    const domain: Domain = {
+      id: uid("dom"),
+      domain: body.domain,
+      // A new domain is never instantly live: it has to pass DNS first.
+      status: "verifying",
+      ssl: "pending",
+      sslRenewsAt: null,
+      links: 0,
+      rootRedirect: body.rootRedirect ?? null,
+      notFoundRedirect: body.notFoundRedirect ?? null,
+      dns: { type: "CNAME", name: body.domain, value: "edge.snapurl.in", ttl: 3600 },
+    };
+    domainStore.unshift(domain);
+    data = domain;
+  } else if (m(/^\/domains\/([^/]+)\/verify$/)) {
+    const domain = domainStore.find((d) => d.id === m(/^\/domains\/([^/]+)\/verify$/)![1]);
+    if (!domain) throw new Error(`No fixture domain ${path}`);
+    domain.status = "live";
+    domain.ssl = "active";
+    domain.sslRenewsAt = daysAgo(-90);
+    data = domain;
+  } else if (m(/^\/domains\/([^/]+)$/) && method === "DELETE") {
+    removeById(domainStore, m(/^\/domains\/([^/]+)$/)![1]);
+    data = undefined;
+  } else if (m(/^\/domains$/)) data = domainStore;
+  /* ---- members and audit ---- */
+  else if (m(/^\/members$/) && method === "POST") {
+    const body = opts.body as { email: string; role: MemberRole };
+    const name = body.email.split("@")[0].replace(/[._-]+/g, " ");
+    const member: Member = {
+      id: uid("mem"),
+      name,
+      email: body.email,
+      role: body.role,
+      status: "invited",
+      links: 0,
+      lastActive: null,
+      twoFactor: false,
+      initials: name.slice(0, 2).toUpperCase(),
+    };
+    memberStore.push(member);
+    recordAudit(`invited ${body.email} as ${body.role}`);
+    data = member;
+  } else if (m(/^\/members\/([^/]+)$/) && method === "PATCH") {
+    const member = memberStore.find((x) => x.id === m(/^\/members\/([^/]+)$/)![1]);
+    const role = (opts.body as { role: MemberRole }).role;
+    if (member) {
+      member.role = role;
+      recordAudit(`changed ${member.email} to ${role}`);
+    }
+    data = undefined;
+  } else if (m(/^\/members\/([^/]+)$/) && method === "DELETE") {
+    const id = m(/^\/members\/([^/]+)$/)![1];
+    const member = memberStore.find((x) => x.id === id);
+    if (member) recordAudit(`removed ${member.email}`);
+    removeById(memberStore, id);
+    data = undefined;
+  } else if (m(/^\/members$/)) data = memberStore;
+  else if (m(/^\/audit$/)) data = auditStore;
+  /* ---- api keys and webhooks ---- */
+  else if (m(/^\/api-keys$/) && method === "POST") {
+    const body = opts.body as { name: string; scopes: string[] };
+    const secret = `sk_live_${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
+    const key: CreatedApiKey = {
+      id: uid("key"),
+      name: body.name,
+      // The masked form is what every later read returns.
+      maskedKey: `sk_live_••••${secret.slice(-4)}`,
+      scopes: body.scopes,
+      lastUsed: null,
+      key: secret,
+    };
+    apiKeyStore.unshift({ id: key.id, name: key.name, maskedKey: key.maskedKey, scopes: key.scopes, lastUsed: null });
+    data = key;
+  } else if (m(/^\/api-keys\/([^/]+)$/) && method === "DELETE") {
+    removeById(apiKeyStore, m(/^\/api-keys\/([^/]+)$/)![1]);
+    data = undefined;
+  } else if (m(/^\/api-keys$/)) data = apiKeyStore;
+  else if (m(/^\/webhooks$/) && method === "POST") {
+    const body = opts.body as { endpoint: string; events: string[] };
+    const hook: CreatedWebhook = {
+      id: uid("whk"),
+      endpoint: body.endpoint,
+      events: body.events,
+      health: "healthy",
+      detail: "No deliveries yet",
+      secret: `whsec_${Math.random().toString(36).slice(2, 18)}`,
+    };
+    webhookStore.unshift({
+      id: hook.id,
+      endpoint: hook.endpoint,
+      events: hook.events,
+      health: hook.health,
+      detail: hook.detail,
+    });
+    data = hook;
+  } else if (m(/^\/webhooks\/([^/]+)$/) && method === "DELETE") {
+    removeById(webhookStore, m(/^\/webhooks\/([^/]+)$/)![1]);
+    data = undefined;
+  } else if (m(/^\/webhooks$/)) data = webhookStore;
+  /* ---- bio pages ---- */
+  else if (m(/^\/bio-pages$/) && method === "PUT") {
+    const body = opts.body as UpsertBioPageInput;
+    // Keyed on (domain, slug), so save-existing and create are one call.
+    const existing = bioStore.find((b) => b.domain === body.domain && b.slug === body.slug);
+    const blocks = body.blocks.map((b, i) => ({
+      id: b.id ?? uid(`blk${i}`),
+      kind: b.kind,
+      title: b.title,
+      subtitle: b.subtitle ?? null,
+      metric: b.metric ?? null,
+      locked: b.locked,
+    }));
+    if (existing) {
+      Object.assign(existing, { status: body.status, blocks });
+      existing.profile = { ...existing.profile, name: body.profile.name, bio: body.profile.bio };
+      data = existing;
+    } else {
+      const page: BioPage = {
+        id: uid("bio"),
+        domain: body.domain,
+        slug: body.slug,
+        status: body.status,
+        blocks,
+        views: 0,
+        clickThrough: null,
+        profile: {
+          name: body.profile.name,
+          bio: body.profile.bio,
+          initials: body.profile.name.slice(0, 2).toUpperCase(),
+        },
+      };
+      bioStore.unshift(page);
+      data = page;
+    }
+  } else if (m(/^\/bio-pages\/([^/]+)$/) && method === "DELETE") {
+    removeById(bioStore, m(/^\/bio-pages\/([^/]+)$/)![1]);
+    data = undefined;
+  } else if (m(/^\/bio-pages$/)) data = bioStore;
+  /* ---- public ---- */
+  else if (m(/^\/public\/links\/([^/]+)\/unlock$/)) {
+    const password = (opts.body as { password?: string })?.password ?? "";
+    // Any non-empty password unlocks. The point of the fixture is the flow,
+    // not the check — the real verification is argon2 on the server.
+    if (!password) throw new Error("That password is not right.");
+    data = { unlockToken: `unlock.${Math.random().toString(36).slice(2)}`, expiresIn: 300 } satisfies UnlockLinkResult;
+  } else if (m(/^\/public\/links\/([^/]+)\/preview$/)) {
+    data = previewFor(m(/^\/public\/links\/([^/]+)\/preview$/)![1]);
+  } else throw new Error(`No fixture for ${method} ${path}. Add one in src/lib/api/fixtures.ts.`);
 
   return schema.parse(data);
 }

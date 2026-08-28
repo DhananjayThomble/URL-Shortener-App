@@ -146,6 +146,12 @@ export const CreateWebhookInput = z.object({
 });
 export type CreateWebhookInput = z.infer<typeof CreateWebhookInput>;
 
+/** The only time the signing secret is ever returned, exactly like CreatedApiKey.
+ *  DevelopersService.createWebhook already returns it; without a schema for the
+ *  response the frontend would have to hand-copy the shape to read it. */
+export const CreatedWebhook = Webhook.extend({ secret: z.string() });
+export type CreatedWebhook = z.infer<typeof CreatedWebhook>;
+
 export const BioBlock = z.object({
   id: z.string(),
   kind: z.enum(["header", "link", "embed", "email", "social"]),

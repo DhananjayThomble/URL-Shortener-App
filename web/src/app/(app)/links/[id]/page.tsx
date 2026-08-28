@@ -6,11 +6,12 @@ import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
 import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, Tile } from "@/components/ui";
 import { useAnalytics, useLink } from "@/lib/api/hooks";
+import type { AnalyticsRange } from "@snapurl/contract";
 import { compact, formatDate, full, pct } from "@/lib/utils";
 
 export default function LinkDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [range, setRange] = useState("30d");
+  const [range, setRange] = useState<AnalyticsRange>("30d");
   const link = useLink(id);
   const stats = useAnalytics(range, id);
 

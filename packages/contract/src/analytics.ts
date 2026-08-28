@@ -114,3 +114,12 @@ export const RecordConversionInput = z.object({
   visitorHash: z.string().optional(),
 });
 export type RecordConversionInput = z.infer<typeof RecordConversionInput>;
+
+/** `recorded` is false when externalId matched an existing row. The ingest is
+ *  idempotent on purpose — a customer retrying a timed-out webhook must not
+ *  book the same sale twice — so the caller needs to be able to tell. */
+export const RecordConversionResult = z.object({
+  id: z.string().nullable(),
+  recorded: z.boolean(),
+});
+export type RecordConversionResult = z.infer<typeof RecordConversionResult>;
