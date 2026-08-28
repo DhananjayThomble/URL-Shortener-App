@@ -35,8 +35,16 @@ export class LinksService {
        them from expires_at and the click count, so they can never go stale.
        That means the filter has to be expressed in SQL rather than compared
        against a column. */
-    const now = new Date();
-    const inSevenDays = new Date(now.getTime() + 7 * 86_400_000);
+    /* ISO strings, not Date objects.
+
+       These are interpolated into raw `sql` fragments below, and a raw
+       fragment binds its parameter without the column's type mapper — so
+       postgres-js receives a Date it cannot serialise and throws
+       ERR_INVALID_ARG_TYPE before the query reaches Postgres. Every request
+       for ?status=active, expiring or expired failed this way. The explicit
+       ::timestamptz cast keeps the comparison typed on the SQL side. */
+    const now = new Date().toISOString();
+    const inSevenDays = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
     if (query.status === "archived") {
       filters.push(sql`${links.archivedAt} is not null`);
@@ -44,13 +52,15 @@ export class LinksService {
       filters.push(isNull(links.archivedAt));
       if (query.status === "expired") {
         filters.push(
-          sql`(${links.expiresAt} <= ${now} or (${links.clickLimit} is not null and ${links.clicks} >= ${links.clickLimit}))`,
+          sql`(${links.expiresAt} <= ${now}::timestamptz or (${links.clickLimit} is not null and ${links.clicks} >= ${links.clickLimit}))`,
         );
       } else if (query.status === "expiring") {
-        filters.push(sql`${links.expiresAt} > ${now} and ${links.expiresAt} <= ${inSevenDays}`);
+        filters.push(
+          sql`${links.expiresAt} > ${now}::timestamptz and ${links.expiresAt} <= ${inSevenDays}::timestamptz`,
+        );
       } else if (query.status === "active") {
         filters.push(
-          sql`(${links.expiresAt} is null or ${links.expiresAt} > ${inSevenDays})
+          sql`(${links.expiresAt} is null or ${links.expiresAt} > ${inSevenDays}::timestamptz)
               and (${links.clickLimit} is null or ${links.clicks} < ${links.clickLimit})`,
         );
       }
@@ -73,7 +83,11 @@ export class LinksService {
     const paged = [...filters];
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
     if (cursor) {
-      paged.push(sql`(${links.createdAt}, ${links.id}) < (${cursor.createdAt}, ${cursor.id})`);
+      // Same reason as the window bounds above: a Date bound into a raw
+      // fragment never reaches Postgres, so every ?cursor= request threw.
+      paged.push(
+        sql`(${links.createdAt}, ${links.id}) < (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id}::uuid)`,
+      );
     }
 
     // One extra row tells us whether there is another page without a second query.
