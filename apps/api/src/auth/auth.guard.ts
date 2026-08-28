@@ -52,6 +52,24 @@ export const Actor = createParamDecorator((_data: unknown, ctx: ExecutionContext
 /** owner ⊃ admin ⊃ editor ⊃ viewer. Higher rank satisfies a lower requirement. */
 const RANK: Record<string, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
 
+/**
+ * Does the caller's role clear the bar for this route?
+ *
+ * Extracted from the guard so the ordering can be asserted directly. An
+ * off-by-one here is not a broken page, it is a viewer who can delete links,
+ * and it would not show up in any test that goes through HTTP.
+ *
+ * Fails closed in both directions: a role that is not in RANK ranks below
+ * everything, and a required role that is not in RANK cannot be satisfied by
+ * anyone. A typo in either place denies access rather than granting it.
+ */
+export function satisfiesRole(have: string, required: readonly string[]): boolean {
+  if (!required.length) return true;
+  const rank = RANK[have] ?? -1;
+  const need = Math.min(...required.map((r) => RANK[r] ?? 99));
+  return rank >= need;
+}
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -82,10 +100,8 @@ export class AuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (required?.length) {
-      const have = RANK[request.actor.role] ?? -1;
-      const need = Math.min(...required.map((r) => RANK[r] ?? 99));
-      if (have < need) throw new ForbiddenException("You don't have permission to do that.");
+    if (required?.length && !satisfiesRole(request.actor.role, required)) {
+      throw new ForbiddenException("You don't have permission to do that.");
     }
 
     const scope = this.reflector.getAllAndOverride<string>(REQUIRED_SCOPE, [
