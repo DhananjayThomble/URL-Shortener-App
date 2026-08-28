@@ -16,6 +16,7 @@ import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as rds from "aws-cdk-lib/aws-rds";
 import type { Construct } from "constructs";
 import * as path from "node:path";
+import { SnapUrlConfig } from "./config.js";
 
 /* ============================================================
    SnapURL on AWS.
@@ -39,10 +40,21 @@ import * as path from "node:path";
    ============================================================ */
 
 export interface SnapUrlStackProps extends StackProps {
-  /** Where the dashboard is served from. Used for CORS on the API. */
-  webOrigin: string;
-  /** Public hostname the redirect service answers on, for building short URLs. */
-  redirectOrigin: string;
+  /**
+   * SSM Parameter Store prefix holding this stage's configuration,
+   * e.g. `/snapurl/prod`. See `infra/lib/config.ts`.
+   */
+  configPrefix: string;
+  /**
+   * Where the dashboard is served from. Used for CORS on the API.
+   *
+   * Optional: normally this comes from Parameter Store so that it is set once
+   * rather than retyped on every deploy. Passing it (`-c webOrigin=...`)
+   * overrides the stored value for a one-off deploy against a preview URL.
+   */
+  webOrigin?: string;
+  /** Public hostname the redirect service answers on. Same precedence as above. */
+  redirectOrigin?: string;
 }
 
 export class SnapUrlStack extends Stack {
@@ -108,6 +120,11 @@ export class SnapUrlStack extends Stack {
       deletionProtection: true,
       enablePerformanceInsights: false, // Not free on t4g.micro.
       publiclyAccessible: false,
+      /* Encryption at rest costs nothing on RDS and `cdk synth` reports its
+         absence as a validation violation. It can only be set when the
+         instance is created, so the cheap moment to get it right is before the
+         first deploy — which has not happened yet. */
+      storageEncrypted: true,
     });
 
     const lambdaSecurityGroup = new ec2.SecurityGroup(this, "LambdaSg", {
@@ -135,18 +152,50 @@ export class SnapUrlStack extends Stack {
     const databaseUrl = `postgres://snapurl:${database.secret!.secretValueFromJson("password").unsafeUnwrap()}` +
       `@${database.instanceEndpoint.hostname}:${database.instanceEndpoint.port}/snapurl`;
 
+    /* ---------------------------------------------------------
+       Configuration
+       --------------------------------------------------------- */
+
+    const config = new SnapUrlConfig(this, "Config", { prefix: props.configPrefix });
+
+    /* Nothing below is a literal. Ordinary settings come from Parameter Store
+       and the two signing keys are generated into Secrets Manager, so this
+       file contains no configuration to keep in step with anything and no
+       secret to leak. `config.ts` explains why both are resolved at deploy
+       time rather than read at cold start. */
     const commonEnv: Record<string, string> = {
       NODE_ENV: "production",
       // A Lambda instance serves one request at a time, so a pool larger than
-      // one just multiplies idle connections against RDS's small max.
+      // one just multiplies idle connections against RDS's small max — which
+      // on a db.t4g.micro is small enough to exhaust under modest concurrency.
       DATABASE_POOL_MAX: "1",
       DATABASE_SSL: "true",
-      WEB_ORIGIN: props.webOrigin,
-      REDIRECT_ORIGIN: props.redirectOrigin,
-      LOG_LEVEL: "info",
-      MAIL_TRANSPORT: "outbox",
       DATABASE_URL: databaseUrl,
+      // Context wins over Parameter Store, so a one-off deploy against a
+      // preview origin does not mean editing the stored value and remembering
+      // to put it back.
+      WEB_ORIGIN: props.webOrigin ?? config.get("web-origin"),
+      REDIRECT_ORIGIN: props.redirectOrigin ?? config.get("redirect-origin"),
+      DEFAULT_DOMAIN: config.get("default-domain"),
+      LOG_LEVEL: config.get("log-level"),
+      MAIL_FROM: config.get("mail-from"),
+      MAIL_TRANSPORT: config.get("mail-transport"),
+      THROTTLE_LIMIT: config.get("throttle-limit"),
+      THROTTLE_TTL_SECONDS: config.get("throttle-ttl-seconds"),
+      /* Absent until this change, and the API would not have started without
+         them: apps/api/src/config/env.ts requires both, at 32 characters
+         minimum, and throws on boot when either is missing. The redirect
+         service needs the access key too — it verifies the short-lived unlock
+         token that password-protected links are opened with, and without it
+         every such link silently bounces back to the password page. */
+      JWT_ACCESS_SECRET: config.jwtAccessSecret.secretValue.unsafeUnwrap(),
+      JWT_REFRESH_SECRET: config.jwtRefreshSecret.secretValue.unsafeUnwrap(),
     };
+
+    /* The path each service answers a health probe on. Kept next to the value
+       that decides it: the API mounts everything under a prefix, so hardcoding
+       "/api/v1/health" somewhere else would break the moment the prefix moved. */
+    const API_PREFIX = "api/v1";
 
     /* Not `as const`: DockerImageFunctionProps wants a mutable
        ISecurityGroup[], and a readonly tuple will not satisfy it. */
@@ -167,6 +216,18 @@ export class SnapUrlStack extends Stack {
         file: "Dockerfile",
         buildArgs: { APP: app },
         target,
+        // Staging writes into `infra/cdk.out`, which is inside `repoRoot` —
+        // the directory being staged. Left alone, each asset copies the
+        // previous one's output into itself until `cdk synth` dies with
+        // ENAMETOOLONG.
+        //
+        // `.dockerignore` excludes it, and has to for `docker build` anyway,
+        // but that alone is not enough. CDK puts the file's own patterns
+        // first and the last match wins, so the `.env.example` re-include
+        // near the end of that file pulls those files back out of an already
+        // excluded directory. Repeating the exclusion here places it after
+        // that negation, which is the ordering that actually holds.
+        exclude: ["cdk.out", "**/cdk.out/**"],
       });
 
 
@@ -178,7 +239,15 @@ export class SnapUrlStack extends Stack {
       code: imageFor("api", "lambda-web"),
       memorySize: 1024, // CPU scales with memory; 1024 is the usual sweet spot.
       timeout: Duration.seconds(30),
-      environment: { ...commonEnv, API_PREFIX: "api/v1" },
+      environment: {
+        ...commonEnv,
+        API_PREFIX,
+        /* The web adapter will not forward a request until this path answers.
+           Its default is "/", which the API does not serve — every route is
+           under the prefix — so without this the adapter waits out its
+           readiness timeout on every cold start before serving anything. */
+        AWS_LWA_READINESS_CHECK_PATH: `/${API_PREFIX}/health`,
+      },
       ...vpcSettings,
     });
 
@@ -198,7 +267,10 @@ export class SnapUrlStack extends Stack {
       // a 302. Paying for memory it never uses is paying for nothing.
       memorySize: 512,
       timeout: Duration.seconds(10),
-      environment: commonEnv,
+      /* "/" is a real route here — it serves a domain's root redirect, and
+         answering it costs a database round trip. /health is the cheap one and
+         the one that actually reports whether Postgres is reachable. */
+      environment: { ...commonEnv, AWS_LWA_READINESS_CHECK_PATH: "/health" },
       ...vpcSettings,
     });
 
@@ -234,7 +306,10 @@ export class SnapUrlStack extends Stack {
       // Rollups over a day of clicks; generous because it runs once a minute,
       // not once a request.
       timeout: Duration.minutes(5),
-      environment: { ...commonEnv, WORKER_MODE: "once" },
+      /* No WORKER_MODE: nothing reads it. The long-running process takes
+         `--once` from argv, and the Lambda entrypoint (apps/worker/src/lambda.ts)
+         skips that path entirely and calls the two jobs directly. */
+      environment: commonEnv,
       ...vpcSettings,
     });
 
@@ -262,7 +337,15 @@ export class SnapUrlStack extends Stack {
     });
     new CfnOutput(this, "DatabaseSecretArn", {
       value: database.secret?.secretArn ?? "(none)",
-      description: "Postgres credentials. Read by the Lambdas at cold start.",
+      description: "Postgres credentials. Generated by CloudFormation; never in this repo.",
+    });
+    new CfnOutput(this, "ConfigPrefix", {
+      value: props.configPrefix,
+      description: "Parameter Store prefix this stage reads. Change a value there, then redeploy.",
+    });
+    new CfnOutput(this, "JwtSecretArns", {
+      value: `${config.jwtAccessSecret.secretArn} ${config.jwtRefreshSecret.secretArn}`,
+      description: "JWT signing keys. Rotating either invalidates the tokens it signed.",
     });
   }
 }
