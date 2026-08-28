@@ -93,3 +93,37 @@ EXPOSE 3001
 # surface at all). Whatever runs these — compose, ECS, Kubernetes — is the right
 # place to say so, and it already has to.
 CMD ["node", "dist/main.js"]
+
+
+# ---------------------------------------------------------------------------
+# lambda-web — the API and redirect service, unchanged, on Lambda
+# ---------------------------------------------------------------------------
+# The AWS Lambda Web Adapter is an extension that speaks the Lambda runtime API
+# on one side and plain HTTP on the other. That means the application needs no
+# Lambda-specific code at all: the image starts the same Fastify server that
+# `docker compose --profile full` runs, and the adapter translates.
+#
+# The alternative -- @fastify/aws-lambda or serverless-express -- would have
+# meant refactoring both entrypoints to separate "build the app" from "start
+# listening", for a runtime that cannot be tested locally. This way what runs
+# in Lambda is byte-for-byte the image whose smoke suite passed.
+FROM runtime AS lambda-web
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
+# The adapter connects to the app on this port and waits for the readiness
+# path to answer before forwarding the first request.
+ENV PORT=8080
+ENV AWS_LWA_PORT=8080
+ENV AWS_LWA_ASYNC_INIT=true
+CMD ["node", "dist/main.js"]
+
+
+# ---------------------------------------------------------------------------
+# lambda-job — the worker, which has no HTTP surface to adapt
+# ---------------------------------------------------------------------------
+# The worker is a batch job on a schedule, so the web adapter has nothing to
+# translate. It uses AWS's own base image instead, which brings the Runtime
+# Interface Client with it, and a handler that calls the same two functions
+# the long-running process calls on its interval.
+FROM public.ecr.aws/lambda/nodejs:22 AS lambda-job
+COPY --from=prune /out ${LAMBDA_TASK_ROOT}/
+CMD ["dist/lambda.handler"]

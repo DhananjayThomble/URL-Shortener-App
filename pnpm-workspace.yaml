@@ -2,6 +2,8 @@ packages:
   - "web"
   - "apps/*"
   - "packages/*"
+  # CDK stack. Not a runtime dependency of anything in apps/ or packages/.
+  - "infra"
 
 # These three ship native binaries and need their install scripts to run:
 # esbuild and sharp come from the Next.js toolchain, argon2 is the password hash.

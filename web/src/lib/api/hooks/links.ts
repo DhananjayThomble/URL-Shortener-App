@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { Link, LinkList, type CreateLinkInput, type ListLinksQuery, type UpdateLinkInput } from "@snapurl/contract";
-import { request } from "../client";
+import { request, API_URL, tokens } from "../client";
 import { qk } from "./keys";
 
 /**
@@ -94,4 +96,49 @@ export function useDeleteLink() {
       qc.invalidateQueries({ queryKey: ["analytics"] });
     },
   });
+}
+
+/**
+ * Download the workspace's links as CSV.
+ *
+ * Not a plain `<a href>`: the endpoint needs an Authorization header, and an
+ * anchor cannot send one. So this fetches with the token, turns the response
+ * into a blob URL, and clicks a synthetic link.
+ *
+ * `request()` is deliberately bypassed — it parses JSON against a zod schema,
+ * and this response is neither JSON nor a shape the contract describes.
+ */
+export function useExportLinks() {
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (filter?: string) => {
+    setExporting(true);
+    setError(null);
+    let url: string | null = null;
+    try {
+      const qs = filter && filter !== "all" ? `?status=${encodeURIComponent(filter)}` : "";
+      const res = await fetch(`${API_URL}/links/export${qs}`, {
+        headers: tokens.access ? { Authorization: `Bearer ${tokens.access}` } : {},
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+
+      url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `snapurl-links-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      // Revoking frees the blob; without it the file stays in memory for the
+      // lifetime of the tab, which for a large export is real memory.
+      if (url) URL.revokeObjectURL(url);
+      setExporting(false);
+    }
+  };
+
+  return { run, exporting, error };
 }

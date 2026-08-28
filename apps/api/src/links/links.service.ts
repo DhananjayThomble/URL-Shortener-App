@@ -331,6 +331,52 @@ export class LinksService {
     });
   }
 
+  /* CSV export.
+   *
+   * Yields chunks rather than building one string, and pages through the same
+   * `list` used by the dashboard rather than reimplementing its filters. That
+   * matters twice over: an export can never disagree with what the table shows,
+   * and a workspace with 50,000 links does not have to fit in memory before the
+   * first byte reaches the browser.
+   *
+   * CSV rather than xlsx: v1 shipped an ExcelJS export, but a spreadsheet
+   * library is several megabytes of dependency to produce a format that is
+   * harder to pipe into anything else. Every tool that opens xlsx opens CSV. */
+  async *exportCsv(workspaceId: string, query: ListLinksQuery): AsyncGenerator<string> {
+    const columns = [
+      "short_url", "destination", "title", "status", "clicks", "unique_clicks",
+      "tags", "folder", "redirect_type", "password_protected", "expires_at",
+      "safe_browsing", "created_at", "created_by",
+    ];
+    yield `${columns.join(",")}\n`;
+
+    let cursor: string | undefined;
+    const PAGE = 500;
+
+    do {
+      const page = await this.list(workspaceId, { ...query, limit: PAGE, cursor });
+      for (const link of page.items) {
+        yield `${[
+          `${link.domain}/${link.slug}`,
+          link.destination,
+          link.title ?? "",
+          link.status,
+          link.clicks,
+          link.uniqueClicks ?? 0,
+          (link.tags ?? []).join(" "),
+          link.folder ?? "",
+          link.redirectType,
+          link.passwordProtected,
+          link.expiresAt ?? "",
+          link.safeBrowsing.status,
+          link.createdAt,
+          link.createdBy ?? "",
+        ].map(csvCell).join(",")}\n`;
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
+
   /* The projection outbox.
 
      The redirect path reads from DynamoDB, not Postgres. Writing to both inside
@@ -406,3 +452,21 @@ export class LinksService {
   }
 }
 
+
+/**
+ * Quote a CSV cell.
+ *
+ * Destinations routinely contain commas and query strings, and a title can
+ * contain anything a person typed. Unescaped, one such value shifts every
+ * subsequent column on that row — which does not error, it just silently
+ * produces a file where the data is in the wrong place.
+ *
+ * A leading =, +, - or @ is prefixed with a quote as well. Spreadsheets treat
+ * those as formulas, so a destination beginning with one is a CSV injection
+ * waiting for someone to open the export.
+ */
+function csvCell(value: unknown): string {
+  const s = String(value ?? "");
+  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+}

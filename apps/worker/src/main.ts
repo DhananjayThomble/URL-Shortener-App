@@ -18,7 +18,7 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@loc
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
 const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3600);
 
-const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: 4 });
+export const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: 4 });
 const projection = new NoProjection();
 
 /** Runs often: this is the loop that makes the dashboards current. */
@@ -110,7 +110,15 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  log.error({ err }, "worker failed to start");
-  process.exit(1);
-});
+/* Only start the loop when this file is the process entrypoint.
+ *
+ * dist/lambda.js imports runFrequent and runMaintenance from here, and an
+ * unguarded main() would start a 30-second interval inside a Lambda that is
+ * about to be frozen — burning the invocation's time budget on work nobody
+ * asked for, then being suspended mid-flight. */
+if (require.main === module) {
+  main().catch((err) => {
+    log.error({ err }, "worker failed to start");
+    process.exit(1);
+  });
+}
