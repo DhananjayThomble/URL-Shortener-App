@@ -3,6 +3,7 @@ import { AddDomainInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, Scope, type RequestActor } from "../auth/auth.guard.js";
 import { DomainsService } from "./domains.service.js";
+import { toActor } from "../common/activity.js";
 
 @Controller("domains")
 export class DomainsController {
@@ -26,7 +27,7 @@ export class DomainsController {
   @Scope("domains:write")
   @HttpCode(200)
   verify(@Actor() actor: RequestActor, @Param("id") id: string) {
-    return this.domains.verify(actor.workspaceId, id);
+    return this.domains.verify(actor.workspaceId, id, toActor(actor));
   }
 
   @Delete(":id")

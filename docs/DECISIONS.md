@@ -206,12 +206,22 @@ An internal transport would be ceremony.
 
 10. **Safe Browsing is behind a feature flag, defaulting off.** It needs a Google API key I do not
     have. With the flag off, links are created with `safeBrowsing.status = "clean"` and a
-    `checkedAt` of now. **This is the assumption most likely to mislead** — the UI will claim links
-    are scanned when they are not. Either set `GOOGLE_SAFE_BROWSING_API_KEY` or soften the copy.
+    `checkedAt` of now, without anything being checked.
 
-11. **Email is stubbed.** Invitations, verification and password reset write to a `logs/outbox/`
-    directory instead of sending. SES needs a verified domain and a sandbox exit request. The
-    interface is `MailerPort`, so wiring SES is one adapter.
+    This was called "the assumption most likely to mislead", because the UI claimed links were
+    scanned when they were not. The copy has since been removed rather than softened — the landing
+    page, the create drawer and `/p/[slug]` no longer say anything is scanned. Set
+    `GOOGLE_SAFE_BROWSING_API_KEY` and the claim can come back, this time truthfully.
+
+11. **Email is stubbed, and only one message exists.** `MailService.sendInvite` is the only mail
+    the system sends; with `MAIL_TRANSPORT=outbox` (the default) it writes to `logs/outbox/`
+    instead of sending. SES needs a verified domain and a sandbox exit request.
+
+    This entry used to say invitations, verification *and* password reset were stubbed. There is
+    no verification flow and no password reset flow — not stubbed, absent: no endpoint on
+    `AuthController`, no method on `MailService`. A user who forgets their password currently has
+    no way back into their account. `MailerPort` was named here as the seam for wiring SES; it
+    does not exist either, only a comment mentioning it. The seam is `MailService.send`.
 
 12. **No rate limit on the redirect path.** Rate limiting the dashboard API protects the database;
     rate limiting redirects would mean a state lookup on the hot path, and CloudFront already

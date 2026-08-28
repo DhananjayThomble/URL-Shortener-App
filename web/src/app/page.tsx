@@ -5,7 +5,7 @@ const FEATURES = [
   { icon: "⇄", title: "Route by anything", body: "Send India to the India store, iOS to the App Store, and split the rest 50/50 for an A/B test. Rules run at the edge." },
   { icon: "▤", title: "Analytics without cookies", body: "Country, device, browser, referrer and conversions — measured with a daily-rotating hash. Nothing stored on the visitor's device." },
   { icon: "▩", title: "QR that stays correct", body: "Print it once, change where it points forever. SVG, PDF and EPS export, with your logo in the middle." },
-  { icon: "🛡", title: "Trust, made visible", body: "Every link is scanned on creation, and anyone can add + to see exactly where it goes before clicking." },
+  { icon: "🛡", title: "Trust, made visible", body: "Anyone can add + to a short link to see exactly where it goes, who made it and what it sets, before clicking." },
   { icon: "⌘", title: "Built for automation", body: "REST API, typed SDKs, real-time webhooks, a CLI and an MCP server. Your agents can ship links too." },
 ];
 
@@ -82,13 +82,13 @@ export default function LandingPage() {
               <span className="text-accent">spring-sale</span>
             </div>
             <div className="text-[11.5px] text-ink-3 mt-[2px]">
-              Scanned &amp; safe · no cookies set · created in 31 ms
+              no cookies set
             </div>
           </div>
         </div>
 
         <div className="flex justify-center gap-[26px] flex-wrap mt-[26px] text-[12.5px] text-ink-3">
-          {["31 ms median redirect", "No tracking cookies", "Export everything, always", "Free tier that doesn't shrink"].map(
+          {["No tracking cookies", "Export everything, always", "Free tier that doesn't shrink"].map(
             (t) => (
               <b key={t} className="flex items-center gap-[7px] font-medium">
                 <span className="w-[6px] h-[6px] rounded-full bg-good" />

@@ -127,27 +127,10 @@ async function recordFailure(db: Database, row: PendingDelivery, error: string, 
   `);
 }
 
-/** Enqueue an event for every webhook subscribed to it. */
-export async function enqueueEvent(
-  db: Database,
-  workspaceId: string,
-  event: string,
-  payload: unknown,
-): Promise<number> {
-  const result = (await db.execute(sql`
-    with queued as (
-      insert into webhook_deliveries (webhook_id, event, payload)
-      select id, ${event}, ${JSON.stringify(payload)}::jsonb
-      from webhooks
-      where workspace_id = ${workspaceId}::uuid
-        and disabled_at is null
-        and ${event} = any(events)
-      returning 1
-    )
-    select count(*)::int as n from queued
-  `)) as unknown as [{ n: number }];
-  return result[0]?.n ?? 0;
-}
+/* enqueueEvent used to live here and had no caller: apps/api is where events
+   happen, and it cannot import from apps/worker. It is now
+   enqueueWebhookEvent in @snapurl/database, which both apps already depend on.
+   This file keeps delivery — signing, backoff and health. */
 
 /** Delivered rows are history nobody reads after a week. */
 export async function pruneDeliveries(db: Database): Promise<number> {
