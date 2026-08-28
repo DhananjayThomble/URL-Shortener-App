@@ -3,6 +3,7 @@ import { CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contr
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { Actor, Roles, Scope, type RequestActor } from "../auth/auth.guard.js";
 import { LinksService } from "./links.service.js";
+import { toActor } from "../common/activity.js";
 
 @Controller("links")
 export class LinksController {
@@ -24,7 +25,7 @@ export class LinksController {
   @Roles("editor")
   @Scope("links:write")
   create(@Actor() actor: RequestActor, @Body(zodBody(CreateLinkInput)) input: CreateLinkInput) {
-    return this.links.create(actor.workspaceId, actor.userId, input);
+    return this.links.create(actor.workspaceId, toActor(actor), input);
   }
 
   /* G1 — the endpoint the frontend needed and the contract didn't have. */
@@ -36,7 +37,7 @@ export class LinksController {
     @Param("id") id: string,
     @Body(zodBody(UpdateLinkInput)) input: UpdateLinkInput,
   ) {
-    return this.links.update(actor.workspaceId, id, input);
+    return this.links.update(actor.workspaceId, id, toActor(actor), input);
   }
 
   @Delete(":id")
@@ -44,6 +45,6 @@ export class LinksController {
   @Scope("links:write")
   @HttpCode(204)
   async remove(@Actor() actor: RequestActor, @Param("id") id: string) {
-    await this.links.remove(actor.workspaceId, id);
+    await this.links.remove(actor.workspaceId, id, toActor(actor));
   }
 }

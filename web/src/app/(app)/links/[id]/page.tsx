@@ -115,8 +115,7 @@ export default function LinkDetailPage() {
               ))
             )}
             <div className="px-[13px] py-[11px] bg-wash-good rounded-[var(--radius-sm)] text-[12.5px] text-good leading-[1.5] mt-1">
-              <b>Safe Browsing: no threats found.</b>{" "}
-              <span className="text-ink-2">Rechecked automatically every 24 hours.</span>
+              <b>Safe Browsing: no threats found.</b>
             </div>
           </CardBody>
         </Card>

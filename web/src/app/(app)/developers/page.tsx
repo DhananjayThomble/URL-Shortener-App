@@ -176,12 +176,6 @@ export default function DevelopersPage() {
           </pre>
           <div className="p-4 border-t border-line flex gap-[18px] text-[11.5px] text-ink-3 flex-wrap">
             <span>
-              Rate limit <b className="font-mono text-ink-2">1,200/min</b>
-            </span>
-            <span>
-              p99 redirect <b className="font-mono text-good">31 ms</b>
-            </span>
-            <span>
               SDKs <b className="text-ink-2">TS · Python · Go</b>
             </span>
           </div>

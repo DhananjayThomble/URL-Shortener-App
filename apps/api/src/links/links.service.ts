@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
 import type { CreateLinkInput, Link, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
@@ -6,6 +6,7 @@ import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingCh
 import { DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
+import { recordActivity, type Actor } from "../common/activity.js";
 import {
   SPARKLINE_DAYS,
   buildSparkline,
@@ -24,6 +25,8 @@ export class LinksService {
     @Inject(DB) private readonly db: Database,
     private readonly safeBrowsing: SafeBrowsingService,
   ) {}
+
+  private readonly logger = new Logger(LinksService.name);
 
   async list(workspaceId: string, query: ListLinksQuery) {
     const filters = [eq(links.workspaceId, workspaceId)];
@@ -110,7 +113,7 @@ export class LinksService {
     return dto!;
   }
 
-  async create(workspaceId: string, userId: string | null, input: CreateLinkInput): Promise<Link> {
+  async create(workspaceId: string, actor: Actor, input: CreateLinkInput): Promise<Link> {
     const domain = await this.resolveDomain(workspaceId, input.domain);
 
     const problems = validateRoutingChain(input.rules);
@@ -157,7 +160,7 @@ export class LinksService {
               safeBrowsingCheckedAt: scan.checkedAt,
               utm: input.utm ?? null,
               social: input.social ?? null,
-              createdBy: userId,
+              createdBy: actor.userId,
             })
             .returning();
 
@@ -177,7 +180,20 @@ export class LinksService {
 
           await this.enqueueProjection(tx, row!.id, "upsert");
           return row!.id;
-        }).then((id) => this.get(workspaceId, id));
+        })
+          .then((id) => this.get(workspaceId, id))
+          .then(async (link) => {
+            await recordActivity(this.db, this.logger, {
+              workspaceId,
+              actor,
+              auditAction: "link.created",
+              webhookEvent: "link.created",
+              targetType: "link",
+              targetId: link.id,
+              metadata: { slug: link.slug, domain: link.domain, destination: link.destination },
+            });
+            return link;
+          });
       } catch (err) {
         if (isUniqueViolation(err)) {
           if (input.slug) {
@@ -194,7 +210,7 @@ export class LinksService {
 
   /* G1 — PATCH did not exist, yet editing a destination is the entire promise
      behind "print it once, change where it points forever". */
-  async update(workspaceId: string, id: string, input: UpdateLinkInput): Promise<Link> {
+  async update(workspaceId: string, id: string, actor: Actor, input: UpdateLinkInput): Promise<Link> {
     const existing = await this.get(workspaceId, id);
 
     if (input.rules) {
@@ -255,13 +271,31 @@ export class LinksService {
       await this.enqueueProjection(tx, id, "upsert");
     });
 
-    void existing;
-    return this.get(workspaceId, id);
+    const updated = await this.get(workspaceId, id);
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "link.updated",
+      webhookEvent: "link.updated",
+      targetType: "link",
+      targetId: id,
+      metadata: {
+        slug: updated.slug,
+        domain: updated.domain,
+        // The old destination is the field anyone auditing an edit is looking
+        // for: "where did this QR code point before someone changed it?"
+        from: existing.destination,
+        to: updated.destination,
+      },
+    });
+    return updated;
   }
 
-  async remove(workspaceId: string, id: string): Promise<void> {
+  async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
+    // The slug is read before the delete because it is the only thing that
+    // makes the audit entry and the webhook payload mean anything afterwards.
     const [row] = await this.db
-      .select({ id: links.id })
+      .select({ id: links.id, slug: links.slug })
       .from(links)
       .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
       .limit(1);
@@ -270,6 +304,16 @@ export class LinksService {
     await this.db.transaction(async (tx) => {
       await this.enqueueProjection(tx, id, "delete");
       await tx.delete(links).where(eq(links.id, id));
+    });
+
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "link.deleted",
+      webhookEvent: "link.deleted",
+      targetType: "link",
+      targetId: id,
+      metadata: { slug: row.slug },
     });
   }
 
