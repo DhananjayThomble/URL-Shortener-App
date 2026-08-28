@@ -24,3 +24,6 @@ dist/
 dist/
 logs/
 *.tsbuildinfo
+
+# Background-agent worktrees are local scratch, never part of the repo.
+.claude/worktrees/
