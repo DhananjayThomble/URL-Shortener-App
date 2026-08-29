@@ -196,23 +196,26 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
       `);
     }
 
-    /* The denormalised counters on links.
+    /* The denormalised counters, in link_counters.
 
        Recomputed from click_daily rather than incremented, for the same reason
        as uniques: a re-run must not inflate them. This is also what the click
        limit gate reads, which is why it can overshoot slightly — it sees the
-       last rollup, not live traffic. */
+       last rollup, not live traffic.
+
+       Written to link_counters rather than links on purpose: links is the row
+       the redirect hot path resolves against, and rewriting a counter on it
+       every minute took row locks and churned indexes on the read path. This
+       upsert hits a table nothing latency-sensitive reads instead. */
     await tx.execute(sql`
-      update links l set
-        clicks = totals.clicks,
-        unique_clicks = totals.uniques
-      from (
-        select link_id, sum(clicks)::int as clicks, sum(uniques)::int as uniques
-        from click_daily
-        where link_id in (select distinct link_id from rollup_batch)
-        group by link_id
-      ) totals
-      where l.id = totals.link_id
+      insert into link_counters (link_id, clicks, unique_clicks)
+      select link_id, sum(clicks)::int, sum(uniques)::int
+      from click_daily
+      where link_id in (select distinct link_id from rollup_batch)
+      group by link_id
+      on conflict (link_id) do update set
+        clicks = excluded.clicks,
+        unique_clicks = excluded.unique_clicks
     `);
 
     /* Matched on the full primary key, and bounded by the batch's time range.

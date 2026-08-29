@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
+import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
 import { CreateLinkInput as CreateLinkInputSchema } from "@snapurl/contract";
 import type {
   BulkCreateLinksInput,
@@ -64,7 +64,7 @@ export class LinksService {
        it is. Symmetrically, `scheduled` carries `notExpired`: a link whose
        expiry passed before its start date is expired, not pending. */
     const notExpired = sql`(${links.expiresAt} is null or ${links.expiresAt} > ${now}::timestamptz)
-        and (${links.clickLimit} is null or ${links.clicks} < ${links.clickLimit})`;
+        and (${links.clickLimit} is null or coalesce(${linkCounters.clicks}, 0) < ${links.clickLimit})`;
     const notScheduled = sql`(${links.activatesAt} is null or ${links.activatesAt} <= ${now}::timestamptz)`;
 
     if (query.status === "archived") {
@@ -73,7 +73,7 @@ export class LinksService {
       filters.push(isNull(links.archivedAt));
       if (query.status === "expired") {
         filters.push(
-          sql`(${links.expiresAt} <= ${now}::timestamptz or (${links.clickLimit} is not null and ${links.clicks} >= ${links.clickLimit}))`,
+          sql`(${links.expiresAt} <= ${now}::timestamptz or (${links.clickLimit} is not null and coalesce(${linkCounters.clicks}, 0) >= ${links.clickLimit}))`,
         );
       } else if (query.status === "scheduled") {
         filters.push(sql`${links.activatesAt} > ${now}::timestamptz`, notExpired);
@@ -85,7 +85,7 @@ export class LinksService {
       } else if (query.status === "active") {
         filters.push(
           sql`(${links.expiresAt} is null or ${links.expiresAt} > ${inSevenDays}::timestamptz)
-              and (${links.clickLimit} is null or ${links.clicks} < ${links.clickLimit})`,
+              and (${links.clickLimit} is null or coalesce(${linkCounters.clicks}, 0) < ${links.clickLimit})`,
           notScheduled,
         );
       }
@@ -103,6 +103,7 @@ export class LinksService {
       .select({ total: sql<number>`count(*)::int` })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
+      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
       .where(and(...filters));
 
     const paged = [...filters];
@@ -117,10 +118,17 @@ export class LinksService {
 
     // One extra row tells us whether there is another page without a second query.
     const rows = await this.db
-      .select({ link: links, domain: domains.domain, creator: users.name })
+      .select({
+        link: links,
+        domain: domains.domain,
+        creator: users.name,
+        clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
+        uniqueClicks: sql<number>`coalesce(${linkCounters.uniqueClicks}, 0)`,
+      })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
       .leftJoin(users, eq(links.createdBy, users.id))
+      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
       .where(and(...paged))
       .orderBy(desc(links.createdAt), desc(links.id))
       .limit(query.limit + 1);
@@ -129,7 +137,9 @@ export class LinksService {
     const page = hasMore ? rows.slice(0, query.limit) : rows;
     const last = page[page.length - 1];
 
-    const items = await this.hydrate(page.map((r) => ({ ...r, link: r.link as LinkRow })));
+    const items = await this.hydrate(
+      page.map((r) => ({ ...r, link: { ...r.link, clicks: r.clicks, uniqueClicks: r.uniqueClicks } as LinkRow })),
+    );
 
     return {
       items,
@@ -140,15 +150,24 @@ export class LinksService {
 
   async get(workspaceId: string, id: string): Promise<Link> {
     const [row] = await this.db
-      .select({ link: links, domain: domains.domain, creator: users.name })
+      .select({
+        link: links,
+        domain: domains.domain,
+        creator: users.name,
+        clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
+        uniqueClicks: sql<number>`coalesce(${linkCounters.uniqueClicks}, 0)`,
+      })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
       .leftJoin(users, eq(links.createdBy, users.id))
+      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
       .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
       .limit(1);
 
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
-    const [dto] = await this.hydrate([{ ...row, link: row.link as LinkRow }]);
+    const [dto] = await this.hydrate([
+      { ...row, link: { ...row.link, clicks: row.clicks, uniqueClicks: row.uniqueClicks } as LinkRow },
+    ]);
     return dto!;
   }
 

@@ -351,10 +351,10 @@ describeDb("rollupClicks", () => {
   });
 
   it("writes the denormalised counters on links from the rollups", async () => {
-    // links.clicks is what the click-limit gate reads, so it has to agree
-    // with click_daily rather than drift from it.
+    // link_counters.clicks is what the click-limit gate reads, so it has to
+    // agree with click_daily rather than drift from it.
     const [row] = (await db.execute(sql`
-      select clicks, unique_clicks from links where id = ${linkId}::uuid
+      select clicks, unique_clicks from link_counters where link_id = ${linkId}::uuid
     `)) as unknown as [{ clicks: number; unique_clicks: number }];
     const rolled = await daily();
 

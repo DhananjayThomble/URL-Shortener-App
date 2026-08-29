@@ -110,15 +110,6 @@ export const links = pgTable(
       image?: string | null;
     } | null>(),
 
-    /* Denormalised counters.
-
-       These are maintained by the rollup worker, not incremented on the hot
-       path. A redirect that had to UPDATE a row would serialise every click on
-       a popular link behind a single row lock — the exact failure the v1
-       backend had, where redirectToURL did findOne + updateOne on every hit. */
-    clicks: integer("clicks").notNull().default(0),
-    uniqueClicks: integer("unique_clicks").notNull().default(0),
-
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -138,6 +129,27 @@ export const links = pgTable(
     index("links_activates_idx").on(t.activatesAt).where(sql`${t.activatesAt} is not null`),
   ],
 );
+
+/* Denormalised counters, keyed off the link.
+
+   These are maintained by the rollup worker, not incremented on the hot path.
+   A redirect that had to UPDATE a row would serialise every click on a popular
+   link behind a single row lock — the exact failure the v1 backend had, where
+   redirectToURL did findOne + updateOne on every hit.
+
+   They live in their own table rather than on `links` on purpose. `links` is
+   the row the redirect hot path resolves against, and the rollup rewrites these
+   counters every minute; keeping them here means that write takes row locks and
+   churns indexes on a table nothing latency-sensitive reads, instead of the one
+   the redirect does. The click-limit gate reads this counter, so it stays a
+   cheap single-key lookup. */
+export const linkCounters = pgTable("link_counters", {
+  linkId: uuid("link_id")
+    .primaryKey()
+    .references(() => links.id, { onDelete: "cascade" }),
+  clicks: integer("clicks").notNull().default(0),
+  uniqueClicks: integer("unique_clicks").notNull().default(0),
+});
 
 export const routingRules = pgTable(
   "routing_rules",
@@ -194,6 +206,11 @@ export const linksRelations = relations(links, ({ one, many }) => ({
   domain: one(domains, { fields: [links.domainId], references: [domains.id] }),
   creator: one(users, { fields: [links.createdBy], references: [users.id] }),
   rules: many(routingRules),
+  counters: one(linkCounters, { fields: [links.id], references: [linkCounters.linkId] }),
+}));
+
+export const linkCountersRelations = relations(linkCounters, ({ one }) => ({
+  link: one(links, { fields: [linkCounters.linkId], references: [links.id] }),
 }));
 
 export const routingRulesRelations = relations(routingRules, ({ one }) => ({

@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
-import { and, clickDaily, conversions, desc, eq, gte, links, lt, sql, workspaces, type Database } from "@snapurl/database";
+import { and, clickDaily, conversions, desc, eq, gte, linkCounters, links, lt, sql, workspaces, type Database } from "@snapurl/database";
 import type { ConversionsReport, RecordConversionInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
@@ -54,14 +54,15 @@ export class ConversionsService {
       .select({
         link: links.slug,
         campaign: sql<string>`coalesce(${links.utm}->>'campaign', coalesce(${links.folder}, '-'))`,
-        clicks: links.clicks,
+        clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
         signups: sql<number>`count(*) filter (where ${conversions.kind} in ('signup', 'lead'))::int`,
         revenueMinor: sql<string>`coalesce(sum(${conversions.valueMinor}) filter (where ${conversions.currency} = ${currency}), 0)::text`,
       })
       .from(conversions)
       .innerJoin(links, eq(conversions.linkId, links.id))
+      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
       .where(and(eq(conversions.workspaceId, workspaceId), gte(conversions.occurredAt, start)))
-      .groupBy(links.id, links.slug, links.utm, links.folder, links.clicks)
+      .groupBy(links.id, links.slug, links.utm, links.folder, linkCounters.clicks)
       .orderBy(desc(sql`count(*)`))
       .limit(10);
 

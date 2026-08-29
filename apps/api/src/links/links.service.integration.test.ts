@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabase, domains, eq, links, workspaces, type Database } from "@snapurl/database";
+import { createDatabase, domains, eq, linkCounters, links, workspaces, type Database } from "@snapurl/database";
 import { ListLinksQuery } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
@@ -67,13 +67,15 @@ describeDb("LinksService.list", () => {
         expiresAt: opts.expiresAt ?? null,
         activatesAt: opts.activatesAt ?? null,
         clickLimit: opts.clickLimit ?? null,
-        clicks: opts.clicks ?? 0,
         archivedAt: opts.archived ? new Date() : null,
         tags: opts.tags ?? [],
         folder: opts.folder ?? null,
         createdAt: opts.createdAt ?? new Date(),
       })
       .returning({ id: links.id });
+    // The counters now live in link_counters, keyed by link_id; the click-limit
+    // status filters read them through the service's join.
+    await db.insert(linkCounters).values({ linkId: row!.id, clicks: opts.clicks ?? 0 });
     return row!.id;
   }
 
