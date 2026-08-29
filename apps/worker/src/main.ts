@@ -1,6 +1,6 @@
 import pino from "pino";
 import { createDatabase, type Database } from "@snapurl/database";
-import { pruneRetention, pruneVisitors, rollupClicks, rotateSalts } from "./jobs/rollup.js";
+import { ensureClickPartitions, pruneRetention, pruneVisitors, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired } from "./jobs/outbox.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 
@@ -49,6 +49,23 @@ export async function runFrequent(database: Database) {
 
 /** Runs hourly: housekeeping, and the jobs that keep the privacy promise. */
 export async function runMaintenance(database: Database) {
+  /* First, because click_events is partitioned by day and this is what keeps a
+     partition ready for every day that could receive a click.
+
+     Isolated, because being first means a throw here would skip everything
+     below it — including rotateSalts, which carries the hardest privacy
+     commitment in the product: once a day's salt is gone, that day's visitor
+     hashes cannot be recomputed from an IP by anyone. Losing that to a
+     partition lock is the wrong trade, and provisioning is an optimisation
+     anyway: the DEFAULT partition is what actually guarantees an insert cannot
+     fail, so a pass that provisions nothing still loses no clicks. */
+  let partitions = 0;
+  try {
+    partitions = await ensureClickPartitions(database);
+  } catch (err) {
+    log.error({ err }, "partition provisioning failed; clicks will land in the default partition");
+  }
+
   const expired = await sweepExpired(database);
   const salts = await rotateSalts(database);
   const pruned = await pruneRetention(database);
@@ -58,7 +75,20 @@ export async function runMaintenance(database: Database) {
   const stuck = await stuckProjections(database);
 
   log.info(
-    { expired, saltsDropped: salts, clicksPruned: pruned, visitorsPruned: visitors, outboxPruned: outbox, deliveriesPruned: deliveries },
+    {
+      partitionsReady: partitions,
+      expired,
+      saltsDropped: salts,
+      /* Reported separately because they cost wildly different amounts. A
+         dropped partition is a catalogue change; a deleted row is WAL, bloat
+         and vacuum work. A steadily non-zero rowsDeleted means workspaces are
+         using mixed retention settings, which is supported but not free. */
+      clickPartitionsDropped: pruned.partitionsDropped,
+      clickRowsDeleted: pruned.rowsDeleted,
+      visitorsPruned: visitors,
+      outboxPruned: outbox,
+      deliveriesPruned: deliveries,
+    },
     "maintenance pass",
   );
 
@@ -69,7 +99,7 @@ export async function runMaintenance(database: Database) {
     log.error({ stuck }, "projection rows have exhausted their retries — the edge may be serving stale link config");
   }
 
-  return { expired, salts, pruned, visitors, outbox, deliveries, stuck };
+  return { partitions, expired, salts, pruned, visitors, outbox, deliveries, stuck };
 }
 
 /** Guard against a slow pass overlapping the next tick. */

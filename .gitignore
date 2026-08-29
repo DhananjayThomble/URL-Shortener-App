@@ -30,3 +30,8 @@ logs/
 
 # Vercel CLI project link — local machine state, not repo state.
 .vercel
+
+# Project-scoped GitHub token, read by `gh` via GH_TOKEN. Local credential,
+# never repo state. Listed here rather than only in .git/info/exclude so a
+# contributor following the same convention is protected too.
+.gh-token
