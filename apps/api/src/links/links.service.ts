@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
-import type { CreateLinkInput, Link, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
+import type { CloneLinkInput, CreateLinkInput, Link, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
@@ -143,6 +143,107 @@ export class LinksService {
   }
 
   async create(workspaceId: string, actor: Actor, input: CreateLinkInput): Promise<Link> {
+    const passwordHash = input.password ? await argon2.hash(input.password, ARGON_OPTIONS) : null;
+    return this.insert(workspaceId, actor, input, passwordHash);
+  }
+
+  /**
+   * Duplicate a link under a new back-half.
+   *
+   * Builds a CreateLinkInput out of the source and hands it to the same
+   * `insert` that `create` uses, so slug generation, collision retry, routing
+   * validation, the projection outbox and the activity record are shared
+   * rather than reimplemented — a second copy of that sequence would drift the
+   * first time one of them changed.
+   *
+   * The password is the one thing that cannot go through CreateLinkInput,
+   * which carries a plaintext the caller has and we do not. It is resolved to
+   * a hash here and passed alongside.
+   */
+  async clone(workspaceId: string, id: string, actor: Actor, input: CloneLinkInput): Promise<Link> {
+    const source = await this.get(workspaceId, id);
+
+    /* The DTO exposes `passwordProtected`, never the hash, so read it
+       separately rather than widening what every caller of `get` receives. */
+    const [row] = await this.db
+      .select({ passwordHash: links.passwordHash })
+      .from(links)
+      .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
+      .limit(1);
+
+    /* Fails closed. Omitting `password` inherits whatever the source had:
+       cloning a private link must not quietly produce an open one. `null`
+       removes protection deliberately, a string replaces it. */
+    const passwordHash =
+      input.password === undefined
+        ? (row?.passwordHash ?? null)
+        : input.password === null
+          ? null
+          : await argon2.hash(input.password, ARGON_OPTIONS);
+
+    /* The DTO stores absent optional fields as null; CreateLinkInput expects
+       them absent. Mapped explicitly rather than cast, so a field added to one
+       shape and not the other is a compile error instead of a silent drop. */
+    const utm = source.utm
+      ? {
+          source: source.utm.source ?? undefined,
+          medium: source.utm.medium ?? undefined,
+          campaign: source.utm.campaign ?? undefined,
+          content: source.utm.content ?? undefined,
+        }
+      : undefined;
+    const social = source.social
+      ? {
+          title: source.social.title ?? undefined,
+          description: source.social.description ?? undefined,
+          image: source.social.image ?? undefined,
+        }
+      : undefined;
+
+    return this.insert(
+      workspaceId,
+      actor,
+      {
+        destination: source.destination,
+        domain: input.domain ?? source.domain,
+        // Empty string means "generate one", same as on create.
+        slug: input.slug || undefined,
+        tags: source.tags ?? [],
+        folder: source.folder ?? undefined,
+        comment: source.comment ?? undefined,
+        redirectType: source.redirectType,
+        rules: source.rules ?? [],
+        expiresAt: source.expiresAt ?? null,
+        expiresTo: source.expiresTo ?? null,
+        activatesAt: source.activatesAt ?? null,
+        scheduledTo: source.scheduledTo ?? null,
+        clickLimit: source.clickLimit ?? null,
+        forwardQuery: source.forwardQuery,
+        deepLink: source.deepLink,
+        hideReferrer: source.hideReferrer,
+        publicPreview: source.publicPreview,
+        utm,
+        social,
+      },
+      passwordHash,
+      id,
+    );
+  }
+
+  /**
+   * The shared write path behind `create` and `clone`.
+   *
+   * `input.password` is deliberately ignored here — the caller has already
+   * resolved it to `passwordHash`, because a clone carries a hash forward and
+   * has no plaintext to offer.
+   */
+  private async insert(
+    workspaceId: string,
+    actor: Actor,
+    input: CreateLinkInput,
+    passwordHash: string | null,
+    clonedFrom?: string,
+  ): Promise<Link> {
     const domain = await this.resolveDomain(workspaceId, input.domain);
 
     const problems = [
@@ -156,7 +257,6 @@ export class LinksService {
       if (!shape.ok) throw new BadRequestException(shape.reason);
     }
 
-    const passwordHash = input.password ? await argon2.hash(input.password, ARGON_OPTIONS) : null;
     const scan = await this.safeBrowsing.check(input.destination);
 
     /* Random slugs, retried on collision.
@@ -224,7 +324,16 @@ export class LinksService {
               webhookEvent: "link.created",
               targetType: "link",
               targetId: link.id,
-              metadata: { slug: link.slug, domain: link.domain, destination: link.destination },
+              /* Still link.created, not a new link.cloned event: a clone *is* a
+                 new link, and anything subscribed to link.created needs to hear
+                 about it. Where it came from is metadata, not a second event
+                 type every existing subscriber would have to learn. */
+              metadata: {
+                slug: link.slug,
+                domain: link.domain,
+                destination: link.destination,
+                ...(clonedFrom ? { clonedFrom } : {}),
+              },
             });
             return link;
           });

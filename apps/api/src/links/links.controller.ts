@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Query, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
-import { CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
+import { CloneLinkInput, CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { Actor, Roles, Scope, type RequestActor } from "../auth/auth.guard.js";
 import { LinksService } from "./links.service.js";
@@ -52,6 +52,19 @@ export class LinksController {
   @Scope("links:write")
   create(@Actor() actor: RequestActor, @Body(zodBody(CreateLinkInput)) input: CreateLinkInput) {
     return this.links.create(actor.workspaceId, toActor(actor), input);
+  }
+
+  /* A creation, not a mutation of :id — the source link is untouched, so this
+     is POST to a subresource rather than PATCH. Returns the new link. */
+  @Post(":id/clone")
+  @Roles("editor")
+  @Scope("links:write")
+  clone(
+    @Actor() actor: RequestActor,
+    @Param("id") id: string,
+    @Body(zodBody(CloneLinkInput)) input: CloneLinkInput,
+  ) {
+    return this.links.clone(actor.workspaceId, id, toActor(actor), input);
   }
 
   /* G1 — the endpoint the frontend needed and the contract didn't have. */

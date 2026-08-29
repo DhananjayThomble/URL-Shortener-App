@@ -4,7 +4,14 @@ import { useState } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Link, LinkList, type CreateLinkInput, type ListLinksQuery, type UpdateLinkInput } from "@snapurl/contract";
+import {
+  Link,
+  LinkList,
+  type CloneLinkInput,
+  type CreateLinkInput,
+  type ListLinksQuery,
+  type UpdateLinkInput,
+} from "@snapurl/contract";
 import { request, API_URL, tokens } from "../client";
 import { qk } from "./keys";
 
@@ -80,6 +87,27 @@ export function useUpdateLink() {
       request(`/links/${id}`, Link, { method: "PATCH", body: input }),
     onSuccess: (link) => {
       qc.setQueryData(qk.link(link.id), link);
+      qc.invalidateQueries({ queryKey: ["links"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+  });
+}
+
+/**
+ * Duplicate a link under a new back-half.
+ *
+ * Sending an empty body is the ordinary case: the server generates a slug and
+ * carries everything else over, including the password. Passing `password:
+ * null` is the only way to drop protection, which is deliberate — a clone that
+ * silently lost its password would be a link the workspace believes is private
+ * and is not.
+ */
+export function useCloneLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: CloneLinkInput & { id: string }) =>
+      request(`/links/${id}/clone`, Link, { method: "POST", body: input }),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["links"] });
       qc.invalidateQueries({ queryKey: ["analytics"] });
     },

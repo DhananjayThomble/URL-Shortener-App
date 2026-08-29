@@ -164,6 +164,32 @@ export const UpdateLinkInput = CreateLinkInput.omit({ domain: true, slug: true }
   });
 export type UpdateLinkInput = z.infer<typeof UpdateLinkInput>;
 
+/**
+ * Duplicate an existing link under a new back-half.
+ *
+ * Everything that decides where a visitor lands is copied — destination,
+ * routing chain, UTM, redirect type, the whole expiry and activation window.
+ * What is deliberately not copied is anything that would be a lie on a new
+ * link: click counts start at zero, and the clone is never archived even if
+ * its source was.
+ *
+ * `password` follows the same tri-state as UpdateLinkInput, and the default
+ * matters: **omitted inherits the original's protection**. Dropping it would
+ * mean duplicating a private beta link and quietly publishing an open one.
+ * Pass `null` to deliberately remove it.
+ */
+export const CloneLinkInput = z.object({
+  slug: z
+    .string()
+    .regex(/^[a-zA-Z0-9._-]*$/, "Use letters, numbers, dots, dashes or underscores")
+    .optional()
+    .or(z.literal("")),
+  /** Defaults to the source link's domain. */
+  domain: z.string().min(1).optional(),
+  password: z.string().nullable().optional(),
+});
+export type CloneLinkInput = z.infer<typeof CloneLinkInput>;
+
 /* G4 — cursor pagination.
 
    `total` on its own implied a page that the request had no way to ask for.
