@@ -35,6 +35,13 @@ services:
     profiles: ["full"]
     build:
       context: .
+      # Build the plain-Node server stage, not the file's last stage
+      # (lambda-job). Without an explicit target Docker builds the final stage,
+      # which is the AWS Lambda image: it runs the Runtime Interface Emulator
+      # instead of `node dist/main.js`, so the container never binds its port
+      # and the healthcheck reports unhealthy. `runtime` is the long-lived
+      # server image the AWS stages are themselves built on top of.
+      target: runtime
       args:
         APP: api
     image: snapurl-api:local
@@ -72,6 +79,7 @@ services:
     profiles: ["full"]
     build:
       context: .
+      target: runtime
       args:
         APP: redirect
     image: snapurl-redirect:local
@@ -101,6 +109,7 @@ services:
     profiles: ["full"]
     build:
       context: .
+      target: runtime
       args:
         APP: worker
     image: snapurl-worker:local
