@@ -165,6 +165,53 @@ export const UpdateLinkInput = CreateLinkInput.omit({ domain: true, slug: true }
 export type UpdateLinkInput = z.infer<typeof UpdateLinkInput>;
 
 /**
+ * Create many links in one request.
+ *
+ * Capped deliberately. Each row costs a Safe Browsing lookup, which is a
+ * network call when a key is configured, so an uncapped batch is a request
+ * that times out halfway and leaves the caller guessing.
+ */
+export const BulkCreateLinksInput = z.object({
+  links: z.array(CreateLinkInput).min(1, "Add at least one link.").max(100, "100 links per batch."),
+});
+export type BulkCreateLinksInput = z.infer<typeof BulkCreateLinksInput>;
+
+/**
+ * What happened to one row, carrying the index it arrived at.
+ *
+ * A discriminated union rather than an object with two optional fields,
+ * because "created but also has an error" is not a state that should be
+ * representable.
+ */
+export const BulkLinkOutcome = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), index: z.number().int(), link: Link }),
+  z.object({
+    ok: z.literal(false),
+    index: z.number().int(),
+    /** Echoed back so the UI can name the row without re-reading its input. */
+    destination: z.string(),
+    error: z.string(),
+  }),
+]);
+export type BulkLinkOutcome = z.infer<typeof BulkLinkOutcome>;
+
+/**
+ * The result of a batch.
+ *
+ * `results` is always the same length as the input and in the same order, so a
+ * row can never be silently dropped — the failure mode the whole feature has
+ * to avoid. Either every row was written or none was: a batch with any invalid
+ * row writes nothing, so fixing the bad rows and resubmitting cannot duplicate
+ * the good ones.
+ */
+export const BulkCreateLinksResult = z.object({
+  created: z.number().int(),
+  failed: z.number().int(),
+  results: z.array(BulkLinkOutcome),
+});
+export type BulkCreateLinksResult = z.infer<typeof BulkCreateLinksResult>;
+
+/**
  * Duplicate an existing link under a new back-half.
  *
  * Everything that decides where a visitor lands is copied — destination,

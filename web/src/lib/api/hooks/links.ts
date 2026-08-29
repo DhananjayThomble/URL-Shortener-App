@@ -5,8 +5,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
+  BulkCreateLinksResult,
   Link,
   LinkList,
+  type BulkCreateLinksInput,
   type CloneLinkInput,
   type CreateLinkInput,
   type ListLinksQuery,
@@ -89,6 +91,29 @@ export function useUpdateLink() {
       qc.setQueryData(qk.link(link.id), link);
       qc.invalidateQueries({ queryKey: ["links"] });
       qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+  });
+}
+
+/**
+ * Create many links at once.
+ *
+ * The response is never a bare success: it carries one outcome per submitted
+ * row, in order, so the caller can show which rows landed and which did not.
+ * A batch that reports `created: 0` wrote nothing at all, which is what makes
+ * fixing the bad rows and resubmitting the whole list safe.
+ */
+export function useBulkCreateLinks() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkCreateLinksInput) =>
+      request("/links/bulk", BulkCreateLinksResult, { method: "POST", body: input }),
+    onSuccess: (result) => {
+      // Only worth invalidating when something was actually written.
+      if (result.created > 0) {
+        qc.invalidateQueries({ queryKey: ["links"] });
+        qc.invalidateQueries({ queryKey: ["analytics"] });
+      }
     },
   });
 }

@@ -195,6 +195,43 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== bulk create =="
+mkbulk() { # mkbulk <json-array-of-links>
+  curl -s -X POST "$API/links/bulk" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d "{\"links\":$1}"
+}
+row() { # row <destination> [slug]
+  node -e 'const [d,s]=process.argv.slice(1);process.stdout.write(JSON.stringify({destination:d,domain:"localhost:3002",...(s?{slug:s}:{}),tags:[],redirectType:"302",rules:[],forwardQuery:true,deepLink:false,hideReferrer:false,publicPreview:true}))' "$1" "${2:-}"
+}
+
+BODY=$(mkbulk "[$(row https://example.com/bulk-a "$RUN-bulk-a"),$(row https://example.com/bulk-b)]")
+check "bulk creates every valid row"        '"created":2'  "$BODY"
+check "bulk reports no failures"            '"failed":0'   "$BODY"
+check "bulk honours an explicit back-half"  "$RUN-bulk-a"  "$BODY"
+check "each row carries its own outcome"    '"index":1'    "$BODY"
+
+# All-or-nothing: one bad row must stop the whole batch, and the good row must
+# still be reported rather than silently dropped.
+BODY=$(mkbulk "[$(row https://example.com/good "$RUN-bulk-good"),$(row not-a-url)]")
+check "one bad row creates nothing"          '"created":0' "$BODY"
+check "the bad row is named"                 'not-a-url'   "$BODY"
+check "the good row is reported, not dropped" 'all or nothing' "$BODY"
+
+FOUND=$(curl -s "$API/links?search=$RUN-bulk-good" -H "Authorization: Bearer $ACCESS" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).total')
+if [ "$FOUND" = "0" ]; then ok "a failed batch wrote nothing at all"; else bad "partial write" "found $FOUND rows for $RUN-bulk-good"; fi
+
+# Two rows competing for the same back-half is a batch-only failure: the unique
+# index would catch it, but only by failing without saying which rows collided.
+BODY=$(mkbulk "[$(row https://example.com/dup1 "$RUN-dup"),$(row https://example.com/dup2 "$RUN-dup")]")
+check "two rows wanting one back-half is refused" 'already asks for' "$BODY"
+
+BODY=$(mkbulk "[$(row https://example.com/taken "$RUN-bulk-a")]")
+check "a back-half already in use is refused" 'already taken' "$BODY"
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/links/bulk" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "$(node -e 'const l={destination:"https://example.com/x",domain:"localhost:3002",tags:[],redirectType:"302",rules:[],forwardQuery:true,deepLink:false,hideReferrer:false,publicPreview:true};process.stdout.write(JSON.stringify({links:Array(101).fill(l)}))')")
+status "a batch over the cap is refused" "400" "$CODE" ""
+
+echo
 echo "== clone =="
 # A link worth copying: routing chain, UTM and a click limit, so the clone has
 # something to get wrong.
