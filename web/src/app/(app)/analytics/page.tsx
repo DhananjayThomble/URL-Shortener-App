@@ -55,7 +55,10 @@ export default function AnalyticsPage() {
             <Tile label="Clicks" value={full(data.totals.clicks)} delta={`▲ ${pct(data.deltas.clicks)}`} deltaTone="up">
               <Sparkline values={data.series.map((s) => s.clicks)} width={160} height={26} />
             </Tile>
-            <Tile label="Unique visitors" value={full(data.totals.unique)} delta={`▲ ${pct(data.deltas.unique)}`} deltaTone="up">
+            {/* Uniques are an approximate HyperLogLog estimate (about 0.8% error),
+                not an exact distinct count - the label says so rather than
+                implying a precision the number does not have. */}
+            <Tile label="Unique visitors (approx.)" value={full(data.totals.unique)} delta={`▲ ${pct(data.deltas.unique)}`} deltaTone="up">
               <Sparkline values={data.series.map((s) => s.unique)} width={160} height={26} />
             </Tile>
             <Tile label="QR scans" value={full(data.totals.scans)} delta={`▲ ${pct(data.deltas.scans)}`} deltaTone="up">

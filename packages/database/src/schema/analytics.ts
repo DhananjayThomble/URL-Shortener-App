@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  customType,
   date,
   index,
   integer,
@@ -124,6 +125,9 @@ export const clickDaily = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     day: date("day").notNull(),
     clicks: integer("clicks").notNull().default(0),
+    /** Approximate distinct visitors, derived from the click_daily_uniques HLL
+     *  sketch during rollup (see that table). An integer here so the dashboard
+     *  and API keep summing it cheaply; the sketch stays out of this hot row. */
     uniques: integer("uniques").notNull().default(0),
     scans: integer("scans").notNull().default(0),
     blocked: integer("blocked").notNull().default(0),
@@ -161,20 +165,44 @@ export const breakdownDaily = pgTable(
   ],
 );
 
-/** Counting distinct visitors per day needs the set of hashes seen that day.
- *  Kept separately from click_events so retention can drop the raw events
- *  while the uniques number stays correct. Pruned aggressively — it only has
- *  to survive long enough for the day to close. */
-export const dailyVisitors = pgTable(
-  "daily_visitors",
+/** A raw Postgres bytea, mapped to a Node Buffer both ways. The postgres
+ *  driver already returns bytea values as Buffer, so the fromDriver side is a
+ *  pass-through; the toDriver side accepts the Buffer that domain.serialize
+ *  produces. Kept generic (Buffer) rather than tied to the sketch so any
+ *  future binary column can reuse it. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+/** The HyperLogLog uniques sketch, one fixed-size (~16 KiB) blob per
+ *  (link_id, day).
+ *
+ *  This is the durable record distinct-visitor counts are derived from, and it
+ *  lives in its own table rather than as a column on click_daily on purpose:
+ *
+ *  - click_daily stays a thin all-integer counter row. The dashboard and API
+ *    sum click_daily on every load; a 16 KiB bytea on each of those rows would
+ *    bloat every one of those scans for a value they never read.
+ *  - the sketch is the uniques source independent of the raw click_events,
+ *    which is exactly the separation the old daily_visitors table provided:
+ *    retention can drop raw events while uniques stay correct.
+ *
+ *  rollupClicks merges the day's incoming sketch into the stored one by taking
+ *  the register-wise maximum (see @snapurl/domain merge), which is idempotent
+ *  and commutative, so recomputing a day never inflates its uniques.
+ *  click_daily.uniques is then re-derived from this sketch via estimate. */
+export const clickDailyUniques = pgTable(
+  "click_daily_uniques",
   {
     linkId: uuid("link_id")
       .notNull()
       .references(() => links.id, { onDelete: "cascade" }),
     day: date("day").notNull(),
-    visitorHash: varchar("visitor_hash", { length: 32 }).notNull(),
+    sketch: bytea("sketch").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.linkId, t.day, t.visitorHash] })],
+  (t) => [primaryKey({ columns: [t.linkId, t.day] })],
 );
 
 /** The rotating salt behind every visitor hash. Yesterday's row is deleted,

@@ -1,6 +1,6 @@
 import pino from "pino";
 import { createDatabase, type Database } from "@snapurl/database";
-import { ensureClickPartitions, pruneRetention, pruneVisitors, rollupClicks, rotateSalts } from "./jobs/rollup.js";
+import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired } from "./jobs/outbox.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 
@@ -69,7 +69,6 @@ export async function runMaintenance(database: Database) {
   const expired = await sweepExpired(database);
   const salts = await rotateSalts(database);
   const pruned = await pruneRetention(database);
-  const visitors = await pruneVisitors(database);
   const outbox = await pruneOutbox(database);
   const deliveries = await pruneDeliveries(database);
   const stuck = await stuckProjections(database);
@@ -85,7 +84,6 @@ export async function runMaintenance(database: Database) {
          using mixed retention settings, which is supported but not free. */
       clickPartitionsDropped: pruned.partitionsDropped,
       clickRowsDeleted: pruned.rowsDeleted,
-      visitorsPruned: visitors,
       outboxPruned: outbox,
       deliveriesPruned: deliveries,
     },
@@ -99,7 +97,7 @@ export async function runMaintenance(database: Database) {
     log.error({ stuck }, "projection rows have exhausted their retries — the edge may be serving stale link config");
   }
 
-  return { partitions, expired, salts, pruned, visitors, outbox, deliveries, stuck };
+  return { partitions, expired, salts, pruned, outbox, deliveries, stuck };
 }
 
 /** Guard against a slow pass overlapping the next tick. */

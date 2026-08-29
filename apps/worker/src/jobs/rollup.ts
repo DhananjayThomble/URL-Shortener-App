@@ -1,4 +1,5 @@
 import { sql, type Database } from "@snapurl/database";
+import { addHashed, createSketch, deserialize, estimate, merge, serialize } from "@snapurl/domain";
 
 /* ============================================================
    Turning raw clicks into the numbers the dashboards read.
@@ -42,16 +43,6 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
     const [{ n }] = (await tx.execute(sql`select count(*)::int as n from rollup_batch`)) as unknown as [{ n: number }];
     if (!n) return { events: 0, days: 0 };
 
-    // Distinct visitors per link per day, kept separately so retention can
-    // drop the raw events while the uniques number stays correct.
-    await tx.execute(sql`
-      insert into daily_visitors (link_id, day, visitor_hash)
-      select link_id, (occurred_at at time zone 'UTC')::date, visitor_hash
-      from rollup_batch
-      where is_bot = false and blocked_reason is null
-      on conflict do nothing
-    `);
-
     await tx.execute(sql`
       insert into click_daily (link_id, workspace_id, day, clicks, uniques, scans, blocked)
       select
@@ -70,19 +61,83 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
         blocked = click_daily.blocked + excluded.blocked
     `);
 
-    /* Uniques are recomputed from daily_visitors rather than added to.
-       Adding would double-count a visitor who clicked twice in one day across
-       two different batches — the exact bug that makes uniques exceed clicks. */
-    await tx.execute(sql`
-      update click_daily cd set uniques = v.n
-      from (
-        select link_id, day, count(*)::int as n
-        from daily_visitors
-        where (link_id, day) in (select distinct link_id, (occurred_at at time zone 'UTC')::date from rollup_batch)
-        group by link_id, day
-      ) v
-      where cd.link_id = v.link_id and cd.day = v.day
-    `);
+    /* Uniques, as an approximate HyperLogLog sketch merged register-wise.
+
+       daily_visitors used to hold one row per (link, day, visitor) and uniques
+       was a COUNT(DISTINCT) over it. That is exact but does not survive this
+       product's load - ~2 billion rows in a btree at retention. So the durable
+       uniques record is now a fixed-size sketch per (link, day) in
+       click_daily_uniques, and click_daily.uniques is derived from it.
+
+       There is no pure-SQL way to build the sketch without the postgresql-hll
+       extension, which we deliberately do not depend on, so the sketch is built
+       in Node here (inside the same transaction) from the batch's non-bot,
+       non-blocked visitor hashes.
+
+       The register-wise-max merge is what keeps a re-run harmless. Merging is
+       idempotent (max(a, a) = a) and commutative, so folding the same batch
+       into the same stored sketch is a no-op: recomputing a day cannot inflate
+       its uniques, which is exactly the property the old recompute-not-increment
+       code protected against a visitor being counted twice across batches. */
+    const visitorRows = (await tx.execute(sql`
+      select
+        link_id as "linkId",
+        (occurred_at at time zone 'UTC')::date::text as day,
+        visitor_hash as "visitorHash"
+      from rollup_batch
+      where is_bot = false and blocked_reason is null
+    `)) as unknown as Array<{ linkId: string; day: string; visitorHash: string }>;
+
+    if (visitorRows.length > 0) {
+      /* Group the batch into one incoming sketch per (link, day). The key is a
+         string join of the two parts, kept alongside its components so the
+         upsert below has them without re-parsing. */
+      const groups = new Map<string, { linkId: string; day: string; sketch: Uint8Array }>();
+      for (const row of visitorRows) {
+        const key = `${row.linkId}|${row.day}`;
+        let group = groups.get(key);
+        if (!group) {
+          group = { linkId: row.linkId, day: row.day, sketch: createSketch() };
+          groups.set(key, group);
+        }
+        addHashed(group.sketch, row.visitorHash);
+      }
+
+      for (const group of groups.values()) {
+        /* Merge the incoming sketch with whatever is already stored for the
+           key, then write the merged bytes back. Reading and merging in TS
+           keeps every bit of sketch logic in @snapurl/domain rather than half
+           of it in a bytea expression. The postgres driver returns bytea as a
+           Buffer, which deserialize copies into a fresh sketch. */
+        const existing = (await tx.execute(sql`
+          select sketch from click_daily_uniques
+          where link_id = ${group.linkId}::uuid and day = ${group.day}::date
+        `)) as unknown as Array<{ sketch: Buffer }>;
+
+        const merged = existing[0]
+          ? merge(deserialize(existing[0].sketch), group.sketch)
+          : group.sketch;
+        const bytes = serialize(merged);
+
+        /* on conflict do update set sketch = excluded.sketch is safe because
+           excluded already carries the merge - two workers cannot lose an
+           update, the loser just re-merges on its next pass. */
+        await tx.execute(sql`
+          insert into click_daily_uniques (link_id, day, sketch)
+          values (${group.linkId}::uuid, ${group.day}::date, ${bytes})
+          on conflict (link_id, day) do update set sketch = excluded.sketch
+        `);
+
+        /* Derive click_daily.uniques from the merged sketch. Recomputed from
+           the sketch, never incremented, for the same reason the merge is a
+           max: a re-run must land on the same number. */
+        const uniques = estimate(merged);
+        await tx.execute(sql`
+          update click_daily set uniques = ${uniques}
+          where link_id = ${group.linkId}::uuid and day = ${group.day}::date
+        `);
+      }
+    }
 
     // One table serves countries, devices, browsers and referrers because the
     // dashboard renders them identically.
@@ -342,17 +397,6 @@ export async function rotateSalts(db: Database): Promise<number> {
   const result = await db.execute(sql`
     with dropped as (
       delete from daily_salts where day < (current_date - interval '1 day') returning 1
-    )
-    select count(*)::int as n from dropped
-  `);
-  return (result as unknown as [{ n: number }])[0]?.n ?? 0;
-}
-
-/** daily_visitors only has to survive long enough for its day to close. */
-export async function pruneVisitors(db: Database): Promise<number> {
-  const result = await db.execute(sql`
-    with dropped as (
-      delete from daily_visitors where day < (current_date - interval '45 days') returning 1
     )
     select count(*)::int as n from dropped
   `);

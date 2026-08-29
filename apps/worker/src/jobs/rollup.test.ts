@@ -96,7 +96,8 @@ describeDb("rollupClicks", () => {
 
   afterAll(async () => {
     // Cascades through domains, links, click_events, click_daily and
-    // daily_visitors. CI runs smoke.sh against this same database afterwards.
+    // click_daily_uniques (the HLL sketch store). CI runs smoke.sh against this
+    // same database afterwards.
     if (workspaceId) await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
     await handle?.close();
   });
@@ -122,9 +123,28 @@ describeDb("rollupClicks", () => {
     const result = await rollupClicks(db);
     expect(result.events).toBeGreaterThanOrEqual(4);
 
+    /* uniques is now a HyperLogLog estimate rather than an exact count, but at
+       these tiny cardinalities (two distinct visitors) the estimator falls in
+       its linear-counting range, which is exact - so the assertion stays === 2
+       rather than a tolerance. The approximation only shows up at thousands of
+       distinct visitors, which these DB tests do not reach. */
     const row = await daily();
     expect(row.clicks).toBe(4);
     expect(row.uniques).toBe(2);
+  });
+
+  it("does not change uniques when the same events are rolled up again", async () => {
+    /* The idempotency guarantee, stated directly. rollupClicks marks events as
+       consumed so a re-run claims nothing, but the deeper reason a re-run is
+       safe is that the sketch merge is register-wise max: even if the same
+       batch were folded in twice, the stored sketch and therefore the derived
+       uniques would not move. Assert the observable half: uniques is stable
+       across a second pass. */
+    const before = await daily();
+    await rollupClicks(db);
+    const after = await daily();
+    expect(after.uniques).toBe(before.uniques);
+    expect(after.uniques).toBeLessThanOrEqual(after.clicks);
   });
 
   it("marks the events it consumed, so a second run is a no-op", async () => {
@@ -140,9 +160,11 @@ describeDb("rollupClicks", () => {
   it("never lets uniques exceed clicks, across separate batches", async () => {
     /* The bug the comment names. A visitor who clicks twice on the same day,
        with the two clicks landing in different batches, must be counted once.
-       Adding uniques per batch instead of recomputing them from
-       daily_visitors is what would break this — and it is invisible until
-       someone notices a link with more unique visitors than clicks. */
+       Adding uniques per batch instead of re-deriving them from the merged HLL
+       sketch is what would break this - and it is invisible until someone
+       notices a link with more unique visitors than clicks. The sketch's
+       register-wise-max merge is what keeps the second click a no-op on the
+       count. */
     await addClick({ visitor: "visitor-c", hour: 5 });
     await rollupClicks(db);
     const afterFirst = await daily();
