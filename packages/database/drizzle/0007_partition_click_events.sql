@@ -99,6 +99,7 @@ DECLARE
 	part_name text := 'click_events_' || to_char(target_day, 'YYYYMMDD');
 	lo timestamptz := target_day::timestamp AT TIME ZONE 'UTC';
 	hi timestamptz := (target_day + 1)::timestamp AT TIME ZONE 'UTC';
+	prev_timeout text;
 BEGIN
 	/* Attached, not merely existing.
 	   A previous call may have created the table and then failed to attach it
@@ -121,15 +122,32 @@ BEGIN
 		RETURN NULL;
 	END IF;
 
-	BEGIN
-		EXECUTE format(
-			'CREATE TABLE %I (LIKE "click_events" INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
-			part_name
-		);
-	EXCEPTION WHEN duplicate_table THEN
-		-- Left behind by an earlier attach that timed out. Reuse it.
-		NULL;
-	END;
+	/* An orphan from an earlier attempt whose ATTACH timed out. Reuse it only if
+	   its columns still match the parent: ALTER TABLE ... ADD COLUMN on a
+	   partitioned table does not reach a detached table, so an orphan that
+	   survives a later column-adding migration would fail ATTACH with
+	   datatype_mismatch on every pass forever, and the only repair would be
+	   dropping it by hand. Dropping it here costs nothing — a caught exception
+	   rolls its drain back with it, so an orphan is always empty. */
+	IF EXISTS (
+		SELECT 1 FROM pg_class
+		WHERE relname = part_name AND relnamespace = 'public'::regnamespace
+	) THEN
+		IF (
+			SELECT count(*) FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = part_name
+		) <> (
+			SELECT count(*) FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'click_events'
+		) THEN
+			EXECUTE format('DROP TABLE %I', part_name);
+		END IF;
+	END IF;
+
+	EXECUTE format(
+		'CREATE TABLE IF NOT EXISTS %I (LIKE "click_events" INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
+		part_name
+	);
 
 	/* ATTACH takes an ACCESS EXCLUSIVE lock on the DEFAULT partition, because it
 	   has to prove no row there belongs to the incoming range. That conflicts
@@ -146,9 +164,25 @@ BEGIN
 	   In steady state this contends with nothing, because a day is provisioned
 	   about a fortnight before any row targets it, so the default holds no rows
 	   in its range and the scan is trivial. */
+	prev_timeout := current_setting('lock_timeout');
 	SET LOCAL lock_timeout = '2s';
 
 	BEGIN
+		/* Take the lock BEFORE draining, not as a side effect of ATTACH.
+		
+		   Draining first leaves a window: a click for this day that commits
+		   between the drain and the ATTACH routes to the default (its partition
+		   is not attached yet), and the ATTACH's validation scan then finds it
+		   and fails with check_violation. That is not a corner case — draining
+		   only matters when the default already holds rows for this day, which
+		   means the day is live and traffic is still arriving for it.
+		
+		   Locking first also stops the drain being wasted work: previously a
+		   large backlog was copied at full WAL cost and then rolled back when
+		   the ATTACH could not get its lock, repeating every pass with no
+		   progress. */
+		EXECUTE 'LOCK TABLE "click_events_default" IN ACCESS EXCLUSIVE MODE';
+
 		EXECUTE format(
 			'WITH moved AS (
 				DELETE FROM "click_events_default"
@@ -165,11 +199,28 @@ BEGIN
 		);
 	EXCEPTION
 		WHEN lock_not_available OR deadlock_detected THEN
+			-- Write traffic won. Provisioning is an optimisation; try next pass.
+			EXECUTE format('SET LOCAL lock_timeout = %L', prev_timeout);
 			RETURN NULL;
-		WHEN invalid_table_definition OR invalid_object_definition THEN
-			-- Another pass attached it between our check and here.
+		WHEN wrong_object_type THEN
+			-- 42809: already a partition of the parent. Another pass won the
+			-- race on this day, which is the outcome we wanted anyway.
 			NULL;
+		WHEN check_violation OR datatype_mismatch OR invalid_object_definition THEN
+			/* 23514 a row slipped into the default despite the lock, 42804 the
+			   candidate is schema-incompatible, 42P17 the range overlaps. None
+			   is recoverable here, and none is worth aborting the caller for:
+			   ensureClickPartitions runs first in the maintenance pass, so
+			   raising would skip salt rotation and every prune behind it. */
+			EXECUTE format('SET LOCAL lock_timeout = %L', prev_timeout);
+			RETURN NULL;
 	END;
+
+	/* Restored rather than left set: SET LOCAL persists to the end of the
+	   caller's transaction, and the migration below calls this function in the
+	   same transaction as the full-table copy and the legacy DROP. A 2s lock
+	   timeout leaking onto those would abort the migration on a live database. */
+	EXECUTE format('SET LOCAL lock_timeout = %L', prev_timeout);
 
 	RETURN part_name;
 END;
@@ -185,13 +236,13 @@ $fn$;--> statement-breakpoint
    The default partition is deliberately never dropped. It is part of the
    table's structure, and anything sitting in it is by definition outside every
    known day. */
-CREATE OR REPLACE FUNCTION click_events_drop_partitions_before(cutoff date)
-RETURNS integer
+CREATE OR REPLACE FUNCTION click_events_spent_partitions(cutoff date)
+RETURNS SETOF text
 LANGUAGE plpgsql
 AS $fn$
 DECLARE
-	dropped integer := 0;
 	part record;
+	unrolled boolean;
 BEGIN
 	FOR part IN
 		SELECT c.relname
@@ -199,16 +250,68 @@ BEGIN
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		WHERE i.inhparent = 'public.click_events'::regclass
 		  AND c.relname ~ '^click_events_[0-9]{8}$'
+		ORDER BY c.relname
 	LOOP
 		-- Partition covers [day, day + 1), so it is spent once day + 1 has
-		-- reached the cutoff.
-		IF to_date(right(part.relname, 8), 'YYYYMMDD') + 1 <= cutoff THEN
-			EXECUTE format('ALTER TABLE "click_events" DETACH PARTITION %I', part.relname);
-			EXECUTE format('DROP TABLE %I', part.relname);
-			dropped := dropped + 1;
-		END IF;
+		-- reached the cutoff. Never a partially-expired partition to reason about.
+		CONTINUE WHEN to_date(right(part.relname, 8), 'YYYYMMDD') + 1 > cutoff;
+
+		/* The invariant the row-level DELETE used to carry: raw detail is never
+		   discarded before it has been counted. Dropping a partition that still
+		   holds un-rolled-up clicks would lose them from click_events *and* from
+		   the rollups at once, and nothing would report it — the dashboards
+		   would simply under-count forever. Cheap to check: click_events_pending_idx
+		   is a partial index on exactly this predicate. */
+		EXECUTE format('SELECT EXISTS (SELECT 1 FROM ONLY %I WHERE rolled_up_at IS NULL)', part.relname)
+		INTO unrolled;
+		CONTINUE WHEN unrolled;
+
+		RETURN NEXT part.relname;
 	END LOOP;
-	RETURN dropped;
+END;
+$fn$;--> statement-breakpoint
+
+/* Drop exactly one spent partition, and never wait long to do it.
+	
+   DETACH takes an ACCESS EXCLUSIVE lock on the **parent**, not just on the
+   partition, so while it is held every insert into every other partition blocks
+   too. DETACH CONCURRENTLY is not available, precisely because this table has a
+   DEFAULT partition — the safety net that makes an insert unfailable is also
+   what forecloses the low-lock detach.
+	
+   So this handles one partition per call and the caller loops, giving each its
+   own transaction and releasing the parent lock in between. Returns false if it
+   could not get the lock in time, which the caller treats as "try again next
+   pass" rather than as an error. */
+CREATE OR REPLACE FUNCTION click_events_drop_partition(part_name text)
+RETURNS boolean
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+	prev_timeout text;
+BEGIN
+	IF part_name !~ '^click_events_[0-9]{8}$' THEN
+		RAISE EXCEPTION 'refusing to drop %', part_name;
+	END IF;
+
+	prev_timeout := current_setting('lock_timeout');
+	SET LOCAL lock_timeout = '2s';
+
+	BEGIN
+		EXECUTE format('ALTER TABLE "click_events" DETACH PARTITION %I', part_name);
+		EXECUTE format('DROP TABLE %I', part_name);
+	EXCEPTION
+		WHEN lock_not_available OR deadlock_detected THEN
+			EXECUTE format('SET LOCAL lock_timeout = %L', prev_timeout);
+			RETURN false;
+		WHEN undefined_table THEN
+			-- A concurrent pass already dropped it. Idempotent by intent.
+			EXECUTE format('SET LOCAL lock_timeout = %L', prev_timeout);
+			RETURN false;
+	END;
+
+	EXECUTE format('SET LOCAL lock_timeout = %L', prev_timeout);
+	RETURN true;
 END;
 $fn$;--> statement-breakpoint
 
@@ -226,6 +329,7 @@ $fn$;--> statement-breakpoint
 DO $mig$
 DECLARE
 	d date;
+	today date;
 	first_day date;
 	last_day date;
 BEGIN
@@ -234,8 +338,12 @@ BEGIN
 	INTO first_day, last_day
 	FROM "click_events_legacy";
 
-	first_day := least(coalesce(first_day, current_date), current_date - 7);
-	last_day  := greatest(coalesce(last_day, current_date), current_date + 14);
+	-- UTC, not current_date: every bound above is built with AT TIME ZONE 'UTC',
+	-- and current_date resolves in the session TimeZone. Mixing the two is the
+	-- bug this file's header warns about.
+	today := (now() AT TIME ZONE 'UTC')::date;
+	first_day := least(coalesce(first_day, today), today - 7);
+	last_day  := greatest(coalesce(last_day, today), today + 14);
 
 	d := first_day;
 	WHILE d <= last_day LOOP

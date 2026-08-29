@@ -41,8 +41,14 @@ const id = () => uuid("id").primaryKey().default(sql`uuidv7()`);
  * own as far as Postgres is concerned. uuidv7() still makes it unique in
  * fact, but a query that looks a row up by `id` without also constraining
  * `occurred_at` cannot use the primary key and will fan out across every
- * partition. Nothing does that today — the rollup joins on the temp batch
- * table — and it is the thing to check before adding one. */
+ * partition — on a three-year database that is roughly 1100 relations.
+ *
+ * `rollupClicks` had exactly that shape and was changed with this: its
+ * `rolled_up_at` marker now matches on (id, occurred_at) and bounds the range
+ * by the batch's own min and max so the executor can prune. It is the only
+ * place in the codebase that reads `click_events` by key, and nothing holds a
+ * foreign key to it — so this comment is the thing to re-read before adding
+ * the second one. */
 export const clickEvents = pgTable(
   "click_events",
   {

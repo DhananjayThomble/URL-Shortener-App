@@ -292,6 +292,97 @@ describeDb("click_events partitioning", () => {
     expect(await partitionOf(visitor)).toBe(partitionName(0));
   });
 
+  it("refuses to drop a spent partition that still holds un-rolled-up clicks", async () => {
+    /* The invariant the row-level DELETE carried and a partition drop does not
+       get for free: raw detail is never discarded before it has been counted.
+       Dropping a spent partition holding `rolled_up_at is null` rows would lose
+       those clicks from click_events *and* from the rollups at once, and nothing
+       would report it — the dashboards would simply under-count forever. */
+    const [{ spent }] = (await db.execute(sql`
+      select ((
+        select ((now() at time zone 'UTC')::date - (coalesce(max(retention_years), 3) * interval '1 year'))::date
+        from workspaces
+      ) - 3)::text as spent
+    `)) as unknown as [{ spent: string }];
+    const spentPartition = `click_events_${spent.replace(/-/g, "")}`;
+
+    await db.execute(sql`select click_events_ensure_partition(${spent}::date)`);
+    // Deliberately pending, unlike every other insert in this file.
+    await db.insert(clickEvents).values({
+      linkId,
+      workspaceId,
+      occurredAt: new Date(`${spent}T11:00:00.000Z`),
+      visitorHash: `pending-${Date.now()}`,
+      rolledUpAt: null,
+    });
+
+    const result = await pruneRetention(db);
+
+    expect(await isAttached(spentPartition)).toBe(true);
+    expect(result.partitionsDropped).toBe(0);
+
+    // Once counted, the same partition becomes droppable.
+    await db.execute(sql`
+      update click_events set rolled_up_at = now()
+      where occurred_at >= ${spent}::date and occurred_at < (${spent}::date + 1)
+    `);
+    const after = await pruneRetention(db);
+    expect(after.partitionsDropped).toBeGreaterThanOrEqual(1);
+    expect(await partitionExists(spentPartition)).toBe(false);
+  });
+
+  it("still deletes rows for a workspace retaining less than the longest retention", async () => {
+    /* The mixed-retention branch, and the whole reason `rowsDeleted` exists.
+       A partition is shared by every workspace, so it can only be dropped once
+       it is past the *longest* retention anyone configured. Workspaces keeping
+       less than that still need their rows removed individually from the
+       partitions that survive. */
+    const stamp = Date.now();
+    const [long] = await db
+      .insert(workspaces)
+      .values({ name: "long retention", slug: `long-${stamp}`, retentionYears: 20 })
+      .returning({ id: workspaces.id });
+    const [short] = await db
+      .insert(workspaces)
+      .values({ name: "short retention", slug: `short-${stamp}`, retentionYears: 1 })
+      .returning({ id: workspaces.id });
+
+    try {
+      const [dom] = await db
+        .insert(domains)
+        .values({ workspaceId: short!.id, domain: `short-${stamp}.test` })
+        .returning({ id: domains.id });
+      const [shortLink] = await db
+        .insert(links)
+        .values({ workspaceId: short!.id, domainId: dom!.id, slug: `s${stamp}`, destination: "https://example.com" })
+        .returning({ id: links.id });
+
+      // Two years back: past the short workspace's 1-year retention, but well
+      // inside the 20-year maximum, so no partition covering it can be dropped.
+      const twoYearsAgo = utcDay(-730);
+      twoYearsAgo.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${twoYearsAgo.toISOString().slice(0, 10)}::date)`);
+      await db.insert(clickEvents).values({
+        linkId: shortLink!.id,
+        workspaceId: short!.id,
+        occurredAt: twoYearsAgo,
+        visitorHash: `mixed-${stamp}`,
+        rolledUpAt: new Date(),
+      });
+
+      const result = await pruneRetention(db);
+
+      // Removed by the DELETE, not by a drop — the partition is still live for
+      // the long-retention workspace.
+      expect(result.rowsDeleted).toBeGreaterThanOrEqual(1);
+      expect(await partitionOf(`mixed-${stamp}`)).toBeNull();
+    } finally {
+      await db.delete(workspaces).where(eq(workspaces.id, short!.id));
+      await db.delete(workspaces).where(eq(workspaces.id, long!.id));
+      await dropPartition(partitionName(-730));
+    }
+  });
+
   it("does not drop a partition whose range extends past the cutoff", async () => {
     /* Boundary. A partition covers [day, day + 1), so it is only spent once
        day + 1 has reached the cutoff. Dropping the partition that straddles the
