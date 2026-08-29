@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { SiteHeader } from "@/components/marketing/site-header";
+import { SiteFooter } from "@/components/marketing/site-footer";
 
 const FEATURES = [
   { icon: "◈", title: "Your domain, your links", body: "Bring any domain, get automatic SSL, and set root and 404 redirects. As many as you want — domains aren't metered." },
@@ -12,35 +14,7 @@ const FEATURES = [
 export default function LandingPage() {
   return (
     <div className="max-w-[1080px] mx-auto px-6 pb-[90px]">
-      <nav className="flex items-center gap-6 py-[22px] flex-wrap">
-        <Link href="/" className="flex items-center gap-[9px]">
-          <span className="w-[27px] h-[27px] rounded-[7px] bg-accent text-accent-ink grid place-items-center font-display font-extrabold text-[15px]">
-            S
-          </span>
-          <b className="font-display text-[16px] font-bold tracking-[-0.02em]">SnapURL</b>
-        </Link>
-        <div className="hidden md:flex gap-[22px] ml-5 text-[13.5px] text-ink-2">
-          {["Product", "Analytics", "Developers", "Self-host", "Pricing"].map((l) => (
-            <span key={l} className="hover:text-ink cursor-pointer">
-              {l}
-            </span>
-          ))}
-        </div>
-        <div className="ml-auto flex gap-[9px] items-center">
-          <Link
-            href="/login"
-            className="px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold text-ink-2 hover:bg-surface-3 hover:text-ink"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/register"
-            className="px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold bg-accent text-accent-ink hover:bg-accent-2"
-          >
-            Start free
-          </Link>
-        </div>
-      </nav>
+      <SiteHeader />
 
       <header className="pt-[66px] pb-10 text-center">
         <div className="inline-flex items-center gap-2 px-[13px] py-[5px] rounded-full bg-accent-wash text-accent text-[12px] font-semibold mb-[22px]">
@@ -128,6 +102,8 @@ export default function LandingPage() {
           Start free
         </Link>
       </div>
+
+      <SiteFooter />
     </div>
   );
 }

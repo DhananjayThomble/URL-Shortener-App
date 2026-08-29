@@ -1,0 +1,24 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Establish a green baseline for the web frontend so subsequent features build against a known-good state. Install workspace dependencies and build the two workspace packages the web app depends on, then confirm type-check and the production build both pass. This is required because the web app imports @snapurl/contract and @snapurl/domain, which must be compiled to dist/ before tsc or next build succeed.",
+  "status": "completed",
+  "steps": [
+    "From the repo root (/projects/sandbox/URL-Shortener-App), run `pnpm install`.",
+    "Build the workspace packages the web app depends on, in order: `pnpm --filter @snapurl/contract build && pnpm --filter @snapurl/domain build`.",
+    "From web/, run `pnpm run type-check` and confirm it exits 0.",
+    "From web/, run `NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm run build` and confirm it compiles and generates static pages. Note: the production build hard-fails if NEXT_PUBLIC_API_URL is unset and rejects NEXT_PUBLIC_USE_FIXTURES=true, so always pass NEXT_PUBLIC_API_URL.",
+    "Record in findings the exact commands that produce a green baseline so later features can re-verify quickly."
+  ],
+  "acceptance_criteria": [
+    "`pnpm run type-check` in web/ exits 0 with no errors.",
+    "`NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm run build` in web/ completes successfully and prints the route table including the existing `/` route.",
+    "No source files under apps/*, packages/*, or web/src were modified (this feature only installs deps and builds packages)."
+  ],
+  "verification": [
+    "cd web && pnpm run type-check",
+    "cd web && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm run build"
+  ],
+  "blocked_reason": null,
+  "findings": "Green baseline confirmed. Exact commands (all exit 0): (1) from repo root /projects/sandbox/URL-Shortener-App: `pnpm install` (deps were already up to date). (2) `pnpm --filter @snapurl/contract build && pnpm --filter @snapurl/domain build` (both tsc -p tsconfig.json, compile to dist/). (3) from web/: `pnpm run type-check` (tsc --noEmit, exit 0). (4) from web/: `NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm run build` -> Next.js 15.5.24 compiled in ~3s, generated 16/16 static pages, printed route table including `/` as static (○). No source files modified; the only untracked item is the .agents/ task dir. Package dist/ outputs are gitignored (git status shows no source changes). REMINDER for later features: the two workspace packages must be built before web type-checks/builds; the production build hard-fails without NEXT_PUBLIC_API_URL and rejects NEXT_PUBLIC_USE_FIXTURES=true."
+}
