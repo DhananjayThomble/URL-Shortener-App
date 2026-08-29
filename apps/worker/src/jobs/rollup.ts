@@ -142,26 +142,104 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
   });
 }
 
+/** How many days of partitions to keep provisioned ahead of now.
+ *
+ *  A fortnight, so a worker that has been down for a week still has somewhere
+ *  to put today's clicks. Anything beyond the provisioned range lands in the
+ *  DEFAULT partition rather than failing, and the next pass drains it — so this
+ *  number controls query performance during an outage, not correctness. */
+const PARTITION_LOOKAHEAD_DAYS = 14;
+
+export interface RetentionResult {
+  /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
+  partitionsDropped: number;
+  /** Rows removed individually, for workspaces retaining less than the longest. */
+  rowsDeleted: number;
+}
+
 /**
- * Delete raw click rows past the workspace's retention setting.
+ * Make sure every day that could receive a click has a partition.
+ *
+ * Idempotent and cheap — it is a catalogue lookup per day, and only does real
+ * work on the one day a fortnight that is genuinely new.
+ *
+ * This has to run *before* the retention pass in a maintenance cycle. A pass
+ * that dropped old partitions and then failed would still have provisioned
+ * today's; the reverse ordering could leave the table with no partition for
+ * today, which is exactly the state the DEFAULT partition exists to cover but
+ * which is not worth entering deliberately.
+ */
+export async function ensureClickPartitions(
+  db: Database,
+  daysAhead = PARTITION_LOOKAHEAD_DAYS,
+): Promise<number> {
+  const result = (await db.execute(sql`
+    select count(*)::int as n
+    from generate_series(
+      current_date - 1,
+      current_date + ${daysAhead}::int,
+      interval '1 day'
+    ) as d,
+    lateral click_events_ensure_partition(d::date)
+  `)) as unknown as [{ n: number }];
+  return result[0]?.n ?? 0;
+}
+
+/**
+ * Expire raw click rows past each workspace's retention setting.
  *
  * The rollups are never pruned — they are small, and they are what the
  * dashboards read. Only the row-level detail expires, which is what the
  * "3 years retention" setting on the settings screen actually promises.
+ *
+ * **Two mechanisms, and the split is the point.** `click_events` is partitioned
+ * by day, so the bulk of expiry is `DETACH` plus `DROP` on whole partitions:
+ * constant time, almost no WAL, no bloat, nothing for autovacuum to chase. At
+ * 86M rows a day the previous row-level `DELETE` produced WAL faster than a
+ * replica could consume it.
+ *
+ * But retention is **per workspace**, and a partition is shared by all of them.
+ * A day can only be dropped once it is past the *longest* retention any
+ * workspace has configured. Workspaces that keep less than the maximum still
+ * need their rows removed individually from the partitions that survive — so
+ * the `DELETE` does not disappear, it just stops carrying the volume. When
+ * every workspace uses the same retention (the common case, and the default),
+ * `rowsDeleted` is zero and the whole job is a partition drop.
  */
-export async function pruneRetention(db: Database): Promise<number> {
-  const result = await db.execute(sql`
+export async function pruneRetention(db: Database): Promise<RetentionResult> {
+  /* The longest retention in use decides which partitions are safe to drop.
+     No workspaces at all still needs a sane answer, hence the coalesce: a
+     fresh install has nothing to expire and should not drop today's data. */
+  const [{ cutoff, maxYears }] = (await db.execute(sql`
+    select
+      (current_date - (coalesce(max(retention_years), 3) * interval '1 year'))::date as cutoff,
+      coalesce(max(retention_years), 3)::int as "maxYears"
+    from workspaces
+  `)) as unknown as [{ cutoff: string; maxYears: number }];
+
+  const [{ dropped }] = (await db.execute(sql`
+    select click_events_drop_partitions_before(${cutoff}::date)::int as dropped
+  `)) as unknown as [{ dropped: number }];
+
+  /* Only workspaces retaining less than the maximum, and only inside partitions
+     that are still attached. Restricting on occurred_at lets the planner prune
+     to the partitions that can actually contain matching rows instead of
+     scanning every day. */
+  const [{ n }] = (await db.execute(sql`
     with expired as (
       delete from click_events ce
       using workspaces w
       where ce.workspace_id = w.id
+        and w.retention_years < ${maxYears}::int
         and ce.rolled_up_at is not null
+        and ce.occurred_at >= ${cutoff}::date
         and ce.occurred_at < now() - (w.retention_years * interval '1 year')
       returning 1
     )
     select count(*)::int as n from expired
-  `);
-  return (result as unknown as [{ n: number }])[0]?.n ?? 0;
+  `)) as unknown as [{ n: number }];
+
+  return { partitionsDropped: dropped ?? 0, rowsDeleted: n ?? 0 };
 }
 
 /**

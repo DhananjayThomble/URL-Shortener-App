@@ -50,6 +50,13 @@
       "when": 1787991450945,
       "tag": "0006_forms",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788019377532,
+      "tag": "0007_partition_click_events",
+      "breakpoints": true
     }
   ]
 }

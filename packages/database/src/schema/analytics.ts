@@ -27,10 +27,29 @@ const id = () => uuid("id").primaryKey().default(sql`uuidv7()`);
    page is only as good as the absence of that column.
    ============================================================ */
 
+/* click_events is RANGE-partitioned by occurred_at, one partition per day.
+ *
+ * Drizzle has no vocabulary for partitioning, so the parent table, the per-day
+ * children and the DEFAULT partition are all created by hand in
+ * drizzle/0007_partition_click_events.sql. What this declaration has to get
+ * right is the one thing partitioning changes about the table's *shape*: the
+ * primary key must contain the partition key, so it is (id, occurred_at)
+ * rather than id alone. Everything else below is identical to a plain table,
+ * which is why every query in the codebase is unaffected.
+ *
+ * The practical consequence worth knowing: `id` is no longer unique on its
+ * own as far as Postgres is concerned. uuidv7() still makes it unique in
+ * fact, but a query that looks a row up by `id` without also constraining
+ * `occurred_at` cannot use the primary key and will fan out across every
+ * partition. Nothing does that today — the rollup joins on the temp batch
+ * table — and it is the thing to check before adding one. */
 export const clickEvents = pgTable(
   "click_events",
   {
-    id: id(),
+    /* Not `id()`: that helper marks the column PRIMARY KEY on its own, which
+       Postgres rejects on a partitioned table unless the partition key is
+       included. The composite key is declared in the table config below. */
+    id: uuid("id").notNull().default(sql`uuidv7()`),
     linkId: uuid("link_id")
       .notNull()
       .references(() => links.id, { onDelete: "cascade" }),
@@ -72,6 +91,9 @@ export const clickEvents = pgTable(
     rolledUpAt: timestamp("rolled_up_at", { withTimezone: true }),
   },
   (t) => [
+    /* Must include occurred_at: Postgres requires the partition key in every
+       unique constraint on a partitioned table. */
+    primaryKey({ columns: [t.id, t.occurredAt] }),
     index("click_events_link_time_idx").on(t.linkId, t.occurredAt.desc()),
     index("click_events_workspace_time_idx").on(t.workspaceId, t.occurredAt.desc()),
     index("click_events_pending_idx").on(t.occurredAt).where(sql`${t.rolledUpAt} is null`),

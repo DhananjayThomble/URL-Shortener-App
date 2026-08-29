@@ -1,6 +1,6 @@
 import pino from "pino";
 import { createDatabase, type Database } from "@snapurl/database";
-import { pruneRetention, pruneVisitors, rollupClicks, rotateSalts } from "./jobs/rollup.js";
+import { ensureClickPartitions, pruneRetention, pruneVisitors, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired } from "./jobs/outbox.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 
@@ -49,6 +49,11 @@ export async function runFrequent(database: Database) {
 
 /** Runs hourly: housekeeping, and the jobs that keep the privacy promise. */
 export async function runMaintenance(database: Database) {
+  /* First, and deliberately so: click_events is partitioned by day, and this is
+     what guarantees a partition exists for every day that could receive a
+     click. Running it before anything that can fail means a maintenance pass
+     which dies halfway has still done the one job the redirect path depends on. */
+  const partitions = await ensureClickPartitions(database);
   const expired = await sweepExpired(database);
   const salts = await rotateSalts(database);
   const pruned = await pruneRetention(database);
@@ -58,7 +63,20 @@ export async function runMaintenance(database: Database) {
   const stuck = await stuckProjections(database);
 
   log.info(
-    { expired, saltsDropped: salts, clicksPruned: pruned, visitorsPruned: visitors, outboxPruned: outbox, deliveriesPruned: deliveries },
+    {
+      partitionsReady: partitions,
+      expired,
+      saltsDropped: salts,
+      /* Reported separately because they cost wildly different amounts. A
+         dropped partition is a catalogue change; a deleted row is WAL, bloat
+         and vacuum work. A steadily non-zero rowsDeleted means workspaces are
+         using mixed retention settings, which is supported but not free. */
+      clickPartitionsDropped: pruned.partitionsDropped,
+      clickRowsDeleted: pruned.rowsDeleted,
+      visitorsPruned: visitors,
+      outboxPruned: outbox,
+      deliveriesPruned: deliveries,
+    },
     "maintenance pass",
   );
 
@@ -69,7 +87,7 @@ export async function runMaintenance(database: Database) {
     log.error({ stuck }, "projection rows have exhausted their retries — the edge may be serving stale link config");
   }
 
-  return { expired, salts, pruned, visitors, outbox, deliveries, stuck };
+  return { partitions, expired, salts, pruned, visitors, outbox, deliveries, stuck };
 }
 
 /** Guard against a slow pass overlapping the next tick. */
