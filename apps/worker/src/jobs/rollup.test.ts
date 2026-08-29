@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { clickEvents, createDatabase, domains, eq, links, sql, workspaces, type Database } from "@snapurl/database";
-import { addHashed, createSketch, estimate, serialize } from "@snapurl/domain";
+import { addHashed, createSketch, estimate, hashForTesting, serialize } from "@snapurl/domain";
 import { rollupClicks } from "./rollup.js";
 
 /* ============================================================
@@ -36,6 +36,12 @@ describeDb("rollupClicks", () => {
     return d;
   };
 
+  /* The real click_events.visitor_hash is always a 32-hex-char HMAC digest
+     (see packages/domain/src/visitor.ts), and the HLL sketch validates that
+     shape loudly. Tests name visitors with readable labels ("visitor-a") and
+     run them through hashForTesting so the stored hash matches the production
+     contract while distinct labels stay distinct and a repeated label maps to
+     the identical hash, exactly the properties these assertions rely on. */
   async function addClick(opts: {
     link?: string;
     visitor: string;
@@ -48,7 +54,7 @@ describeDb("rollupClicks", () => {
       linkId: opts.link ?? linkId,
       workspaceId,
       occurredAt: at(opts.hour ?? 12),
-      visitorHash: opts.visitor,
+      visitorHash: hashForTesting(opts.visitor),
       country: "IN",
       device: "desktop",
       browser: "Chrome",
@@ -169,7 +175,7 @@ describeDb("rollupClicks", () => {
     seededAt.setUTCHours(12, 0, 0, 0);
 
     const preSeed = createSketch();
-    addHashed(preSeed, "preexisting-visitor");
+    addHashed(preSeed, hashForTesting("preexisting-visitor"));
     await db.execute(sql`
       insert into click_daily_uniques (link_id, day, sketch)
       values (${linkId}::uuid, ${seededDayKey}::date, ${serialize(preSeed)})
@@ -183,8 +189,8 @@ describeDb("rollupClicks", () => {
     `);
 
     await db.insert(clickEvents).values([
-      { linkId, workspaceId, occurredAt: seededAt, visitorHash: "batch-visitor-1", country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
-      { linkId, workspaceId, occurredAt: seededAt, visitorHash: "batch-visitor-2", country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
+      { linkId, workspaceId, occurredAt: seededAt, visitorHash: hashForTesting("batch-visitor-1"), country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
+      { linkId, workspaceId, occurredAt: seededAt, visitorHash: hashForTesting("batch-visitor-2"), country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
     ]);
     await rollupClicks(db);
 
@@ -195,9 +201,9 @@ describeDb("rollupClicks", () => {
     // distinct, exact in HLL's linear-counting range at this tiny N. An
     // overwrite would have dropped the pre-seeded visitor and reported two.
     const expected = createSketch();
-    addHashed(expected, "preexisting-visitor");
-    addHashed(expected, "batch-visitor-1");
-    addHashed(expected, "batch-visitor-2");
+    addHashed(expected, hashForTesting("preexisting-visitor"));
+    addHashed(expected, hashForTesting("batch-visitor-1"));
+    addHashed(expected, hashForTesting("batch-visitor-2"));
     expect(rows[0]?.uniques).toBe(estimate(expected));
     expect(rows[0]?.uniques).toBe(3);
   });
