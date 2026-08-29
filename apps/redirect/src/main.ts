@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { createDatabase } from "@snapurl/database";
 import {
   REDIRECT_STATUS,
+  buildDeepLink,
   buildDestination,
   cacheHeadersFor,
   evaluateRouting,
@@ -133,6 +134,14 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
     utm: link.utm,
   });
 
+  /* Applied last, to the URL the visitor would actually have received —
+     otherwise the intent's fallback would point at the pre-UTM destination and
+     anyone without the app would lose the campaign parameters.
+
+     Returns `destination` untouched unless there is a real app to open and a
+     platform fallback to catch the miss, so this is a no-op for most clicks. */
+  const target = buildDeepLink(destination, parseDevice(userAgent), link.deepLink);
+
   void record(link, request, userAgent, null, decision.matchedRuleId, decision.variant, hash);
 
   for (const [header, value] of Object.entries(cacheHeadersFor(link.redirectType))) {
@@ -140,7 +149,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   }
   if (link.hideReferrer) void reply.header("Referrer-Policy", "no-referrer");
 
-  return reply.redirect(destination, REDIRECT_STATUS[link.redirectType]);
+  return reply.redirect(target, REDIRECT_STATUS[link.redirectType]);
 });
 
 app.get("/", async (request, reply) => {

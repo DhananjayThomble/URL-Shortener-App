@@ -54,8 +54,10 @@ mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"localhost:300
 mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-scheduled-bare\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-deep\",\"deepLink\":true,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
+mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-nodeep\",\"deepLink\":false,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 mklink "{\"destination\":\"https://example.com/rest\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-geo\",\"tags\":[],\"redirectType\":\"302\",\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true,\"rules\":[{\"id\":\"r-in\",\"when\":{\"country\":\"IN\"},\"then\":\"https://example.in/store\"},{\"id\":\"r-ios\",\"when\":{\"device\":\"ios\"},\"then\":\"https://apps.apple.com/app\"}]}" >/dev/null
-ok "created ten links"
+ok "created twelve links"
 
 echo
 echo "== basic redirect =="
@@ -96,6 +98,25 @@ TOKEN=$(curl -s -X POST "$API/public/links/$RUN-locked/unlock" -H 'Content-Type:
   -d '{"password":"hunter2"}' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).unlockToken||""')
 contains "unlock token opens the link (G3)" "example.com/locked" "$(loc "$RUN-locked?k=$TOKEN")"
 contains "a token for another link is refused" "unlock=1" "$(loc "$RUN-locked?k=not-a-real-token")"
+
+echo
+echo "== deep linking =="
+ANDROID='User-Agent: Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'
+IPHONE='User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile Safari/604.1'
+
+DEEP=$(loc "$RUN-deep" -H "$ANDROID")
+contains "Android gets an intent URL"          "intent://www.youtube.com" "$DEEP"
+contains "the intent names the YouTube package" "com.google.android.youtube" "$DEEP"
+# The property the feature rests on: no app, no dead end.
+contains "the intent carries a web fallback"   "S.browser_fallback_url"   "$DEEP"
+
+# iOS is served by Universal Links on the plain https URL, and a custom scheme
+# there would surface "Cannot Open Page" whenever the app is absent.
+contains "iPhone gets the plain URL"    "https://www.youtube.com/watch" "$(loc "$RUN-deep" -H "$IPHONE")"
+contains "desktop gets the plain URL"   "https://www.youtube.com/watch" "$(loc "$RUN-deep")"
+contains "the flag off means untouched" "https://www.youtube.com/watch" "$(loc "$RUN-nodeep" -H "$ANDROID")"
+# A host with no app must pass straight through even with the flag on.
+contains "an unknown host is untouched"  "example.com/plain" "$(loc "$RUN-plain" -H "$ANDROID")"
 
 echo
 echo "== the + preview convention =="
