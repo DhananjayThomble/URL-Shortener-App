@@ -7,7 +7,7 @@ import { Card, CardBody, Chip, SectionLabel } from "@/components/ui";
 export const metadata: Metadata = {
   title: "Developers",
   description:
-    "A typed REST API, SDKs, real-time webhooks, a CLI and an MCP server. SnapURL is MIT licensed and built so your agents can ship links too.",
+    "A typed REST API, real-time webhooks and scoped API keys — the same surfaces the dashboard is built on. SnapURL is MIT licensed and yours to read, fork and self-host.",
 };
 
 const REPO_URL = "https://github.com/DhananjayThomble/URL-Shortener-App";
@@ -16,12 +16,7 @@ const SURFACES = [
   {
     icon: "⌘",
     title: "REST API",
-    body: "A typed, versioned HTTP API. Create a link, read its analytics, manage domains — the dashboard uses the same endpoints you do.",
-  },
-  {
-    icon: "◇",
-    title: "Typed SDKs",
-    body: "End-to-end types shared with the API contract, so a link you create in code has the same shape the dashboard renders.",
+    body: "A typed, versioned HTTP API. Create a link, read its analytics, manage domains — the dashboard talks to the same endpoints you do.",
   },
   {
     icon: "⇉",
@@ -29,19 +24,9 @@ const SURFACES = [
     body: "Subscribe to events like conversion.recorded and get them pushed to your endpoint the moment they happen.",
   },
   {
-    icon: "▸",
-    title: "CLI",
-    body: "Script link creation and exports from your terminal or CI, using the same API keys as everything else.",
-  },
-  {
-    icon: "✦",
-    title: "MCP server",
-    body: "Expose SnapURL to your agents over the Model Context Protocol so they can create and route links themselves.",
-  },
-  {
     icon: "⚿",
-    title: "API keys",
-    body: "Scoped keys per workspace. Rotate them, revoke them, and attribute conversions to the key that reported them.",
+    title: "Scoped API keys",
+    body: "Per-workspace keys you can rotate and revoke, so conversions attribute back to the key that reported them.",
   },
 ];
 
@@ -81,8 +66,8 @@ export default function ForDevelopersPage() {
           not a form field.
         </h1>
         <p className="text-[16.5px] text-ink-2 max-w-[58ch] mx-auto mt-5">
-          A typed REST API, SDKs, real-time webhooks, a CLI and an MCP server — the same surfaces the dashboard is built
-          on. Automate everything, and let your agents ship links too.
+          A typed REST API, real-time webhooks and scoped API keys — the same surfaces the dashboard is built on.
+          Automate link creation, wire up attribution, and read every line of the source that does it.
         </p>
       </header>
 
