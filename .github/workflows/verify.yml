@@ -138,3 +138,106 @@ jobs:
       - name: Stop services
         if: always()
         run: kill "$API_PID" "$REDIRECT_PID" 2>/dev/null || true
+
+  # The `verify` job above starts the compiled JS directly and never touches the
+  # container images or the worker. Two of the audit's showstoppers (CloudFront
+  # rewriting Host, and CloudFront-Viewer-Country never being forwarded) passed
+  # every unit test and full CI because neither exists until the real edge and
+  # the real container stack are in front. This job brings up the actual
+  # `docker compose --profile full` stack on every PR and runs the smoke suites
+  # against the container images, so a regression in the redirect path fails CI
+  # rather than being found after deploy.
+  integration:
+    name: Compose integration harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The runner needs pnpm/node only to run migrations against the composed
+      # database (`pnpm db:migrate`). The apps themselves run inside containers.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Ordering matters. The composed api/redirect/worker run NODE_ENV=production,
+      # do NOT auto-migrate, and depend_on postgres service_healthy with
+      # restart: unless-stopped — so if started against an empty schema they
+      # crash-loop until it exists. Bring up ONLY postgres first, migrate against
+      # its host-published port, then start the apps against a ready schema.
+      - name: Start database
+        run: docker compose up -d --wait postgres
+
+      - name: Apply migrations
+        # Only DATABASE_URL is needed; the apps get their own env from
+        # docker-compose.yml. No secrets are set here.
+        run: DATABASE_URL=postgres://snapurl:snapurl@localhost:5433/snapurl pnpm db:migrate
+
+      # Build the three images and start api/redirect/worker. `--wait` blocks on
+      # the api and redirect healthchecks; the worker has no healthcheck, so it
+      # will not block on the worker — expected and correct.
+      - name: Build and start the full stack
+        run: docker compose --profile full up -d --build --wait
+
+      # The composed api/redirect publish the same host ports (3001/3002) the
+      # scripts target by default, so no env override is needed here.
+      - name: Smoke — dashboard API
+        run: bash scripts/smoke.sh
+
+      # Exercises, against the CONTAINER images for the first time: the real
+      # 302+Location, the cloudfront-viewer-country routing match, and the
+      # password-unlock round-trip. DATABASE_URL points the script's psql branch
+      # at the composed postgres on 5433.
+      - name: Smoke — redirect path
+        run: bash scripts/smoke-redirect.sh
+        env:
+          DATABASE_URL: postgres://snapurl:snapurl@localhost:5433/snapurl
+
+      # The one behaviour the smoke scripts cannot cover: a real click surviving
+      # the live worker's rollup from click_events into click_daily.
+      - name: Integration assertions — click rollup
+        run: bash scripts/integration-assertions.sh
+        env:
+          DATABASE_URL: postgres://snapurl:snapurl@localhost:5433/snapurl
+
+      # A silently-broken adapter can serve wrong-but-2xx responses that the
+      # smoke assertions do not catch. pino logs errors at numeric level 50
+      # (pino: error=50), and all three apps emit JSON logs (api is nestjs-pino,
+      # redirect/worker are pino/fastify-pino). Match the structured marker
+      # "level":50 rather than the bare word "error", which appears benignly in
+      # URLs, slugs and info lines and would produce false positives.
+      - name: Fail on container errors
+        id: log_error_gate
+        run: |
+          found=0
+          for svc in api redirect worker; do
+            logs="$(docker compose --profile full logs --no-color "$svc" 2>&1)"
+            if echo "$logs" | grep -F '"level":50'; then
+              echo "::error::$svc logged a pino error-level line"
+              found=1
+            fi
+          done
+          if [ "$found" -ne 0 ]; then exit 1; fi
+
+      # Without this a failed run shows only which assertion failed, not the
+      # container-side reason for it.
+      - name: Container logs
+        if: failure()
+        run: |
+          docker compose --profile full logs --no-color
+          docker compose --profile full ps
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile full down -v
