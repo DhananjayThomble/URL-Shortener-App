@@ -2,7 +2,7 @@
 
 import { PageHead } from "@/components/app-shell";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
-import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from "@/lib/api/hooks";
+import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember, useWorkspace } from "@/lib/api/hooks";
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
 import { useState } from "react";
 import { cn, full } from "@/lib/utils";
@@ -32,6 +32,7 @@ const ROLE_OPTIONS: { value: MemberRole; label: string }[] = [...INVITE_ROLES, {
 
 export default function TeamPage() {
   const { data: members, isLoading } = useMembers();
+  const { data: workspace } = useWorkspace();
   const { data: audit } = useAudit();
 
   const invite = useInviteMember();
@@ -89,7 +90,7 @@ export default function TeamPage() {
     <>
       <PageHead
         title="Team"
-        sub={`${members?.length ?? "—"} members in Acme Growth · every action is written to the audit log`}
+        sub={`${members?.length ?? "—"} members in ${workspace?.name ?? "this workspace"} · every action is written to the audit log`}
         actions={
           <>
             <Button>Audit log</Button>
