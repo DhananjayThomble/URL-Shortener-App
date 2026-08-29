@@ -56,7 +56,10 @@ export function TrafficChart({
   series?: SeriesKey[];
   height?: number;
 }) {
-  const labels: Record<SeriesKey, string> = { clicks: "Clicks", unique: "Unique", scans: "QR scans" };
+  // "Unique" carries the same "(approx.)" caveat as the KPI tiles: the figure
+  // is a HyperLogLog estimate, not an exact distinct count, and the legend must
+  // not imply otherwise.
+  const labels: Record<SeriesKey, string> = { clicks: "Clicks", unique: "Unique (approx.)", scans: "QR scans" };
   // Primary series takes the brand accent; the comparison stays neutral so
   // the pairing survives whichever accent the viewer picked.
   const colors: Record<SeriesKey, string> = {
