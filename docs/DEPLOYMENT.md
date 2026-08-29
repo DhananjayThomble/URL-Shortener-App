@@ -11,25 +11,45 @@ separately and is not yet implemented.
 
 ## Frontend → Vercel
 
-### What Vercel needs to know
+### Set Root Directory to `web`
 
-SnapURL is a pnpm workspace, and `web/` depends on two local packages that must
-be built before it. `vercel.json` at the repository root handles this:
+This is the one setting that decides whether the deploy works at all.
 
-```json
-{
-  "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter @snapurl/contract build && pnpm --filter @snapurl/domain build && pnpm --filter snapurl-web build",
-  "outputDirectory": "web/.next"
-}
+Vercel detects the framework by reading the **Root Directory's**
+`package.json`. The repository root has no dependencies at all — `next` lives
+in `web/package.json` — so pointing Root Directory at the repo root fails
+before it builds anything:
+
+```
+Error: No Next.js version detected. Make sure your package.json has "next"
+in either "dependencies" or "devDependencies".
 ```
 
-Leave Vercel's **Root Directory** at the repository root, not `web/`. Setting it
-to `web/` hides the workspace from pnpm and the contract package will not
-resolve.
+Set Root Directory to **`web`**. Vercel still finds `pnpm-workspace.yaml` at
+the repository root and installs the whole workspace from there, so
+`@snapurl/contract` and `@snapurl/domain` resolve normally.
+
+`vercel.json` therefore lives at `web/vercel.json` — Vercel reads it from the
+Root Directory, not from the repository root.
+
+### How the workspace packages get built
+
+`web/` depends on two local packages that must be compiled before Next.js can
+type-check against them. Vercel runs a `vercel-build` script in preference to
+`build` when one exists, so the whole recipe lives in `web/package.json`:
+
+```json
+"vercel-build": "pnpm --filter @snapurl/contract build && pnpm --filter @snapurl/domain build && next build"
+```
+
+Keeping it there rather than in a `buildCommand` means the exact sequence
+Vercel runs is also runnable locally with `pnpm vercel-build` — a build command
+that only ever executes on Vercel is a build command nobody can debug.
 
 The `ignoreCommand` skips a rebuild when a commit touched only backend files,
-so a change to `apps/worker` does not redeploy the dashboard.
+so a change to `apps/worker` does not redeploy the dashboard. It uses git's
+`:/` pathspec prefix, which resolves from the repository root regardless of
+the directory Vercel runs it from.
 
 ### Required environment variables
 
@@ -76,7 +96,7 @@ simplest honest answer is to point previews at a staging API.
 
 ### First deploy checklist
 
-1. Import the repository into Vercel; leave Root Directory at the repo root.
+1. Import the repository into Vercel and set **Root Directory to `web`**.
 2. Set `NEXT_PUBLIC_API_URL` to the deployed API's base URL.
 3. Deploy. If it fails, read the error — the guard names the exact variable.
 4. Set `WEB_ORIGIN` on the API to the Vercel URL, and restart the API.
