@@ -195,6 +195,16 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== analytics geo =="
+BODY=$(curl -s "$API/analytics?range=30d" -H "Authorization: Bearer $ACCESS")
+check "analytics reports countries" '"countries"' "$BODY"
+check "analytics reports cities"    '"cities"'    "$BODY"
+# The privacy line this feature had to stay behind: city is resolved at the
+# CDN edge and handed over as a name, so no IP column exists to hold one.
+NOIP=$(curl -s "$API/analytics?range=30d" -H "Authorization: Bearer $ACCESS" | grep -c '"ip"' || true)
+if [ "$NOIP" = "0" ]; then ok "analytics exposes no IP"; else bad "ip leaked in analytics" "$BODY"; fi
+
+echo
 echo "== bulk create =="
 mkbulk() { # mkbulk <json-array-of-links>
   curl -s -X POST "$API/links/bulk" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d "{\"links\":$1}"

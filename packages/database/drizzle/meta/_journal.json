@@ -29,6 +29,13 @@
       "when": 1787931698295,
       "tag": "0003_scheduled_activation",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787989531374,
+      "tag": "0004_click_city",
+      "breakpoints": true
     }
   ]
 }

@@ -15,6 +15,7 @@ export interface ClickEvent {
   occurredAt: Date;
   visitorHash: string;
   country: string | null;
+  city: string | null;
   device: string | null;
   browser: string | null;
   os: string | null;
@@ -40,6 +41,7 @@ export class PostgresClickSink implements ClickSink {
       occurredAt: event.occurredAt,
       visitorHash: event.visitorHash,
       country: event.country,
+      city: event.city,
       device: event.device,
       browser: event.browser,
       os: event.os,

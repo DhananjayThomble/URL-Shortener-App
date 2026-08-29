@@ -64,8 +64,12 @@ export class AnalyticsService {
       .groupBy(clickDaily.day)
       .orderBy(clickDaily.day);
 
-    const [countries, devices, browsers, referrers] = await Promise.all([
+    const [countries, cities, devices, browsers, referrers] = await Promise.all([
       this.breakdown(workspaceId, "country", start, query.linkId),
+      /* Unlimited, because the k-anonymity floor has to see the whole tail to
+         fold it — taking the top 8 first would discard the small cities rather
+         than aggregate them, and the total would stop adding up. */
+      this.breakdown(workspaceId, "city", start, query.linkId, 0).then(applyCityFloor),
       this.breakdown(workspaceId, "device", start, query.linkId),
       this.breakdown(workspaceId, "browser", start, query.linkId),
       this.breakdown(workspaceId, "referrer", start, query.linkId),
@@ -125,6 +129,7 @@ export class AnalyticsService {
         value: c.value,
         icon: FLAGS[c.label] ?? "🌐",
       })),
+      cities,
       devices,
       browsers,
       referrers,
@@ -133,7 +138,13 @@ export class AnalyticsService {
     };
   }
 
-  private async breakdown(workspaceId: string, dimension: string, start: Date, linkId?: string): Promise<Breakdown[]> {
+  private async breakdown(
+    workspaceId: string,
+    dimension: string,
+    start: Date,
+    linkId?: string,
+    limit = 8,
+  ): Promise<Breakdown[]> {
     const filters = [
       eq(breakdownDaily.workspaceId, workspaceId),
       eq(breakdownDaily.dimension, dimension),
@@ -146,10 +157,9 @@ export class AnalyticsService {
       .from(breakdownDaily)
       .where(and(...filters))
       .groupBy(breakdownDaily.value)
-      .orderBy(desc(sql`sum(${breakdownDaily.count})`))
-      .limit(8);
+      .orderBy(desc(sql`sum(${breakdownDaily.count})`));
 
-    return rows.map((r) => ({ label: r.label, value: r.value }));
+    return (limit > 0 ? rows.slice(0, limit) : rows).map((r) => ({ label: r.label, value: r.value }));
   }
 
   /** Tags live on the link, not on the click, so this joins rather than
@@ -178,6 +188,48 @@ export class AnalyticsService {
       .limit(8);
     return rows.map((r) => ({ label: r.slug, value: r.value }));
   }
+}
+
+/**
+ * The smallest number of clicks a city may be named for.
+ *
+ * Country plus device plus browser identifies nobody. City plus device plus
+ * browser plus OS plus referrer, somewhere small enough, can. Five is a
+ * judgement, not a standard — raise it here and everywhere follows.
+ */
+export const CITY_MIN_CLICKS = 5;
+
+/** What the folded remainder is called. */
+export const OTHER_CITIES = "Other cities";
+
+/**
+ * Fold thinly-populated cities into one bucket.
+ *
+ * The total is preserved, so the workspace loses no volume — it loses only the
+ * ability to read "one visitor, this city" off the dashboard beside a single
+ * device and a single referrer. See docs/DECISIONS.md.
+ *
+ * "Unknown" is passed through whatever its size: it is already an aggregate of
+ * every click CloudFront could not place, so it identifies no one, and folding
+ * it into "Other cities" would lose the distinction between "we don't know"
+ * and "too few to say".
+ */
+export function applyCityFloor(rows: Breakdown[], min = CITY_MIN_CLICKS, limit = 8): Breakdown[] {
+  const named: Breakdown[] = [];
+  let folded = 0;
+
+  for (const row of rows) {
+    if (row.label === "Unknown" || row.value >= min) named.push(row);
+    else folded += row.value;
+  }
+
+  named.sort((a, b) => b.value - a.value);
+  // Trim before adding the bucket, so the bucket cannot itself be trimmed away
+  // and take the tail's volume with it.
+  const top = named.slice(0, limit);
+  for (const row of named.slice(limit)) folded += row.value;
+
+  return folded > 0 ? [...top, { label: OTHER_CITIES, value: folded }] : top;
 }
 
 export function iso(d: Date): string {

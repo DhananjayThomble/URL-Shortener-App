@@ -34,6 +34,12 @@ export const Analytics = z.object({
   }),
   series: z.array(TimeseriesPoint),
   countries: z.array(Breakdown),
+  /**
+   * Cities, with a k-anonymity floor applied — anything below the threshold is
+   * folded into "Other cities" rather than named. Resolved from CloudFront's
+   * edge header, so no IP is stored to produce it. See docs/DECISIONS.md.
+   */
+  cities: z.array(Breakdown),
   devices: z.array(Breakdown),
   browsers: z.array(Breakdown),
   referrers: z.array(Breakdown),

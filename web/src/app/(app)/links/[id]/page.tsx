@@ -264,6 +264,7 @@ export default function LinkDetailPage() {
         {(
           [
             ["Countries", a?.countries],
+            ["Cities", a?.cities],
             ["Devices", a?.devices],
             ["Referrers", a?.referrers],
           ] as const

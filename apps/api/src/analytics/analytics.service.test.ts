@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillSeries, iso, percentChange, windowFor } from "./analytics.service.js";
+import { CITY_MIN_CLICKS, OTHER_CITIES, applyCityFloor, fillSeries, iso, percentChange, windowFor } from "./analytics.service.js";
 
 /* The three pure helpers behind every number on the analytics screen. Each has
    a failure mode that renders as a plausible-looking chart rather than an
@@ -123,5 +123,74 @@ describe("fillSeries", () => {
 describe("iso", () => {
   it("formats a date as the YYYY-MM-DD key the rollups are keyed on", () => {
     expect(iso(new Date("2026-03-01T13:45:00.000Z"))).toBe("2026-03-01");
+  });
+});
+
+describe("applyCityFloor", () => {
+  const total = (rows: Array<{ value: number }>) => rows.reduce((n, r) => n + r.value, 0);
+
+  it("names a city that clears the threshold", () => {
+    const out = applyCityFloor([{ label: "Pune", value: CITY_MIN_CLICKS }]);
+    expect(out).toEqual([{ label: "Pune", value: CITY_MIN_CLICKS }]);
+  });
+
+  it("folds a city one click short of the threshold", () => {
+    // The whole point: "Pune · 1 click" beside one iPhone and one referrer is
+    // a person, not a statistic.
+    const out = applyCityFloor([{ label: "Pune", value: CITY_MIN_CLICKS - 1 }]);
+    expect(out).toEqual([{ label: OTHER_CITIES, value: CITY_MIN_CLICKS - 1 }]);
+  });
+
+  it("keeps the total intact when it folds", () => {
+    const rows = [
+      { label: "Mumbai", value: 40 },
+      { label: "Pune", value: 3 },
+      { label: "Nashik", value: 2 },
+      { label: "Satara", value: 1 },
+    ];
+    const out = applyCityFloor(rows);
+    expect(total(out)).toBe(total(rows));
+    expect(out).toEqual([
+      { label: "Mumbai", value: 40 },
+      { label: OTHER_CITIES, value: 6 },
+    ]);
+  });
+
+  it("passes Unknown through however small it is", () => {
+    // Unknown is already an aggregate of every click CloudFront could not
+    // place, so it identifies nobody — and folding it would lose the
+    // difference between "we don't know" and "too few to say".
+    const out = applyCityFloor([{ label: "Unknown", value: 1 }, { label: "Pune", value: 1 }]);
+    expect(out).toEqual([
+      { label: "Unknown", value: 1 },
+      { label: OTHER_CITIES, value: 1 },
+    ]);
+  });
+
+  it("adds no bucket when nothing was folded", () => {
+    const out = applyCityFloor([{ label: "Mumbai", value: 9 }]);
+    expect(out.some((r) => r.label === OTHER_CITIES)).toBe(false);
+  });
+
+  it("rolls the trimmed tail into the bucket rather than dropping it", () => {
+    // Trimming to the top N *after* folding would silently lose volume, and
+    // the dashboard totals would stop agreeing with the click count.
+    const rows = Array.from({ length: 12 }, (_, i) => ({ label: `City${i}`, value: 100 - i }));
+    const out = applyCityFloor(rows, CITY_MIN_CLICKS, 8);
+    expect(out).toHaveLength(9);
+    expect(out[8]!.label).toBe(OTHER_CITIES);
+    expect(total(out)).toBe(total(rows));
+  });
+
+  it("returns the strongest cities first", () => {
+    const out = applyCityFloor([
+      { label: "Small", value: 6 },
+      { label: "Big", value: 60 },
+    ]);
+    expect(out.map((r) => r.label)).toEqual(["Big", "Small"]);
+  });
+
+  it("handles an empty window", () => {
+    expect(applyCityFloor([])).toEqual([]);
   });
 });
