@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 const FEATURES = [
-  { icon: "◈", title: "Your domain, your links", body: "Bring any domain, get automatic SSL, and set root and 404 redirects. Five domains on the free plan — not one." },
+  { icon: "◈", title: "Your domain, your links", body: "Bring any domain, get automatic SSL, and set root and 404 redirects. As many as you want — domains aren't metered." },
   { icon: "⇄", title: "Route by anything", body: "Send India to the India store, iOS to the App Store, and split the rest 50/50 for an A/B test. Rules run at the edge." },
   { icon: "▤", title: "Analytics without cookies", body: "Country, city, device, browser, referrer and conversions — measured with a daily-rotating hash. No IP stored, nothing left on the visitor's device." },
   { icon: "▩", title: "QR that stays correct", body: "Print it once, change where it points forever. SVG, PDF and EPS export, with your logo in the middle." },

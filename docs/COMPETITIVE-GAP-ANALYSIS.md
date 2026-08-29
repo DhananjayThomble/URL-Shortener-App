@@ -18,7 +18,7 @@ This is a product-surface comparison, not a security or performance review. InAp
 | CSV export | UI gap | The Links page shows `Export`, and settings mention export/import, but no complete export endpoint/workflow is implemented. |
 | Link cloning | Missing | No clone operation is exposed in the link contract or API. |
 | Google and Apple login | Missing | SnapURL currently implements email/password authentication. InApp exposes Google and Apple sign-in. |
-| Billing and subscriptions | UI/demo gap | SnapURL displays plan and billing controls, but there is no implemented payment, upgrade, downgrade, or subscription lifecycle. |
+| Billing and subscriptions | Not built, and no longer implied | The unbacked controls are gone: no `Manage billing` button, and no quota gauge drawing a cap nothing enforces. The settings page now says everything is free and nothing is metered, which is true. Reasoning in [DECISIONS.md](./DECISIONS.md). |
 
 ## Partial or parity features
 

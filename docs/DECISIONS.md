@@ -334,6 +334,38 @@ access to this account.
 Lambda's configuration. That was already true of the database password before this
 change, and it is the same trade, made once, for the same reason.
 
+### Billing: the controls are removed rather than faked
+
+**Asked by #242, whose own answer — "removing is the honest interim state" — is the one
+I took, for a reason worth recording.**
+
+Real billing is not buildable here. There is no payment provider configured, no
+credentials for one, and the brief this work runs under does not add dependencies — a
+provider SDK is exactly that. So the choice was never "implement or remove"; it was
+"remove, or leave a button that lies."
+
+What was actually unbacked, once separated from what was real:
+
+| | |
+| --- | --- |
+| `Manage billing` button | **Nothing behind it.** No payment integration, no upgrade path. Removed. |
+| The click quota bar | `clicksUsed` is genuinely counted from the rollups. `clicksIncluded` is a real column that **nothing reads but the display** — no code anywhere enforces it. The bar therefore drew a cap that does not exist, filled to 100%, and kept going. Now a plain count. |
+| "Five domains on the free plan" | Contradicted the settings page, which said Custom domains: Unlimited. Nothing enforces either. The landing page was the unbacked one. |
+
+`clicksIncluded` stays as a column and a contract field. It is real data, and a future
+billing implementation would want it — the problem was presenting it as a limit, not
+storing it.
+
+The domains contradiction is the part worth dwelling on. Two screens disagreed about the
+same number and neither was enforced, which is the same failure as the analytics and
+conversions disagreement above: a reader who notices stops trusting both screens, not
+just the wrong one.
+
+**What would revisit it:** a decision to charge for this, which needs a provider, a
+plan model, entitlement enforcement on the write paths, and an upgrade/downgrade
+lifecycle. That is a feature, not a button. Until it exists, the settings page says
+everything is free and nothing is metered, which has the advantage of being true.
+
 ### Third-party tracking pixels: declined
 
 **Asked by #243, which was right to refuse to be implemented silently.**

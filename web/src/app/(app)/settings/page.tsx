@@ -65,7 +65,6 @@ export default function SettingsPage() {
     }
   }
 
-  const usedPct = ws ? Math.min(100, Math.round((ws.clicksUsed / ws.clicksIncluded) * 100)) : 0;
 
   return (
     <>
@@ -251,18 +250,18 @@ export default function SettingsPage() {
 
         <div className="flex flex-col gap-3.5">
           <Card>
-            <CardHeader title="Plan & usage" right={<Chip tone="accent">{ws?.plan ?? "—"}</Chip>} />
+            <CardHeader title="Usage" right={<Chip tone="accent">{ws?.plan ?? "—"}</Chip>} />
             <CardBody className="flex flex-col gap-3.5">
-              <div>
-                <div className="flex justify-between text-[11.5px] text-ink-3 mb-[6px]">
-                  <span>Clicks this month</span>
-                  <b className="text-ink-2 font-mono tnum">
-                    {ws ? `${ws.clicksUsed.toLocaleString()} / ${ws.clicksIncluded.toLocaleString()}` : "—"}
-                  </b>
-                </div>
-                <div className="h-1 bg-surface-4 rounded-full overflow-hidden">
-                  <i className="block h-full bg-accent rounded-full" style={{ width: `${usedPct}%` }} />
-                </div>
+              {/* A real number, counted from the click rollups for the calendar
+                  month. It used to be drawn as a bar against clicksIncluded,
+                  which implied a cap — and nothing anywhere enforces one, so
+                  the bar filled up and then simply kept going. A count that is
+                  true beats a gauge that is not. */}
+              <div className="flex justify-between items-baseline">
+                <span className="text-[12.5px] text-ink-3">Clicks this month</span>
+                <b className="text-ink font-mono tnum text-[17px]">
+                  {ws ? ws.clicksUsed.toLocaleString() : "—"}
+                </b>
               </div>
               <div className="flex flex-col">
                 {["Links", "QR codes", "Destination edits", "Custom domains", "Bio pages", "Team members"].map((k) => (
@@ -272,11 +271,18 @@ export default function SettingsPage() {
                   </div>
                 ))}
               </div>
+              {/* The "Manage billing" button that used to sit here went
+                  nowhere: there is no payment integration, no entitlement
+                  enforcement and no upgrade path behind it. A control that
+                  does nothing is worse than an absent one, because someone
+                  eventually presses it. See docs/DECISIONS.md. */}
               <div className="px-[13px] py-[11px] bg-wash-good rounded-[var(--radius-sm)] text-[12.5px] text-good leading-[1.5]">
-                <b>Clicks are the only thing we count.</b>{" "}
-                <span className="text-ink-2">Nothing else is metered, on any plan.</span>
+                <b>Everything is free while SnapURL is in development.</b>{" "}
+                <span className="text-ink-2">
+                  Nothing is metered and there is no billing to manage. Clicks are counted so you can see them, not
+                  to charge for them.
+                </span>
               </div>
-              <Button className="justify-center">Manage billing</Button>
             </CardBody>
           </Card>
 
