@@ -147,9 +147,9 @@ async function main() {
     }
 
     await sql`
-      update links l set clicks = t.c, unique_clicks = t.u
-      from (select link_id, sum(clicks)::int c, sum(uniques)::int u from click_daily group by link_id) t
-      where l.id = t.link_id`;
+      insert into link_counters (link_id, clicks, unique_clicks)
+      select link_id, sum(clicks)::int, sum(uniques)::int from click_daily group by link_id
+      on conflict (link_id) do update set clicks = excluded.clicks, unique_clicks = excluded.unique_clicks`;
 
     console.log("  adding conversions...");
     for (let daysAgo = 29; daysAgo >= 0; daysAgo--) {

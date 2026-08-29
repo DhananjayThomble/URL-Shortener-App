@@ -106,10 +106,11 @@ export async function sweepExpired(db: Database): Promise<number> {
     with newly_expired as (
       select l.id
       from links l
+      left join link_counters lc on lc.link_id = l.id
       where l.archived_at is null
         and (
           (l.expires_at is not null and l.expires_at <= now())
-          or (l.click_limit is not null and l.clicks >= l.click_limit)
+          or (l.click_limit is not null and coalesce(lc.clicks, 0) >= l.click_limit)
         )
         and not exists (
           select 1 from projection_outbox o

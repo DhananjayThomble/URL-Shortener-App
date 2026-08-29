@@ -1,0 +1,7 @@
+{
+  "task_id": "task-link-counters",
+  "task_description": "Issue #270 (architecture epic #267 Phase 1): Move the denormalised click counters (clicks, unique_clicks) off the 'links' table into a new 'link_counters' table keyed by link_id, so the rollup worker stops writing the table the redirect hot path reads. Recommendation (a): keyed-by-link_id table for a cheap single-key read on the click-limit gate. Update schema, add migration 0009 (create + backfill + drop columns), change the worker rollup to upsert into link_counters, make the redirect resolver LEFT JOIN link_counters (coalesce to 0) keeping ResolvedLink unchanged, update every API reader (links list/get/exportCsv status filters, conversions byLink) to source from link_counters, and update the DB tests. Done when: no scheduled job UPDATEs links, gateFor still enforces click limits from the new location, and ResolvedLink is unchanged.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}

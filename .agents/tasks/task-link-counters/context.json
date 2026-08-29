@@ -1,0 +1,30 @@
+{
+  "project_type": "pnpm monorepo, TypeScript. NestJS API (apps/api), Fastify-style redirect service (apps/redirect), background worker (apps/worker), Next.js web (web), shared packages (packages/database Drizzle ORM + migrations, packages/contract, packages/domain).",
+  "language": "TypeScript",
+  "build_system": "pnpm workspaces. Root scripts: build = 'pnpm -r build'; type-check = 'pnpm build:packages && pnpm -r type-check'; test = 'pnpm build:packages && pnpm -r test'. Drizzle migrations generated via 'pnpm db:generate' (drizzle-kit) but hand-written SQL is precedented (0007, 0008). db:up/db:migrate require Docker Postgres which is NOT available in this sandbox.",
+  "test_framework": "Vitest across packages. DB-gated suites guard on process.env.DATABASE_URL and use describe.skip when it is unset (apps/worker/src/jobs/rollup.test.ts, apps/api/src/links/links.service.integration.test.ts). Non-DB unit tests run locally.",
+  "build_command": "NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm build (web build REQUIRES this env var). rm -rf web/.next before web type-check/build to clear stale generated route types.",
+  "test_command": "pnpm test (DB-gated suites skip locally without DATABASE_URL; they run in CI).",
+  "verification_instructions": "From repo root (cd URL-Shortener-App): 1) pnpm install; 2) pnpm type-check; 3) rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm build; 4) pnpm test. Also run 'pnpm --filter @snapurl/database generate' (or the check equivalent) and confirm drizzle-kit reports NO drift between the schema and migrations (i.e. it does not want to emit a new migration for the links/link_counters change). DB-gated tests run in CI (the 'Verify' workflow, required check 'Type-check, build, test') which provisions Postgres 18 and applies migrations.",
+  "snapshot_or_generated_files": "packages/database/drizzle/*.sql migrations and packages/database/drizzle/meta/*_snapshot.json + _journal.json. New migration is 0009. drizzle-kit generate produces the .sql + snapshot + journal entry; hand-editing the SQL for data operations (backfill) is precedented (see 0007, 0008). The schema declaration in packages/database/src/schema/links.ts MUST stay in sync so 'drizzle-kit generate' reports no drift.",
+  "setup_instructions": "cd URL-Shortener-App && pnpm install. Node v22, pnpm 11.",
+  "environment_constraints": "Sandbox network: no Docker daemon usable (podman-backed, cannot start postgres:18-alpine; crun cgroup error). 'pnpm db:up' has no working compose provider. Therefore DB-gated tests (rollup.test.ts, links.service.integration.test.ts) SKIP locally and must be verified via CI. Run bash from workspace root as 'cd URL-Shortener-App/...'; absolute cwd triggers a 'spawn bwrap' error. Verify type-check + build + non-DB tests locally; write/update the DB tests correctly and rely on the CI 'Verify' workflow as the arbiter.",
+  "contribution_requirements": "Adhere to code style; keep changes surgical. The API is being actively developed by another session: change ONLY what reads the two columns; do not refactor surrounding code. External contract shape (packages/contract Link.clicks/uniqueClicks) MUST remain unchanged. ResolvedLink shape MUST be byte-for-byte unchanged.",
+  "key_patterns": "Denormalised counters clicks/unique_clicks currently live on the 'links' table (packages/database/src/schema/links.ts ~lines 118-121). The rollup (apps/worker/src/jobs/rollup.ts, final UPDATE) recomputes them from click_daily (recompute-not-increment, idempotent). The redirect resolver (apps/redirect/src/resolver.ts) reads them into ResolvedLink.clicks; gateFor (apps/redirect/src/main.ts ~line 176) enforces the click limit off ResolvedLink.clicks. The API links list/get select the whole 'links' row via select({ link: links }) and map through LinkRow (apps/api/src/links/links.mapper.ts) which expects clicks/uniqueClicks fields; the list status filters reference links.clicks in raw SQL; conversions.service.ts selects/groups by links.clicks; exportCsv emits link.clicks/uniqueClicks. Migrations: hand-written SQL with drizzle-managed constraint names (see 0008). uuidv7 default for ids.",
+  "relevant_files": [
+    "packages/database/src/schema/links.ts (declare link_counters table; drop clicks/uniqueClicks columns from links; add relations)",
+    "packages/database/drizzle/0009_*.sql (NEW hand-written migration: create link_counters, backfill from links, drop the two columns)",
+    "packages/database/drizzle/meta/_journal.json (add idx 9 entry) and packages/database/drizzle/meta/0009_snapshot.json (NEW)",
+    "apps/worker/src/jobs/rollup.ts (final UPDATE links -> UPSERT into link_counters ON CONFLICT (link_id))",
+    "apps/worker/src/jobs/rollup.test.ts (the 'writes the denormalised counters on links from the rollups' test reads select clicks, unique_clicks from links -> must read from link_counters)",
+    "apps/redirect/src/resolver.ts (LEFT JOIN link_counters, coalesce clicks to 0; ResolvedLink unchanged)",
+    "apps/redirect/src/main.ts (gateFor - no change needed; confirm it still reads link.clicks populated from link_counters)",
+    "apps/api/src/links/links.mapper.ts (LinkRow currently expects clicks/uniqueClicks; keep the DTO fields, source them from the counter)",
+    "apps/api/src/links/links.service.ts (list/get select({link: links}) + raw SQL status filters referencing links.clicks; exportCsv reads link.clicks/uniqueClicks -> source from link_counters via join)",
+    "apps/api/src/conversions/conversions.service.ts (byLink select/groupBy links.clicks -> join link_counters)",
+    "apps/api/src/links/links.service.integration.test.ts (addLink seeds clicks on links insert -> seed link_counters instead)",
+    "packages/contract (Link.clicks/uniqueClicks contract shape - confirm unchanged)",
+    "web/src/lib/api/fixtures.ts (frontend fixtures with clicks/uniqueClicks - contract-level, unchanged)"
+  ],
+  "directory_structure": "apps/{api,redirect,worker}/src; packages/{database,contract,domain}/src; web/src. Migrations in packages/database/drizzle with meta/ snapshots + _journal.json."
+}

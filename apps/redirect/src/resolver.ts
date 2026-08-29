@@ -1,4 +1,4 @@
-import { and, domains, eq, links, routingRules, sql, type Database } from "@snapurl/database";
+import { and, domains, eq, linkCounters, links, routingRules, sql, type Database } from "@snapurl/database";
 import type { RoutingRule } from "@snapurl/contract";
 
 /* ============================================================
@@ -64,9 +64,10 @@ export class PostgresLinkResolver implements LinkResolver {
 
   async resolve(host: string, slug: string): Promise<ResolvedLink | null> {
     const [row] = await this.db
-      .select({ link: links, domainId: domains.id })
+      .select({ link: links, domainId: domains.id, clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)` })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
+      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
       .where(
         and(
           sql`lower(${domains.domain}) = ${normaliseHost(host)}`,
@@ -103,7 +104,7 @@ export class PostgresLinkResolver implements LinkResolver {
       activatesAt: row.link.activatesAt,
       scheduledTo: row.link.scheduledTo,
       clickLimit: row.link.clickLimit,
-      clicks: row.link.clicks,
+      clicks: row.clicks,
       hasPassword: Boolean(row.link.passwordHash),
       forwardQuery: row.link.forwardQuery,
       deepLink: row.link.deepLink,
