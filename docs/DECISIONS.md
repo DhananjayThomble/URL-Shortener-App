@@ -334,6 +334,47 @@ access to this account.
 Lambda's configuration. That was already true of the database password before this
 change, and it is the same trade, made once, for the same reason.
 
+### Third-party tracking pixels: declined
+
+**Asked by #243, which was right to refuse to be implemented silently.**
+
+The competitor offers Meta and Google pixels on redirects. This does not, and the
+decision is to keep it that way. Four reasons, in the order they'd bite.
+
+**It cannot be done with a 302.** A pixel has to execute in the visitor's browser, so
+the redirect stops being a redirect and becomes an HTML interstitial that loads
+third-party script, waits for it, then navigates. That throws away the reason
+`apps/redirect` exists as a separate dependency-light service on the hot path, and it
+puts a full page load in front of every QR scan on mobile data. The smoke suite now
+asserts that a successful redirect is a 3xx and not HTML, so this cannot be reintroduced
+by accident.
+
+**It is unlawful in the EU and UK without prior consent.** ePrivacy requires consent
+before non-essential third-party storage. So the interstitial needs a consent banner —
+a cookie banner in the middle of a redirect, shown to everyone who clicks a short link.
+That is a worse product than not having the feature, and the version without the banner
+is worse still, because it is illegal rather than merely annoying.
+
+**Three public claims would have to be reworded**, and the schema's guarantees would
+stop being mechanisms and become marketing: "no tracking cookies" on the landing page,
+"we do not set cookies, and we never sell click data" on the public preview page, and
+"nothing is stored on their device" in settings. Giving click data away to Meta for
+free is not meaningfully better than selling it.
+
+**The need behind the request is already met, server-side.** People asking for pixels
+want ad-campaign attribution. `POST /conversions` exists for exactly that — scoped to an
+API key so the customer's own site reports the conversion — alongside
+`conversion.recorded` webhooks and UTM forwarding, so the advertiser's own analytics
+attributes the click. That reaches the same business outcome without putting a third
+party on the visitor's device, and it keeps working for the growing share of visitors
+whose browsers block pixels outright.
+
+**What would revisit it:** a deliberate decision to stop competing on privacy. #243
+already describes the honest shape if so — opt-in per link, disclosed on the public
+preview page, marketing copy changed first. The ordering in that sentence is the
+important part: copy first, then disclosure, then code. Shipping the code first is how
+a privacy product becomes a surveillance product without anyone deciding to.
+
 ### City-level geo: CloudFront's header, never an IP, never coordinates
 
 **Asked by #240, which was right to block on it.**

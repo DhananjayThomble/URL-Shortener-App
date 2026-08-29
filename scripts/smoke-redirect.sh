@@ -141,6 +141,19 @@ if dbq "select column_name from information_schema.columns where table_name='cli
   bad "click_events stores no coordinates" "a latitude/longitude column exists"
 else ok "click_events has no coordinate columns"; fi
 
+# A tracking pixel cannot run inside a 302 — it needs an HTML interstitial to
+# execute third-party script in the visitor's browser. Asserting that a
+# successful redirect is still a bare 3xx turns "we don't do that" from a
+# claim on the landing page into something CI enforces. See DECISIONS.md.
+RH=$(curl -s -o /dev/null -D - "$RD/$RUN-plain" | tr -d '\r')
+if echo "$RH" | grep -qi "content-type: *text/html"; then
+  bad "a redirect is a redirect, not an interstitial" "$(echo "$RH" | head -3)"
+else ok "a redirect is a redirect, not an interstitial"; fi
+
+BODY_BYTES=$(curl -s "$RD/$RUN-plain" | wc -c | tr -d '[:space:]')
+if [ "$BODY_BYTES" -lt 256 ]; then ok "the redirect carries no page to hang a pixel on ($BODY_BYTES bytes)";
+else bad "redirect body is large enough to be a page" "$BODY_BYTES bytes"; fi
+
 echo
 echo "----------------------------------------"
 echo "  $PASSES passed, $FAILS failed"
