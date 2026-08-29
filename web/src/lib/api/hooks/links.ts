@@ -8,7 +8,6 @@ import {
   BulkCreateLinksResult,
   Link,
   LinkList,
-  type BulkCreateLinksInput,
   type CloneLinkInput,
   type CreateLinkInput,
   type ListLinksQuery,
@@ -106,8 +105,12 @@ export function useUpdateLink() {
 export function useBulkCreateLinks() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: BulkCreateLinksInput) =>
-      request("/links/bulk", BulkCreateLinksResult, { method: "POST", body: input }),
+    /* Typed as CreateLinkInput[] here even though the endpoint accepts rows
+       loosely. The looseness exists so the *server* can attribute a bad row to
+       its index; there is no reason for the dashboard to send anything it
+       cannot describe. */
+    mutationFn: (links: CreateLinkInput[]) =>
+      request("/links/bulk", BulkCreateLinksResult, { method: "POST", body: { links } }),
     onSuccess: (result) => {
       // Only worth invalidating when something was actually written.
       if (result.created > 0) {

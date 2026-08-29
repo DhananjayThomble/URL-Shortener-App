@@ -172,7 +172,23 @@ export type UpdateLinkInput = z.infer<typeof UpdateLinkInput>;
  * that times out halfway and leaves the caller guessing.
  */
 export const BulkCreateLinksInput = z.object({
-  links: z.array(CreateLinkInput).min(1, "Add at least one link.").max(100, "100 links per batch."),
+  /**
+   * Rows are deliberately **not** validated here.
+   *
+   * `z.array(CreateLinkInput)` is the obvious spelling and it defeats the
+   * feature: the validation pipe rejects the whole request before the handler
+   * runs, so one malformed URL — the single most common thing wrong with a
+   * pasted list — comes back as `links.1.destination: ...` and never reaches
+   * the per-row report this endpoint exists to produce.
+   *
+   * Each row is parsed against CreateLinkInput individually inside the
+   * service, where a failure can be attributed to the row that caused it.
+   * Only the envelope is checked here: an array of objects, within the cap.
+   */
+  links: z
+    .array(z.record(z.string(), z.unknown()))
+    .min(1, "Add at least one link.")
+    .max(100, "100 links per batch."),
 });
 export type BulkCreateLinksInput = z.infer<typeof BulkCreateLinksInput>;
 

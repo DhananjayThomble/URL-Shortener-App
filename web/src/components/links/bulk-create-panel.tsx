@@ -65,7 +65,7 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
         }) as CreateLinkInput,
     );
     try {
-      await bulk.mutateAsync({ links });
+      await bulk.mutateAsync(links);
     } catch {
       /* surfaced below via bulk.error */
     }

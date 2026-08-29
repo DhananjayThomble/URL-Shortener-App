@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
+import { CreateLinkInput as CreateLinkInputSchema } from "@snapurl/contract";
 import type {
   BulkCreateLinksInput,
   BulkCreateLinksResult,
@@ -189,6 +190,12 @@ export class LinksService {
     const rows = input.links;
     const errors = new Map<number, string>();
 
+    /* Echoed back on every failure so the UI can name the row without
+       re-reading its own input. Read off the raw row, because a row that
+       failed to parse has no typed destination to read. */
+    const destinationOf = (raw: Record<string, unknown>) =>
+      typeof raw.destination === "string" ? raw.destination : "";
+
     /* One lookup per distinct domain rather than per row: a hundred links on
        the same domain is the normal shape of a batch. */
     const domainCache = new Map<string, { id: string; name: string } | string>();
@@ -221,7 +228,20 @@ export class LinksService {
     };
     const prepared: Prepared[] = [];
 
-    for (const [index, row] of rows.entries()) {
+    for (const [index, raw] of rows.entries()) {
+      /* Parsed per row rather than by the pipe. See BulkCreateLinksInput: a
+         schema on the array would reject the whole request for one bad URL
+         and never reach this report. */
+      const parsed = CreateLinkInputSchema.safeParse(raw);
+      if (!parsed.success) {
+        errors.set(
+          index,
+          parsed.error.issues.map((i) => `${i.path.join(".") || "row"}: ${i.message}`).join(" "),
+        );
+        continue;
+      }
+      const row = parsed.data;
+
       const problems = [...validateRoutingChain(row.rules), ...validateSchedule(row.activatesAt, row.expiresAt)];
       if (row.slug) {
         const shape = isSlugAvailableShape(row.slug);
@@ -302,10 +322,10 @@ export class LinksService {
       return {
         created: 0,
         failed: rows.length,
-        results: rows.map((row, index) => ({
+        results: rows.map((raw, index) => ({
           ok: false as const,
           index,
-          destination: row.destination,
+          destination: destinationOf(raw),
           error:
             errors.get(index) ??
             "Not created — another row in this batch was invalid, and a batch is all or nothing.",
