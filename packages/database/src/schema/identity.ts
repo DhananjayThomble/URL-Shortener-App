@@ -30,8 +30,17 @@ export const users = pgTable(
     id: id(),
     name: varchar("name", { length: 120 }).notNull(),
     email: varchar("email", { length: 255 }).notNull(),
-    /** argon2id. Never bcrypt — it silently truncates at 72 bytes. */
-    passwordHash: text("password_hash").notNull(),
+    /**
+     * argon2id. Never bcrypt — it silently truncates at 72 bytes.
+     *
+     * Nullable since OAuth: a user who has only ever signed in with Google or
+     * Apple has no password, and null says that honestly rather than storing a
+     * placeholder someone might one day try to verify against. `AuthService`
+     * refuses the password path outright when this is null — see the guard
+     * there, which exists so the behaviour is a decision rather than a
+     * consequence of argon2 happening to throw.
+     */
+    passwordHash: text("password_hash"),
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
 
     /* G6 — the team page renders a 2FA column, so it needs a real flow. */
@@ -140,6 +149,35 @@ export const refreshTokens = pgTable(
     index("refresh_tokens_user_idx").on(t.userId),
     index("refresh_tokens_family_idx").on(t.familyId),
   ],
+);
+
+/**
+ * A sign-in identity held by an external provider.
+ *
+ * Separate from `users` rather than a pair of columns on it, because one
+ * account may legitimately carry several — Google today, Apple tomorrow — and
+ * a column pair forces a choice between them.
+ *
+ * The unique index is on (provider, subject), never on email. `subject` is the
+ * provider's stable identifier for the person; email is a display attribute
+ * that providers allow to change, and treating a mutable attribute as an
+ * identity key is how accounts get taken over.
+ */
+export const oauthIdentities = pgTable(
+  "oauth_identities",
+  {
+    id: id(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 20 }).notNull(),
+    /** The `sub` claim. Stable for the life of the account at that provider. */
+    subject: varchar("subject", { length: 255 }).notNull(),
+    /** What the provider said at link time. Informational; never used to match. */
+    email: varchar("email", { length: 255 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("oauth_identities_provider_subject_key").on(t.provider, t.subject)],
 );
 
 export const usersRelations = relations(users, ({ many }) => ({

@@ -3,6 +3,7 @@ import type { FastifyRequest } from "fastify";
 import {
   LoginInput,
   LogoutInput,
+  OAuthSignInInput,
   RefreshInput,
   RegisterInput,
   TotpDisableInput,
@@ -28,6 +29,15 @@ export class AuthController {
   @HttpCode(200)
   login(@Body(zodBody(LoginInput)) input: LoginInput, @Req() req: FastifyRequest) {
     return this.auth.login(input, req.headers["user-agent"]);
+  }
+
+  /* Public by necessity — this is how someone without a session gets one. The
+     ID token is the credential, and OAuthService treats it as hostile until
+     every claim checks out. */
+  @Public()
+  @Post("oauth")
+  oauth(@Body(zodBody(OAuthSignInInput)) input: OAuthSignInInput, @Req() req: FastifyRequest) {
+    return this.auth.oauthSignIn(input.provider, input.idToken, req.headers["user-agent"]);
   }
 
   @Public()
