@@ -84,6 +84,56 @@ output will never be served to anyone." Never set it on a real deploy — it
 disables the only thing standing between a missing variable and a silently
 broken production site.
 
+### Continuous deployment, and what actually gates it
+
+The Vercel project is connected to the GitHub repository, so deploys are
+triggered by pushes, not by a workflow in this repo:
+
+| Trigger | Result |
+| --- | --- |
+| push to `main` | production deploy |
+| open/update a pull request | preview deploy on its own URL |
+
+**Vercel does not wait for GitHub Actions.** A preview builds even when
+`verify.yml` is red — the two run in parallel and neither knows about the
+other. That is fine for previews and would be dangerous for production, which
+is why the gate is somewhere else: `main` is a protected branch requiring the
+`Type-check, build, test` check to pass before anything can merge. Nothing
+reaches `main` without CI, so nothing reaches production without CI.
+
+If that protection is ever removed, this becomes an unguarded pipeline. The
+branch rule *is* the deployment gate.
+
+There is deliberately no `vercel deploy` step in `.github/workflows/`. Adding
+one alongside the Git integration would deploy every commit twice, and the
+second deploy would race the first.
+
+### Not deploying when nothing changed
+
+`web/vercel.json` sets an `ignoreCommand`:
+
+```
+git diff --quiet HEAD^ HEAD -- :/web :/packages :/pnpm-lock.yaml
+```
+
+Exit 0 means "nothing relevant changed, skip the build". A commit touching only
+`apps/worker` or `infra/` therefore does not redeploy the dashboard.
+
+The `:/` prefix is a git pathspec magic word meaning "relative to the
+repository root", which is what makes this work from inside `web/`. If the
+command errors — a shallow clone with no `HEAD^`, for instance — Vercel builds
+rather than skips, which is the right way round for a guard to fail.
+
+### `NEXT_PUBLIC_USE_FIXTURES` must not be set on the project
+
+It is opt-in and defaults to off, so setting it can only do harm: `"true"`
+fails the build by design, and `"false"` is redundant. Leave it absent.
+
+Also worth knowing: `NEXT_PUBLIC_*` variables are inlined into the browser
+bundle and readable by every visitor. Marking one "Sensitive" in the Vercel
+dashboard hides it from you, not from them. Nothing that needs protecting
+should ever carry that prefix.
+
 ### CORS
 
 The API allows `WEB_ORIGIN` only (`apps/api/src/config/env.ts`). After the
