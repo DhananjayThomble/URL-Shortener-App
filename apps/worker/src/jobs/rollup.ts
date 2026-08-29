@@ -160,28 +160,38 @@ export interface RetentionResult {
 /**
  * Make sure every day that could receive a click has a partition.
  *
- * Idempotent and cheap — it is a catalogue lookup per day, and only does real
- * work on the one day a fortnight that is genuinely new.
+ * Idempotent and cheap — a catalogue lookup per day, doing real work only on
+ * the one genuinely new day per pass.
  *
- * This has to run *before* the retention pass in a maintenance cycle. A pass
- * that dropped old partitions and then failed would still have provisioned
- * today's; the reverse ordering could leave the table with no partition for
- * today, which is exactly the state the DEFAULT partition exists to cover but
- * which is not worth entering deliberately.
+ * **Best-effort by design.** `ATTACH PARTITION` takes an ACCESS EXCLUSIVE lock
+ * on the DEFAULT partition, which conflicts with every concurrent insert, and
+ * the redirect path inserts continuously. So the SQL function waits a bounded
+ * two seconds and gives up rather than stalling the hot path or deadlocking
+ * against a writer. A day it could not attach is attached by a later pass; the
+ * DEFAULT partition is what guarantees an insert cannot fail in the meantime.
+ *
+ * The returned count is days *attached*, which is why it can be lower than the
+ * window. A count that stays short across several passes means provisioning is
+ * losing to write traffic — worth knowing, and not an outage.
+ *
+ * Runs *before* the retention pass. A cycle that dies partway has then still
+ * done the one job the redirect path depends on.
  */
 export async function ensureClickPartitions(
   db: Database,
   daysAhead = PARTITION_LOOKAHEAD_DAYS,
 ): Promise<number> {
   const result = (await db.execute(sql`
-    select count(*)::int as n
+    select count(part)::int as n
     from generate_series(
       current_date - 1,
       current_date + ${daysAhead}::int,
       interval '1 day'
     ) as d,
-    lateral click_events_ensure_partition(d::date)
+    lateral click_events_ensure_partition(d::date) as part
   `)) as unknown as [{ n: number }];
+  /* count(part) rather than count(*): the function returns NULL for a day it
+     declined to attach, and counting rows would report those as provisioned. */
   return result[0]?.n ?? 0;
 }
 

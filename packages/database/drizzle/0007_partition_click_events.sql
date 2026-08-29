@@ -100,48 +100,75 @@ DECLARE
 	lo timestamptz := target_day::timestamp AT TIME ZONE 'UTC';
 	hi timestamptz := (target_day + 1)::timestamp AT TIME ZONE 'UTC';
 BEGIN
+	/* Attached, not merely existing.
+	   A previous call may have created the table and then failed to attach it
+	   (see the lock_timeout below), and treating that as done would leave a
+	   permanently orphaned table while the day's rows piled into the default. */
 	IF EXISTS (
-		SELECT 1 FROM pg_class
-		WHERE relname = part_name AND relnamespace = 'public'::regnamespace
+		SELECT 1 FROM pg_inherits i
+		JOIN pg_class c ON c.oid = i.inhrelid
+		WHERE i.inhparent = 'public.click_events'::regclass AND c.relname = part_name
 	) THEN
 		RETURN part_name;
 	END IF;
 
-	/* The check above is advisory, not a lock. Two workers running a
-	   maintenance pass at the same time can both pass it for the same day —
-	   reserved concurrency allows two worker instances, and EventBridge retries
-	   on top of that, so this is an ordinary Tuesday rather than a corner case.
-	   Losing the race is not an error worth propagating: the other pass is
-	   creating exactly the partition this one wanted. */
+	/* One provisioner at a time. Reserved concurrency allows two worker
+	   instances and EventBridge retries on top of that, so two passes racing on
+	   the same day is ordinary rather than exotic. Transaction-scoped and
+	   re-entrant within a session, so a single pass looping over a fortnight of
+	   days takes it once. */
+	IF NOT pg_try_advisory_xact_lock(hashtext('click_events_ensure_partition')) THEN
+		RETURN NULL;
+	END IF;
+
 	BEGIN
 		EXECUTE format(
 			'CREATE TABLE %I (LIKE "click_events" INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
 			part_name
 		);
 	EXCEPTION WHEN duplicate_table THEN
-		RETURN part_name;
+		-- Left behind by an earlier attach that timed out. Reuse it.
+		NULL;
 	END;
 
-	EXECUTE format(
-		'WITH moved AS (
-			DELETE FROM "click_events_default"
-			WHERE "occurred_at" >= %L AND "occurred_at" < %L
-			RETURNING *
-		)
-		INSERT INTO %I SELECT * FROM moved',
-		lo, hi, part_name
-	);
+	/* ATTACH takes an ACCESS EXCLUSIVE lock on the DEFAULT partition, because it
+	   has to prove no row there belongs to the incoming range. That conflicts
+	   with every concurrent insert, and the redirect path inserts continuously.
+	
+	   Waiting on that lock is the wrong trade twice over: it stalls the hot
+	   path, and it can deadlock against a writer that already holds a row lock
+	   in the partition being scanned. So the wait is bounded and failure is not
+	   an error — provisioning is an optimisation, and the DEFAULT partition is
+	   what actually guarantees an insert cannot fail. A day we could not attach
+	   now is attached by a later pass; in the meantime its rows land in the
+	   default and are drained when it succeeds.
+	
+	   In steady state this contends with nothing, because a day is provisioned
+	   about a fortnight before any row targets it, so the default holds no rows
+	   in its range and the scan is trivial. */
+	SET LOCAL lock_timeout = '2s';
 
-	/* Same race, one step later: the winner may have attached between our
-	   CREATE and here. Postgres reports an already-attached table as
-	   invalid_table_definition rather than a dedicated code. */
 	BEGIN
+		EXECUTE format(
+			'WITH moved AS (
+				DELETE FROM "click_events_default"
+				WHERE "occurred_at" >= %L AND "occurred_at" < %L
+				RETURNING *
+			)
+			INSERT INTO %I SELECT * FROM moved',
+			lo, hi, part_name
+		);
+
 		EXECUTE format(
 			'ALTER TABLE "click_events" ATTACH PARTITION %I FOR VALUES FROM (%L) TO (%L)',
 			part_name, lo, hi
 		);
-	EXCEPTION WHEN invalid_table_definition OR invalid_object_definition THEN
-		NULL;
+	EXCEPTION
+		WHEN lock_not_available OR deadlock_detected THEN
+			RETURN NULL;
+		WHEN invalid_table_definition OR invalid_object_definition THEN
+			-- Another pass attached it between our check and here.
+			NULL;
 	END;
 
 	RETURN part_name;
@@ -185,8 +212,17 @@ BEGIN
 END;
 $fn$;--> statement-breakpoint
 
-/* Provision the days the existing rows need, plus a fortnight ahead so the
-   table is usable before the worker has run even once. */
+/* Provision the days the existing rows need, a week behind, and a fortnight
+   ahead.
+	
+   The window matters, not just its size. This migration runs with no concurrent
+   writers, so it is the one moment a past day can be attached cheaply — and a
+   past day is the expensive case, because rows for it may already sit in the
+   DEFAULT partition and ATTACH has to scan and lock it. Leaving the recent past
+   unprovisioned means the worker's first pass tries to attach yesterday while
+   the redirect path is inserting into it, which is precisely the contention the
+   bounded lock_timeout above exists to bail out of. Doing it here instead means
+   the worker only ever attaches empty future days. */
 DO $mig$
 DECLARE
 	d date;
@@ -198,7 +234,7 @@ BEGIN
 	INTO first_day, last_day
 	FROM "click_events_legacy";
 
-	first_day := least(coalesce(first_day, current_date), current_date);
+	first_day := least(coalesce(first_day, current_date), current_date - 7);
 	last_day  := greatest(coalesce(last_day, current_date), current_date + 14);
 
 	d := first_day;
