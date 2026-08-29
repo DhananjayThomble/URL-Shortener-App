@@ -4,6 +4,7 @@ import { AuthController } from "./auth.controller.js";
 import { AuthService } from "./auth.service.js";
 import { TokenService } from "./token.service.js";
 import { TotpService } from "./totp.service.js";
+import { OAuthService } from "./oauth.service.js";
 
 /* Global because AuthGuard is bound application-wide in app.module and needs
    TokenService wherever it runs. */
@@ -11,7 +12,7 @@ import { TotpService } from "./totp.service.js";
 @Module({
   imports: [JwtModule.register({})],
   controllers: [AuthController],
-  providers: [AuthService, TokenService, TotpService],
-  exports: [AuthService, TokenService, TotpService],
+  providers: [AuthService, TokenService, TotpService, OAuthService],
+  exports: [AuthService, TokenService, TotpService, OAuthService],
 })
 export class AuthModule {}

@@ -80,6 +80,24 @@ export type TotpVerifyInput = z.infer<typeof TotpVerifyInput>;
 export const TotpDisableInput = z.object({ password: z.string().min(1) });
 export type TotpDisableInput = z.infer<typeof TotpDisableInput>;
 
+/**
+ * Sign in with an ID token obtained from Google or Apple in the browser.
+ *
+ * The token, not an authorization code: the browser SDKs already return a
+ * signed ID token, and taking it directly avoids needing a client *secret*
+ * server-side — which Apple only issues as a JWT you must sign yourself and
+ * rotate twice a year.
+ *
+ * The response is the same shape as password login, including the TOTP
+ * challenge: a second factor the user turned on is not skipped because the
+ * first factor came from somewhere else.
+ */
+export const OAuthSignInInput = z.object({
+  provider: z.enum(["google", "apple"]),
+  idToken: z.string().min(1),
+});
+export type OAuthSignInInput = z.infer<typeof OAuthSignInInput>;
+
 /* G2 — logout was client-side only, so the refresh token stayed valid for its
    full 30-day life after the user signed out. This revokes the whole family. */
 export const LogoutInput = z.object({

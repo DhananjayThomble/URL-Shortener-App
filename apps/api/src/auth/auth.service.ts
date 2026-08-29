@@ -10,6 +10,7 @@ import { and, eq, isNull, sql } from "@snapurl/database";
 import {
   domains,
   memberships,
+  oauthIdentities,
   recoveryCodes,
   users,
   workspaces,
@@ -28,6 +29,7 @@ import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "./token.service.js";
 import { TotpService } from "./totp.service.js";
+import { OAuthService, type OAuthProvider } from "./oauth.service.js";
 
 /** "Dhananjay Thomble" → "DT". The UI renders these in avatars. */
 export function initialsOf(name: string): string {
@@ -51,6 +53,7 @@ export class AuthService {
     @Inject(ENV) private readonly env: Env,
     private readonly tokens: TokenService,
     private readonly totp: TotpService,
+    private readonly oauth: OAuthService,
   ) {}
 
   async register(input: RegisterInput, userAgent?: string): Promise<AuthSession> {
@@ -78,54 +81,154 @@ export class AuthService {
         .values({ name: input.name.trim(), email, passwordHash })
         .returning();
 
-      const baseSlug = slugify(input.name) || "workspace";
-      const [workspace] = await tx
-        .insert(workspaces)
-        .values({
-          name: `${input.name.trim()}'s workspace`,
-          slug: await uniqueWorkspaceSlug(tx, baseSlug),
-          defaultRedirect: "302",
-        })
-        .returning();
-
-      /* The shared short domain is a system domain owned by nobody, so every
-         workspace points at the same row rather than trying to claim it.
-         The first registration creates it; the rest find it. */
-      await tx
-        .insert(domains)
-        .values({
-          workspaceId: null,
-          domain: this.env.DEFAULT_DOMAIN,
-          isSystem: true,
-          status: "live",
-          ssl: "active",
-          verifiedAt: new Date(),
-        })
-        .onConflictDoNothing();
-
-      const [systemDomain] = await tx
-        .select({ id: domains.id })
-        .from(domains)
-        .where(sql`lower(${domains.domain}) = ${this.env.DEFAULT_DOMAIN.toLowerCase()}`)
-        .limit(1);
-
-      if (systemDomain) {
-        await tx.update(workspaces).set({ defaultDomainId: systemDomain.id }).where(eq(workspaces.id, workspace!.id));
-      }
-
-      await tx.insert(memberships).values({
-        workspaceId: workspace!.id,
-        userId: user!.id,
-        email,
-        role: "owner",
-        status: "active",
-        acceptedAt: new Date(),
-      });
-
-      return { user: user!, workspace: workspace!, role: "owner" as const };
+      const workspace = await this.provisionWorkspace(tx, user!.id, input.name, email);
+      return { user: user!, workspace, role: "owner" as const };
     });
 
     return this.issueSession(user, workspace.id, role, userAgent);
+  }
+
+  /**
+   * Everything a brand new account needs besides the user row.
+   *
+   * Shared by password registration and first-time OAuth sign-in so the two
+   * cannot drift into producing differently-shaped accounts — the kind of
+   * difference that surfaces months later as "domains work for people who
+   * signed up with email".
+   */
+  private async provisionWorkspace(tx: Executor, userId: string, displayName: string, email: string) {
+    const baseSlug = slugify(displayName) || "workspace";
+    const [workspace] = await tx
+      .insert(workspaces)
+      .values({
+        name: `${displayName.trim()}'s workspace`,
+        slug: await uniqueWorkspaceSlug(tx, baseSlug),
+        defaultRedirect: "302",
+      })
+      .returning();
+
+    /* The shared short domain is a system domain owned by nobody, so every
+       workspace points at the same row rather than trying to claim it.
+       The first registration creates it; the rest find it. */
+    await tx
+      .insert(domains)
+      .values({
+        workspaceId: null,
+        domain: this.env.DEFAULT_DOMAIN,
+        isSystem: true,
+        status: "live",
+        ssl: "active",
+        verifiedAt: new Date(),
+      })
+      .onConflictDoNothing();
+
+    const [systemDomain] = await tx
+      .select({ id: domains.id })
+      .from(domains)
+      .where(sql`lower(${domains.domain}) = ${this.env.DEFAULT_DOMAIN.toLowerCase()}`)
+      .limit(1);
+
+    if (systemDomain) {
+      await tx.update(workspaces).set({ defaultDomainId: systemDomain.id }).where(eq(workspaces.id, workspace!.id));
+    }
+
+    await tx.insert(memberships).values({
+      workspaceId: workspace!.id,
+      userId,
+      email,
+      role: "owner",
+      status: "active",
+      acceptedAt: new Date(),
+    });
+
+    return workspace!;
+  }
+
+  /**
+   * Sign in with an ID token from Google or Apple.
+   *
+   * Three cases, in the order they are checked, and the order is the security
+   * argument:
+   *
+   * 1. **The identity is already linked** — (provider, subject) matches a row.
+   *    Sign that user in. Email is never consulted, so a provider-side address
+   *    change cannot move the account.
+   * 2. **The email matches an existing account** — link, but only if the
+   *    provider asserts the address is verified. An unverified assertion is
+   *    someone typing an address into a form, and honouring it would let
+   *    anyone who can create an account at a sloppy provider claim any
+   *    SnapURL account by email. Refused rather than silently creating a
+   *    duplicate account, which would be confusing in a different way.
+   * 3. **Nobody has that email** — create the account with no password and
+   *    provision it exactly as registration does.
+   *
+   * Two-factor still applies. A user who turned TOTP on did so for this
+   * account; the provider having its own second factor is not something we can
+   * verify, and skipping ours would mean a compromised Google account walks
+   * straight past a control the person deliberately added.
+   */
+  async oauthSignIn(provider: OAuthProvider, idToken: string, userAgent?: string): Promise<LoginResult> {
+    const profile = await this.oauth.verify(provider, idToken);
+
+    const [linked] = await this.db
+      .select({ userId: oauthIdentities.userId })
+      .from(oauthIdentities)
+      .where(and(eq(oauthIdentities.provider, provider), eq(oauthIdentities.subject, profile.subject)))
+      .limit(1);
+
+    let userId = linked?.userId ?? null;
+
+    if (!userId) {
+      const [existing] = await this.db
+        .select({ id: users.id })
+        .from(users)
+        .where(sql`lower(${users.email}) = ${profile.email}`)
+        .limit(1);
+
+      if (existing) {
+        if (!profile.emailVerified) {
+          throw new UnauthorizedException(
+            "That provider has not verified this email address, so it cannot be linked to an existing account. Sign in with your password instead.",
+          );
+        }
+        await this.db
+          .insert(oauthIdentities)
+          .values({ userId: existing.id, provider, subject: profile.subject, email: profile.email });
+        userId = existing.id;
+      } else {
+        // Apple sends a name only on the very first authorisation, and may
+        // send none at all, so the local-part is the fallback rather than an
+        // empty string that would render as a blank account everywhere.
+        const displayName = profile.name ?? profile.email.split("@")[0] ?? "there";
+        userId = await this.db.transaction(async (tx) => {
+          const [user] = await tx
+            .insert(users)
+            .values({
+              name: displayName,
+              email: profile.email,
+              passwordHash: null,
+              // The provider checked it; recording that avoids asking again.
+              emailVerifiedAt: profile.emailVerified ? new Date() : null,
+            })
+            .returning();
+          await tx
+            .insert(oauthIdentities)
+            .values({ userId: user!.id, provider, subject: profile.subject, email: profile.email });
+          await this.provisionWorkspace(tx, user!.id, displayName, profile.email);
+          return user!.id;
+        });
+      }
+    }
+
+    const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) throw new UnauthorizedException();
+
+    if (user.totpEnabledAt && user.totpSecret) {
+      return { challenge: "totp" as const, challengeToken: await this.tokens.signChallengeToken(user.id) };
+    }
+
+    const membership = await this.primaryMembership(user.id);
+    return this.issueSession(user, membership.workspaceId, membership.role, userAgent);
   }
 
   async login(input: LoginInput, userAgent?: string): Promise<LoginResult> {
@@ -136,13 +239,25 @@ export class AuthService {
       .where(sql`lower(${users.email}) = ${email}`)
       .limit(1);
 
+    /* A user with no password hash signs in through a provider and cannot
+       authenticate here at all. argon2.verify would throw on null and the
+       catch below would turn that into `false`, which is the right answer by
+       accident — this makes it the right answer on purpose, and keeps the
+       dummy-hash timing for that case too.
+
+       The error stays the generic one. Saying "this account uses Google"
+       would be friendlier and would also confirm to an attacker that the
+       address is registered, which is the property the DUMMY_HASH comparison
+       below exists to protect. */
+    const hash = user?.passwordHash ?? null;
+
     // Always do the work, even for an unknown address, so response time does
     // not tell an attacker which emails have accounts.
-    const ok = user
-      ? await argon2.verify(user.passwordHash, input.password).catch(() => false)
+    const ok = hash
+      ? await argon2.verify(hash, input.password).catch(() => false)
       : await argon2.verify(DUMMY_HASH, input.password).catch(() => false);
 
-    if (!user || !ok) {
+    if (!user || !hash || !ok) {
       throw new UnauthorizedException("That email and password don't match.");
     }
 
@@ -226,6 +341,17 @@ export class AuthService {
   async disableTotp(userId: string, password: string): Promise<void> {
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user) throw new UnauthorizedException();
+    /* Turning 2FA off is a step down in security, so it is gated on proving
+       the first factor. An account that signs in through a provider has no
+       password to prove, and accepting one anyway — or letting argon2 throw
+       its way to a rejection — are both worse than saying so. Naming the
+       situation is safe here: the caller is already authenticated as this
+       user, so there is nothing left to enumerate. */
+    if (!user.passwordHash) {
+      throw new UnauthorizedException(
+        "This account signs in with a provider and has no password, so two-factor authentication can't be turned off this way.",
+      );
+    }
     if (!(await argon2.verify(user.passwordHash, password).catch(() => false))) {
       throw new UnauthorizedException("That password isn't right.");
     }

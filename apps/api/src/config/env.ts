@@ -35,6 +35,13 @@ export const EnvSchema = z.object({
      is not true. Either set this or soften the copy. See docs/DECISIONS.md A10. */
   GOOGLE_SAFE_BROWSING_API_KEY: z.string().optional(),
 
+  /* OAuth sign-in. Each provider is enabled by the presence of its client id
+     and switched off by its absence, so a deployment that has not set one up
+     simply does not offer it. The client id is public — it ships in the page
+     that starts the flow — so neither of these is a secret. */
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  APPLE_OAUTH_CLIENT_ID: z.string().optional(),
+
   /** Local dev writes mail to logs/outbox instead of sending. */
   MAIL_TRANSPORT: z.enum(["outbox", "ses"]).default("outbox"),
   MAIL_FROM: z.string().default("SnapURL <no-reply@snapurl.local>"),

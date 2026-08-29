@@ -195,6 +195,29 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== oauth sign-in =="
+# CI configures no client id, so both providers are switched off. A provider
+# that is off must refuse rather than half-run — this is the state most
+# deployments are in, and it is the one worth pinning.
+BODY=$(curl -s -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
+  -d '{"provider":"google","idToken":"eyJhbGciOiJSUzI1NiIsImtpZCI6IngifQ.e30.sig"}')
+check "an unconfigured provider is refused" 'not configured' "$BODY"
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
+  -d '{"provider":"google","idToken":"not-a-jwt"}')
+status "a malformed token is refused" "401" "$CODE" ""
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
+  -d '{"provider":"myspace","idToken":"x"}')
+status "an unknown provider fails validation" "400" "$CODE" ""
+
+# The endpoint has to be reachable without a session — it is how someone
+# without one gets a session — but it must never accept an empty credential.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
+  -d '{"provider":"google","idToken":""}')
+status "an empty token fails validation" "400" "$CODE" ""
+
+echo
 echo "== analytics geo =="
 BODY=$(curl -s "$API/analytics?range=30d" -H "Authorization: Bearer $ACCESS")
 check "analytics reports countries" '"countries"' "$BODY"
