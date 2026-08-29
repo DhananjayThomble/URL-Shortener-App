@@ -86,6 +86,12 @@ echo "== the worker rolls it up into click_daily =="
 # 30s), so allow ~90s (three cycles plus slack) for the click to appear in the
 # daily rollup. This is the assertion no unit test and no other smoke script
 # makes: proof the live worker folds click_events into click_daily.
+#
+# NOTE: the 90s budget assumes the compose worker's default ~30s rollup
+# interval. docker-compose.yml sets no ROLLUP_INTERVAL_SECONDS override, so the
+# default holds today. If that override is ever raised in docker-compose.yml,
+# raise this poll count to match (roughly 3x the interval), or a slow-but-
+# working rollup will look like a rollup bug here.
 DAILY=0
 for i in $(seq 1 90); do
   DAILY="$(dbq "select coalesce(sum(clicks),0) from click_daily where link_id in (select id from links where slug = '$SLUG')" | tr -d '[:space:]')"

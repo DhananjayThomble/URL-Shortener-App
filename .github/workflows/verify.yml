@@ -217,11 +217,21 @@ jobs:
       # redirect/worker are pino/fastify-pino). Match the structured marker
       # "level":50 rather than the bare word "error", which appears benignly in
       # URLs, slugs and info lines and would produce false positives.
+      #
+      # The GATE is scoped to api and redirect only. The issue's target is "a
+      # silently-broken ADAPTER" — the api/redirect HTTP surfaces serving
+      # wrong-but-2xx. The worker is deliberately excluded: it uses error-level
+      # logging for benign operational conditions (a stuck projection, a
+      # transient job retry logged as "job failed") that are not adapter
+      # regressions, so gating on them would false-positive and flake the run.
+      # A worker crash is still diagnosable — the "Container logs" step below
+      # dumps every service on failure, and a dead worker also fails the rollup
+      # assertion above.
       - name: Fail on container errors
         id: log_error_gate
         run: |
           found=0
-          for svc in api redirect worker; do
+          for svc in api redirect; do
             logs="$(docker compose --profile full logs --no-color "$svc" 2>&1)"
             if echo "$logs" | grep -F '"level":50'; then
               echo "::error::$svc logged a pino error-level line"
