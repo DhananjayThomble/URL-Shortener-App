@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { clickEvents, createDatabase, domains, eq, links, sql, workspaces, type Database } from "@snapurl/database";
+import { addHashed, createSketch, estimate, serialize } from "@snapurl/domain";
 import { rollupClicks } from "./rollup.js";
 
 /* ============================================================
@@ -145,6 +146,60 @@ describeDb("rollupClicks", () => {
     const after = await daily();
     expect(after.uniques).toBe(before.uniques);
     expect(after.uniques).toBeLessThanOrEqual(after.clicks);
+  });
+
+  it("re-merges against the stored sketch instead of overwriting it", async () => {
+    /* The convergence guarantee, stated directly. The rollup used to read the
+       stored sketch into Node, merge, and write "on conflict do update set
+       sketch = excluded.sketch" - a blind overwrite of a snapshot read that
+       would drop another writer's registers if two workers ever processed the
+       same (link, day) at once. The fix locks the row (insert-do-nothing then
+       select-for-update) and merges against the current committed value.
+
+       Simulate the "another writer already stored a sketch" case on a fresh
+       link/day: pre-seed click_daily_uniques with a sketch that already counts
+       one visitor, then roll up a batch of different visitors. If the rollup
+       overwrote, the pre-seeded visitor would be lost and uniques would equal
+       only the batch's distinct count; because it re-merges, the stored sketch
+       is the union and uniques covers both. */
+    const seededDay = new Date(day);
+    seededDay.setUTCDate(seededDay.getUTCDate() - 1);
+    const seededDayKey = seededDay.toISOString().slice(0, 10);
+    const seededAt = new Date(seededDay);
+    seededAt.setUTCHours(12, 0, 0, 0);
+
+    const preSeed = createSketch();
+    addHashed(preSeed, "preexisting-visitor");
+    await db.execute(sql`
+      insert into click_daily_uniques (link_id, day, sketch)
+      values (${linkId}::uuid, ${seededDayKey}::date, ${serialize(preSeed)})
+      on conflict (link_id, day) do update set sketch = excluded.sketch
+    `);
+    // click_daily needs a row for the same key so the derived-uniques update lands.
+    await db.execute(sql`
+      insert into click_daily (link_id, workspace_id, day, clicks, uniques, scans, blocked)
+      values (${linkId}::uuid, ${workspaceId}::uuid, ${seededDayKey}::date, 0, 0, 0, 0)
+      on conflict (link_id, day) do nothing
+    `);
+
+    await db.insert(clickEvents).values([
+      { linkId, workspaceId, occurredAt: seededAt, visitorHash: "batch-visitor-1", country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
+      { linkId, workspaceId, occurredAt: seededAt, visitorHash: "batch-visitor-2", country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
+    ]);
+    await rollupClicks(db);
+
+    const rows = (await db.execute(sql`
+      select uniques from click_daily where link_id = ${linkId}::uuid and day = ${seededDayKey}::date
+    `)) as unknown as Array<{ uniques: number }>;
+    // Union of the pre-seeded visitor and the two batch visitors is three
+    // distinct, exact in HLL's linear-counting range at this tiny N. An
+    // overwrite would have dropped the pre-seeded visitor and reported two.
+    const expected = createSketch();
+    addHashed(expected, "preexisting-visitor");
+    addHashed(expected, "batch-visitor-1");
+    addHashed(expected, "batch-visitor-2");
+    expect(rows[0]?.uniques).toBe(estimate(expected));
+    expect(rows[0]?.uniques).toBe(3);
   });
 
   it("marks the events it consumed, so a second run is a no-op", async () => {

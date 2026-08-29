@@ -78,7 +78,12 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
        idempotent (max(a, a) = a) and commutative, so folding the same batch
        into the same stored sketch is a no-op: recomputing a day cannot inflate
        its uniques, which is exactly the property the old recompute-not-increment
-       code protected against a visitor being counted twice across batches. */
+       code protected against a visitor being counted twice across batches.
+
+       The merge below is made convergent under concurrent workers by locking
+       the sketch row before merging (see the per-group loop), so it re-merges
+       against the current committed value rather than blindly overwriting a
+       snapshot. */
     const visitorRows = (await tx.execute(sql`
       select
         link_id as "linkId",
@@ -108,24 +113,50 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
            key, then write the merged bytes back. Reading and merging in TS
            keeps every bit of sketch logic in @snapurl/domain rather than half
            of it in a bytea expression. The postgres driver returns bytea as a
-           Buffer, which deserialize copies into a fresh sketch. */
-        const existing = (await tx.execute(sql`
+           Buffer, which deserialize copies into a fresh sketch.
+
+           The read-merge-write has to be convergent even if two workers ever
+           process overlapping (link, day) rows at once. A plain "select then
+           insert ... on conflict do update set sketch = excluded.sketch" is
+           not: both workers read the same stored sketch, each merges its own
+           batch against that snapshot, and the second commit overwrites the
+           first, dropping the first batch's registers. The old daily_visitors
+           path ("insert ... on conflict do nothing") converged, so an overwrite
+           here would be a behavioral regression - the shipped single-instance
+           everyN loop never overlaps its own ticks and so cannot hit it, but we
+           do not want correctness to depend on that.
+
+           So serialize concurrent mergers on the row itself. First guarantee a
+           row exists with "insert ... on conflict do nothing" (a no-op for a
+           losing first-inserter), then "select ... for update" to take a row
+           lock: a second worker blocks there until the first commits, then
+           reads the first's already-merged sketch and merges on top of it. No
+           registers are lost regardless of writer topology, and because the
+           merge is register-wise max it stays idempotent - re-folding the same
+           batch is max(a, a) = a. */
+        await tx.execute(sql`
+          insert into click_daily_uniques (link_id, day, sketch)
+          values (${group.linkId}::uuid, ${group.day}::date, ${serialize(createSketch())})
+          on conflict (link_id, day) do nothing
+        `);
+
+        const locked = (await tx.execute(sql`
           select sketch from click_daily_uniques
           where link_id = ${group.linkId}::uuid and day = ${group.day}::date
+          for update
         `)) as unknown as Array<{ sketch: Buffer }>;
 
-        const merged = existing[0]
-          ? merge(deserialize(existing[0].sketch), group.sketch)
+        /* The row is guaranteed to exist and be locked by the insert above, so
+           locked[0] is always present; the fallback keeps this total in the
+           face of an unexpected driver shape rather than throwing. */
+        const merged = locked[0]
+          ? merge(deserialize(locked[0].sketch), group.sketch)
           : group.sketch;
         const bytes = serialize(merged);
 
-        /* on conflict do update set sketch = excluded.sketch is safe because
-           excluded already carries the merge - two workers cannot lose an
-           update, the loser just re-merges on its next pass. */
         await tx.execute(sql`
-          insert into click_daily_uniques (link_id, day, sketch)
-          values (${group.linkId}::uuid, ${group.day}::date, ${bytes})
-          on conflict (link_id, day) do update set sketch = excluded.sketch
+          update click_daily_uniques set sketch = ${bytes}
+          where link_id = ${group.linkId}::uuid and day = ${group.day}::date
         `);
 
         /* Derive click_daily.uniques from the merged sketch. Recomputed from
