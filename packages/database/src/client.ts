@@ -49,7 +49,7 @@ export interface DatabaseOptions {
  *    1. sslNoVerify  — deliberate opt-out for VPC/self-signed (insecure).
  *    2. sslCaCert    — verify against a supplied CA bundle.
  *    3. 'verify-full'— verify against the system CA store (the default). */
-function buildSslOption(opts: DatabaseOptions): postgres.Options<Record<string, never>>["ssl"] {
+export function buildSslOption(opts: DatabaseOptions): postgres.Options<Record<string, never>>["ssl"] {
   if (!opts.ssl) return undefined;
   if (opts.sslNoVerify) return { rejectUnauthorized: false };
   if (opts.sslCaCert) return { ca: opts.sslCaCert, rejectUnauthorized: true };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createDatabase } from "./client.js";
+import { buildSslOption, createDatabase } from "./client.js";
 
 /* Pure-logic checks for the read-replica plumbing. postgres-js does not open a
    socket until a query actually runs, so constructing the pools here is safe
@@ -38,5 +38,50 @@ describe("createDatabase read-replica handle", () => {
     expect(handle).toHaveProperty("readDb");
     expect(handle).toHaveProperty("sql");
     expect(typeof handle.close).toBe("function");
+  });
+});
+
+/* Security-critical: buildSslOption holds the TLS verification default and the
+   opt-out precedence. These assertions are written so that reintroducing
+   `{ rejectUnauthorized: false }` as the default (the old insecure behaviour)
+   would make the "verify-full" and CA-bundle cases fail. */
+describe("buildSslOption", () => {
+  const CA_PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----";
+
+  it("returns undefined when ssl is disabled", () => {
+    expect(buildSslOption({ url: PRIMARY_URL, ssl: false })).toBeUndefined();
+  });
+
+  it("returns undefined when ssl is absent", () => {
+    expect(buildSslOption({ url: PRIMARY_URL })).toBeUndefined();
+  });
+
+  it("returns { rejectUnauthorized: false } when ssl is on and sslNoVerify is set", () => {
+    expect(buildSslOption({ url: PRIMARY_URL, ssl: true, sslNoVerify: true })).toEqual({
+      rejectUnauthorized: false,
+    });
+  });
+
+  it("verifies against a supplied CA bundle when ssl is on and sslCaCert is set", () => {
+    const result = buildSslOption({ url: PRIMARY_URL, ssl: true, sslCaCert: CA_PEM });
+    expect(result).toEqual({ ca: CA_PEM, rejectUnauthorized: true });
+  });
+
+  it("defaults to 'verify-full' when ssl is on and nothing else is set", () => {
+    const result = buildSslOption({ url: PRIMARY_URL, ssl: true });
+    // Must NOT silently disable verification: the default has to verify the chain
+    // AND the hostname, never { rejectUnauthorized: false }.
+    expect(result).toBe("verify-full");
+    expect(result).not.toEqual({ rejectUnauthorized: false });
+  });
+
+  it("lets sslNoVerify win over sslCaCert when both are set (explicit opt-out wins)", () => {
+    const result = buildSslOption({
+      url: PRIMARY_URL,
+      ssl: true,
+      sslNoVerify: true,
+      sslCaCert: CA_PEM,
+    });
+    expect(result).toEqual({ rejectUnauthorized: false });
   });
 });
