@@ -9,6 +9,8 @@ import type {
   CreatedApiKey,
   CreatedWebhook,
   Domain,
+  Form,
+  FormResponse,
   Link,
   Member,
   MemberRole,
@@ -281,6 +283,50 @@ export const LINKS: Link[] = [
     createdAt: daysAgo(120),
     createdBy: "Arjun Kapoor",
   },
+];
+
+/* Forms. The response set deliberately carries a `phone` answer for a field
+   the form no longer declares, so the responses table and the export exercise
+   the union-of-keys rule rather than only the happy path. */
+const FORMS: Form[] = [
+  {
+    id: "frm_feedback",
+    slug: "spring-feedback",
+    title: "Spring launch feedback",
+    description: "Two minutes, and it genuinely shapes what we build next.",
+    status: "live",
+    fields: [
+      { key: "name", label: "Your name", type: "text", required: true, placeholder: "Ada Lovelace" },
+      { key: "email", label: "Email", type: "email", required: true, placeholder: "you@company.com" },
+      { key: "plan", label: "How are you using SnapURL?", type: "select", required: false, options: ["Personal", "Team", "Agency"] },
+      { key: "notes", label: "Anything else?", type: "textarea", required: false, placeholder: "Optional" },
+    ],
+    responseCount: 3,
+    createdAt: daysAgo(12),
+    updatedAt: daysAgo(2),
+  },
+  {
+    id: "frm_beta",
+    slug: "beta-waitlist",
+    title: "Beta waitlist",
+    description: "",
+    status: "draft",
+    fields: [{ key: "email", label: "Email", type: "email", required: true }],
+    responseCount: 0,
+    createdAt: daysAgo(4),
+    updatedAt: daysAgo(4),
+  },
+];
+
+const FORM_RESPONSES: FormResponse[] = [
+  {
+    id: "fr_1",
+    answers: { name: "Ada Lovelace", email: "ada@example.com", plan: "Team", notes: "The QR export saved us." },
+    submittedAt: daysAgo(1),
+  },
+  { id: "fr_2", answers: { name: "Grace Hopper", email: "grace@example.com", plan: "Agency" }, submittedAt: daysAgo(3) },
+  // Answered a "phone" field that has since been removed from the form.
+  { id: "fr_3", answers: { name: "Alan Turing", email: "alan@example.com", phone: "+44 20 7946 0000" }, submittedAt: daysAgo(6) },
 ];
 
 const SERIES = [
@@ -578,6 +624,47 @@ export async function fixtureRequest<T>(
     };
     linkStore.unshift(link);
     data = link;
+  /* ---- forms ---- */
+  } else if (m(/^\/public\/forms\/([^/]+)$/) && method === "POST") {
+    const form = FORMS.find((f) => f.slug === m(/^\/public\/forms\/([^/]+)$/)![1]);
+    if (!form) throw new Error(`No fixture form ${path}`);
+    const answers = (opts.body as { answers: Record<string, string> }).answers ?? {};
+    // Mirrors the server: required fields are checked, and errors come back
+    // keyed by field key so the UI can place each message.
+    const errors: Record<string, string> = {};
+    for (const f of form.fields) {
+      if (f.required && !String(answers[f.key] ?? "").trim()) errors[f.key] = `${f.label} is required.`;
+    }
+    data = Object.keys(errors).length ? { ok: false, errors } : { ok: true, errors: {} };
+  } else if (m(/^\/public\/forms\/([^/]+)$/)) {
+    const form = FORMS.find((f) => f.slug === m(/^\/public\/forms\/([^/]+)$/)![1]);
+    if (!form) throw new Error(`No fixture form ${path}`);
+    data = {
+      slug: form.slug,
+      title: form.title,
+      description: form.description,
+      fields: form.fields,
+      workspace: WORKSPACE.name,
+    };
+  } else if (m(/^\/forms\/([^/]+)\/responses$/)) {
+    const id = m(/^\/forms\/([^/]+)\/responses$/)![1];
+    const form = FORMS.find((f) => f.id === id);
+    data = {
+      items: FORM_RESPONSES,
+      total: FORM_RESPONSES.length,
+      // Union of current fields and anything a response still carries, so a
+      // deleted field's answers are not silently dropped.
+      columns: [
+        ...(form?.fields ?? []).map((f) => f.key),
+        ...FORM_RESPONSES.flatMap((r) => Object.keys(r.answers)).filter(
+          (k) => !(form?.fields ?? []).some((f) => f.key === k),
+        ),
+      ].filter((k, i, a) => a.indexOf(k) === i),
+    };
+  } else if (m(/^\/forms\/([^/]+)$/)) {
+    data = FORMS.find((f) => f.id === m(/^\/forms\/([^/]+)$/)![1]) ?? FORMS[0];
+  } else if (m(/^\/forms$/)) {
+    data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
     const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
     /* Mirrors the server's all-or-nothing rule: one invalid row means nothing

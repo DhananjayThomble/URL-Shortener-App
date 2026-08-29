@@ -172,3 +172,90 @@ export const bioPagesRelations = relations(bioPages, ({ one, many }) => ({
 export const bioBlocksRelations = relations(bioBlocks, ({ one }) => ({
   page: one(bioPages, { fields: [bioBlocks.bioPageId], references: [bioPages.id] }),
 }));
+
+/* ============================================================
+   Forms.
+
+   A separate product module, not a link feature. The schema
+   decisions here are recorded in docs/DECISIONS.md because they
+   are the expensive kind: once responses exist, changing how an
+   answer is addressed means rewriting history.
+   ============================================================ */
+
+export const forms = pgTable(
+  "forms",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+
+    /* Served by the web app at /f/<slug>, deliberately not on a short domain.
+       The redirect service owns that slug namespace, and a form competing for
+       it would mean a form and a link racing for the same back-half. */
+    slug: varchar("slug", { length: 64 }).notNull(),
+
+    title: varchar("title", { length: 160 }).notNull(),
+    description: varchar("description", { length: 500 }).notNull().default(""),
+    status: varchar("status", { length: 10 }).notNull().default("draft"),
+
+    /* The whole field definition, in order.
+
+       JSONB rather than a form_fields table: a form is read and written as one
+       document, and every constraint that matters — order, key uniqueness — is
+       inside it. Each field carries a `key` that is frozen at creation; see
+       the answers column below for why that matters. */
+    fields: jsonb("fields")
+      .$type<
+        Array<{
+          key: string;
+          label: string;
+          type: "text" | "email" | "textarea" | "number" | "select" | "checkbox";
+          required: boolean;
+          placeholder?: string | null;
+          options?: string[];
+        }>
+      >()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+
+    /** Denormalised for the list view, maintained on submit. */
+    responseCount: integer("response_count").notNull().default(0),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("forms_slug_key").on(sql`lower(${t.slug})`)],
+);
+
+export const formResponses = pgTable(
+  "form_responses",
+  {
+    id: id(),
+    formId: uuid("form_id")
+      .notNull()
+      .references(() => forms.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+
+    /* Keyed by the field's frozen `key`, never by its id or label, and never
+       rewritten when the form changes. A label typo fixed next month must not
+       orphan the answers collected today. Export unions every key ever seen so
+       a deleted field's answers survive in the durable record. */
+    answers: jsonb("answers").$type<Record<string, string>>().notNull(),
+
+    /* No ip column, for the same reason click_events has none. A form
+       collects what someone chose to type and nothing they did not. */
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("form_responses_form_idx").on(t.formId, t.submittedAt.desc())],
+);
+
+export const formsRelations = relations(forms, ({ many }) => ({
+  responses: many(formResponses),
+}));
+
+export const formResponsesRelations = relations(formResponses, ({ one }) => ({
+  form: one(forms, { fields: [formResponses.formId], references: [forms.id] }),
+}));

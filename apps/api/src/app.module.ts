@@ -20,6 +20,7 @@ import { DevelopersModule } from "./developers/developers.module.js";
 import { BioPagesModule } from "./bio-pages/bio-pages.module.js";
 import { PublicModule } from "./public/public.module.js";
 import { HealthController } from "./common/health.controller.js";
+import { FormsModule } from "./forms/forms.module.js";
 import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
 
 @Module({
@@ -65,6 +66,7 @@ import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
     MembersModule,
     DevelopersModule,
     BioPagesModule,
+    FormsModule,
     PublicModule,
   ],
   controllers: [HealthController],

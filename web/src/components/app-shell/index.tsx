@@ -15,6 +15,7 @@ const NAV: { group: string; items: { href: string; label: string; icon: string; 
       { href: "/analytics", label: "Analytics", icon: "▤" },
       { href: "/qr", label: "QR studio", icon: "▩" },
       { href: "/bio", label: "Bio pages", icon: "☰", count: "bio" },
+      { href: "/forms", label: "Forms", icon: "▧" },
       { href: "/conversions", label: "Conversions", icon: "⇄" },
     ],
   },
