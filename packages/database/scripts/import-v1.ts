@@ -113,10 +113,10 @@ async function main() {
       const [row] = await sql`
         insert into links (
           workspace_id, domain_id, slug, destination, tags, redirect_type,
-          safe_browsing_status, safe_browsing_checked_at, clicks, unique_clicks, created_at
+          safe_browsing_status, safe_browsing_checked_at, created_at
         ) values (
           ${workspace.id}, ${domain.id}, ${slug}, ${destination}, ${tags}, '302',
-          'pending', null, ${doc.visitCount ?? 0}, 0, ${createdAt}
+          'pending', null, ${createdAt}
         ) returning id`;
 
       /* v1 only ever stored a lifetime counter, with no dates attached. Rather
@@ -128,6 +128,11 @@ async function main() {
           insert into click_daily ("link_id", "workspace_id", "day", "clicks", "uniques", "scans", "blocked")
           values (${row!.id}, ${workspace.id}, current_date, ${doc.visitCount}, 0, 0, 0)
           on conflict (link_id, day) do update set clicks = excluded.clicks`;
+
+        await sql`
+          insert into link_counters (link_id, clicks, unique_clicks)
+          values (${row!.id}, ${doc.visitCount}, 0)
+          on conflict (link_id) do update set clicks = excluded.clicks, unique_clicks = excluded.unique_clicks`;
       }
 
       // Make the redirect path pick it up.
