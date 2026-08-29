@@ -108,8 +108,19 @@ describeDb("rollupClicks", () => {
     await addClick({ visitor: "visitor-a", hour: 3 });
     await addClick({ visitor: "visitor-b", hour: 4 });
 
+    /* Deliberately not `expect(result.events).toBe(4)`.
+     *
+     * rollupClicks is global — it drains every unprocessed event in the
+     * database, not just this test's. That assertion held only on a database
+     * nothing else had ever written to, so it passed in CI against a fresh
+     * service container and failed on any developer machine that had run the
+     * app or the smoke suite. A test that is green in CI and red locally
+     * teaches people to distrust the suite.
+     *
+     * It has to process at least ours, and the row assertions below are
+     * scoped to this link, which is what the test is actually about. */
     const result = await rollupClicks(db);
-    expect(result.events).toBe(4);
+    expect(result.events).toBeGreaterThanOrEqual(4);
 
     const row = await daily();
     expect(row.clicks).toBe(4);
