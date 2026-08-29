@@ -12,7 +12,7 @@ This is a product-surface comparison, not a security or performance review. InAp
 | Custom forms | Missing | No form builder, shareable form URL, response table, or CSV response export. |
 | Native-app deep linking | Partial | SnapURL has a `deepLink` flag, but no app-specific routing, app fallback configuration, or supported-app integrations. InApp advertises YouTube, Spotify, Instagram, X, Amazon, TikTok, WhatsApp, Facebook, SoundCloud, and Etsy. |
 | City-level analytics | Present | Resolved from CloudFront's edge header, so no IP is stored to produce it, and cities below a five-click floor are folded into "Other cities" rather than named. The reasoning is in [DECISIONS.md](./DECISIONS.md). |
-| Tracking pixels | Missing | No tracking-pixel configuration or delivery path is implemented. |
+| Tracking pixels | **Declined** | Not a gap. Delivering one needs an HTML interstitial in place of the 302, needs EU/UK consent before it may run, and contradicts three public claims. `POST /conversions` plus webhooks already serve the attribution need server-side. Reasoning in [DECISIONS.md](./DECISIONS.md). |
 | Scheduled activation | Missing | SnapURL supports expiry dates and expiry fallbacks, but not a future activation/start date. |
 | Bulk link creation | UI gap | The Links page shows a `Bulk create` action, but no complete bulk-create workflow or contract is implemented. |
 | CSV export | UI gap | The Links page shows `Export`, and settings mention export/import, but no complete export endpoint/workflow is implemented. |
@@ -80,4 +80,4 @@ Evidence: [packages/contract/src/link.ts](../packages/contract/src/link.ts), [pa
 4. Build forms and response export as a separate product module.
 5. Add city-level analytics only after choosing a privacy-preserving geo data source.
 6. Add OAuth and billing once account and commercial requirements are defined.
-7. Add tracking pixels only with clear consent, privacy, and browser-blocking expectations.
+7. Tracking pixels are declined, not deferred — see [DECISIONS.md](./DECISIONS.md). If that is ever reversed, the order is marketing copy first, preview-page disclosure second, code last.
