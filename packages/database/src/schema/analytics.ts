@@ -44,6 +44,11 @@ export const clickEvents = pgTable(
     visitorHash: varchar("visitor_hash", { length: 32 }).notNull(),
 
     country: varchar("country", { length: 2 }),
+    /* Resolved by CloudFront at the edge and handed to us as a name, so no IP
+       is ever seen here for geolocation and none is stored. The city name and
+       nothing finer — never the latitude/longitude the same header family
+       offers. See docs/DECISIONS.md. */
+    city: varchar("city", { length: 100 }),
     device: varchar("device", { length: 10 }),
     browser: varchar("browser", { length: 40 }),
     os: varchar("os", { length: 20 }),

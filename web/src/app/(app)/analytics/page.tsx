@@ -101,6 +101,7 @@ export default function AnalyticsPage() {
             {(
               [
                 ["Countries", data.countries],
+                ["Cities", data.cities],
                 ["Browsers", data.browsers],
                 ["Tags", data.tags],
               ] as const

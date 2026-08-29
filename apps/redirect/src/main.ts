@@ -219,6 +219,10 @@ function record(
         occurredAt: new Date(),
         visitorHash: hash,
         country: ((request.headers["cloudfront-viewer-country"] as string) ?? "").toUpperCase().slice(0, 2) || null,
+        /* Deliberately not paired with CloudFront-Viewer-Latitude/Longitude,
+           which the same header family offers: a city is a population, a
+           coordinate is a location. */
+        city: ((request.headers["cloudfront-viewer-city"] as string) ?? "").slice(0, 100) || null,
         device: parseDevice(userAgent),
         browser: parseBrowser(userAgent),
         os: parseOs(userAgent),

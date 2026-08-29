@@ -1,0 +1,1 @@
+ALTER TABLE "click_events" ADD COLUMN "city" varchar(100);

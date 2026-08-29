@@ -3,7 +3,7 @@ import Link from "next/link";
 const FEATURES = [
   { icon: "◈", title: "Your domain, your links", body: "Bring any domain, get automatic SSL, and set root and 404 redirects. Five domains on the free plan — not one." },
   { icon: "⇄", title: "Route by anything", body: "Send India to the India store, iOS to the App Store, and split the rest 50/50 for an A/B test. Rules run at the edge." },
-  { icon: "▤", title: "Analytics without cookies", body: "Country, device, browser, referrer and conversions — measured with a daily-rotating hash. Nothing stored on the visitor's device." },
+  { icon: "▤", title: "Analytics without cookies", body: "Country, city, device, browser, referrer and conversions — measured with a daily-rotating hash. No IP stored, nothing left on the visitor's device." },
   { icon: "▩", title: "QR that stays correct", body: "Print it once, change where it points forever. SVG, PDF and EPS export, with your logo in the middle." },
   { icon: "🛡", title: "Trust, made visible", body: "Anyone can add + to a short link to see exactly where it goes, who made it and what it sets, before clicking." },
   { icon: "⌘", title: "Built for automation", body: "REST API, typed SDKs, real-time webhooks, a CLI and an MCP server. Your agents can ship links too." },

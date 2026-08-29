@@ -304,6 +304,17 @@ export const ANALYTICS: Analytics = {
     { label: "Singapore", value: 22406, icon: "🇸🇬" },
     { label: "Australia", value: 16008, icon: "🇦🇺" },
   ],
+  /* Shaped the way the API returns it: the long tail of small cities is
+     folded into one bucket rather than named, so the fixture cannot teach a
+     UI habit the real endpoint will not support. */
+  cities: [
+    { label: "Mumbai", value: 51204 },
+    { label: "Bengaluru", value: 38110 },
+    { label: "London", value: 26440 },
+    { label: "New York", value: 21008 },
+    { label: "Unknown", value: 18902 },
+    { label: "Other cities", value: 9877 },
+  ],
   devices: [
     { label: "iOS", value: 34980, icon: "📱" },
     { label: "Android", value: 29104, icon: "🤖" },

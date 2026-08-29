@@ -11,7 +11,7 @@ This is a product-surface comparison, not a security or performance review. InAp
 | --- | --- | --- |
 | Custom forms | Missing | No form builder, shareable form URL, response table, or CSV response export. |
 | Native-app deep linking | Partial | SnapURL has a `deepLink` flag, but no app-specific routing, app fallback configuration, or supported-app integrations. InApp advertises YouTube, Spotify, Instagram, X, Amazon, TikTok, WhatsApp, Facebook, SoundCloud, and Etsy. |
-| City-level analytics | Missing | SnapURL reports country, device, browser, referrer, tags, links, QR scans, and conversions. Its documented geo input is country-level, not city-level. |
+| City-level analytics | Present | Resolved from CloudFront's edge header, so no IP is stored to produce it, and cities below a five-click floor are folded into "Other cities" rather than named. The reasoning is in [DECISIONS.md](./DECISIONS.md). |
 | Tracking pixels | Missing | No tracking-pixel configuration or delivery path is implemented. |
 | Scheduled activation | Missing | SnapURL supports expiry dates and expiry fallbacks, but not a future activation/start date. |
 | Bulk link creation | UI gap | The Links page shows a `Bulk create` action, but no complete bulk-create workflow or contract is implemented. |

@@ -88,6 +88,7 @@ export async function rollupClicks(db: Database, batchSize = 50_000): Promise<Ro
     // dashboard renders them identically.
     for (const [dimension, column] of [
       ["country", sql`country`],
+      ["city", sql`city`],
       ["device", sql`device`],
       ["browser", sql`browser`],
       ["referrer", sql`referrer_host`],

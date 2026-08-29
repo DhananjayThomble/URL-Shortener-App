@@ -334,6 +334,44 @@ access to this account.
 Lambda's configuration. That was already true of the database password before this
 change, and it is the same trade, made once, for the same reason.
 
+### City-level geo: CloudFront's header, never an IP, never coordinates
+
+**Asked by #240, which was right to block on it.**
+
+Three options, and the licensed GeoIP database is excluded twice over. It needs the
+visitor's IP in the redirect process's memory to do the lookup, which reintroduces
+exactly what `click_events` was designed without, and it means shipping megabytes of
+database into a 512 MB Lambda that sits on the hot path.
+
+**What I chose:** CloudFront resolves the IP at its edge and hands us
+`CloudFront-Viewer-City` as a header, already a name. Our code never sees an IP for
+geolocation. `click_events` still has no `ip` column, no cookie is set, and nothing is
+stored on the visitor's device — every claim on the landing page and the settings page
+stays literally true, which is the bar #217 set and I did not want to quietly lower.
+
+**But city is more identifying than country, and that is the part worth saying out
+loud.** Country plus device plus browser identifies nobody. City plus device plus
+browser plus OS plus referrer, in a small enough place, can. So two limits come with
+it:
+
+- **The city name only. Never `CloudFront-Viewer-Latitude/Longitude`,** which the same
+  header family offers and which is the easy mistake to make — they are adjacent in
+  AWS's documentation. A city name is a population; a coordinate pair is a location.
+- **A k-anonymity floor of five.** A city with fewer than five clicks in the window is
+  folded into "Other cities" rather than given its own row. The total still adds up, so
+  the workspace loses no volume — but "Bengaluru · 1 click" never renders beside a
+  single iPhone and a single referrer. The threshold is one named constant, so raising
+  or removing it is a one-line decision rather than an archaeology exercise.
+
+**What it costs:** coverage. CloudFront's city data is coarse and frequently absent,
+particularly on mobile networks and behind VPNs. Those clicks roll up as "Unknown".
+That is the honest price of not shipping a GeoIP database, and it is visible in the
+dashboard rather than hidden.
+
+**What would revisit it:** anyone needing reliable or finer-grained location. That is a
+different product with a different promise, and the marketing copy would have to change
+before the code did — not after.
+
 ### `cdk synth` was staging its own output into itself
 
 **Found by:** running it. The stack merged in #246 did not synthesise at all.

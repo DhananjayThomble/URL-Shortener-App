@@ -81,7 +81,7 @@ contains "click-time UTM wins over stored" "utm_source=twitter" "$(loc "$RUN-utm
 
 echo
 echo "== routing chain =="
-contains "India goes to the India store" "example.in" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: IN')"
+contains "India goes to the India store" "example.in" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: IN' -H 'CloudFront-Viewer-City: Pune')"
 contains "iOS goes to the App Store" "apps.apple.com" "$(loc "$RUN-geo" -H 'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')"
 contains "everyone else gets the default" "example.com/rest" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: FR')"
 
@@ -129,6 +129,17 @@ if dbq "select column_name from information_schema.columns where table_name='cli
 else ok "click_events has no ip column"; fi
 HASHES=$(dbq "select count(distinct visitor_hash) from click_events where link_id in (select id from links where slug like '$RUN%')" | tr -d '[:space:]')
 [ -n "$HASHES" ] && ok "clicks recorded with visitor hashes ($HASHES distinct)" || bad "click recording" "no rows"
+
+# City comes from CloudFront's edge header, already resolved — the reason no IP
+# is needed to produce it. See docs/DECISIONS.md.
+CITY=$(dbq "select count(*) from click_events where city = 'Pune' and link_id in (select id from links where slug like '$RUN%')" | tr -d '[:space:]')
+[ "${CITY:-0}" -ge 1 ] && ok "the CloudFront city header is recorded" || bad "city not recorded" "count=$CITY"
+
+# The other half of that decision: a city name is a population, a coordinate is
+# a location, and only one of them belongs here.
+if dbq "select column_name from information_schema.columns where table_name='click_events' and column_name in ('latitude','longitude','lat','lon')" | grep -q .; then
+  bad "click_events stores no coordinates" "a latitude/longitude column exists"
+else ok "click_events has no coordinate columns"; fi
 
 echo
 echo "----------------------------------------"
