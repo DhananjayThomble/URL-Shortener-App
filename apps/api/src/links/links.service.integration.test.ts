@@ -84,7 +84,9 @@ describeDb("LinksService.list", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new LinksService(db, safeBrowsingStub);
+    // Second arg is the read-only handle. Single-node here, so it is the same
+    // db handle as the primary (matches READ_DB === DB when no replica is set).
+    service = new LinksService(db, db, safeBrowsingStub);
 
     const [ws] = await db
       .insert(workspaces)

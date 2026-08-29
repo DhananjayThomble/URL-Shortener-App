@@ -10,10 +10,21 @@ export const EnvSchema = z.object({
   API_PREFIX: z.string().default("api/v1"),
 
   DATABASE_URL: z.string().min(1),
+  /** Optional read-replica connection string. Absent means reads use the
+      primary — single-node behaviour is unchanged. */
+  DATABASE_REPLICA_URL: z.string().optional(),
   DATABASE_SSL: z
     .string()
     .default("false")
     .transform((v) => v === "true"),
+  /** Opt out of TLS certificate verification (VPC/self-signed only; insecure
+      across untrusted networks). Defaults to off, i.e. verification is on. */
+  DATABASE_SSL_NO_VERIFY: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+  /** PEM contents of a CA bundle used to verify the DB server certificate. */
+  DATABASE_CA_CERT: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().default(10),
 
   /* Two separate secrets. If one key signed both, a stolen access token could

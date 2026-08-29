@@ -23,7 +23,8 @@
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
     "studio": "drizzle-kit studio",
-    "import-v1": "tsx scripts/import-v1.ts"
+    "import-v1": "tsx scripts/import-v1.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@snapurl/contract": "workspace:*",
@@ -36,6 +37,7 @@
     "argon2": "^0.44.0",
     "drizzle-kit": "^0.31.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
   }
 }
