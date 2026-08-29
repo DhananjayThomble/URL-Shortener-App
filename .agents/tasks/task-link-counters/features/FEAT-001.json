@@ -1,0 +1,25 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Establish a green baseline: install dependencies and confirm the existing type-check, build, and (non-DB) tests pass before any change. This documents the sandbox constraints (Docker/Postgres unavailable, so DB-gated suites skip locally and are verified in CI).",
+  "status": "completed",
+  "steps": [
+    "From repo root: cd URL-Shortener-App && pnpm install.",
+    "Run: pnpm type-check. Confirm it passes.",
+    "Run: rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm build. Confirm it passes.",
+    "Run: pnpm test. Confirm the non-DB suites pass and the DB-gated suites (apps/worker rollup.test.ts, apps/api links.service.integration.test.ts) report as skipped because DATABASE_URL is unset and Docker is unavailable in this sandbox.",
+    "Record the baseline result in this feature's findings (which commands passed, which suites skipped)."
+  ],
+  "acceptance_criteria": [
+    "pnpm type-check exits 0.",
+    "NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm build exits 0 (after rm -rf web/.next).",
+    "pnpm test exits 0 with DB-gated suites skipped locally."
+  ],
+  "verification": [
+    "pnpm type-check",
+    "rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm build",
+    "pnpm test"
+  ],
+  "blocked_reason": null,
+  "findings": "Green baseline established on branch main (HEAD 5be7b4a). No source changes made. Commands run from repo root (cd URL-Shortener-App):\n1) pnpm install -> exit 0 ('Already up to date', 9 workspace projects, pnpm 11.24.0).\n2) pnpm type-check -> exit 0. build:packages (contract, domain, database) then -r type-check all pass (infra, contract, domain, database, web, api, worker, redirect).\n3) rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 pnpm build -> exit 0. Web builds all 20 routes; apps/api (nest build), apps/worker, apps/redirect all Done. NEXT_PUBLIC_API_URL is required for the web build.\n4) pnpm test -> exit 0. Passing suites: packages/domain 113 passed (5 files); apps/redirect 3 passed (resolver.test.ts); apps/worker 5 passed (webhooks.test.ts); apps/api 89 passed (6 files).\n   DB-gated suites SKIPPED locally as expected (no DATABASE_URL; Docker/Postgres unavailable in sandbox): apps/worker/src/jobs/rollup.test.ts (12 skipped), apps/worker/src/jobs/partitions.test.ts (12 skipped), apps/api/src/links/links.service.integration.test.ts (19 skipped). These run in CI (Verify workflow with Postgres 18).\nConfirmed sandbox constraint: DB tests skip locally and must be validated via CI."
+}
