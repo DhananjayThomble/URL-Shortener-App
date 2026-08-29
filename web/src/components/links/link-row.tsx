@@ -4,6 +4,7 @@ import NextLink from "next/link";
 import { useState } from "react";
 import { Sparkline } from "@/components/charts";
 import { Chip } from "@/components/ui";
+import { useCloneLink } from "@/lib/api/hooks";
 import type { Link, LinkStatus } from "@/lib/api/types";
 import { cn, compact, copy, faviconFor, formatDate, relativeDate } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; la
 export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
+  const cloneLink = useCloneLink();
   const status = STATUS[link.status];
   const url = `${link.domain}/${link.slug}`;
 
@@ -66,6 +68,16 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
               className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
             >
               {copied ? "✓ copied" : "⧉ copy"}
+            </button>
+            {/* No slug is sent, so the server generates one — a duplicate that
+                reused the back-half would collide with the link it came from. */}
+            <button
+              onClick={() => cloneLink.mutate({ id: link.id })}
+              disabled={cloneLink.isPending}
+              title="Create a copy of this link with a new back-half"
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
+            >
+              {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
             </button>
             <Chip tone={status.tone} dot>
               {status.label(link)}

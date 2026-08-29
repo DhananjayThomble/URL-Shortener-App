@@ -567,6 +567,29 @@ export async function fixtureRequest<T>(
     };
     linkStore.unshift(link);
     data = link;
+  } else if (m(/^\/links\/([^/]+)\/clone$/) && method === "POST") {
+    const source = findLink(m(/^\/links\/([^/]+)\/clone$/)![1]);
+    if (!source) throw new Error(`No fixture link ${path}`);
+    const body = opts.body as { slug?: string; domain?: string; password?: string | null };
+    /* Mirrors the server: everything that decides where a visitor lands is
+       carried over, and everything that would be a lie on a new link is not —
+       counters start at zero and a clone is never archived. */
+    const link: Link = {
+      ...source,
+      id: uid("lnk"),
+      slug: body.slug || Math.random().toString(36).slice(2, 9),
+      domain: body.domain ?? source.domain,
+      status: source.status === "archived" ? "active" : source.status,
+      clicks: 0,
+      uniqueClicks: 0,
+      sparkline: Array(15).fill(0),
+      // Omitting `password` inherits the source's protection.
+      passwordProtected: body.password === undefined ? source.passwordProtected : body.password !== null,
+      createdAt: new Date().toISOString(),
+      createdBy: SESSION.user.name,
+    };
+    linkStore.unshift(link);
+    data = link;
   } else if (m(/^\/links\/([^/]+)$/) && method === "PATCH") {
     const link = findLink(m(/^\/links\/([^/]+)$/)![1]);
     if (!link) throw new Error(`No fixture link ${path}`);

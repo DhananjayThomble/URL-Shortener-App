@@ -195,6 +195,38 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== clone =="
+# A link worth copying: routing chain, UTM and a click limit, so the clone has
+# something to get wrong.
+BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"destination\":\"https://example.com/original\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-src\",\"tags\":[\"promo\"],\"redirectType\":\"307\",\"clickLimit\":250,\"forwardQuery\":false,\"deepLink\":false,\"hideReferrer\":true,\"publicPreview\":true,\"utm\":{\"source\":\"newsletter\"},\"rules\":[{\"id\":\"r-in\",\"when\":{\"country\":\"IN\"},\"then\":\"https://example.in/store\"}]}")
+SRC_ID=$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id || ""')
+
+BODY=$(curl -s -X POST "$API/links/$SRC_ID/clone" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d '{}')
+check "clone copies the destination"   '"destination":"https://example.com/original"' "$BODY"
+check "clone copies the redirect type" '"redirectType":"307"'                          "$BODY"
+check "clone copies the routing chain" 'example.in/store'                              "$BODY"
+check "clone copies UTM"               '"source":"newsletter"'                         "$BODY"
+check "clone copies the click limit"   '"clickLimit":250'                              "$BODY"
+check "clone starts with no clicks"    '"clicks":0'                                    "$BODY"
+CLONE_ID=$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id || ""')
+CLONE_SLUG=$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).slug || ""')
+if [ -n "$CLONE_ID" ] && [ "$CLONE_ID" != "$SRC_ID" ]; then ok "clone is a new link, not the source"; else bad "clone id" "src=$SRC_ID clone=$CLONE_ID"; fi
+if [ -n "$CLONE_SLUG" ] && [ "$CLONE_SLUG" != "$RUN-src" ]; then ok "clone gets a generated back-half"; else bad "clone slug" "got '$CLONE_SLUG'"; fi
+
+# The security-critical default: cloning a protected link must not publish an
+# open one. $RUN-locked was created with a password in the G3 section above.
+LOCKED_ID=$(curl -s "$API/links?search=$RUN-locked" -H "Authorization: Bearer $ACCESS" | node -pe 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); (d.items[0]&&d.items[0].id)||""')
+BODY=$(curl -s -X POST "$API/links/$LOCKED_ID/clone" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d '{}')
+check "cloning a protected link stays protected" '"passwordProtected":true' "$BODY"
+
+BODY=$(curl -s -X POST "$API/links/$LOCKED_ID/clone" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d '{"password":null}')
+check "password:null drops protection deliberately" '"passwordProtected":false' "$BODY"
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/links/$SRC_ID/clone" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d "{\"slug\":\"$RUN-src\"}")
+status "cloning onto a taken back-half is refused" "409" "$CODE" ""
+
+echo
 echo "== scheduled activation =="
 BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
   -d "{\"destination\":\"https://example.com/launch\",\"domain\":\"localhost:3002\",\"slug\":\"$RUN-sched\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/teaser\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}")
