@@ -18,6 +18,7 @@ export * from "./auth";
 export * from "./bio-pages";
 export * from "./developers";
 export * from "./domains";
+export * from "./forms";
 export * from "./links";
 export * from "./members";
 export * from "./public";

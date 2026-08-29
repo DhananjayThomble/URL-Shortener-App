@@ -334,6 +334,48 @@ access to this account.
 Lambda's configuration. That was already true of the database password before this
 change, and it is the same trade, made once, for the same reason.
 
+### Forms: answers are keyed by a frozen field key, and never rewritten
+
+**The design pass #239 asked for. These are the decisions that are expensive to change
+once responses exist.**
+
+**Field definitions live in JSONB on the form, not in a `form_fields` table.** A form is
+read and written as a whole document, and every integrity constraint that matters —
+field order, key uniqueness — is *within* that document. A table would add a join to
+every read and a position column to maintain, in exchange for per-field queryability
+nobody needs.
+
+**Answers are keyed by a stable field `key`, never by a field id and never by the
+label.** This is the decision the whole module turns on. A form gets edited: labels are
+rewritten, fields are reordered, some are deleted. If answers were keyed by label, a
+typo fix would orphan every response already collected. The key is derived from the
+label once, at field creation, and then frozen — editing the label afterwards changes
+what the form *says* and not what its history *means*.
+
+**A response is never rewritten when its form changes.** Old responses keep the keys
+they were submitted with. The alternative — migrating stored answers to match the
+current definition — means a form edit silently rewrites history, and a mistaken edit
+is unrecoverable.
+
+Which forces the export rule: **CSV export unions every key ever seen in the response
+set**, not just the keys the form currently has. A deleted field's historical answers
+are still exported. Exporting only current fields would mean deleting a field quietly
+destroys the answers people gave to it, in the one artefact meant to be the durable
+record.
+
+**One row per submission with a JSONB `answers` object, not one row per answer.** The
+read pattern is whole submissions — a response table and an export. EAV would need a
+join per field for every read and turn the export into a pivot.
+
+**On privacy, because this module inverts the posture the rest of the product holds.**
+Click analytics deliberately observe as little as possible about visitors who never
+chose to be measured. A form is the opposite: its entire purpose is to collect what
+someone typed. The distinction that makes both honest is consent — a response is
+volunteered by a person who chose to fill the form in, an impression is not. So the
+existing claims stay literally true (a form sets no cookies and stores no IP), and the
+new obligations that come with holding volunteered data are the ones this module has to
+meet: the public page names the workspace collecting it, and responses are deletable.
+
 ### Billing: the controls are removed rather than faked
 
 **Asked by #242, whose own answer — "removing is the honest interim state" — is the one

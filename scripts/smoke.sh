@@ -195,6 +195,51 @@ BODY=$(curl -s -X POST "$API/auth/refresh" -H 'Content-Type: application/json' -
 check "reuse revokes the whole family" 'signed out' "$BODY"
 
 echo
+echo "== forms =="
+BODY=$(curl -s -X POST "$API/forms" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Feedback\",\"slug\":\"$RUN-form\",\"status\":\"live\",\"description\":\"\",\"fields\":[{\"label\":\"Your name\",\"type\":\"text\",\"required\":true},{\"label\":\"Email\",\"type\":\"email\",\"required\":false}]}")
+check "creating a form assigns a field key" '"key":"your_name"' "$BODY"
+FORM_ID=$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id || ""')
+
+check "a live form renders publicly"    '"title":"Feedback"' "$(curl -s "$API/public/forms/$RUN-form")"
+check "the public form names the collector" '"workspace"'     "$(curl -s "$API/public/forms/$RUN-form")"
+
+# A missing required answer comes back as a per-field message, not a 400 — the
+# caller is a person filling in a form.
+BODY=$(curl -s -X POST "$API/public/forms/$RUN-form" -H 'Content-Type: application/json' -d '{"answers":{}}')
+check "a missing required answer is reported per field" '"your_name"' "$BODY"
+check "and the submission is refused"                   '"ok":false'  "$BODY"
+
+BODY=$(curl -s -X POST "$API/public/forms/$RUN-form" -H 'Content-Type: application/json' \
+  -d '{"answers":{"your_name":"Ada","email":"ada@example.com","sneaky":"dropped"}}')
+check "a valid submission is accepted" '"ok":true' "$BODY"
+
+BODY=$(curl -s "$API/forms/$FORM_ID/responses" -H "Authorization: Bearer $ACCESS")
+check "the response is stored under the field key" '"your_name":"Ada"' "$BODY"
+# Undeclared keys are dropped rather than stored, so a stale tab cannot write
+# unbounded junk into the answers column.
+if echo "$BODY" | grep -q "sneaky"; then bad "an undeclared answer was stored" "$BODY"; else ok "an undeclared answer is dropped"; fi
+
+# Renaming a label must not orphan answers already collected under its key.
+curl -s -X PATCH "$API/forms/$FORM_ID" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"fields":[{"key":"your_name","label":"Full name","type":"text","required":true}]}' >/dev/null
+BODY=$(curl -s "$API/forms/$FORM_ID/responses" -H "Authorization: Bearer $ACCESS")
+check "renaming a label keeps the old answers" '"your_name":"Ada"' "$BODY"
+# The email field was deleted by that PATCH; its answer must still be exported.
+check "a deleted field still has a column" 'email' "$BODY"
+
+CSV=$(curl -s "$API/forms/$FORM_ID/responses.csv" -H "Authorization: Bearer $ACCESS")
+check "csv export carries the answer"          'Ada'        "$CSV"
+check "csv export keeps a removed field's data" 'ada@example.com' "$CSV"
+
+# A draft form is not found rather than forbidden: whether a workspace has a
+# form at an address is not a stranger's business.
+curl -s -X PATCH "$API/forms/$FORM_ID" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"status":"draft"}' >/dev/null
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/public/forms/$RUN-form")
+status "a draft form is not public" "404" "$CODE" ""
+
+echo
 echo "== oauth sign-in =="
 # CI configures no client id, so both providers are switched off. A provider
 # that is off must refuse rather than half-run — this is the state most

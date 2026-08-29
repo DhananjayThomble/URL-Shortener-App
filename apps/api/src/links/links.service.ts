@@ -859,7 +859,7 @@ export class LinksService {
  * those as formulas, so a destination beginning with one is a CSV injection
  * waiting for someone to open the export.
  */
-function csvCell(value: unknown): string {
+export function csvCell(value: unknown): string {
   const s = String(value ?? "");
   const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
   return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
