@@ -331,6 +331,34 @@ The worker has no HTTP surface for an adapter to translate, so it uses AWS's
 own Node base image and a handler that calls the same two functions the
 long-running process calls on its interval.
 
+### Applying database migrations
+
+**A fresh deploy leaves the database empty.** CloudFormation creates the RDS
+instance; it does not create tables. Until migrations run, every API request
+fails.
+
+`pnpm db:migrate` cannot do it. RDS is in isolated subnets with
+`publiclyAccessible: false`, so there is no route from a laptop to the
+database at all — by design, because the alternative is a NAT gateway or a
+publicly reachable database.
+
+The Lambdas are inside the VPC, so the worker carries the job. Invoke it once
+after the first deploy, and again after any deploy that adds a migration:
+
+```bash
+aws lambda invoke   --function-name "$(aws cloudformation describe-stacks --stack-name SnapUrl       --query "Stacks[0].Outputs[?OutputKey=='WorkerFunctionName'].OutputValue" --output text)"   --payload '{"task":"migrate"}' --cli-binary-format raw-in-base64-out   /dev/stdout
+```
+
+Expect `{"task":"migrate","applied":true,"folder":"..."}`. It is idempotent —
+Drizzle records which migrations have run, so a second invocation applies
+nothing and returns the same shape.
+
+Migrations are deliberately **not** run on API cold start. Several Lambdas can
+cold-start simultaneously, and racing each other for a schema lock is a bad way
+to discover that migrations are not serialised. They are also not on the
+EventBridge schedule: a migration should run when someone decides to run it,
+not while nobody is watching.
+
 ### What is verified, and what is not
 
 **Verified:** the stack type-checks, synthesises with zero validation
