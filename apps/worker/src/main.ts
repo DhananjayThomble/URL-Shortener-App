@@ -22,7 +22,20 @@ const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3
    where every extra connection is idle and counted against RDS's limit. */
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 4);
 
-export const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: POOL_MAX });
+/* The replica URL and SSL settings are plumbed through for consistency, but the
+   worker deliberately runs every job on the PRIMARY `db` handle: rollups drain
+   click_events then mark them consumed, retention prunes what it has just
+   counted, and so on — every worker read is part of a read-then-write logical
+   operation. Reading those from a lagging replica would double-count or skip
+   rows, so there is no readDb here on purpose. */
+export const { db, close } = createDatabase({
+  url: DATABASE_URL,
+  replicaUrl: process.env.DATABASE_REPLICA_URL,
+  ssl: process.env.DATABASE_SSL === "true",
+  sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+  sslCaCert: process.env.DATABASE_CA_CERT,
+  max: POOL_MAX,
+});
 const projection = new NoProjection();
 
 /** Runs often: this is the loop that makes the dashboards current. */

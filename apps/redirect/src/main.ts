@@ -45,7 +45,19 @@ const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustProxy: true });
-const { db, close } = createDatabase({ url: DATABASE_URL, ssl: process.env.DATABASE_SSL === "true", max: POOL_MAX });
+/* The replica URL and SSL settings are plumbed through for consistency with the
+   other apps, but the redirect deliberately uses the PRIMARY `db` handle (not
+   readDb) everywhere: the click-limit gate reads a link's click count and then
+   records a click, so it is a read-then-write path. Serving that read from a
+   replica would let lag hand back a stale count and overshoot the hard cap. */
+const { db, close } = createDatabase({
+  url: DATABASE_URL,
+  replicaUrl: process.env.DATABASE_REPLICA_URL,
+  ssl: process.env.DATABASE_SSL === "true",
+  sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+  sslCaCert: process.env.DATABASE_CA_CERT,
+  max: POOL_MAX,
+});
 
 const resolver: LinkResolver = new PostgresLinkResolver(db);
 const clicks: ClickSink = new PostgresClickSink(db);
