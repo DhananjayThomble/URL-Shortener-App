@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Query, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
-import { CloneLinkInput, CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
+import { BulkCreateLinksInput, CloneLinkInput, CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { Actor, Roles, Scope, type RequestActor } from "../auth/auth.guard.js";
 import { LinksService } from "./links.service.js";
@@ -52,6 +52,18 @@ export class LinksController {
   @Scope("links:write")
   create(@Actor() actor: RequestActor, @Body(zodBody(CreateLinkInput)) input: CreateLinkInput) {
     return this.links.create(actor.workspaceId, toActor(actor), input);
+  }
+
+  /* Always 200, never 207.
+     Either every row was written or none was, so there is no "multi-status" to
+     report — the per-row detail is in the body, where a caller can act on it,
+     rather than in a status code they would have to special-case. */
+  @Post("bulk")
+  @Roles("editor")
+  @Scope("links:write")
+  @HttpCode(200)
+  bulkCreate(@Actor() actor: RequestActor, @Body(zodBody(BulkCreateLinksInput)) input: BulkCreateLinksInput) {
+    return this.links.bulkCreate(actor.workspaceId, toActor(actor), input);
   }
 
   /* A creation, not a mutation of :id — the source link is untouched, so this

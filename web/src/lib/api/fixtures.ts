@@ -567,6 +567,64 @@ export async function fixtureRequest<T>(
     };
     linkStore.unshift(link);
     data = link;
+  } else if (m(/^\/links\/bulk$/) && method === "POST") {
+    const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
+    /* Mirrors the server's all-or-nothing rule: one invalid row means nothing
+       is written, and every row still gets an outcome so none is silently
+       dropped. The fixture only validates what it can see — a destination that
+       is not a URL, and a back-half already used in this store. */
+    const taken = new Set(linkStore.map((l) => `${l.domain}:${l.slug.toLowerCase()}`));
+    const problems = new Map<number, string>();
+    body.links.forEach((row, i) => {
+      try {
+        new URL(row.destination);
+      } catch {
+        problems.set(i, "That doesn't look like a URL — include https://");
+        return;
+      }
+      if (row.slug && taken.has(`${row.domain}:${row.slug.toLowerCase()}`)) {
+        problems.set(i, `${row.domain}/${row.slug} is already taken. Try another back-half.`);
+      }
+      if (row.slug) taken.add(`${row.domain}:${row.slug.toLowerCase()}`);
+    });
+
+    if (problems.size) {
+      data = {
+        created: 0,
+        failed: body.links.length,
+        results: body.links.map((row, index) => ({
+          ok: false,
+          index,
+          destination: row.destination,
+          error:
+            problems.get(index) ??
+            "Not created — another row in this batch was invalid, and a batch is all or nothing.",
+        })),
+      };
+    } else {
+      const results = body.links.map((row, index) => {
+        const link: Link = {
+          ...LINKS[0],
+          id: uid("lnk"),
+          slug: row.slug || Math.random().toString(36).slice(2, 9),
+          domain: row.domain,
+          destination: row.destination,
+          title: null,
+          comment: null,
+          tags: [],
+          status: "active",
+          clicks: 0,
+          uniqueClicks: 0,
+          rules: [],
+          sparkline: Array(15).fill(0),
+          createdAt: new Date().toISOString(),
+          createdBy: SESSION.user.name,
+        };
+        linkStore.unshift(link);
+        return { ok: true, index, link };
+      });
+      data = { created: results.length, failed: 0, results };
+    }
   } else if (m(/^\/links\/([^/]+)\/clone$/) && method === "POST") {
     const source = findLink(m(/^\/links\/([^/]+)\/clone$/)![1]);
     if (!source) throw new Error(`No fixture link ${path}`);

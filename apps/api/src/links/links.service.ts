@@ -1,7 +1,17 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
-import type { CloneLinkInput, CreateLinkInput, Link, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
+import { CreateLinkInput as CreateLinkInputSchema } from "@snapurl/contract";
+import type {
+  BulkCreateLinksInput,
+  BulkCreateLinksResult,
+  BulkLinkOutcome,
+  CloneLinkInput,
+  CreateLinkInput,
+  Link,
+  ListLinksQuery,
+  UpdateLinkInput,
+} from "@snapurl/contract";
 import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
@@ -145,6 +155,251 @@ export class LinksService {
   async create(workspaceId: string, actor: Actor, input: CreateLinkInput): Promise<Link> {
     const passwordHash = input.password ? await argon2.hash(input.password, ARGON_OPTIONS) : null;
     return this.insert(workspaceId, actor, input, passwordHash);
+  }
+
+  /**
+   * Create many links in one request.
+   *
+   * Two phases, and the split is the whole design.
+   *
+   * **Phase one validates every row and writes nothing.** Destination, slug
+   * shape, routing chain, activation window, domain — all checked up front,
+   * along with the two things a single-link create never has to think about:
+   * two rows asking for the same back-half, and a requested back-half that is
+   * already taken. If any row fails, the response describes every row and the
+   * database is untouched.
+   *
+   * **Phase two writes the whole batch in one transaction.** Nothing partial
+   * survives a failure.
+   *
+   * That combination is what makes the feature safe to retry. A partial import
+   * would leave the caller unable to resubmit — fixing three bad rows and
+   * sending the file again would duplicate the ninety-seven good ones, because
+   * generated back-halves differ every time. All-or-nothing means resubmitting
+   * the corrected file is always the right move.
+   *
+   * `results` is the same length as the input and in the same order, so no row
+   * is ever silently dropped, which is the failure this feature exists to
+   * avoid being worse than not having it.
+   */
+  async bulkCreate(
+    workspaceId: string,
+    actor: Actor,
+    input: BulkCreateLinksInput,
+  ): Promise<BulkCreateLinksResult> {
+    const rows = input.links;
+    const errors = new Map<number, string>();
+
+    /* Echoed back on every failure so the UI can name the row without
+       re-reading its own input. Read off the raw row, because a row that
+       failed to parse has no typed destination to read. */
+    const destinationOf = (raw: Record<string, unknown>) =>
+      typeof raw.destination === "string" ? raw.destination : "";
+
+    /* One lookup per distinct domain rather than per row: a hundred links on
+       the same domain is the normal shape of a batch. */
+    const domainCache = new Map<string, { id: string; name: string } | string>();
+    const resolveDomainCached = async (name: string) => {
+      const key = name.toLowerCase();
+      const hit = domainCache.get(key);
+      if (hit !== undefined) return hit;
+      try {
+        const row = await this.resolveDomain(workspaceId, name);
+        const resolved = { id: row.id, name: row.domain };
+        domainCache.set(key, resolved);
+        return resolved;
+      } catch (err) {
+        // Kept as a per-row failure; one bad domain must not 400 the batch.
+        const message = err instanceof BadRequestException ? String(err.message) : `${name} isn't usable.`;
+        domainCache.set(key, message);
+        return message;
+      }
+    };
+
+    type Prepared = {
+      index: number;
+      input: CreateLinkInput;
+      domainId: string;
+      slug: string;
+      /** True when we chose the slug, so a collision can be redrawn. */
+      generated: boolean;
+      passwordHash: string | null;
+      scan: { status: string; checkedAt: Date };
+    };
+    const prepared: Prepared[] = [];
+
+    for (const [index, raw] of rows.entries()) {
+      /* Parsed per row rather than by the pipe. See BulkCreateLinksInput: a
+         schema on the array would reject the whole request for one bad URL
+         and never reach this report. */
+      const parsed = CreateLinkInputSchema.safeParse(raw);
+      if (!parsed.success) {
+        errors.set(
+          index,
+          parsed.error.issues.map((i) => `${i.path.join(".") || "row"}: ${i.message}`).join(" "),
+        );
+        continue;
+      }
+      const row = parsed.data;
+
+      const problems = [...validateRoutingChain(row.rules), ...validateSchedule(row.activatesAt, row.expiresAt)];
+      if (row.slug) {
+        const shape = isSlugAvailableShape(row.slug);
+        // isSlugAvailableShape returns { ok: boolean; reason?: string } rather
+        // than a discriminated union, so `reason` does not narrow here.
+        if (!shape.ok) problems.push(shape.reason ?? "That back-half isn't usable.");
+      }
+      const domain = await resolveDomainCached(row.domain);
+      if (typeof domain === "string") problems.push(domain);
+
+      if (problems.length) {
+        errors.set(index, problems.join(" "));
+        continue;
+      }
+
+      prepared.push({
+        index,
+        input: row,
+        domainId: (domain as { id: string }).id,
+        slug: row.slug || generateSlug(),
+        generated: !row.slug,
+        passwordHash: row.password ? await argon2.hash(row.password, ARGON_OPTIONS) : null,
+        scan: await this.safeBrowsing.check(row.destination),
+      });
+    }
+
+    /* Two rows asking for the same back-half. The unique index would catch it,
+       but only by failing the transaction — which tells the caller nothing
+       about which two rows disagreed. */
+    const seen = new Map<string, number>();
+    for (const item of prepared) {
+      if (!item.generated) {
+        const key = `${item.domainId}:${item.slug.toLowerCase()}`;
+        const first = seen.get(key);
+        if (first !== undefined) {
+          errors.set(item.index, `Row ${first + 1} already asks for /${item.slug} in this batch.`);
+        } else {
+          seen.set(key, item.index);
+        }
+      }
+    }
+
+    /* Back-halves already in the database. Checked here so a taken one is
+       reported against its row, and so a generated one that happens to collide
+       can simply be redrawn — the in-transaction retry `create` uses is not
+       available once every row shares a transaction. */
+    for (let pass = 0; pass < SLUG_RETRY_LIMIT; pass++) {
+      const live = prepared.filter((p) => !errors.has(p.index));
+      if (!live.length) break;
+
+      const takenPairs = new Set<string>();
+      for (const domainId of new Set(live.map((p) => p.domainId))) {
+        const wanted = live.filter((p) => p.domainId === domainId).map((p) => p.slug.toLowerCase());
+        const existing = await this.db
+          .select({ slug: links.slug })
+          .from(links)
+          .where(and(eq(links.domainId, domainId), inArray(sql`lower(${links.slug})`, wanted)));
+        for (const e of existing) takenPairs.add(`${domainId}:${e.slug.toLowerCase()}`);
+      }
+      if (!takenPairs.size) break;
+
+      let redrew = false;
+      for (const item of live) {
+        if (!takenPairs.has(`${item.domainId}:${item.slug.toLowerCase()}`)) continue;
+        if (item.generated) {
+          item.slug = generateSlug();
+          redrew = true;
+        } else {
+          errors.set(item.index, `${item.input.domain}/${item.slug} is already taken. Try another back-half.`);
+        }
+      }
+      if (!redrew) break;
+    }
+
+    /* Nothing is written when anything failed. See the note above: a partial
+       import cannot be safely resubmitted. */
+    if (errors.size) {
+      return {
+        created: 0,
+        failed: rows.length,
+        results: rows.map((raw, index) => ({
+          ok: false as const,
+          index,
+          destination: destinationOf(raw),
+          error:
+            errors.get(index) ??
+            "Not created — another row in this batch was invalid, and a batch is all or nothing.",
+        })),
+      };
+    }
+
+    const ids = await this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(links)
+        .values(
+          prepared.map((p) => ({
+            workspaceId,
+            domainId: p.domainId,
+            slug: p.slug,
+            destination: p.input.destination,
+            comment: p.input.comment ?? null,
+            tags: p.input.tags ?? [],
+            folder: p.input.folder ?? null,
+            redirectType: p.input.redirectType,
+            expiresAt: p.input.expiresAt ? new Date(p.input.expiresAt) : null,
+            expiresTo: p.input.expiresTo ?? null,
+            activatesAt: p.input.activatesAt ? new Date(p.input.activatesAt) : null,
+            scheduledTo: p.input.scheduledTo ?? null,
+            clickLimit: p.input.clickLimit ?? null,
+            passwordHash: p.passwordHash,
+            forwardQuery: p.input.forwardQuery,
+            deepLink: p.input.deepLink,
+            hideReferrer: p.input.hideReferrer,
+            publicPreview: p.input.publicPreview,
+            safeBrowsingStatus: p.scan.status,
+            safeBrowsingCheckedAt: p.scan.checkedAt,
+            utm: p.input.utm ?? null,
+            social: p.input.social ?? null,
+            createdBy: actor.userId,
+          })),
+        )
+        .returning({ id: links.id });
+
+      const rules = prepared.flatMap((p, i) =>
+        p.input.rules.map((rule, position) => ({
+          linkId: inserted[i]!.id,
+          position,
+          whenCountry: rule.when.country?.toUpperCase() ?? null,
+          whenDevice: rule.when.device ?? null,
+          whenLanguage: rule.when.language?.toLowerCase() ?? null,
+          then: rule.then,
+          weight: rule.weight ?? null,
+        })),
+      );
+      if (rules.length) await tx.insert(routingRules).values(rules);
+
+      for (const r of inserted) await this.enqueueProjection(tx, r.id, "upsert");
+      return inserted.map((r) => r.id);
+    });
+
+    /* Read back and record activity after the commit, never inside it — the
+       links exist by now, so a failure here must not undo them. */
+    const results: BulkLinkOutcome[] = [];
+    for (const [i, id] of ids.entries()) {
+      const link = await this.get(workspaceId, id);
+      await recordActivity(this.db, this.logger, {
+        workspaceId,
+        actor,
+        auditAction: "link.created",
+        webhookEvent: "link.created",
+        targetType: "link",
+        targetId: link.id,
+        metadata: { slug: link.slug, domain: link.domain, destination: link.destination, bulk: true },
+      });
+      results.push({ ok: true, index: prepared[i]!.index, link });
+    }
+
+    return { created: results.length, failed: 0, results };
   }
 
   /**

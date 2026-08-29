@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
+  BulkCreateLinksResult,
   Link,
   LinkList,
   type CloneLinkInput,
@@ -89,6 +90,33 @@ export function useUpdateLink() {
       qc.setQueryData(qk.link(link.id), link);
       qc.invalidateQueries({ queryKey: ["links"] });
       qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+  });
+}
+
+/**
+ * Create many links at once.
+ *
+ * The response is never a bare success: it carries one outcome per submitted
+ * row, in order, so the caller can show which rows landed and which did not.
+ * A batch that reports `created: 0` wrote nothing at all, which is what makes
+ * fixing the bad rows and resubmitting the whole list safe.
+ */
+export function useBulkCreateLinks() {
+  const qc = useQueryClient();
+  return useMutation({
+    /* Typed as CreateLinkInput[] here even though the endpoint accepts rows
+       loosely. The looseness exists so the *server* can attribute a bad row to
+       its index; there is no reason for the dashboard to send anything it
+       cannot describe. */
+    mutationFn: (links: CreateLinkInput[]) =>
+      request("/links/bulk", BulkCreateLinksResult, { method: "POST", body: { links } }),
+    onSuccess: (result) => {
+      // Only worth invalidating when something was actually written.
+      if (result.created > 0) {
+        qc.invalidateQueries({ queryKey: ["links"] });
+        qc.invalidateQueries({ queryKey: ["analytics"] });
+      }
     },
   });
 }
