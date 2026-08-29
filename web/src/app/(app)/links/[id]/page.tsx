@@ -169,7 +169,9 @@ export default function LinkDetailPage() {
         <Tile label="Total clicks" value={full(l.clicks)} {...deltaFor(a?.deltas.clicks, range)}>
           <Sparkline values={clickSeries} width={160} height={26} />
         </Tile>
-        <Tile label="Unique visitors" value={full(l.uniqueClicks ?? 0)} {...deltaFor(a?.deltas.unique, range)}>
+        {/* Approximate: uniques come from a HyperLogLog sketch (about 0.8%
+            error), so the label signals that rather than implying an exact count. */}
+        <Tile label="Unique visitors (approx.)" value={full(l.uniqueClicks ?? 0)} {...deltaFor(a?.deltas.unique, range)}>
           {/* The real per-day uniques, not the click sparkline scaled by 0.72. */}
           {uniqueSeries ? <Sparkline values={uniqueSeries} width={160} height={26} /> : null}
         </Tile>

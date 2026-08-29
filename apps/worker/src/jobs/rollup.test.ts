@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { clickEvents, createDatabase, domains, eq, links, sql, workspaces, type Database } from "@snapurl/database";
+import { addHashed, createSketch, estimate, hashForTesting, serialize } from "@snapurl/domain";
 import { rollupClicks } from "./rollup.js";
 
 /* ============================================================
@@ -25,6 +26,19 @@ describeDb("rollupClicks", () => {
   let linkId: string;
   let secondLinkId: string;
 
+  /* The re-merge test seeds a sketch with a visitor that never produced a
+     click_event, so its (link, day) row legitimately holds uniques > clicks.
+     That is fine for what that test proves, but it would violate the two
+     workspace-wide aggregate assertions below ("uniques <= clicks for every
+     row" and "the denormalised counters on links") if it shared this suite's
+     workspace and link. Those aggregates describe REAL click traffic, where a
+     unique always implies at least one click. So the re-merge scenario gets its
+     own workspace and link, fully isolated from the shared fixtures: the
+     workspace-wide scan never sees the click-less seeded visitor, and the
+     shared link's denormalised counter never absorbs the seeded day's clicks. */
+  let remergeWorkspaceId: string;
+  let remergeLinkId: string;
+
   /** Yesterday, so the rows sit on one settled UTC day regardless of run time. */
   const day = new Date(Date.now() - 86_400_000);
   const dayKey = day.toISOString().slice(0, 10);
@@ -35,6 +49,12 @@ describeDb("rollupClicks", () => {
     return d;
   };
 
+  /* The real click_events.visitor_hash is always a 32-hex-char HMAC digest
+     (see packages/domain/src/visitor.ts), and the HLL sketch validates that
+     shape loudly. Tests name visitors with readable labels ("visitor-a") and
+     run them through hashForTesting so the stored hash matches the production
+     contract while distinct labels stay distinct and a repeated label maps to
+     the identical hash, exactly the properties these assertions rely on. */
   async function addClick(opts: {
     link?: string;
     visitor: string;
@@ -47,7 +67,7 @@ describeDb("rollupClicks", () => {
       linkId: opts.link ?? linkId,
       workspaceId,
       occurredAt: at(opts.hour ?? 12),
-      visitorHash: opts.visitor,
+      visitorHash: hashForTesting(opts.visitor),
       country: "IN",
       device: "desktop",
       browser: "Chrome",
@@ -92,12 +112,39 @@ describeDb("rollupClicks", () => {
       .values({ workspaceId, domainId: dom!.id, slug: `r${stamp}b`, destination: "https://example.com/b" })
       .returning({ id: links.id });
     secondLinkId = two!.id;
+
+    /* A separate workspace + domain + link for the re-merge test. Kept out of
+       the shared workspace so its deliberately click-less seeded visitor cannot
+       be observed by the two workspace-wide aggregate assertions. */
+    const [remergeWs] = await db
+      .insert(workspaces)
+      .values({ name: "rollup remerge", slug: `rollup-remerge-${stamp}` })
+      .returning({ id: workspaces.id });
+    remergeWorkspaceId = remergeWs!.id;
+
+    const [remergeDom] = await db
+      .insert(domains)
+      .values({ workspaceId: remergeWorkspaceId, domain: `rollup-remerge-${stamp}.test` })
+      .returning({ id: domains.id });
+
+    const [remergeLink] = await db
+      .insert(links)
+      .values({
+        workspaceId: remergeWorkspaceId,
+        domainId: remergeDom!.id,
+        slug: `r${stamp}c`,
+        destination: "https://example.com/c",
+      })
+      .returning({ id: links.id });
+    remergeLinkId = remergeLink!.id;
   });
 
   afterAll(async () => {
     // Cascades through domains, links, click_events, click_daily and
-    // daily_visitors. CI runs smoke.sh against this same database afterwards.
+    // click_daily_uniques (the HLL sketch store). CI runs smoke.sh against this
+    // same database afterwards.
     if (workspaceId) await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+    if (remergeWorkspaceId) await db.delete(workspaces).where(eq(workspaces.id, remergeWorkspaceId));
     await handle?.close();
   });
 
@@ -122,9 +169,87 @@ describeDb("rollupClicks", () => {
     const result = await rollupClicks(db);
     expect(result.events).toBeGreaterThanOrEqual(4);
 
+    /* uniques is now a HyperLogLog estimate rather than an exact count, but at
+       these tiny cardinalities (two distinct visitors) the estimator falls in
+       its linear-counting range, which is exact - so the assertion stays === 2
+       rather than a tolerance. The approximation only shows up at thousands of
+       distinct visitors, which these DB tests do not reach. */
     const row = await daily();
     expect(row.clicks).toBe(4);
     expect(row.uniques).toBe(2);
+  });
+
+  it("does not change uniques when the same events are rolled up again", async () => {
+    /* The idempotency guarantee, stated directly. rollupClicks marks events as
+       consumed so a re-run claims nothing, but the deeper reason a re-run is
+       safe is that the sketch merge is register-wise max: even if the same
+       batch were folded in twice, the stored sketch and therefore the derived
+       uniques would not move. Assert the observable half: uniques is stable
+       across a second pass. */
+    const before = await daily();
+    await rollupClicks(db);
+    const after = await daily();
+    expect(after.uniques).toBe(before.uniques);
+    expect(after.uniques).toBeLessThanOrEqual(after.clicks);
+  });
+
+  it("re-merges against the stored sketch instead of overwriting it", async () => {
+    /* The convergence guarantee, stated directly. The rollup used to read the
+       stored sketch into Node, merge, and write "on conflict do update set
+       sketch = excluded.sketch" - a blind overwrite of a snapshot read that
+       would drop another writer's registers if two workers ever processed the
+       same (link, day) at once. The fix locks the row (insert-do-nothing then
+       select-for-update) and merges against the current committed value.
+
+       Simulate the "another writer already stored a sketch" case on a fresh
+       link/day: pre-seed click_daily_uniques with a sketch that already counts
+       one visitor, then roll up a batch of different visitors. If the rollup
+       overwrote, the pre-seeded visitor would be lost and uniques would equal
+       only the batch's distinct count; because it re-merges, the stored sketch
+       is the union and uniques covers both. */
+    /* Runs entirely inside remergeWorkspaceId / remergeLinkId, an isolated
+       workspace and link created in beforeAll. The pre-seeded sketch counts a
+       visitor with no matching click_event, so this (link, day) ends with
+       uniques > clicks. That is correct for what this test proves, but it must
+       not leak into the shared-workspace aggregate tests, hence the isolation. */
+    const seededDay = new Date(day);
+    seededDay.setUTCDate(seededDay.getUTCDate() - 1);
+    const seededDayKey = seededDay.toISOString().slice(0, 10);
+    const seededAt = new Date(seededDay);
+    seededAt.setUTCHours(12, 0, 0, 0);
+
+    const preSeed = createSketch();
+    addHashed(preSeed, hashForTesting("preexisting-visitor"));
+    await db.execute(sql`
+      insert into click_daily_uniques (link_id, day, sketch)
+      values (${remergeLinkId}::uuid, ${seededDayKey}::date, ${serialize(preSeed)})
+      on conflict (link_id, day) do update set sketch = excluded.sketch
+    `);
+    // click_daily needs a row for the same key so the derived-uniques update lands.
+    await db.execute(sql`
+      insert into click_daily (link_id, workspace_id, day, clicks, uniques, scans, blocked)
+      values (${remergeLinkId}::uuid, ${remergeWorkspaceId}::uuid, ${seededDayKey}::date, 0, 0, 0, 0)
+      on conflict (link_id, day) do nothing
+    `);
+
+    await db.insert(clickEvents).values([
+      { linkId: remergeLinkId, workspaceId: remergeWorkspaceId, occurredAt: seededAt, visitorHash: hashForTesting("batch-visitor-1"), country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
+      { linkId: remergeLinkId, workspaceId: remergeWorkspaceId, occurredAt: seededAt, visitorHash: hashForTesting("batch-visitor-2"), country: "IN", device: "desktop", browser: "Chrome", isQr: false, isBot: false, blockedReason: null },
+    ]);
+    await rollupClicks(db);
+
+    const rows = (await db.execute(sql`
+      select uniques from click_daily where link_id = ${remergeLinkId}::uuid and day = ${seededDayKey}::date
+    `)) as unknown as Array<{ uniques: number }>;
+    // Union of the pre-seeded visitor and the two batch visitors is three
+    // distinct, exact in HLL's linear-counting range at this tiny N. An
+    // overwrite would have dropped the pre-seeded visitor and reported two.
+    const expected = createSketch();
+    addHashed(expected, hashForTesting("preexisting-visitor"));
+    addHashed(expected, hashForTesting("batch-visitor-1"));
+    addHashed(expected, hashForTesting("batch-visitor-2"));
+    expect(rows[0]?.uniques).toBe(estimate(expected));
+    expect(rows[0]?.uniques).toBe(3);
   });
 
   it("marks the events it consumed, so a second run is a no-op", async () => {
@@ -140,9 +265,11 @@ describeDb("rollupClicks", () => {
   it("never lets uniques exceed clicks, across separate batches", async () => {
     /* The bug the comment names. A visitor who clicks twice on the same day,
        with the two clicks landing in different batches, must be counted once.
-       Adding uniques per batch instead of recomputing them from
-       daily_visitors is what would break this — and it is invisible until
-       someone notices a link with more unique visitors than clicks. */
+       Adding uniques per batch instead of re-deriving them from the merged HLL
+       sketch is what would break this - and it is invisible until someone
+       notices a link with more unique visitors than clicks. The sketch's
+       register-wise-max merge is what keeps the second click a no-op on the
+       count. */
     await addClick({ visitor: "visitor-c", hour: 5 });
     await rollupClicks(db);
     const afterFirst = await daily();
