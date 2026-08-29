@@ -24,6 +24,19 @@ EMAIL="integration-$(date +%s)@example.com"
 PASS="a-long-enough-password-123"
 PASSES=0; FAILS=0
 
+# A realistic desktop-browser User-Agent for the redirect that must survive the
+# rollup into click_daily. This MUST NOT be a bot UA: the redirect service tags
+# every click with isBot() (packages/domain/src/visitor.ts), whose BOT_PATTERN
+# matches curl/wget/etc. Bots ARE stored in click_events (so the decision stays
+# reversible), but rollupClicks (apps/worker/src/jobs/rollup.ts) folds only
+# non-bot clicks into click_daily.clicks (count(*) filter where is_bot = false).
+# curl's default UA (e.g. curl/8.x) matches BOT_PATTERN, so a click driven with
+# the default UA lands in click_events but is excluded from click_daily forever.
+# The UA below contains no BOT_PATTERN token (no bot/crawler/spider/preview/
+# headless/etc.), so the click is eligible for rollup. Do NOT "simplify" this
+# back to curl's default, or the click_daily assertion below will never count.
+BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
 ok()  { PASSES=$((PASSES+1)); echo "  PASS  $1"; }
 bad() { FAILS=$((FAILS+1));  echo "  FAIL  $1"; echo "        $2"; }
 
@@ -56,8 +69,10 @@ ok "created a plain 302 link"
 echo
 echo "== a real redirect =="
 # A real 302 with a real Location, served by the redirect container. This is
-# also what generates the click the worker must later roll up.
-RES="$(loc "$SLUG")"
+# also what generates the click the worker must later roll up, so it is driven
+# with a non-bot browser UA (see BROWSER_UA above): the click_daily rollup
+# excludes bot clicks, and curl's default UA is classified as a bot.
+RES="$(loc "$SLUG" -H "User-Agent: $BROWSER_UA")"
 if [ "$RES" = "302|https://example.com/rollup" ]; then
   ok "302 to the destination"
 else
@@ -67,7 +82,9 @@ fi
 echo
 echo "== the click lands in click_events =="
 # The redirect service records clicks asynchronously, so poll rather than
-# assume the row is there the instant the 302 came back.
+# assume the row is there the instant the 302 came back. Note: this count is
+# over click_events regardless of is_bot, so it would pass even for a bot UA;
+# the click_daily check below is the one that requires a non-bot UA.
 EVENTS=0
 for i in $(seq 1 20); do
   EVENTS="$(dbq "select count(*) from click_events where link_id in (select id from links where slug = '$SLUG')" | tr -d '[:space:]')"
