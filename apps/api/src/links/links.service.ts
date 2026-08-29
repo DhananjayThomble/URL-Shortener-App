@@ -13,7 +13,7 @@ import type {
   UpdateLinkInput,
 } from "@snapurl/contract";
 import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
-import { DB } from "../database/database.module.js";
+import { DB, READ_DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
@@ -33,11 +33,19 @@ const ARGON_OPTIONS = { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, 
 export class LinksService {
   constructor(
     @Inject(DB) private readonly db: Database,
+    // Read-only handle for the two purely external reads (list and the public
+    // get). Every write path — and the post-write read-backs inside them —
+    // deliberately stays on this.db; see getFrom() for the read-your-own-write
+    // trap that makes the distinction load-bearing.
+    @Inject(READ_DB) private readonly readDb: Database,
     private readonly safeBrowsing: SafeBrowsingService,
   ) {}
 
   private readonly logger = new Logger(LinksService.name);
 
+  /* Replica-safe: list() is a purely external read for the dashboard table
+     and CSV export. It never writes, and it is never called from inside a
+     write flow, so it reads from this.readDb. */
   async list(workspaceId: string, query: ListLinksQuery) {
     const filters = [eq(links.workspaceId, workspaceId)];
 
@@ -99,7 +107,7 @@ export class LinksService {
     if (query.folder) filters.push(eq(links.folder, query.folder));
     if (query.domain) filters.push(sql`lower(${domains.domain}) = ${query.domain.toLowerCase()}`);
 
-    const [{ total }] = await this.db
+    const [{ total }] = await this.readDb
       .select({ total: sql<number>`count(*)::int` })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
@@ -117,7 +125,7 @@ export class LinksService {
     }
 
     // One extra row tells us whether there is another page without a second query.
-    const rows = await this.db
+    const rows = await this.readDb
       .select({
         link: links,
         domain: domains.domain,
@@ -138,6 +146,7 @@ export class LinksService {
     const last = page[page.length - 1];
 
     const items = await this.hydrate(
+      this.readDb,
       page.map((r) => ({ ...r, link: { ...r.link, clicks: r.clicks, uniqueClicks: r.uniqueClicks } as LinkRow })),
     );
 
@@ -148,8 +157,26 @@ export class LinksService {
     };
   }
 
+  /* Replica-safe: the public GET path for a single link is a pure read, so it
+     goes through this.readDb.
+
+     WARNING: get() is NOT safe to reuse inside write flows. insert(),
+     bulkCreate() and clone() call get() right after committing to return the
+     freshly written row, and update() reads it before and after mutating. On a
+     lagging replica that "read your own write" returns a stale or absent row —
+     the caller would see the pre-write state, or a 404 for a link that exists.
+     Those callers use getFrom(this.db, ...) instead so the read-back lands on
+     the primary. The query is written once in getFrom(); only the executor
+     differs. */
   async get(workspaceId: string, id: string): Promise<Link> {
-    const [row] = await this.db
+    return this.getFrom(this.readDb, workspaceId, id);
+  }
+
+  /* The shared single-link read. `executor` is this.readDb for the external
+     GET and this.db for post-write read-backs — see get() for why the
+     distinction matters. */
+  private async getFrom(executor: Executor, workspaceId: string, id: string): Promise<Link> {
+    const [row] = await executor
       .select({
         link: links,
         domain: domains.domain,
@@ -165,7 +192,7 @@ export class LinksService {
       .limit(1);
 
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
-    const [dto] = await this.hydrate([
+    const [dto] = await this.hydrate(executor, [
       { ...row, link: { ...row.link, clicks: row.clicks, uniqueClicks: row.uniqueClicks } as LinkRow },
     ]);
     return dto!;
@@ -405,7 +432,9 @@ export class LinksService {
        links exist by now, so a failure here must not undo them. */
     const results: BulkLinkOutcome[] = [];
     for (const [i, id] of ids.entries()) {
-      const link = await this.get(workspaceId, id);
+      // Primary read-back: these rows were just committed, a replica may not
+      // have them yet.
+      const link = await this.getFrom(this.db, workspaceId, id);
       await recordActivity(this.db, this.logger, {
         workspaceId,
         actor,
@@ -435,7 +464,9 @@ export class LinksService {
    * a hash here and passed alongside.
    */
   async clone(workspaceId: string, id: string, actor: Actor, input: CloneLinkInput): Promise<Link> {
-    const source = await this.get(workspaceId, id);
+    // Primary: clone reads the source then inserts a copy, a read-then-write.
+    // The insert() it delegates to also reads back from the primary.
+    const source = await this.getFrom(this.db, workspaceId, id);
 
     /* The DTO exposes `passwordProtected`, never the hash, so read it
        separately rather than widening what every caller of `get` receives. */
@@ -589,7 +620,9 @@ export class LinksService {
           await this.enqueueProjection(tx, row!.id, "upsert");
           return row!.id;
         })
-          .then((id) => this.get(workspaceId, id))
+          // Primary read-back: reading the just-committed row from a lagging
+          // replica could 404 or return a stale copy.
+          .then((id) => this.getFrom(this.db, workspaceId, id))
           .then(async (link) => {
             await recordActivity(this.db, this.logger, {
               workspaceId,
@@ -628,7 +661,9 @@ export class LinksService {
   /* G1 — PATCH did not exist, yet editing a destination is the entire promise
      behind "print it once, change where it points forever". */
   async update(workspaceId: string, id: string, actor: Actor, input: UpdateLinkInput): Promise<Link> {
-    const existing = await this.get(workspaceId, id);
+    // Primary: update reads the row, mutates it, then reads it back — a
+    // read-then-write throughout, so both reads must see the primary.
+    const existing = await this.getFrom(this.db, workspaceId, id);
 
     /* Both windows have to be checked against what the row will look like
        afterwards, not against the patch: sending only `expiresAt` can still
@@ -697,7 +732,7 @@ export class LinksService {
       await this.enqueueProjection(tx, id, "upsert");
     });
 
-    const updated = await this.get(workspaceId, id);
+    const updated = await this.getFrom(this.db, workspaceId, id);
     await recordActivity(this.db, this.logger, {
       workspaceId,
       actor,
@@ -822,11 +857,14 @@ export class LinksService {
 
   /** Batch the rules and sparklines for a page of links — otherwise a 50-row
    *  table issues 101 queries. */
-  private async hydrate(rows: Array<{ link: LinkRow; domain: string; creator: string | null }>) {
+  private async hydrate(
+    executor: Executor,
+    rows: Array<{ link: LinkRow; domain: string; creator: string | null }>,
+  ) {
     if (rows.length === 0) return [];
     const ids = rows.map((r) => r.link.id);
 
-    const rules = await this.db
+    const rules = await executor
       .select()
       .from(routingRules)
       .where(inArray(routingRules.linkId, ids))
@@ -834,7 +872,7 @@ export class LinksService {
 
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - SPARKLINE_DAYS);
-    const daily = await this.db
+    const daily = await executor
       .select({ linkId: clickDaily.linkId, day: clickDaily.day, clicks: clickDaily.clicks })
       .from(clickDaily)
       .where(and(inArray(clickDaily.linkId, ids), gte(clickDaily.day, since.toISOString().slice(0, 10))));

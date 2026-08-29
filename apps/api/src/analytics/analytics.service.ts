@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, links, lt, sql, type Database } from "@snapurl/database";
 import type { Analytics, AnalyticsQuery, Breakdown, TimeseriesPoint } from "@snapurl/contract";
-import { DB } from "../database/database.module.js";
+import { DB, READ_DB } from "../database/database.module.js";
 
 const RANGE_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
 
@@ -20,20 +20,31 @@ const COUNTRY_NAMES: Record<string, string> = {
 
 @Injectable()
 export class AnalyticsService {
-  constructor(@Inject(DB) private readonly db: Database) {}
+  constructor(
+    @Inject(DB) private readonly db: Database,
+    // Read-only handle. Every query in this service is a pure dashboard
+    // aggregation over rollup tables with no write in the same operation, so
+    // all of them are replica-safe — see overview().
+    @Inject(READ_DB) private readonly readDb: Database,
+  ) {}
 
   /* Everything here reads rollup tables, never click_events.
 
      Aggregating raw rows on page load is fine at a thousand clicks and
      unusable at ten million; the rollups exist precisely so this endpoint's
-     cost is bounded by the date range rather than by traffic. */
+     cost is bounded by the date range rather than by traffic.
+
+     Replica-safe: overview (and the breakdown/tagBreakdown/topLinks helpers it
+     calls) only read rollup tables and never write, so they route through
+     this.readDb. No read-then-write here, so replica lag cannot produce a
+     wrong answer relative to a write in the same operation. */
   async overview(workspaceId: string, query: AnalyticsQuery): Promise<Analytics> {
     const days = RANGE_DAYS[query.range] ?? 30;
     const { start, previousStart } = windowFor(days);
 
     const scope = query.linkId ? and(eq(clickDaily.workspaceId, workspaceId), eq(clickDaily.linkId, query.linkId)) : eq(clickDaily.workspaceId, workspaceId);
 
-    const [current] = await this.db
+    const [current] = await this.readDb
       .select({
         clicks: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int`,
         unique: sql<number>`coalesce(sum(${clickDaily.uniques}), 0)::int`,
@@ -43,7 +54,7 @@ export class AnalyticsService {
       .from(clickDaily)
       .where(and(scope, gte(clickDaily.day, iso(start))));
 
-    const [previous] = await this.db
+    const [previous] = await this.readDb
       .select({
         clicks: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int`,
         unique: sql<number>`coalesce(sum(${clickDaily.uniques}), 0)::int`,
@@ -52,7 +63,7 @@ export class AnalyticsService {
       .from(clickDaily)
       .where(and(scope, gte(clickDaily.day, iso(previousStart)), lt(clickDaily.day, iso(start))));
 
-    const series = await this.db
+    const series = await this.readDb
       .select({
         date: clickDaily.day,
         clicks: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int`,
@@ -84,7 +95,7 @@ export class AnalyticsService {
        the stat tile needs its own count. Without this the analytics page reads
        zero while the conversions page reports hundreds — the kind of
        contradiction that makes someone stop trusting both numbers. */
-    const [conversionTotals] = await this.db
+    const [conversionTotals] = await this.readDb
       .select({ n: sql<number>`count(*)::int` })
       .from(conversions)
       .where(
@@ -95,7 +106,7 @@ export class AnalyticsService {
         ),
       );
 
-    const [previousConversions] = await this.db
+    const [previousConversions] = await this.readDb
       .select({ n: sql<number>`count(*)::int` })
       .from(conversions)
       .where(
@@ -152,7 +163,8 @@ export class AnalyticsService {
     ];
     if (linkId) filters.push(eq(breakdownDaily.linkId, linkId));
 
-    const rows = await this.db
+    // Replica-safe: pure read of the breakdown rollup.
+    const rows = await this.readDb
       .select({ label: breakdownDaily.value, value: sql<number>`sum(${breakdownDaily.count})::int` })
       .from(breakdownDaily)
       .where(and(...filters))
@@ -165,7 +177,8 @@ export class AnalyticsService {
   /** Tags live on the link, not on the click, so this joins rather than
    *  reading a breakdown row. A click inherits whatever tags the link has now. */
   private async tagBreakdown(workspaceId: string, start: Date): Promise<Breakdown[]> {
-    const rows = await this.db
+    // Replica-safe: pure read of the click rollup joined to links.
+    const rows = await this.readDb
       .select({ label: sql<string>`tag`, value: sql<number>`sum(${clickDaily.clicks})::int` })
       .from(clickDaily)
       .innerJoin(links, eq(clickDaily.linkId, links.id))
@@ -178,7 +191,8 @@ export class AnalyticsService {
   }
 
   private async topLinks(workspaceId: string, start: Date): Promise<Breakdown[]> {
-    const rows = await this.db
+    // Replica-safe: pure read of the click rollup joined to links.
+    const rows = await this.readDb
       .select({ slug: links.slug, value: sql<number>`sum(${clickDaily.clicks})::int` })
       .from(clickDaily)
       .innerJoin(links, eq(clickDaily.linkId, links.id))

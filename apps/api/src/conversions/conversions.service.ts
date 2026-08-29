@@ -1,17 +1,25 @@
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import { and, clickDaily, conversions, desc, eq, gte, linkCounters, links, lt, sql, workspaces, type Database } from "@snapurl/database";
 import type { ConversionsReport, RecordConversionInput } from "@snapurl/contract";
-import { DB } from "../database/database.module.js";
+import { DB, READ_DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 
 const RANGE_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
 
 @Injectable()
 export class ConversionsService {
-  constructor(@Inject(DB) private readonly db: Database) {}
+  constructor(
+    @Inject(DB) private readonly db: Database,
+    // Read-only handle for the pure dashboard reads (report and its helpers).
+    // record() deliberately stays on this.db — see the note there.
+    @Inject(READ_DB) private readonly readDb: Database,
+  ) {}
 
   private readonly logger = new Logger(ConversionsService.name);
 
+  /* Replica-safe: report (and its totalsFor/revenueSeries helpers) only reads
+     rollup and conversion rows to render the dashboard; it never writes in the
+     same operation, so it routes through this.readDb. */
   async report(workspaceId: string, range = "30d"): Promise<ConversionsReport> {
     const days = RANGE_DAYS[range] ?? 30;
     const start = new Date();
@@ -26,7 +34,7 @@ export class ConversionsService {
        number that means nothing, and converting would need a rate source and a
        rate date — a product decision, not a backend one. So the report states
        the workspace currency and counts only conversions recorded in it. */
-    const [workspace] = await this.db
+    const [workspace] = await this.readDb
       .select({ currency: workspaces.currency })
       .from(workspaces)
       .where(eq(workspaces.id, workspaceId))
@@ -36,7 +44,7 @@ export class ConversionsService {
     const totals = await this.totalsFor(workspaceId, start, undefined, currency);
     const previous = await this.totalsFor(workspaceId, previousStart, start, currency);
 
-    const events = await this.db
+    const events = await this.readDb
       .select({
         id: sql<string>`min(${conversions.id}::text)`,
         kind: conversions.kind,
@@ -50,7 +58,7 @@ export class ConversionsService {
       .orderBy(desc(sql`count(*)`))
       .limit(12);
 
-    const byLink = await this.db
+    const byLink = await this.readDb
       .select({
         link: links.slug,
         campaign: sql<string>`coalesce(${links.utm}->>'campaign', coalesce(${links.folder}, '-'))`,
@@ -95,6 +103,12 @@ export class ConversionsService {
     };
   }
 
+  /* Stays on the primary (this.db), never the replica: this is a read-then-write.
+     It resolves a slug to a link id and reads the workspace currency, then
+     INSERTs a conversion and writes activity in the same logical operation.
+     On a lagging replica the slug or currency lookup could miss a row that was
+     just created on the primary, so the conversion would be misresolved or
+     rejected. Read the inputs and write from the same primary handle. */
   async record(workspaceId: string, actor: Actor, input: RecordConversionInput) {
     let linkId = input.linkId ?? null;
     if (!linkId && input.slug) {
@@ -167,7 +181,8 @@ export class ConversionsService {
     const bounds = [eq(conversions.workspaceId, workspaceId), gte(conversions.occurredAt, start)];
     if (end) bounds.push(lt(conversions.occurredAt, end));
 
-    const [row] = await this.db
+    // Replica-safe: helper for report(), pure aggregate read.
+    const [row] = await this.readDb
       .select({
         leads: sql<number>`count(*) filter (where ${conversions.kind} = 'lead')::int`,
         signups: sql<number>`count(*) filter (where ${conversions.kind} = 'signup')::int`,
@@ -179,7 +194,7 @@ export class ConversionsService {
 
     const clickBounds = [eq(clickDaily.workspaceId, workspaceId), gte(clickDaily.day, isoDay(start))];
     if (end) clickBounds.push(lt(clickDaily.day, isoDay(end)));
-    const [clicks] = await this.db
+    const [clicks] = await this.readDb
       .select({ total: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int` })
       .from(clickDaily)
       .where(and(...clickBounds));
@@ -194,7 +209,8 @@ export class ConversionsService {
   }
 
   private async revenueSeries(workspaceId: string, start: Date, days: number, currency: string): Promise<number[]> {
-    const rows = await this.db
+    // Replica-safe: helper for report(), pure aggregate read.
+    const rows = await this.readDb
       .select({
         day: sql<string>`(${conversions.occurredAt} at time zone 'UTC')::date::text`,
         revenueMinor: sql<string>`coalesce(sum(${conversions.valueMinor}), 0)::text`,

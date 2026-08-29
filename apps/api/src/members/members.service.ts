@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable, NotFoundExc
 import { randomBytes, createHash } from "node:crypto";
 import { and, auditLog, desc, eq, links, memberships, sql, users, type Database } from "@snapurl/database";
 import type { AuditEntry, InviteMemberInput, Member } from "@snapurl/contract";
-import { DB } from "../database/database.module.js";
+import { DB, READ_DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";
 import { MailService } from "../mail/mail.service.js";
 
@@ -10,11 +10,16 @@ import { MailService } from "../mail/mail.service.js";
 export class MembersService {
   constructor(
     @Inject(DB) private readonly db: Database,
+    // Read-only handle for the pure reads (list, audit). The mutating methods
+    // below (invite/changeRole/remove/writeAudit) read-then-write in the same
+    // operation and deliberately stay on this.db.
+    @Inject(READ_DB) private readonly readDb: Database,
     private readonly mail: MailService,
   ) {}
 
+  // Replica-safe: pure read of the membership/user tables for the team page.
   async list(workspaceId: string): Promise<Member[]> {
-    const rows = await this.db
+    const rows = await this.readDb
       .select({
         membership: memberships,
         user: users,
@@ -41,6 +46,12 @@ export class MembersService {
     }));
   }
 
+  /* invite/changeRole/remove/writeAudit all stay on the primary (this.db):
+     each reads-then-writes in one operation (invite checks for an existing
+     membership then inserts; changeRole/remove count owners then mutate;
+     writeAudit inserts). On a lagging replica the guard read could miss a row
+     that already exists on the primary, so the check and the write must share
+     the primary handle. */
   async invite(workspaceId: string, actorLabel: string, input: InviteMemberInput): Promise<Member> {
     const email = input.email.toLowerCase().trim();
 
@@ -149,8 +160,9 @@ export class MembersService {
     });
   }
 
+  // Replica-safe: pure read of the audit log for the activity view.
   async audit(workspaceId: string, limit = 50): Promise<AuditEntry[]> {
-    const rows = await this.db
+    const rows = await this.readDb
       .select()
       .from(auditLog)
       .where(eq(auditLog.workspaceId, workspaceId))
