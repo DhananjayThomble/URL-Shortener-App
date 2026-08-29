@@ -29,6 +29,7 @@ export interface ResolvedLink {
   clicks: number;
   hasPassword: boolean;
   forwardQuery: boolean;
+  deepLink: boolean;
   hideReferrer: boolean;
   publicPreview: boolean;
   archived: boolean;
@@ -105,6 +106,7 @@ export class PostgresLinkResolver implements LinkResolver {
       clicks: row.link.clicks,
       hasPassword: Boolean(row.link.passwordHash),
       forwardQuery: row.link.forwardQuery,
+      deepLink: row.link.deepLink,
       hideReferrer: row.link.hideReferrer,
       publicPreview: row.link.publicPreview,
       archived: Boolean(row.link.archivedAt),

@@ -239,7 +239,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                         checked={field.value ?? false}
                         onChange={field.onChange}
                         title="Deep link into app"
-                        description="Opens the native app when it is installed."
+                        description="Android opens the app when it is installed and the browser when it isn't. iPhones already do this on their own, and desktops have no app to open."
                       />
                     )}
                   />
