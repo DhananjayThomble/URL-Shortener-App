@@ -24,6 +24,7 @@
     "seed": "tsx scripts/seed.ts",
     "studio": "drizzle-kit studio",
     "import-v1": "tsx scripts/import-v1.ts",
+    "audit-urls": "tsx scripts/audit-urls.ts",
     "test": "vitest run"
   },
   "dependencies": {
