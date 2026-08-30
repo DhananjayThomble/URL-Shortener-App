@@ -22,6 +22,12 @@ new SnapUrlStack(app, "SnapUrl", {
      empty with a CORS error in the console. */
   webOrigin: app.node.tryGetContext("webOrigin"),
   redirectOrigin: app.node.tryGetContext("redirectOrigin"),
+  /* A topology/synth-time choice (it shapes the VPC), not deploy-time config,
+     so it lives here and not in SSM. Defaults to 'instance' (t4g.nano NAT
+     instance, ~$3/mo) inside the stack; override with `-c natStrategy=gateway`
+     (managed NAT, ~$32/mo) or `-c natStrategy=none` (free, no egress). Context
+     is untyped, so the stack validates it and throws on anything else. */
+  natStrategy: app.node.tryGetContext("natStrategy"),
   description: "SnapURL: API, redirect service, worker, and the Postgres they share.",
   tags: {
     Project: "SnapURL",

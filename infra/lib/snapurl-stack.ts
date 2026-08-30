@@ -32,12 +32,38 @@ import { SnapUrlConfig } from "./config.js";
    would be about $58/month against Lambda's ~$0, and would burn
    the credits in under two months.
 
-   The single most expensive mistake available in this file is a
-   NAT Gateway. It costs ~$32/month before a byte moves — more
-   than everything else combined, including the database — and
-   the standard "put RDS in a private subnet" tutorial creates
-   one without mentioning it. See the VPC below.
+   Egress is the one place where cost and correctness pull
+   against each other. A managed NAT Gateway costs ~$32/month
+   before a byte moves — more than everything else combined,
+   including the database — and the standard "put RDS in a
+   private subnet" tutorial creates one without mentioning it.
+   But the backend genuinely needs the internet: Safe Browsing,
+   customer webhooks, Google OAuth (JWKS) and mail all call out.
+   The `natStrategy` prop reconciles the two; see the VPC below.
    ============================================================ */
+
+/**
+ * How the private subnets reach the internet.
+ *
+ * - `'instance'` (default): a single t4g.nano NAT *instance* via
+ *   `ec2.NatProvider.instanceV2`, ~$3/month. Gives full IPv4 egress so Safe
+ *   Browsing, customer webhooks, Google OAuth (JWKS) and mail actually work.
+ *   Single point of failure (one instance, one AZ) — acceptable for a hobby
+ *   stack, and the reason this is an instance rather than a managed gateway.
+ * - `'gateway'`: a managed NAT gateway, ~$32/month. Same topology as
+ *   `'instance'` but highly available and zero-maintenance — a one-flag
+ *   upgrade when the budget or the traffic justifies it.
+ * - `'none'`: the original free, no-egress topology (natGateways: 0, a single
+ *   isolated subnet group). Safe Browsing, webhooks, OAuth and mail then stay
+ *   non-functional; choosing this is the operator's explicit decision to trade
+ *   those features for $0 of egress cost.
+ *
+ * NAT (instance/gateway) was chosen over an IPv6 egress-only IGW because
+ * arbitrary customer webhook endpoints cannot be relied on to publish AAAA
+ * records, so IPv6-only egress would leave webhook coverage patchy. See the
+ * VPC block below and docs/DECISIONS.md.
+ */
+export type NatStrategy = "gateway" | "instance" | "none";
 
 export interface SnapUrlStackProps extends StackProps {
   /**
@@ -55,6 +81,14 @@ export interface SnapUrlStackProps extends StackProps {
   webOrigin?: string;
   /** Public hostname the redirect service answers on. Same precedence as above. */
   redirectOrigin?: string;
+  /**
+   * How the backend reaches the internet. Defaults to `'instance'` (a
+   * t4g.nano NAT instance, ~$3/month) so Safe Browsing, webhooks, OAuth and
+   * mail work out of the box. `'gateway'` is the one-flag ~$32/month managed
+   * upgrade; `'none'` preserves the original free, no-egress isolated-only
+   * topology at the cost of those features. See {@link NatStrategy}.
+   */
+  natStrategy?: NatStrategy;
 }
 
 export class SnapUrlStack extends Stack {
@@ -65,19 +99,107 @@ export class SnapUrlStack extends Stack {
        Network
        --------------------------------------------------------- */
 
-    const vpc = new ec2.Vpc(this, "Vpc", {
-      maxAzs: 2, // RDS requires a subnet group spanning at least two.
-      /* natGateways: 0 is the most important line in this stack.
-         With no NAT, nothing in a private subnet can reach the internet —
-         which is fine here, because nothing needs to. The Lambdas talk to
-         RDS inside the VPC and to AWS services through VPC endpoints. */
-      natGateways: 0,
-      subnetConfiguration: [
-        { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
-        // ISOLATED, not PRIVATE_WITH_EGRESS: the latter implies a NAT.
-        { name: "isolated", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
-      ],
-    });
+    /* How the backend reaches the internet. Default 'instance': a t4g.nano NAT
+       instance (~$3/month) rather than a managed NAT gateway (~$32/month),
+       because a hobby stack does not need the gateway's per-AZ redundancy.
+       'gateway' is the one-flag upgrade to that redundancy; 'none' keeps the
+       original zero-egress topology. See NatStrategy above. A value that is
+       present but not one of the three fails synth loudly here rather than
+       silently defaulting, so a `-c natStrategy=gatway` typo is caught. */
+    const natStrategy: NatStrategy = props.natStrategy ?? "instance";
+    if (!["gateway", "instance", "none"].includes(natStrategy)) {
+      throw new Error(
+        `Invalid natStrategy '${natStrategy as string}'. ` +
+          `Expected one of: 'gateway', 'instance', 'none' (default 'instance').`,
+      );
+    }
+
+    /* Three egress strategies, one VPC shape parameterised by natStrategy:
+
+         'none'      natGateways: 0, no NAT device. PUBLIC + a single isolated
+                     subnet group. Nothing in a private subnet reaches the
+                     internet — the original free topology. Safe Browsing,
+                     webhooks, OAuth and mail stay dead; the operator's choice.
+         'instance'  natGateways: 1 through a t4g.nano NAT *instance*
+                     (NatProvider.instanceV2, ~$3/month). Full IPv4 egress.
+                     Single instance in a single AZ — a single point of
+                     failure, which is why it is an instance and not a gateway;
+                     acceptable for a hobby stack, the default.
+         'gateway'   natGateways: 1 through a managed NAT *gateway*
+                     (~$32/month). Same topology, highly available, no
+                     maintenance — the paid upgrade from 'instance'.
+
+       NAT (either device) over an IPv6 egress-only IGW: arbitrary customer
+       webhook endpoints cannot be relied on to publish AAAA records, so
+       IPv6-only egress would leave webhook coverage patchy. When NAT is on we
+       add a PRIVATE_WITH_EGRESS group ('egress') for the app Lambdas and keep
+       a PRIVATE_ISOLATED group ('isolated') for the DB, which never egresses.
+       The exhaustive switch below leaves no unhandled strategy, so synth is
+       valid by construction for all three values. */
+    const egressAz = ec2.InstanceType.of(
+      ec2.InstanceClass.BURSTABLE4_GRAVITON,
+      ec2.InstanceSize.NANO,
+    );
+    let vpcProps: ec2.VpcProps;
+    switch (natStrategy) {
+      case "none":
+        vpcProps = {
+          maxAzs: 2, // RDS requires a subnet group spanning at least two.
+          natGateways: 0,
+          subnetConfiguration: [
+            { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+            // ISOLATED, not PRIVATE_WITH_EGRESS: the latter implies a NAT.
+            { name: "isolated", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
+          ],
+        };
+        break;
+      case "instance":
+        vpcProps = {
+          maxAzs: 2,
+          natGateways: 1, // One instance, not one per AZ — the hobby-stack SPOF tradeoff.
+          natGatewayProvider: ec2.NatProvider.instanceV2({ instanceType: egressAz }),
+          subnetConfiguration: [
+            { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+            { name: "egress", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
+            { name: "isolated", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
+          ],
+        };
+        break;
+      case "gateway":
+        vpcProps = {
+          maxAzs: 2,
+          natGateways: 1, // One gateway, not one per AZ — cost over redundancy.
+          // No natGatewayProvider: the default is a managed NAT gateway.
+          subnetConfiguration: [
+            { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+            { name: "egress", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
+            { name: "isolated", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
+          ],
+        };
+        break;
+      default: {
+        // Exhaustiveness guard: if NatStrategy gains a member, this is a
+        // compile error rather than a silent no-egress deploy.
+        const unreachable: never = natStrategy;
+        throw new Error(`Unhandled natStrategy: ${String(unreachable)}`);
+      }
+    }
+
+    const vpc = new ec2.Vpc(this, "Vpc", vpcProps);
+
+    /* The DB never needs egress, so it stays in the isolated group in every
+       mode. The app Lambdas take the egress-aware group: PRIVATE_WITH_EGRESS
+       when a NAT device exists, else the isolated group (which is all there is
+       when natStrategy === 'none'). */
+    const databaseSubnets: ec2.SubnetSelection = {
+      subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+    };
+    const appLambdaSubnets: ec2.SubnetSelection = {
+      subnetType:
+        natStrategy === "none"
+          ? ec2.SubnetType.PRIVATE_ISOLATED
+          : ec2.SubnetType.PRIVATE_WITH_EGRESS,
+    };
 
     /* Gateway endpoints are free. Interface endpoints are ~$7/month each, so
        only S3 and DynamoDB get one — the two that happen to be gateways. */
@@ -103,7 +225,8 @@ export class SnapUrlStack extends Stack {
       // Graviton. Same price class as t3.micro and measurably faster.
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.MICRO),
       vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      // Always isolated: the database never needs egress, in any natStrategy.
+      vpcSubnets: databaseSubnets,
       securityGroups: [dbSecurityGroup],
       multiAz: false, // Doubles the cost. A hobby project does not need it.
       allocatedStorage: 20,
@@ -130,6 +253,10 @@ export class SnapUrlStack extends Stack {
     const lambdaSecurityGroup = new ec2.SecurityGroup(this, "LambdaSg", {
       vpc,
       description: "SnapURL Lambdas.",
+      /* Outbound-open so the Lambdas can egress on 443 through the NAT device.
+         This path only actually reaches the internet when natStrategy !==
+         'none' (the app Lambdas then sit in PRIVATE_WITH_EGRESS); under 'none'
+         the same rule is harmless because there is no route out. */
       allowAllOutbound: true,
     });
     dbSecurityGroup.addIngressRule(
@@ -201,7 +328,12 @@ export class SnapUrlStack extends Stack {
        ISecurityGroup[], and a readonly tuple will not satisfy it. */
     const vpcSettings = {
       vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED } as ec2.SubnetSelection,
+      /* Egress-aware: PRIVATE_WITH_EGRESS when NAT is on so the API, redirect
+         and worker can call Safe Browsing / webhooks / OAuth / mail; the
+         isolated group under natStrategy === 'none'. Redirect shares this
+         object for RDS access — giving it egress when NAT is on is harmless
+         and consistent, and Phase 7 may rely on it. */
+      vpcSubnets: appLambdaSubnets,
       securityGroups: [lambdaSecurityGroup] as ec2.ISecurityGroup[],
     };
 
