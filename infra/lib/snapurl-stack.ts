@@ -577,8 +577,18 @@ export class SnapUrlStack extends Stack {
       // IP address: the custom origin request policy above forwards CloudFront's
       // CloudFront-Viewer-Country / -City headers, and the viewer-request
       // function supplies x-forwarded-host so the app can resolve the link's
-      // domain. PriceClass 100 keeps egress cheapest.
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      // domain.
+      //
+      // PriceClass 200, not 100: India is in Price Class 200, and 100 (US /
+      // Canada / Mexico / Europe / Israel) excludes it. Under 100 an Indian
+      // visitor — the primary audience — routes to a European edge and back to
+      // ap-south-1 for every request, and since the behaviour is
+      // CACHING_DISABLED nothing is absorbed at the edge, so every request pays
+      // both legs (~150-210 ms of p50). 200 adds the Indian (and wider APAC/
+      // South-American) edges; the marginally higher per-GB egress there is
+      // immaterial at the payload size of a 302. (300 — the whole world,
+      // incl. Australia/NZ — buys nothing this audience uses.)
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
       comment: "SnapURL redirect edge",
     });
 
