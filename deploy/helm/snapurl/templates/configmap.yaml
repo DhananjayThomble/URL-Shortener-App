@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snapurl.configMapName" . }}
+  labels:
+    {{- include "snapurl.labels" . | nindent 4 }}
+  annotations:
+    # Also a pre-install/pre-upgrade hook (weight -10) so the DATABASE_SSL /
+    # non-secret toggles the migrate Job reads exist before it runs — same
+    # ordering reason as the Secret. Kept around for the Deployments too.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/resource-policy": keep
+data:
+  # Non-secret env shared by all services. Credential-bearing values
+  # (DATABASE_URL, REDIS_URL, DATABASE_CA_CERT, JWT secrets) live in the Secret,
+  # NOT here — only non-credential toggles and public origins are in the ConfigMap.
+  NODE_ENV: "production"
+  WEB_ORIGIN: {{ .Values.webOrigin | quote }}
+  DEFAULT_DOMAIN: {{ .Values.defaultDomain | quote }}
+  REDIRECT_ORIGIN: {{ .Values.redirectOrigin | quote }}
+  TRUSTED_PROXY_HOPS: {{ .Values.trustedProxyHops | quote }}
+  # CACHE_DRIVER is forced to "redis" whenever redis.url is set, so every API
+  # replica shares one throttle counter (correct multi-replica rate limiting).
+  # With no redis.url it falls back to the per-instance "memory" driver.
+  CACHE_DRIVER: {{ if .Values.redis.url }}"redis"{{ else }}"memory"{{ end }}
+  THROTTLE_TTL_SECONDS: {{ .Values.throttle.ttlSeconds | quote }}
+  THROTTLE_LIMIT: {{ .Values.throttle.limit | quote }}
+  MAIL_TRANSPORT: {{ .Values.mail.transport | quote }}
+  {{- if .Values.mail.from }}
+  MAIL_FROM: {{ .Values.mail.from | quote }}
+  {{- end }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  # Database toggles (non-credential). DATABASE_URL/replica/CA live in the Secret.
+  DATABASE_SSL: {{ .Values.postgres.ssl | quote }}
+  DATABASE_SSL_NO_VERIFY: {{ .Values.postgres.sslNoVerify | quote }}
+  DATABASE_POOL_MAX: {{ .Values.postgres.poolMax | quote }}
+  {{- if .Values.analytics.columnar.enabled }}
+  # FUTURE seam (#284): only the postgres reader exists today. When the
+  # columnar branch is enabled we plumb the env, but no columnar adapter ships
+  # in this chart — the app must gain one for these to do anything.
+  ANALYTICS_READER: {{ .Values.analytics.reader | quote }}
+  ANALYTICS_COLUMNAR_DRIVER: {{ .Values.analytics.columnar.driver | quote }}
+  ANALYTICS_COLUMNAR_URL: {{ .Values.analytics.columnar.url | quote }}
+  {{- end }}

@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "snapurl.fullname" . }}-redirect
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "redirect") | nindent 4 }}
+spec:
+  # NOTE: when hpa.enabled the HPA owns this count — replicaCount is only the
+  # initial value. Omitted from the manifest when the HPA is enabled so it does
+  # not fight the autoscaler on every `helm upgrade`.
+  {{- if not .Values.hpa.enabled }}
+  replicas: {{ .Values.redirect.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "snapurl.componentSelectorLabels" (dict "root" . "component" "redirect") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "snapurl.componentLabels" (dict "root" . "component" "redirect") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "snapurl.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: redirect
+          image: {{ include "snapurl.image" (dict "root" . "component" "redirect") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.redirect.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "snapurl.configMapName" . }}
+          env:
+            - name: PORT
+              value: {{ .Values.redirect.service.port | quote }}
+            # Least-privilege: the redirect verifies unlock tokens the API
+            # SIGNED, so it needs ONLY the access secret — NOT the refresh secret.
+            - name: JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: jwt-access-secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-url
+            {{- if .Values.postgres.replicaUrl }}
+            - name: DATABASE_REPLICA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-replica-url
+            {{- end }}
+            {{- if .Values.redis.url }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: redis-url
+            {{- end }}
+            {{- if .Values.postgres.caCert }}
+            - name: DATABASE_CA_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-ca-cert
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.redirect.service.port }}
+            initialDelaySeconds: {{ .Values.redirect.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.redirect.probes.periodSeconds }}
+            timeoutSeconds: {{ .Values.redirect.probes.timeoutSeconds }}
+            failureThreshold: {{ .Values.redirect.probes.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.redirect.service.port }}
+            initialDelaySeconds: {{ .Values.redirect.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.redirect.probes.periodSeconds }}
+            timeoutSeconds: {{ .Values.redirect.probes.timeoutSeconds }}
+            failureThreshold: {{ .Values.redirect.probes.failureThreshold }}
+          resources:
+            {{- toYaml .Values.redirect.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

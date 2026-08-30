@@ -1,0 +1,90 @@
+{{- if .Values.migrateJob.enabled }}
+{{- /*
+  THE POINT OF THIS JOB: the apps do NOT migrate at boot. Running the schema
+  migration inside every pod's start-up would have N replicas racing to apply
+  the same migrations concurrently — the exact failure mode this Job prevents.
+  Instead this runs ONCE, as a Helm pre-install/pre-upgrade hook, before the new
+  pods roll.
+
+  It reuses the WORKER image because that image ships the drizzle/*.sql folder
+  (packages/database lists "drizzle" in its files) and bundles @snapurl/database
+  under node_modules, so the bare `require('@snapurl/database').runMigrations`
+  resolves — exactly like the single-node compose `migrate` service.
+
+  The command below is byte-identical to deploy/single-node/docker-compose.yml.
+
+  Uses the default ServiceAccount (not the chart's) on purpose: the chart SA is
+  a normal resource created AFTER pre-install hooks, so it does not yet exist
+  when this hook runs on a fresh install.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "snapurl.fullname" . }}-migrate
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "migrate") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrateJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrateJob.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "snapurl.componentSelectorLabels" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "snapurl.image" (dict "root" . "component" "worker") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - node
+            - -e
+            - "require('@snapurl/database').runMigrations(process.env.DATABASE_URL, process.env.DATABASE_SSL==='true').then(r=>{console.log('migrations applied',r.folder);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: DATABASE_SSL
+              value: {{ .Values.postgres.ssl | quote }}
+            - name: DATABASE_SSL_NO_VERIFY
+              value: {{ .Values.postgres.sslNoVerify | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-url
+            {{- if .Values.postgres.caCert }}
+            - name: DATABASE_CA_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-ca-cert
+            {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,26 @@
+# Patterns to ignore when packaging the chart (helm package / helm install).
+# Mirrors the default `helm create` .helmignore plus this repo's task metadata.
+.DS_Store
+# Version control
+.git/
+.gitignore
+.bzr/
+.hg/
+.hgignore
+.svn/
+# Common backup/temporary files
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+*.tmpl.bak
+# IDE / editor
+.idea/
+.vscode/
+# CI / build artifacts
+*.log
+# Repo agent/task metadata — never part of a packaged chart
+.tasks/
+.agents/
+.kiro/

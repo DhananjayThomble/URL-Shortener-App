@@ -1,0 +1,37 @@
+SnapURL (Profile 2 — horizontally scaled) has been {{ if .Release.IsInstall }}installed{{ else }}upgraded{{ end }} as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Schema migrations ran as a pre-{{ if .Release.IsInstall }}install{{ else }}upgrade{{ end }} Job BEFORE the app pods rolled — the apps never migrate at boot, so there is no concurrent-boot migration race to worry about.
+
+Workloads:
+  * api      x {{ .Values.api.replicaCount }}   (Service :80 -> :{{ .Values.api.service.port }}, health /api/v1/health)
+  * redirect x {{ if .Values.hpa.enabled }}{{ .Values.hpa.minReplicas }}-{{ .Values.hpa.maxReplicas }} (HPA){{ else }}{{ .Values.redirect.replicaCount }}{{ end }}   (Service :80 -> :{{ .Values.redirect.service.port }}, health /health)
+  * worker   x {{ .Values.worker.replicaCount }}   (no Service, no HTTP)
+
+{{- if .Values.ingress.enabled }}
+
+Reach it via the ingress:
+{{- if .Values.ingress.apiHost }}
+  API/dashboard: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.apiHost }}
+{{- end }}
+{{- if .Values.ingress.redirectHost }}
+  Short links:   http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.redirectHost }}
+{{- end }}
+  Make sure TRUSTED_PROXY_HOPS (currently {{ .Values.trustedProxyHops }}) matches how many proxies in front of these services append to X-Forwarded-For, or rate limiting keys off the wrong client IP.
+{{- else }}
+
+Ingress is DISABLED. Reach the services with kubectl port-forward, e.g.:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "snapurl.fullname" . }}-api 3001:80
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "snapurl.fullname" . }}-redirect 3002:80
+{{- end }}
+
+{{- if not .Values.redis.url }}
+
+WARNING: redis.url is NOT set, so CACHE_DRIVER falls back to "memory" (a
+per-instance counter). With more than one api replica the rate limit is applied
+PER POD, not globally. Set redis.url to make multi-replica rate limiting correct.
+{{- end }}
+
+Reminders:
+  * postgres.url must point at an EXTERNAL managed Postgres primary (this chart ships no database).
+  * redis.url makes multi-replica rate limiting correct (shared throttle counter).
+  * Provide secrets.jwtAccessSecret + secrets.jwtRefreshSecret (>=32 chars each), OR set secrets.existingSecret.

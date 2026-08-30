@@ -1,0 +1,35 @@
+# Profile 2 — the horizontally scaled Kubernetes deployment.
+#
+# One chart for every Kubernetes: EKS, GKE, AKS, k3s and bare-metal. It runs
+# the same three GHCR images the single-node compose runs (api, redirect,
+# worker), but as independent Deployments with per-service replica counts, an
+# HPA on the bursty redirect service, a Redis-backed CacheStore so rate limiting
+# stays correct across API replicas, and migrations as a pre-upgrade Job rather
+# than something the apps race to run at boot. See deploy/helm/README.md and the
+# Profile 2 section of SELF-HOSTING.md for the operator walk-through.
+apiVersion: v2
+name: snapurl
+description: SnapURL — the horizontally scaled Kubernetes deployment (Profile 2)
+type: application
+
+# Chart SemVer: bumped when the templates/values change, independent of the app.
+version: 0.1.0
+
+# The default application version this chart deploys. Matches values.yaml
+# image.tag: pin it to a release tag (e.g. "v2.0.0") in production; "latest"
+# follows the newest published build.
+appVersion: "latest"
+
+# autoscaling/v2 and policy/v1 are GA from k8s 1.23, and networking.k8s.io/v1
+# Ingress has been GA far longer. 1.23 is the floor this chart supports.
+kubeVersion: ">=1.23.0-0"
+
+home: https://github.com/DhananjayThomble/URL-Shortener-App
+sources:
+  - https://github.com/DhananjayThomble/URL-Shortener-App
+keywords:
+  - url-shortener
+  - snapurl
+maintainers:
+  - name: SnapURL maintainers
+    url: https://github.com/DhananjayThomble/URL-Shortener-App

@@ -1,0 +1,68 @@
+{{- if .Values.ingress.enabled }}
+{{- /*
+  Routes the two public hostnames to the api and redirect Services.
+
+  TRUSTED_PROXY_HOPS (values.trustedProxyHops) must match how many proxies in
+  front of these services APPEND to X-Forwarded-For: the ingress controller is
+  one hop; a cloud LB that also appends XFF makes it two. Set it wrong and rate
+  limiting / visitor hashing key off the wrong client IP.
+*/}}
+{{- $fullName := include "snapurl.fullname" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "snapurl.labels" . | nindent 4 }}
+  {{- if or .Values.ingress.annotations .Values.ingress.tls.clusterIssuer }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.ingress.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- if .Values.ingress.apiHost }}
+        - {{ .Values.ingress.apiHost | quote }}
+        {{- end }}
+        {{- if .Values.ingress.redirectHost }}
+        - {{ .Values.ingress.redirectHost | quote }}
+        {{- end }}
+      {{- if .Values.ingress.tls.secretName }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+      {{- end }}
+  {{- end }}
+  rules:
+    {{- if .Values.ingress.apiHost }}
+    - host: {{ .Values.ingress.apiHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}-api
+                port:
+                  number: 80
+    {{- end }}
+    {{- if .Values.ingress.redirectHost }}
+    - host: {{ .Values.ingress.redirectHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}-redirect
+                port:
+                  number: 80
+    {{- end }}
+{{- end }}

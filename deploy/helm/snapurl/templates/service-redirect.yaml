@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "snapurl.fullname" . }}-redirect
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "redirect") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "snapurl.componentSelectorLabels" (dict "root" . "component" "redirect") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: {{ .Values.redirect.service.port }}
+      protocol: TCP
+{{- /* No Service for the worker: it serves no HTTP. */}}

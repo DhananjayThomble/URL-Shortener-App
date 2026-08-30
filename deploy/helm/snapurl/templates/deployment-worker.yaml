@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "snapurl.fullname" . }}-worker
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "snapurl.componentSelectorLabels" (dict "root" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "snapurl.componentLabels" (dict "root" . "component" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "snapurl.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "snapurl.image" (dict "root" . "component" "worker") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # CMD is inherited (node dist/main.js runs the rollup/maintenance loop).
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          # No Service, no ports and NO HTTP probes: the worker serves no HTTP.
+          # Its liveness shows in the rollup tables, not on a port. An exec/TCP
+          # probe would be a guess with no endpoint behind it, so it is omitted.
+          envFrom:
+            - configMapRef:
+                name: {{ include "snapurl.configMapName" . }}
+          env:
+            # The worker needs NEITHER JWT secret — it does no auth. Only the DB.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-url
+            {{- if .Values.postgres.caCert }}
+            - name: DATABASE_CA_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: database-ca-cert
+            {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
