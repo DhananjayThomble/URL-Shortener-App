@@ -53,17 +53,26 @@ describe("MailService — outbox transport", () => {
     await rm(defaultDir, { recursive: true, force: true });
     cleanup.push(defaultDir);
 
+    /* The old code wrote to process.cwd()/logs/outbox. Snapshot that dir's
+       contents *before* the send so the guard reacts only to what this send
+       writes: a stale logs/outbox left by a previous run of the old code must
+       not cause a spurious pass or fail. We assert on the delta, not on
+       ambient filesystem state. */
+    const cwdOutbox = resolve(process.cwd(), "logs/outbox");
+    const cwdOutboxBefore = existsSync(cwdOutbox) ? await readdir(cwdOutbox) : [];
+
     const svc = new MailService(envStub({ MAIL_OUTBOX_DIR: undefined }));
     await svc.send({ to: "guard@example.com", subject: "Guard", body: "no cwd" });
 
+    // Load-bearing assertion: the message landed in the tmpdir default.
     const files = await readdir(defaultDir);
     expect(files).toHaveLength(1);
     const contents = await readFile(join(defaultDir, files[0]!), "utf8");
     expect(contents).toContain("To: guard@example.com");
 
-    // The old code wrote to process.cwd()/logs/outbox — assert nothing landed there.
-    const cwdOutbox = resolve(process.cwd(), "logs/outbox");
-    expect(existsSync(cwdOutbox)).toBe(false);
+    // Guard: this send must not have written anything to process.cwd()/logs/outbox.
+    const cwdOutboxAfter = existsSync(cwdOutbox) ? await readdir(cwdOutbox) : [];
+    expect(cwdOutboxAfter).toEqual(cwdOutboxBefore);
   });
 });
 

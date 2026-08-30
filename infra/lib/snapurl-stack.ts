@@ -157,7 +157,21 @@ export class SnapUrlStack extends Stack {
         vpcProps = {
           maxAzs: 2,
           natGateways: 1, // One instance, not one per AZ — the hobby-stack SPOF tradeoff.
-          natGatewayProvider: ec2.NatProvider.instanceV2({ instanceType: egressAz }),
+          natGatewayProvider: ec2.NatProvider.instanceV2({
+            instanceType: egressAz,
+            /* OUTBOUND_ONLY, not the INBOUND_AND_OUTBOUND default: a NAT
+               accepts traffic *from the private subnets* and forwards it out;
+               it must not accept unsolicited inbound from the internet. The
+               default synthesizes a security group that allows all inbound
+               from 0.0.0.0/0 on this public-IP instance (cdk synth W2508),
+               which is unnecessary attack surface. OUTBOUND_ONLY keeps
+               allowAllOutbound (so egress still forwards) and drops the
+               0.0.0.0/0 ingress rule; return traffic for outbound flows is
+               permitted by the SG's stateful behaviour, and the private-subnet
+               default route still points at this instance's ENI, so egress is
+               unaffected. */
+            defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
+          }),
           subnetConfiguration: [
             { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
             { name: "egress", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
