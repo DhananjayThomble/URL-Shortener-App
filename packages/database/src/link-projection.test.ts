@@ -200,15 +200,21 @@ describe("isEdgeEligible", () => {
     expect(isEdgeEligible({ ...plain, hideReferrer: true })).toBe(false);
   });
 
-  /* A 301's permanence (cacheHeadersFor => public, max-age=300) would not be
-     honoured by the edge's always-no-store response, so 301 links stay on the
-     Lambda. Only 302/307 are edge-served. */
+  /* Only a plain 302 is edge-served. A 301's permanence (cacheHeadersFor =>
+     public, max-age=300) would not be honoured by the edge's always-no-store
+     response, and a 307's exact status the edge Function cannot emit (its
+     status mapping collapses every non-301 to 302), so both 301 and 307 stay
+     on the authoritative Lambda. */
   it("is false when the redirect is a 301 (permanence not honoured at the edge)", () => {
     expect(isEdgeEligible({ ...plain, redirectType: "301" })).toBe(false);
   });
 
-  it("is true for a 307 (same non-permanent semantics as 302)", () => {
-    expect(isEdgeEligible({ ...plain, redirectType: "307" })).toBe(true);
+  it("is false when the redirect is a 307 (edge Function cannot emit 307 exactly)", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "307" })).toBe(false);
+  });
+
+  it("is true for a plain 302", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "302" })).toBe(true);
   });
 });
 

@@ -738,7 +738,7 @@ scheduled — the redirect is now answered **at the edge with no origin fetch at
 Lambda invocation, no DynamoDB, no VPC. Expected p50 in India ~10-20 ms against ~245 ms
 today. The viewer-request CloudFront Function (JS_2_0), which already copied Host into
 `x-forwarded-host` for #274, now also reads a per-link CloudFront KeyValueStore entry and
-returns the 302/301 itself. It falls through to the Lambda origin unchanged for anything
+returns the 302 itself. It falls through to the Lambda origin unchanged for anything
 it cannot answer, so correctness never depends on the fast path being complete.
 
 **The design.** A KVS entry `{ destination, redirectType }` per edge-eligible link, keyed
@@ -765,14 +765,18 @@ hold:
   Lambda sets `Referrer-Policy: no-referrer`). The edge returns only the raw stored
   destination, so serving any of these at the edge would drop query forwarding, campaign
   params, Android deep-linking, or the no-referrer header the author asked for;
-- a **301**: `cacheHeadersFor("301")` honours the author's chosen permanence with
-  `public, max-age=300`, whereas the edge answers every hit with `no-store`. Rather than
-  special-case the Function, only 302/307 are edge-served and a 301 stays on the Lambda so
-  its permanence is honoured.
+- a **non-302 redirect type**: only plain **302** links are edge-served; **301** and
+  **307** stay on the authoritative Lambda. A 301's permanence is honoured on the Lambda
+  with `public, max-age=300` (`cacheHeadersFor("301")`), whereas the edge answers every
+  hit with `no-store`. A 307's *exact* status the edge Function cannot emit — its status
+  mapping collapses every non-301 hit to 302 (`parsed.redirectType === "301" ? 301 :
+  302`), so an edge-served 307 would answer HTTP 302 where the Lambda answers HTTP 307 (via
+  `REDIRECT_STATUS`). Rather than special-case the Function, both 301 and 307 fall through
+  to the authoritative Lambda.
 
 Because the edge cannot reproduce the Lambda's query-forwarding, UTM injection,
-deep-linking, referrer suppression, or 301 permanence, those links stay authoritative on
-the Lambda; keeping everything else there too is the safest rule.
+deep-linking, referrer suppression, 301 permanence, or a 307's exact status, those links
+stay authoritative on the Lambda; keeping everything else there too is the safest rule.
 
 **The blocking decision — click accounting for edge-served redirects. Chose (c).** A
 redirect served at the edge never reaches the click pipeline, and the three ways to

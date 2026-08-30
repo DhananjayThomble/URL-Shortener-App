@@ -18,8 +18,8 @@ function commandName(command: unknown): string {
 
 /** A plain, edge-eligible link: no password, no rules, no click limit, no time
  *  gate, not archived, safe-browsing clean, AND no transform the edge cannot
- *  reproduce (no forwardQuery, no utm, no deepLink, no hideReferrer) and not a
- *  301 (whose permanence the edge would not honour). */
+ *  reproduce (no forwardQuery, no utm, no deepLink, no hideReferrer) and a plain
+ *  302 (301's permanence and 307's exact status the edge would not honour). */
 function eligibleLink(overrides: Partial<ProjectedLink> = {}): ProjectedLink {
   return {
     id: "link-1",
@@ -108,8 +108,11 @@ describe("KvsWriter.putIfEligible", () => {
     ["utm", { utm: { source: "print", medium: "qr", campaign: null, content: null } }],
     ["deepLink", { deepLink: true }],
     ["hideReferrer", { hideReferrer: true }],
-    /* A 301's permanence would not be honoured at the edge. */
+    /* Only a plain 302 is edge-served: a 301's permanence would not be honoured
+       at the edge, and the edge Function cannot emit a 307 exactly (it collapses
+       every non-301 hit to 302), so both fall through to the Lambda. */
     ["301", { redirectType: "301" }],
+    ["307", { redirectType: "307" }],
   ];
 
   for (const [label, overrides] of ineligible) {

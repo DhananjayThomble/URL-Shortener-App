@@ -271,10 +271,14 @@ export function kvsKey(host: string, slug: string): string {
  *    `forwardQuery`, a non-null `utm`, `deepLink`, or `hideReferrer` would make
  *    the edge response materially wrong. Keep those links on the Lambda.
  *
- *  - Not a 301: cacheHeadersFor("301") honours the author's chosen permanence
- *    with `public, max-age=300`, whereas the edge answers every hit with
- *    `no-store`. Rather than special-case the Function, only 302/307 links are
- *    edge-served; a 301 stays on the Lambda so its permanence is honoured.
+ *  - Only a plain 302: 301 and 307 both fall through to the Lambda. A 301's
+ *    permanence is honoured on the Lambda with `public, max-age=300`
+ *    (cacheHeadersFor("301")), which the edge's always-`no-store` response
+ *    would not preserve. A 307's exact status the edge Function cannot emit —
+ *    its status mapping collapses every non-301 hit to 302, so an edge-served
+ *    307 would answer 302 where the Lambda answers 307 (via REDIRECT_STATUS).
+ *    Rather than special-case the Function, only plain 302 links are
+ *    edge-served; 301 and 307 stay authoritative on the Lambda.
  *
  *  Everything else falls through to the Lambda, which remains authoritative for
  *  click accounting and every conditional gate. */
@@ -291,7 +295,7 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
     link.utm == null &&
     link.deepLink === false &&
     link.hideReferrer === false &&
-    link.redirectType !== "301"
+    link.redirectType === "302"
   );
 }
 
