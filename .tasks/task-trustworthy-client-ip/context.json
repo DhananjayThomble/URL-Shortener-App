@@ -1,0 +1,36 @@
+{
+  "project_type": "pnpm monorepo. apps/api = NestJS 11 on Fastify 5. apps/redirect = plain Fastify 5. Shared logic in packages/domain (@snapurl/domain). apps/redirect deploys under AWS Lambda Web Adapter behind API Gateway HTTP API v2 + CloudFront; apps/api similar.",
+  "language": "TypeScript (ESM, .js import specifiers, NodeNext).",
+  "build_system": "pnpm workspaces via corepack. Node 22 required. pnpm/node are NOT on the default PATH: prepend /opt/toolchains/.nvm/versions/node/v22.23.2/bin then use `corepack pnpm ...`.",
+  "test_framework": "vitest run per package. packages/domain has pure-function unit tests (e.g. destination.test.ts covers visitorHash). apps/api has *.test.ts including a DB-gated *.integration.test.ts that skips without Postgres.",
+  "build_command": "export PATH=\"/opt/toolchains/.nvm/versions/node/v22.23.2/bin:$PATH\" && corepack pnpm type-check ; then rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 corepack pnpm build",
+  "test_command": "export PATH=\"/opt/toolchains/.nvm/versions/node/v22.23.2/bin:$PATH\" && corepack pnpm test",
+  "verification_instructions": "1) corepack pnpm type-check (all packages). 2) corepack pnpm --filter @snapurl/domain test (new parser unit test must pass). 3) corepack pnpm test (full suite; DB-gated integration tests skip in-sandbox with no Postgres, run in CI). 4) build. DB-gated smoke suites (scripts/smoke-redirect.sh) run in the compose `integration` and `verify` CI jobs and hit services DIRECTLY on localhost with NO X-Forwarded-For header, so request.ip falls back to the socket IP regardless of hop count. That is why the default hop count keeps smoke/compose/verify green.",
+  "snapshot_or_generated_files": "None relevant. web build emits .next (gitignored). No checked-in generated files touched by this task.",
+  "setup_instructions": "export PATH=\"/opt/toolchains/.nvm/versions/node/v22.23.2/bin:$PATH\" && corepack pnpm install (already installed in sandbox).",
+  "environment_constraints": "OPEN INTERNET available. No Postgres in sandbox, so DB-gated tests skip locally (run in CI). Node 22 toolchain at /opt/toolchains/.nvm/versions/node/v22.23.2/bin, not on default PATH.",
+  "contribution_requirements": "Conventional commits. Keep the redirect hot path lean (no new heavy deps). Shared logic belongs in packages/domain so API and redirect share one implementation. API config is validated once at boot via zod in apps/api/src/config/env.ts.",
+  "key_patterns": "Per-route throttle precedent already exists: apps/api/src/public/public.controller.ts:65 has `@Throttle({ default: { limit: 10, ttl: 60_000 } })` on the forms POST. Mirror that decorator shape. visitorHash lives in packages/domain/src/visitor.ts and is exported via index.ts; the redirect calls it at main.ts:131 and 239 with `ip: request.ip`. NestJS throttler default getTracker returns req.ip (confirmed in dist).",
+  "relevant_files": [
+    "apps/api/src/main.ts",
+    "apps/api/src/app.module.ts",
+    "apps/api/src/config/env.ts",
+    "apps/api/src/auth/auth.controller.ts",
+    "apps/api/src/public/public.controller.ts",
+    "apps/api/.env.example",
+    "apps/redirect/src/main.ts",
+    "apps/redirect/.env.example",
+    "packages/domain/src/visitor.ts",
+    "packages/domain/src/index.ts",
+    "packages/domain/src/destination.test.ts",
+    "scripts/smoke-redirect.sh",
+    "docker-compose.yml"
+  ],
+  "directory_structure": "apps/api (NestJS API), apps/redirect (plain Fastify hot path), apps/worker, packages/domain (shared pure logic + vitest tests), packages/contract, packages/database, web (Next.js). scripts/ holds smoke suites. .tasks/ holds prior task plans (this repo's convention, not .agents/tasks).",
+  "external_findings": {
+    "fastify_version": "5.11.3 in BOTH apps/api and apps/redirect (verified via node -e require of installed package.json).",
+    "fastify_trustproxy_numeric_disabled": "Fastify 5 current docs (fastify.dev/docs/latest/Reference/Server, trustProxy section): a NUMBER for trustProxy is 'Hop-count-only trust is disabled because it cannot validate the immediate peer and lets direct clients spoof X-Forwarded-* values. Use an IP/CIDR string, array, or custom function that validates the proxy address instead.' The security note explicitly calls hop-count-only checks unsafe when the origin can be reached directly. THEREFORE numeric hop-count trustProxy is NOT a usable mechanism; the portable fix is an explicit rightmost-XFF parser (which the issue also names as the portable fix).",
+    "throttler_version": "@nestjs/throttler 6.5.0. ThrottlerGuard exposes `protected getTracker(req): Promise<string>` (default returns req.ip, verified in dist/throttler.guard.js:141-142). Override by subclassing ThrottlerGuard. Also supports a `getTracker` option, but subclassing is the clean override point for this version.",
+    "cloudfront_xff": "AWS CloudFront docs (RequestAndResponseBehaviorCustomOrigin, Client IP addresses): CloudFront APPENDS the viewer IP to the END (rightmost) of any client-supplied X-Forwarded-For. Downstream appenders (ELB, API Gateway, WAF) append their own edge IP after that. So attacker-prepended entries land on the LEFT and the trustworthy client IP is the (N+1)th entry from the RIGHT for N trusted appending hops. This is exactly why rightmost-XFF parsing with a known hop count is spoof-proof."
+  }
+}

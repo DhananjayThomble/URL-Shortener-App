@@ -1,0 +1,26 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Establish a green baseline before touching security-sensitive IP derivation. Confirm the toolchain, install, type-check, run the existing test suites (DB-gated tests skip without Postgres), and build. This proves the pre-change state is green so any later failure is attributable to this task.",
+  "status": "completed",
+  "steps": [
+    "Prepend the Node 22 toolchain to PATH: export PATH=\"/opt/toolchains/.nvm/versions/node/v22.23.2/bin:$PATH\".",
+    "From the repo root (cd URL-Shortener-App), run `corepack pnpm install` to confirm dependencies resolve.",
+    "Run `corepack pnpm type-check` and confirm it passes across all packages.",
+    "Run `corepack pnpm test` and record which suites pass and which skip (DB-gated apps/api integration tests skip in-sandbox with no Postgres; that is expected).",
+    "Run `rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 corepack pnpm build` and confirm the build succeeds.",
+    "Record the baseline results in this feature's findings field."
+  ],
+  "acceptance_criteria": [
+    "corepack pnpm type-check passes.",
+    "corepack pnpm test completes; passing suites pass and only DB-gated suites skip.",
+    "The build completes successfully.",
+    "Baseline results are written to findings."
+  ],
+  "verification": [
+    "export PATH=\"/opt/toolchains/.nvm/versions/node/v22.23.2/bin:$PATH\" && corepack pnpm type-check",
+    "export PATH=\"/opt/toolchains/.nvm/versions/node/v22.23.2/bin:$PATH\" && corepack pnpm test"
+  ],
+  "blocked_reason": null,
+  "findings": "Green baseline established on branch main (HEAD ca89ea4) with no source changes. Node v22.23.2, pnpm v11.24.0.\n\ninstall: `corepack pnpm install` -> 'Already up to date' (9 workspace projects), exit 0.\n\ntype-check: `corepack pnpm type-check` PASS across all packages (packages/contract, packages/domain, packages/database, infra, web, apps/api, apps/redirect, apps/worker), exit 0.\n\ntest: `corepack pnpm test` completed exit 0. vitest v3.2.7. Results per package:\n- packages/domain: 5 files, 113 passed (deep-link, form, routing, destination, hll).\n- packages/database: 1 file, 10 passed (client.test.ts).\n- apps/redirect: 1 file, 3 passed (resolver.test.ts).\n- apps/worker: 3 files, 5 passed | 24 skipped. Skipped = DB-gated partitions.test.ts (12) and rollup.test.ts (12).\n- apps/api: 7 files, 89 passed | 19 skipped. Skipped = DB-gated links.service.integration.test.ts (19). Passing incl. activity, oauth.service, auth.guard, analytics.service, api, totp.service.\nOnly DB-gated suites skipped (no Postgres in sandbox); expected per plan. No failures.\n\nbuild: `rm -rf web/.next && NEXT_PUBLIC_API_URL=https://api.example.com/api/v1 corepack pnpm build` SUCCEEDED, exit 0. Next.js 15.5.24 compiled and generated 20 static pages; apps/api (nest build), apps/worker (tsc), apps/redirect (tsc) all Done.\n\nConclusion: pre-change state is fully green. Any later failure is attributable to subsequent task changes."
+}

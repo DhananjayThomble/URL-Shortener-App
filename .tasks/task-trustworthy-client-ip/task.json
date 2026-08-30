@@ -1,0 +1,7 @@
+{
+  "task_id": "task-trustworthy-client-ip",
+  "task_description": "Issue #279 (Phase 3, security release-blocker): client-supplied X-Forwarded-For defeats every rate limit (API) and forges visitor identity (redirect) because both services set Fastify trustProxy:true, making req.ip the leftmost client-typed XFF entry. Fix by adding a shared spoof-proof rightmost-XFF parser in @snapurl/domain (given a configurable TRUSTED_PROXY_HOPS count), wiring it into a custom @nestjs/throttler getTracker (API) and into visitorHash (redirect), dropping trustProxy:true in both services, and adding per-route @Throttle limits tighter than the global on the three unauthenticated argon2 routes (login, 2fa/verify, unlock). Mechanism is the explicit parser, not Fastify numeric trustProxy (which is disabled/unsafe in Fastify 5.11.3).",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}
