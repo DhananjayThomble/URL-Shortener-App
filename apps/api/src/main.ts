@@ -9,7 +9,13 @@ import { ENV, type Env } from "./config/env.js";
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true }),
+    /* Do NOT trust any proxy for Fastify's req.ip: `trustProxy: true` would
+       surface the client-typed leftmost X-Forwarded-For entry, and Fastify 5's
+       numeric hop-count is disabled as unsafe. The authoritative client IP for
+       rate limiting is derived instead by ProxyAwareThrottlerGuard from the
+       rightmost trustworthy X-Forwarded-For entry (see #279). Nothing else in
+       the API reads req.ip. */
+    new FastifyAdapter({ trustProxy: false }),
     { bufferLogs: true },
   );
 

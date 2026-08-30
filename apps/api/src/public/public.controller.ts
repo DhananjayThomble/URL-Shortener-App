@@ -22,7 +22,13 @@ export class PublicController {
     return this.publicService.preview(slug, host);
   }
 
+  /* 5/min per client IP, far tighter than the global 120/min. unlock verifies
+     the link password with argon2id (19 MiB) on every call, so an unthrottled
+     path is a free CPU-burn and a password-guessing oracle. Keyed on the
+     trustworthy IP (ProxyAwareThrottlerGuard), so a rotating X-Forwarded-For
+     cannot reset it. */
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post("links/:slug/unlock")
   @HttpCode(200)
   unlock(
