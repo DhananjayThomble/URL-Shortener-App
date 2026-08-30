@@ -1,5 +1,6 @@
 import { sql, type Database } from "@snapurl/database";
 import { addHashed, createSketch, deserialize, estimate, merge, serialize } from "@snapurl/domain";
+import { withLease } from "./lease.js";
 
 /* ============================================================
    Turning raw clicks into the numbers the dashboards read.
@@ -305,6 +306,27 @@ const MAX_PARTITION_DROPS = 20;
  *  ingest rate demands a tighter cap. */
 const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1100);
 
+/** How long a retention pass holds its lease.
+ *
+ *  Five minutes, matching the worker Lambda's own timeout. That is the honest
+ *  bound: on AWS a holder cannot outlive it, so a pass that overran is already
+ *  dead rather than slow, and its lease should become available shortly after.
+ *
+ *  Worth being precise about what is *not* bounded, because it is tempting to
+ *  argue from the drop loops. Those are bounded — MAX_PARTITION_DROPS drops,
+ *  each capped by a 2s lock_timeout, so roughly 40s worst case. The row-level
+ *  DELETE the pass ends on is not: it carries no lock_timeout, and
+ *  createDatabase sets no statement_timeout. It only does real work when
+ *  workspaces use mixed retention settings, but that is exactly when a pass
+ *  could exceed this TTL.
+ *
+ *  So on AWS the Lambda ceiling covers it. On the compose and Helm profiles
+ *  there is no process ceiling, and a long enough pass can be overtaken. The
+ *  damage is bounded rather than absent: the drop helper is a single statement,
+ *  so DETACH and DROP are atomic, and a loser either times out on the parent
+ *  lock or finds the partition already gone and reports false. */
+const RETENTION_LEASE_SECONDS = 300;
+
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
@@ -395,19 +417,25 @@ export async function pruneRetention(
      default. */
   maxRetainedDays = MAX_RETAINED_DAYS,
 ): Promise<RetentionResult> {
-  /* One expiry pass at a time. Without this, two overlapping passes both read
-     the same list of spent partitions and the second fails on one the first
-     already dropped — which would abort every maintenance job queued behind it.
-     EventBridge fires every minute with retryAttempts: 2 and the Lambda path has
-     no equivalent of the in-process overlap guard, so this is reachable.
-     pg_try_advisory_lock rather than the _xact_ variant, because the drops
-     deliberately span several transactions. */
-  const [{ locked }] = (await db.execute(sql`
-    select pg_try_advisory_lock(hashtext('click_events_prune_retention')) as locked
-  `)) as unknown as [{ locked: boolean }];
-  if (!locked) return { partitionsDropped: 0, rowsDeleted: 0 };
-
-  try {
+  /* One expiry pass at a time.
+   *
+   * Two overlapping passes would both read the same list of spent partitions,
+   * and the cap pass below adds a second, independent drop loop whose targets
+   * `click_events_spent_partitions` never listed — so per-drop idempotence is
+   * not enough on its own and the guard has to be at pass level. EventBridge
+   * fires every minute with retryAttempts: 2 and the Lambda path has no
+   * equivalent of the in-process overlap guard, so this is reachable.
+   *
+   * A lease rather than a session-scoped advisory lock, which is what this used
+   * to be. The drops deliberately span several transactions, so a *_xact_* lock
+   * would release at the first commit — but a session lock lives on the
+   * connection, and the worker pools connections with DATABASE_POOL_MAX=1 on
+   * the AWS profile. A pass that vanished mid-run (a Lambda frozen or
+   * reclaimed) stranded the lock on a backend Postgres still considered
+   * healthy, and every later pass declined: retention stopped for good, with no
+   * error and nothing in the logs to distinguish it from having nothing to do.
+   * A lease expires by the clock, so the same crash costs one late pass. */
+  const lease = await withLease(db, "click_events_prune_retention", RETENTION_LEASE_SECONDS, async () => {
     /* The longest retention in use decides which partitions are safe to drop.
        No workspaces at all still needs a sane answer, hence the coalesce: a
        fresh install has nothing to expire and should not drop today's data.
@@ -537,9 +565,11 @@ export async function pruneRetention(
     `)) as unknown as [{ n: number }];
 
     return { partitionsDropped, rowsDeleted: n ?? 0 };
-  } finally {
-    await db.execute(sql`select pg_advisory_unlock(hashtext('click_events_prune_retention'))`);
-  }
+  });
+
+  /* Another holder had the lease, so this pass did nothing. Reported as zeroes
+     rather than as a failure, because it is the mechanism working. */
+  return lease.value ?? { partitionsDropped: 0, rowsDeleted: 0 };
 }
 
 /**
