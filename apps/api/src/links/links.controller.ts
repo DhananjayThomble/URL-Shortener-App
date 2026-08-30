@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Query, Res } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { BulkCreateLinksInput, CloneLinkInput, CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
@@ -41,9 +41,15 @@ export class LinksController {
     reply.raw.end();
   }
 
+  /* Every :id route below parses the param as a UUID at the edge. Link ids are
+     uuidv7 columns, so an empty ("/links//clone") or malformed id is a client
+     mistake, not a lookup that happens to miss. ParseUUIDPipe turns it into a
+     clean 400 BEFORE the value reaches a Drizzle `where id = $1` query — where
+     Postgres would otherwise raise `invalid input syntax for type uuid: ""`
+     (22P02), which the PostgresErrorFilter cannot map and surfaces as a 500. */
   @Get(":id")
   @Scope("links:read")
-  get(@Actor() actor: RequestActor, @Param("id") id: string) {
+  get(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     return this.links.get(actor.workspaceId, id);
   }
 
@@ -73,7 +79,7 @@ export class LinksController {
   @Scope("links:write")
   clone(
     @Actor() actor: RequestActor,
-    @Param("id") id: string,
+    @Param("id", ParseUUIDPipe) id: string,
     @Body(zodBody(CloneLinkInput)) input: CloneLinkInput,
   ) {
     return this.links.clone(actor.workspaceId, id, toActor(actor), input);
@@ -85,7 +91,7 @@ export class LinksController {
   @Scope("links:write")
   update(
     @Actor() actor: RequestActor,
-    @Param("id") id: string,
+    @Param("id", ParseUUIDPipe) id: string,
     @Body(zodBody(UpdateLinkInput)) input: UpdateLinkInput,
   ) {
     return this.links.update(actor.workspaceId, id, toActor(actor), input);
@@ -95,7 +101,7 @@ export class LinksController {
   @Roles("editor")
   @Scope("links:write")
   @HttpCode(204)
-  async remove(@Actor() actor: RequestActor, @Param("id") id: string) {
+  async remove(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     await this.links.remove(actor.workspaceId, id, toActor(actor));
   }
 }

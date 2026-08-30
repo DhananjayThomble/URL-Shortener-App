@@ -46,9 +46,22 @@ env:
   # the composed image ref is a bare `snapurl-<app>:ci` (no registry) that
   # matches exactly what `kind load` puts in the node's image store.
   IMAGE_TAG: ci
-  # The small, deterministic throttle limit used for the multi-replica 429
-  # assertion. Kept in env so the helm --set and the assertion step agree.
-  THROTTLE_LIMIT_CI: "5"
+  # The deployed API's GLOBAL throttle limit for this job. Set very high so the
+  # smoke suites (scripts/smoke.sh makes several hundred requests in a couple of
+  # minutes) never trip the global rate limiter — exactly what verify.yml does
+  # with THROTTLE_LIMIT: "100000" for the same reason. This does NOT weaken the
+  # multi-replica 429 proof below: that proof targets POST /api/v1/auth/login,
+  # which carries its OWN route-level @Throttle limit:5/60s in code
+  # (apps/api/src/auth/auth.controller.ts) that is INDEPENDENT of this global
+  # limit — so the login bucket still caps at 5 regardless of how high the
+  # global limit is. THROTTLE_LIMIT_PROOF below is that known route-level 5, the
+  # number the assertion step checks against.
+  THROTTLE_LIMIT_SMOKE: "100000"
+  # The deterministic per-client limit the multi-replica 429 assertion checks
+  # against. It equals the login route's hardcoded route-level @Throttle limit
+  # (5/60s) — NOT the global limit — so the assertion holds no matter what the
+  # global THROTTLE_LIMIT_SMOKE is set to.
+  THROTTLE_LIMIT_PROOF: "5"
   # The redirect host new links are created on. This MUST equal the API's
   # DEFAULT_DOMAIN and the Host the redirect resolver matches (see
   # scripts/smoke-redirect.sh header). We port-forward redirect to
@@ -252,7 +265,11 @@ jobs:
       # redis.url forces CACHE_DRIVER=redis for every service — the shared
       # counter the rate-limit proof depends on. secrets.existingSecret reuses
       # the Secret created above so no secret value appears on the helm command
-      # line. throttle.limit is the small CI limit. DEFAULT_DOMAIN /
+      # line. throttle.limit is set VERY HIGH (THROTTLE_LIMIT_SMOKE) so the
+      # smoke suites' several-hundred requests never trip the GLOBAL limiter —
+      # the multi-replica 429 proof still holds because it targets /auth/login,
+      # whose route-level @Throttle limit:5 is independent of this global value.
+      # DEFAULT_DOMAIN /
       # REDIRECT_ORIGIN / WEB_ORIGIN line up with the port-forward + smoke
       # scripts (LINK_HOST). ingress.enabled=false (we use port-forward).
       # hpa.enabled=false: kind has no metrics-server, so an enabled HPA would
@@ -271,7 +288,7 @@ jobs:
             --set-string postgres.url="postgres://snapurl:snapurl@ci-postgres.${NS}.svc:5432/snapurl" \
             --set-string redis.url="redis://ci-redis.${NS}.svc:6379" \
             --set secrets.existingSecret=snapurl-secrets \
-            --set throttle.limit="$THROTTLE_LIMIT_CI" \
+            --set throttle.limit="$THROTTLE_LIMIT_SMOKE" \
             --set-string defaultDomain="$LINK_HOST" \
             --set-string redirectOrigin="http://$LINK_HOST" \
             --set-string webOrigin="http://localhost:3000" \
@@ -387,11 +404,15 @@ jobs:
       #
       # WHY POST /api/v1/auth/login is the target, and why it is deterministic:
       #   * It carries a route-level @Throttle limit:5/60s
-      #     (apps/api/src/auth/auth.controller.ts), AND the global throttle is
-      #     also set to 5 here (throttle.limit=5) and applied to every route by
-      #     ProxyAwareThrottlerGuard (an APP_GUARD in app.module.ts). Both
-      #     buckets cap at 5, so the assertion holds regardless of which one
-      #     fires first.
+      #     (apps/api/src/auth/auth.controller.ts). This route-level bucket is
+      #     what the proof relies on: it is set in CODE and is INDEPENDENT of the
+      #     deployed global THROTTLE_LIMIT. The chart's global limit is set VERY
+      #     HIGH here (THROTTLE_LIMIT_SMOKE) so the earlier smoke suites don't
+      #     trip it, but the login route still caps at 5 — so this assertion
+      #     holds against THROTTLE_LIMIT_PROOF (=5) regardless of the global
+      #     value. The guard applied to every route (ProxyAwareThrottlerGuard, an
+      #     APP_GUARD in app.module.ts) enforces whichever bucket is tighter; for
+      #     /auth/login that is the route-level 5.
       #   * The throttler guard runs BEFORE the handler, so a request over the
       #     limit is 429 before any credential check — a well-formed login body
       #     with a bogus account returns 401 while under the limit and 429 once
@@ -437,7 +458,9 @@ jobs:
       - name: Assert the shared Redis rate-limit counter (429 across pods)
         run: |
           set -uo pipefail
-          LIMIT="$THROTTLE_LIMIT_CI"
+          # The login route's hardcoded route-level limit (5), NOT the deployed
+          # global THROTTLE_LIMIT_SMOKE — the login bucket is what bounds this.
+          LIMIT="$THROTTLE_LIMIT_PROOF"
           TOTAL=$((LIMIT + 10))       # send comfortably past the limit
           ok2xx=0; refused401=0; throttled429=0; other=0
           for i in $(seq 1 "$TOTAL"); do
