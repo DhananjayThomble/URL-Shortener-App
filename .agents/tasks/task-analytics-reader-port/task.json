@@ -1,7 +1,0 @@
-{
-  "task_id": "task-analytics-reader-port",
-  "task_description": "Issue #284 (Phase 4 of architecture epic #267): add an AnalyticsReader port so the analytics read store is swappable. Define the port (interface + Nest DI token) mirroring LinkResolver/ClickSink, implement ONLY the Postgres adapter by moving the Drizzle queries verbatim out of analytics.service.ts, make AnalyticsService depend on the port instead of Drizzle (keeping the store-agnostic city floor / country-name mapping / period math / delta / fill logic in the service), wire the module, and document the ClickHouse/Timescale seam without building it. Behavior must be byte-for-byte preserved.",
-  "status": "in_progress",
-  "feature_order": ["FEAT-001", "FEAT-002"],
-  "blocked_reason": null
-}

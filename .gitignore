@@ -38,3 +38,4 @@ logs/
 
 # Internal agent task-state (planning artifacts, not product code)
 .tasks/
+.agents/
