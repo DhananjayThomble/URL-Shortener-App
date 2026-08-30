@@ -17,9 +17,20 @@ import { sql, type Database } from "@snapurl/database";
    than "never again".
    ============================================================ */
 
-/** Identifies this process in the lease row. Diagnostics only — correctness
- *  comes from it being unique per holder, not from what it says. */
-const HOLDER = `${process.env.AWS_LAMBDA_FUNCTION_NAME ?? "worker"}:${process.pid}:${randomUUID().slice(0, 8)}`;
+/** Readable prefix identifying the process, for reading the table later. The
+ *  unique part is appended per acquisition — see `holderToken`. */
+const PROCESS_TAG = `${process.env.AWS_LAMBDA_FUNCTION_NAME ?? "worker"}:${process.pid}`;
+
+/** A token unique to one acquisition, not one process.
+ *
+ *  Per-acquisition matters, and per-process is a trap: the release below matches
+ *  on this value so an overrunning holder cannot release a lease that has since
+ *  been taken by somebody else. A process-wide constant makes that guard blind
+ *  to the case where the somebody else is *another pass in the same process* —
+ *  the two would share the string, the overrunning pass would release the new
+ *  holder's lease, and a third pass could then start alongside it. Which is
+ *  precisely the concurrent execution the guard exists to prevent. */
+const holderToken = () => `${PROCESS_TAG}:${randomUUID()}`;
 
 export interface LeaseResult<T> {
   /** False when another holder had it. The job did not run; nothing is wrong. */
@@ -51,12 +62,14 @@ export async function withLease<T>(
   ttlSeconds: number,
   job: () => Promise<T>,
 ): Promise<LeaseResult<T>> {
+  const holder = holderToken();
+
   const rows = (await db.execute(sql`
     insert into job_leases (name, locked_until, holder, acquired_at)
-    values (${name}, now() + make_interval(secs => ${ttlSeconds}), ${HOLDER}, now())
+    values (${name}, now() + make_interval(secs => ${ttlSeconds}), ${holder}, now())
     on conflict (name) do update
       set locked_until = now() + make_interval(secs => ${ttlSeconds}),
-          holder = ${HOLDER},
+          holder = ${holder},
           acquired_at = now()
       where job_leases.locked_until < now()
     returning name
@@ -81,8 +94,8 @@ export async function withLease<T>(
      * must never mask the job's own error. */
     await db
       .execute(sql`
-        update job_leases set locked_until = now()
-        where name = ${name} and holder = ${HOLDER}
+        update job_leases set locked_until = now(), holder = null
+        where name = ${name} and holder = ${holder}
       `)
       .catch(() => undefined);
   }

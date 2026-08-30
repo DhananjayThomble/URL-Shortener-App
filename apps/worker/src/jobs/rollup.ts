@@ -308,14 +308,23 @@ const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1
 
 /** How long a retention pass holds its lease.
  *
- *  Has to exceed the worst-case pass or a slow one has its lease taken from
- *  underneath it and ends up running twice. The ceiling is bounded by design:
- *  MAX_PARTITION_DROPS drops across the two loops, each capped by a 2s
- *  lock_timeout, so a pass cannot run long even when every drop times out.
+ *  Five minutes, matching the worker Lambda's own timeout. That is the honest
+ *  bound: on AWS a holder cannot outlive it, so a pass that overran is already
+ *  dead rather than slow, and its lease should become available shortly after.
  *
- *  Five minutes because that is the worker Lambda's own timeout, which is the
- *  real limit on how long a pass can be alive at all — a holder that has hit it
- *  is gone, not slow, and its lease should be available again shortly after. */
+ *  Worth being precise about what is *not* bounded, because it is tempting to
+ *  argue from the drop loops. Those are bounded — MAX_PARTITION_DROPS drops,
+ *  each capped by a 2s lock_timeout, so roughly 40s worst case. The row-level
+ *  DELETE the pass ends on is not: it carries no lock_timeout, and
+ *  createDatabase sets no statement_timeout. It only does real work when
+ *  workspaces use mixed retention settings, but that is exactly when a pass
+ *  could exceed this TTL.
+ *
+ *  So on AWS the Lambda ceiling covers it. On the compose and Helm profiles
+ *  there is no process ceiling, and a long enough pass can be overtaken. The
+ *  damage is bounded rather than absent: the drop helper is a single statement,
+ *  so DETACH and DROP are atomic, and a loser either times out on the parent
+ *  lock or finds the partition already gone and reports false. */
 const RETENTION_LEASE_SECONDS = 300;
 
 export interface RetentionResult {

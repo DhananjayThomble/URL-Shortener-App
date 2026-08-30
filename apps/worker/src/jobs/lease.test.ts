@@ -39,7 +39,10 @@ describeDb("withLease", () => {
   }
 
   beforeEach(async () => {
-    handle ??= createDatabase({ url: DATABASE_URL!, max: 2 });
+    // Room for several genuinely concurrent callers: the overlap tests need
+    // more than one connection in flight or they serialise on the pool and
+    // stop testing overlap at all.
+    handle ??= createDatabase({ url: DATABASE_URL!, max: 4 });
     db = handle.db;
     await db.execute(sql`delete from job_leases where name like 'test_lease%'`);
   });
@@ -132,6 +135,78 @@ describeDb("withLease", () => {
     // otherwise lock itself out permanently.
     const next = await withLease(db, NAME, 60, async () => "after failure");
     expect(next.acquired).toBe(true);
+  });
+
+  it("derives the expiry from ttlSeconds, so the lease frees itself on time", async () => {
+    /* Every other test writes `locked_until` by hand, which means none of them
+       touch the TTL — reading the argument as minutes instead of seconds, or
+       ignoring it entirely, would pass the whole suite. This is the only case
+       that pins the unit. */
+    const held = await withLease(db, NAME, 1, async () => "held");
+    expect(held.acquired).toBe(true);
+
+    // Immediately after release the lease is free, so re-take it and let this
+    // one lapse on the clock rather than by releasing.
+    await db.execute(sql`
+      update job_leases set locked_until = now() + make_interval(secs => 1), holder = 'ttl-holder'
+      where name = ${NAME}
+    `);
+
+    const tooSoon = await withLease(db, NAME, 60, async () => "should not run");
+    expect(tooSoon.acquired).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    const afterExpiry = await withLease(db, NAME, 60, async () => "expired naturally");
+    expect(afterExpiry.acquired).toBe(true);
+    expect(afterExpiry.value).toBe("expired naturally");
+  });
+
+  it("does not release a lease taken over by another pass in the same process", async () => {
+    /* The sibling of the test below, and the one that actually bites, because
+     * the guard cannot see it: both passes live in one process.
+     *
+     * The release matches on a holder token. Were that token per *process*
+     * rather than per *acquisition*, two overlapping passes inside one worker
+     * would share the string — so the overrunning pass's release would match the
+     * takeover's row and free a lease that is still in use, letting a third pass
+     * run alongside it.
+     *
+     * The takeover has to still be **in flight** when the outer pass exits. An
+     * earlier version of this test awaited the takeover inside the outer job; it
+     * released itself first, leaving nothing live to stomp, and the test passed
+     * against the per-process bug it was written to catch. Verified by mutation:
+     * pin the token to a constant and this fails. */
+    let takeoverInFlight = false;
+    let takeoverAcquired = false;
+    let takeoverPromise: Promise<unknown> = Promise.resolve();
+
+    await withLease(db, NAME, 60, async () => {
+      // This pass overruns: its lease lapses while it is still working.
+      await expireLease();
+
+      // Deliberately not awaited — it must outlive the outer pass.
+      takeoverPromise = withLease(db, NAME, 60, async () => {
+        takeoverInFlight = true;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        takeoverInFlight = false;
+      }).then((r) => {
+        takeoverAcquired = r.acquired;
+      });
+
+      // Long enough for the takeover to have acquired and entered its job.
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    // The outer pass's release has now run. The takeover is still working.
+    const intruder = await withLease(db, NAME, 60, async () => "third pass");
+
+    await takeoverPromise;
+
+    expect(takeoverAcquired).toBe(true);
+    // The assertion: nobody got in while the takeover held the lease.
+    expect(intruder.acquired && takeoverInFlight).toBe(false);
+    expect(intruder.acquired).toBe(false);
   });
 
   it("does not release a lease that has already been taken by someone else", async () => {
