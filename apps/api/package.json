@@ -20,6 +20,7 @@
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/platform-fastify": "^11.1.6",
     "@nestjs/throttler": "^6.4.0",
+    "@snapurl/cache": "workspace:*",
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",

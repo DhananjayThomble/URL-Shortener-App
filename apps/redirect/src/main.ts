@@ -16,7 +16,9 @@ import {
   visitorHash,
   clientIpFromXff,
 } from "@snapurl/domain";
+import { createCacheStore, type CacheDriver } from "@snapurl/cache";
 import { PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
+import { CachingLinkResolver } from "./caching-resolver.js";
 import { PostgresClickSink, type ClickSink } from "./click-sink.js";
 import { DailySaltCache } from "./salt.js";
 
@@ -62,6 +64,19 @@ const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
    behind CloudFront sets it to 1 (or higher for additional appending hops). */
 const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
 
+/* Which CacheStore backs the hot-link cache. 'memory' (the default) is a
+   per-instance in-memory cache, which is all local/CI/compose and any
+   single-node deployment needs. The scaled profile sets 'redis' + REDIS_URL so
+   the cache is shared across instances; the AWS profile uses 'dynamodb'. See
+   docs/DECISIONS.md for the per-profile reasoning. */
+const CACHE_DRIVER = (process.env.CACHE_DRIVER ?? "memory") as CacheDriver;
+const REDIS_URL = process.env.REDIS_URL;
+/* A short bounded-staleness window: an edited link stops serving its old
+   destination within this many seconds even before edit-invalidation lands.
+   Ten seconds keeps the database out of the hot path for the common repeated
+   click while honouring "change where it points forever". */
+const LINK_CACHE_TTL_SECONDS = Number(process.env.LINK_CACHE_TTL_SECONDS ?? 10);
+
 /* trustProxy is OFF: Fastify's request.ip is then the socket peer, and we
    derive the real client IP ourselves via clientIpFromXff. Fastify 5's numeric
    hop-count is disabled as unsafe, and `true` would surface the client-typed
@@ -97,7 +112,13 @@ async function init(): Promise<void> {
     max: POOL_MAX,
   });
   close = database.close;
-  resolver = new PostgresLinkResolver(database.db);
+  const postgresResolver = new PostgresLinkResolver(database.db);
+  /* Wrap the Postgres resolver in the short-lived cache. With the default
+     'memory' driver this is a per-instance cache with a 10s TTL — a safe
+     optimization that never changes redirect correctness: a hot link still
+     302s to the right place and the click is still recorded per request. */
+  const cacheStore = await createCacheStore({ driver: CACHE_DRIVER, redisUrl: REDIS_URL });
+  resolver = new CachingLinkResolver(postgresResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
   clicks = new PostgresClickSink(database.db);
   salts = new DailySaltCache(database.db);
 }

@@ -126,6 +126,32 @@ describe("DynamoDbCacheStore", () => {
     expect(called).toBe(true);
   });
 
+  it("pttl derives the remainder from expiresAt with Redis-style sentinels", async () => {
+    // Absent item -> -2.
+    store = makeStore({ GetCommand: () => ({}) });
+    expect(await store.pttl("k")).toBe(-2);
+
+    // Item with no expiry -> -1.
+    store = makeStore({ GetCommand: () => ({ Item: { pk: "k", value: "v" } }) });
+    expect(await store.pttl("k")).toBe(-1);
+
+    // Item with a future expiry -> remaining millis.
+    store = makeStore({
+      GetCommand: () => ({
+        Item: { pk: "k", value: "v", expiresAt: Math.floor(Date.now() / 1000) + 60 },
+      }),
+    });
+    expect(await store.pttl("k")).toBe(60_000);
+
+    // Item past its expiry (TTL deletion is eventually consistent) -> -2.
+    store = makeStore({
+      GetCommand: () => ({
+        Item: { pk: "k", value: "v", expiresAt: Math.floor(Date.now() / 1000) - 1 },
+      }),
+    });
+    expect(await store.pttl("k")).toBe(-2);
+  });
+
   it("mergeSketch sends Get then a conditional Put and returns the estimate", async () => {
     const b = createSketch();
     for (let i = 0; i < 300; i++) addHashed(b, hashForTesting(`b-${i}`));

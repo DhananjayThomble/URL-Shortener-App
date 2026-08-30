@@ -97,6 +97,16 @@ export class MemoryCacheStore implements CacheStore {
     this.store.delete(key);
   }
 
+  async pttl(key: string): Promise<number> {
+    // -2 (absent) mirrors Redis PTTL: live() also evicts an expired key,
+    // so a key past its expiry reports absent, not a stale remainder.
+    const entry = this.live(key);
+    if (!entry) return -2;
+    // -1 mirrors Redis PTTL for a key that exists with no expiry.
+    if (entry.expiresAt === null) return -1;
+    return Math.max(0, entry.expiresAt - Date.now());
+  }
+
   async mergeSketch(
     key: string,
     sketch: Uint8Array,

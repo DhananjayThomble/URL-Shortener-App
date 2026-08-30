@@ -141,6 +141,22 @@ export class DynamoDbCacheStore implements CacheStore {
     );
   }
 
+  async pttl(key: string): Promise<number> {
+    // DynamoDB has no TTL-read command, so derive the remainder from the
+    // stored expiresAt (unix epoch SECONDS). Returns Redis-style sentinels:
+    // -2 when the item is absent or already past its expiry, -1 when it
+    // exists with no expiry. TTL deletion is eventually consistent, so an
+    // item read after its expiry reports absent, matching get().
+    const result = await this.client.send(
+      new GetCommand({ TableName: this.table, Key: { pk: key } }),
+    );
+    const item = result.Item;
+    if (!item) return -2;
+    if (typeof item.expiresAt !== "number") return -1;
+    const remainingMs = item.expiresAt * 1000 - Date.now();
+    return remainingMs <= 0 ? -2 : remainingMs;
+  }
+
   async mergeSketch(
     key: string,
     sketch: Uint8Array,

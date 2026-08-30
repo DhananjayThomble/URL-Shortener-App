@@ -78,6 +78,25 @@ describe("MemoryCacheStore", () => {
     expect(await store.get("k")).toBeNull();
   });
 
+  it("reports remaining ttl in millis via pttl (Redis-style sentinels)", async () => {
+    // -2 for an absent key.
+    expect(await store.pttl("missing")).toBe(-2);
+
+    // -1 for a key with no expiry.
+    await store.set("forever", "v");
+    expect(await store.pttl("forever")).toBe(-1);
+
+    // A positive remainder for a key with a ttl, counting down with time.
+    await store.set("k", "v", 60);
+    expect(await store.pttl("k")).toBe(60_000);
+    vi.setSystemTime(new Date("2025-01-01T00:00:59.000Z"));
+    expect(await store.pttl("k")).toBe(1_000);
+
+    // Past expiry the key is evicted, so pttl reports absent, not 0.
+    vi.setSystemTime(new Date("2025-01-01T00:01:00.000Z"));
+    expect(await store.pttl("k")).toBe(-2);
+  });
+
   it("mergeSketch equals the domain merge/estimate", async () => {
     // Two independent domain sketches.
     const a = createSketch();

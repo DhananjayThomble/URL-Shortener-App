@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@snapurl/cache": "workspace:*",
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",

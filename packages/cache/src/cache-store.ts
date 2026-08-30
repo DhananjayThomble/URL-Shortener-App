@@ -75,6 +75,19 @@ export interface CacheStore {
   del(key: string): Promise<void>;
 
   /**
+   * Return the remaining time-to-live of a key in MILLISECONDS, or a
+   * negative number when the key is absent or has no expiry.
+   *
+   * This mirrors Redis PTTL semantics: -2 when the key does not exist,
+   * -1 when it exists but has no associated expiry. The rate-limit
+   * throttler uses it to report an accurate timeToExpire for the
+   * fixed window (the count is bumped by incr, the remaining window is
+   * read by pttl), rather than approximating it from the configured
+   * ttl on every hit.
+   */
+  pttl(key: string): Promise<number>;
+
+  /**
    * Merge the given HLL sketch register-wise into the sketch stored at
    * key and return the current estimate.
    *

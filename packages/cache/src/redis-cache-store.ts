@@ -90,6 +90,13 @@ export class RedisCacheStore implements CacheStore {
     await this.client.del(key);
   }
 
+  async pttl(key: string): Promise<number> {
+    // Redis PTTL is the source these semantics were modelled on: it
+    // returns the remaining ttl in milliseconds, -2 when the key is
+    // absent and -1 when it exists with no expiry.
+    return this.client.pttl(key);
+  }
+
   async mergeSketch(
     key: string,
     sketch: Uint8Array,

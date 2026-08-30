@@ -80,6 +80,20 @@ export const EnvSchema = z.object({
   THROTTLE_TTL_SECONDS: z.coerce.number().int().default(60),
   THROTTLE_LIMIT: z.coerce.number().int().default(120),
 
+  /* Which CacheStore backs the rate-limit counters (and, in the redirect
+     service, hot-link caching). 'memory' is the default: a per-instance
+     in-memory counter, byte-for-byte the single-node/CI behaviour. 'redis'
+     shares one counter across instances so the limit is honoured globally —
+     the multi-instance fix; 'dynamodb' is the AWS serverless profile. See
+     docs/DECISIONS.md for the per-profile reasoning. */
+  CACHE_DRIVER: z.enum(["memory", "redis", "dynamodb"]).default("memory"),
+  /** Only used when CACHE_DRIVER=redis: the ioredis connection URL. Absent on
+      every other profile, so the default memory driver needs nothing set. */
+  REDIS_URL: z.string().optional(),
+  /** Only used when CACHE_DRIVER=dynamodb: the cache table name. The DynamoDB
+      adapter exists in code; the CDK table itself is a Phase-7 follow-up. */
+  CACHE_DYNAMO_TABLE: z.string().optional(),
+
   /* How many proxies in front of this service APPEND their edge IP to
      X-Forwarded-For. The throttler derives the real client IP as the
      (TRUSTED_PROXY_HOPS+1)th entry from the right of that chain, so a

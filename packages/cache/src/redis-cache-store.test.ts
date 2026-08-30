@@ -21,6 +21,7 @@ interface FakeRedis {
   eval: ReturnType<typeof vi.fn>;
   expire: ReturnType<typeof vi.fn>;
   del: ReturnType<typeof vi.fn>;
+  pttl: ReturnType<typeof vi.fn>;
 }
 
 function fakeClient(): FakeRedis {
@@ -31,6 +32,7 @@ function fakeClient(): FakeRedis {
     eval: vi.fn(),
     expire: vi.fn().mockResolvedValue(1),
     del: vi.fn().mockResolvedValue(1),
+    pttl: vi.fn().mockResolvedValue(-2),
   };
 }
 
@@ -102,6 +104,12 @@ describe("RedisCacheStore", () => {
   it("del delegates to client.del", async () => {
     await store.del("k");
     expect(client.del).toHaveBeenCalledWith("k");
+  });
+
+  it("pttl delegates to client.pttl and returns the remaining millis", async () => {
+    client.pttl.mockResolvedValue(1234);
+    expect(await store.pttl("k")).toBe(1234);
+    expect(client.pttl).toHaveBeenCalledWith("k");
   });
 
   it("mergeSketch reads via getBuffer, writes merged bytes, returns the estimate", async () => {
