@@ -1,0 +1,34 @@
+{
+  "name": "@snapurl/cache",
+  "version": "2.0.0",
+  "private": true,
+  "description": "The CacheStore port and its three adapters (in-memory, Redis, DynamoDB) plus an env-driven driver factory. Confines ioredis/aws-sdk to the one package that needs them, keeping @snapurl/domain pure.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1121.0",
+    "@aws-sdk/lib-dynamodb": "^3.1121.0",
+    "@snapurl/domain": "workspace:*",
+    "ioredis": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}

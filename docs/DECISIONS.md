@@ -156,9 +156,30 @@ it does not, delete the script and move on.
 
 ### Things I deliberately did not use
 
-**Redis.** Every use I had for it — rate limit counters, the click queue, caching — is served by
-DynamoDB, SQS, or CloudFront at a lower cost. Adding ElastiCache would nearly double the monthly
-bill to solve problems this system does not have yet.
+**Redis, per profile.** I used to reject Redis outright. That was the right call for the AWS
+serverless profile and the wrong call to apply to every profile. The CacheStore port (#285,
+`packages/cache`) makes the store a swappable adapter, so the Redis decision is now recorded per
+profile rather than globally, chosen at deploy time by `CACHE_DRIVER`.
+
+- **Single-node / local / compose:** the in-memory CacheStore, and it is the default. Nothing to
+  run alongside the app, no container to warm, no extra dependency. This is what CI, docker compose
+  and any single-node deployment use, and it covers hot-link caching and rate-limit counters
+  perfectly well when there is exactly one process.
+- **Scaled / self-host:** Redis. For a self-hostable product Redis is the most portable scaling
+  primitive there is. One container, runs anywhere, and it covers caching, rate-limit counters,
+  queueing and sketch merging at the same time. This is the profile where the in-memory counter's
+  limit x instances bug actually bites (each instance keeps its own Map), and a shared Redis counter
+  is what makes the configured limit the effective limit. Revisit if a deployment already runs Redis
+  for something else, in which case this is free.
+- **AWS serverless:** DynamoDB + SQS + CloudFront, and Redis is still rejected here. Every use I had
+  for it in this profile (rate limit counters, the click queue, caching) is served by DynamoDB, SQS
+  or CloudFront at a lower cost, and adding ElastiCache would nearly double the monthly bill (roughly
+  $12/mo minimum) to solve problems this profile does not have. That is the original reasoning,
+  preserved and still correct.
+
+The DynamoDB adapter exists in code (`packages/cache`), but the CDK DynamoDB cache table is a
+Phase-7 follow-up (#288 territory), so `CACHE_DRIVER=dynamodb` is not wired into the stack yet. The
+point of the port is precisely that this stays a per-profile config choice, not a rewrite.
 
 **A GraphQL layer.** The frontend is TanStack Query over REST and the contract is already typed
 end to end. GraphQL would add a schema to keep in sync with no caller asking for it.

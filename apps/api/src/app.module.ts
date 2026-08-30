@@ -3,8 +3,11 @@ import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 
+import { createCacheStore } from "@snapurl/cache";
+
 import { ConfigModule } from "./config/config.module.js";
 import { ENV, loadEnv, type Env } from "./config/env.js";
+import { CacheStoreThrottlerStorage } from "./common/cache-throttler-storage.js";
 import { DatabaseModule } from "./database/database.module.js";
 import { MailModule } from "./mail/mail.module.js";
 import { AuthModule } from "./auth/auth.module.js";
@@ -52,8 +55,22 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
     }),
     ThrottlerModule.forRootAsync({
       inject: [ENV],
-      useFactory: (env: Env) => ({
+      /* Back the throttler with a CacheStore selected by CACHE_DRIVER. The
+         default 'memory' driver is a Map-backed atomic counter — behaviourally
+         the stock in-memory storage, so single-node/CI limits are unchanged.
+         With CACHE_DRIVER=redis + REDIS_URL the counter is SHARED across
+         instances, which is the multi-instance fix (the effective limit stops
+         being limit x instances). The factory is async because of its lazy
+         redis/dynamodb imports, so the useFactory is async too. */
+      useFactory: async (env: Env) => ({
         throttlers: [{ ttl: env.THROTTLE_TTL_SECONDS * 1000, limit: env.THROTTLE_LIMIT }],
+        storage: new CacheStoreThrottlerStorage(
+          await createCacheStore({
+            driver: env.CACHE_DRIVER,
+            redisUrl: env.REDIS_URL,
+            dynamoTable: env.CACHE_DYNAMO_TABLE,
+          }),
+        ),
       }),
     }),
     DatabaseModule,
