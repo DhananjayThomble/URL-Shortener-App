@@ -41,6 +41,7 @@ COPY apps/worker/package.json     apps/worker/
 COPY packages/contract/package.json  packages/contract/
 COPY packages/domain/package.json    packages/domain/
 COPY packages/database/package.json  packages/database/
+COPY packages/cache/package.json     packages/cache/
 
 # --frozen-lockfile fails if any manifest disagrees with the lockfile, so an
 # image can never be built from a dependency set nobody committed.
