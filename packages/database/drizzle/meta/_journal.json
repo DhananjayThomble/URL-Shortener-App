@@ -78,6 +78,13 @@
       "when": 1788067972592,
       "tag": "0010_ambitious_talos",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788074200290,
+      "tag": "0011_illegal_kabuki",
+      "breakpoints": true
     }
   ]
 }

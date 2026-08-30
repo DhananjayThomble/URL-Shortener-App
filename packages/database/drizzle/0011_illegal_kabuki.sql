@@ -1,0 +1,1 @@
+ALTER TABLE "projection_outbox" ADD COLUMN "claimed_at" timestamp with time zone;
