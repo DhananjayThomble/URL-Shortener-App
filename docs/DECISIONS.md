@@ -730,6 +730,111 @@ been exercised:
 conditional-write cap on the item is the DynamoDB move), or if the salt race matters
 enough to warrant an atomic first-write primitive on the `CacheStore` port.
 
+### Profile 3: the CloudFront Function + KeyValueStore edge fast path
+
+**Built by #289 (Phase 7 of #267, the last thing in the epic):** for the majority of
+links that are simple — no password, no routing rules, no click limit, not expired, not
+scheduled — the redirect is now answered **at the edge with no origin fetch at all**: no
+Lambda invocation, no DynamoDB, no VPC. Expected p50 in India ~10-20 ms against ~245 ms
+today. The viewer-request CloudFront Function (JS_2_0), which already copied Host into
+`x-forwarded-host` for #274, now also reads a per-link CloudFront KeyValueStore entry and
+returns the 302 itself. It falls through to the Lambda origin unchanged for anything
+it cannot answer, so correctness never depends on the fast path being complete.
+
+**The design.** A KVS entry `{ destination, redirectType }` per edge-eligible link, keyed
+`<host>/<slug>` (both lowercased — the `edgeKey`/`kvsKey` invariant shared with
+`@snapurl/database`), written by the **same outbox drain** that writes the DynamoDB
+projection (which is why 3a had to come first): each edge-eligible upsert also `PutKey`s
+the entry, each ineligible-or-removed link `DeleteKey`s it. The store limits — 5 MB per
+store, 1 KB per value — fit a `{destination, redirectType}` JSON comfortably. The Function
+guards conservatively before it looks anything up: only a bare `GET` of a single
+non-empty path segment, no `?k=` unlock token, no trailing `+` trust-preview convention;
+anything else, plus any KVS miss or error, returns the request unchanged so CloudFront
+forwards it to the authoritative Lambda origin. A link is **edge-eligible** only when it
+is a plain unconditional redirect that the edge can answer exactly the way the Lambda
+would. It is **edge-INELIGIBLE** (kept on the authoritative Lambda) when *any* of these
+hold:
+
+- a **blocking gate** the edge cannot evaluate: a password, routing rules, a click limit,
+  an expiry, an activation time, archived, or a non-`clean` Safe-Browsing status — the
+  edge cannot reliably evaluate time or conditions;
+- a **transform** the Lambda applies on the happy path and the edge cannot reproduce:
+  `forwardQuery` (the Lambda merges the incoming query via `buildDestination`), a non-null
+  `utm` (the Lambda injects the stored campaign params), `deepLink` (the Lambda rewrites
+  Android destinations into `intent://…` via `buildDeepLink`), or `hideReferrer` (the
+  Lambda sets `Referrer-Policy: no-referrer`). The edge returns only the raw stored
+  destination, so serving any of these at the edge would drop query forwarding, campaign
+  params, Android deep-linking, or the no-referrer header the author asked for;
+- a **non-302 redirect type**: only plain **302** links are edge-served; **301** and
+  **307** stay on the authoritative Lambda. A 301's permanence is honoured on the Lambda
+  with `public, max-age=300` (`cacheHeadersFor("301")`), whereas the edge answers every
+  hit with `no-store`. A 307's *exact* status the edge Function cannot emit — its status
+  mapping collapses every non-301 hit to 302 (`parsed.redirectType === "301" ? 301 :
+  302`), so an edge-served 307 would answer HTTP 302 where the Lambda answers HTTP 307 (via
+  `REDIRECT_STATUS`). Rather than special-case the Function, both 301 and 307 fall through
+  to the authoritative Lambda.
+
+Because the edge cannot reproduce the Lambda's query-forwarding, UTM injection,
+deep-linking, referrer suppression, 301 permanence, or a 307's exact status, those links
+stay authoritative on the Lambda; keeping everything else there too is the safest rule.
+
+**The blocking decision — click accounting for edge-served redirects. Chose (c).** A
+redirect served at the edge never reaches the click pipeline, and the three ways to
+recover the click were:
+
+| Option | What it is | Why not |
+| --- | --- | --- |
+| (a) CloudFront real-time logs to Kinesis | Full parity with the existing click pipeline | Kinesis is ~$11/month for a single shard — most of the remaining budget on a $100-credit stack |
+| (b) Standard access logs to S3, batch-ingested by the worker | Nearly free (the S3 gateway endpoint already exists) | Delayed by minutes, and it forces parsing IPs out of log lines — which **throws away the salted-hash design** that makes the cookieless privacy promise real |
+| **(c) Only edge-serve links where per-click accuracy does not matter** (chosen) | Keep the Lambda authoritative for anything with a click limit or an analytics commitment; edge-serve the rest | Smaller latency win, but it is the only option that neither blows the budget nor undoes the privacy design, and the win still applies to the majority of links |
+
+(c) is why the edge-eligibility rule excludes click-limited links: a click limit needs the
+authoritative per-click count the Lambda path maintains, and analytics-critical links keep
+their salted-hash accounting on the Lambda. The Lambda stays authoritative for the rest;
+the edge is a pure latency optimisation over the simple-link majority.
+
+**`CACHING_DISABLED` → a 1-5s edge TTL.** The reasoning behind disabling the cache was
+right — a cached 302 makes a destination edit invisible — but the setting was over-broad.
+The layer that actually protects "print it once, change where it points forever" is
+`cacheHeadersFor()` in `packages/domain/src/destination.ts`, which already sends
+`no-store` to the **browser**, so no visitor ever caches a stale redirect regardless of
+the edge. A `defaultTtl` of 1s (min 0s, max 5s) on the RedirectCdn default behavior keeps
+edits effectively instant — well under a printed QR's reaction time — while absorbing
+QR-scan and burst storms that would otherwise each hit the fall-through Lambda origin. The
+TTL only helps the **fall-through** path: the viewer-request Function answers simple links
+from KVS *before* the cache is consulted, so the fast path is separate. The cache key
+includes the query string (`CacheQueryStringBehavior.all()`) so the `?k=` unlock token and
+the UTM / forwardQuery overrides key distinct entries — dropping it would let one visitor's
+unlock/UTM response be served to the next.
+
+**Reachability — verified before building, not during.** `cloudfront-keyvaluestore` is a
+**global public API** with no PrivateLink / interface VPC endpoint (only the free S3 and
+DynamoDB gateway endpoints exist in this VPC). The worker writes the store, and under the
+default `natStrategy = 'instance'` (and `'gateway'`) the worker Lambda sits in
+`PRIVATE_WITH_EGRESS` subnets whose default route is the NAT, so it reaches the public KVS
+endpoint over the internet — the same egress path Safe Browsing, webhooks and mail already
+use. Under `natStrategy = 'none'` the worker is isolated with no egress, so the KVS writer
+cannot reach the API — but that is the *same* limitation those other egress-dependent
+features already carry, and the writer is **opt-in**: it is constructed only when
+`LINK_PROJECTION_KVS_ARN` is set (which the stack sets on `workerFn` only, granting the
+three `cloudfront-keyvaluestore` data-plane actions scoped to the store's ARN). The
+Function *reads* the store at the edge via its CloudFront association, which is never in a
+VPC, so the read path is unaffected by `natStrategy`.
+
+**CI-proven vs deploy-deferred.** The decision logic (`decide`/`edgeKey`) is unit-tested
+against an injectable `kvsGet` — hit, miss, error, and every guard — and a drift-guard
+test asserts the deployed `.js` and the tested `.logic.mjs` twin are byte-for-byte
+identical in the guarded region, so the tested logic is provably the deployed logic. The
+CDK shape (the `AWS::CloudFront::KeyValueStore`, the Function↔KVS association, the worker
+IAM grant, `LINK_PROJECTION_KVS_ARN` on the worker, the short-TTL cache policy) is
+synth-proven. A real edge invocation and a real KVS round trip are **deploy-deferred** —
+CloudFront Functions and KeyValueStores cannot run in CI or the sandbox.
+
+**Revisit if** per-click accuracy on edge-served links ever becomes worth paying for
+(option (a) or (b), with the privacy cost of (b) understood), or if the eligibility rule
+proves too conservative and a time-bounded link could be safely edge-served with a
+carefully evaluated TTL.
+
 ---
 
 ## Part 5 — Open questions for you

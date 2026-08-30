@@ -2,3 +2,8 @@ cdk.out/
 *.js
 !bin/*.ts
 !lib/*.ts
+# The CloudFront Function source (#289) is hand-written JS the CDK inlines,
+# not compiled output — keep it tracked. Its testable twin (.mjs) is not
+# matched by *.js, but list it here alongside for clarity.
+!functions/*.js
+!functions/*.mjs

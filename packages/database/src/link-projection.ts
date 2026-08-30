@@ -215,6 +215,99 @@ export function fromLinkItem(item: LinkItem): ProjectedLink {
   };
 }
 
+/* ============================================================
+   The CloudFront + KeyValueStore edge fast path (#289).
+
+   For a plain, unconditional link — no password, no routing
+   rules, no click limit, not expired, not scheduled, not
+   archived, safe-browsing clean — the redirect can be answered at
+   the edge from a CloudFront KeyValueStore, with no Lambda
+   invocation, no DynamoDB read and no VPC round-trip. The same
+   outbox drain that writes the DynamoDB projection writes one KVS
+   entry per edge-eligible link; anything the edge cannot answer
+   falls through to the Lambda, which stays authoritative.
+
+   These three functions are the single source of truth shared by
+   the worker's KVS writer and the CloudFront Function's reader:
+   the key format, the eligibility rule and the stored value must
+   match byte-for-byte on both sides, so they are defined ONCE here
+   (SDK-free, in the package both apps import) rather than
+   duplicated. The CloudFront Function cannot import this module
+   (its `cloudfront` runtime is not Node), so it re-implements
+   kvsKey inline — the shared test in infra/functions guards the
+   two against drift.
+   ============================================================ */
+
+/** The KeyValueStore key for a link, derived from the viewer host and slug.
+ *
+ *  Format: `<normalised-host>/<lowercased-slug>` — e.g. `snap.to/foo`.
+ *
+ *  Deliberately built from only what a CloudFront Function can reproduce with
+ *  no extra normalisation: the host lowercased+trimmed (normaliseHost) and the
+ *  slug lowercased, joined by a single '/'. The Function derives the identical
+ *  key from `request.headers.host.value` and the single path segment, so a
+ *  write here and a read there resolve the same entry. Do NOT change this
+ *  format without changing the Function (and the drift-guard test) in lockstep. */
+export function kvsKey(host: string, slug: string): string {
+  return `${normaliseHost(host)}/${slug.toLowerCase()}`;
+}
+
+/** Whether a link may be served from the edge fast path.
+ *
+ *  Edge-eligible iff it is a plain unconditional redirect the edge can answer
+ *  byte-for-byte the way the Lambda would. That means:
+ *
+ *  - No BLOCKING gate: no password, no routing rules, no click limit, and no
+ *    time gate at all (neither expiry nor activation — the edge cannot reliably
+ *    evaluate time), not archived, and safe-browsing clean. This is the
+ *    click-accounting decision (option c): the edge only serves links where
+ *    per-click accuracy does not matter.
+ *
+ *  - No TRANSFORM the Lambda applies on the happy path and the edge cannot
+ *    reproduce: the redirect Lambda runs buildDestination (which merges the
+ *    forwarded query when `forwardQuery` and injects stored `utm`), buildDeepLink
+ *    (when `deepLink`), and sets `Referrer-Policy: no-referrer` (when
+ *    `hideReferrer`). The edge returns only the raw stored destination, so any of
+ *    `forwardQuery`, a non-null `utm`, `deepLink`, or `hideReferrer` would make
+ *    the edge response materially wrong. Keep those links on the Lambda.
+ *
+ *  - Only a plain 302: 301 and 307 both fall through to the Lambda. A 301's
+ *    permanence is honoured on the Lambda with `public, max-age=300`
+ *    (cacheHeadersFor("301")), which the edge's always-`no-store` response
+ *    would not preserve. A 307's exact status the edge Function cannot emit —
+ *    its status mapping collapses every non-301 hit to 302, so an edge-served
+ *    307 would answer 302 where the Lambda answers 307 (via REDIRECT_STATUS).
+ *    Rather than special-case the Function, only plain 302 links are
+ *    edge-served; 301 and 307 stay authoritative on the Lambda.
+ *
+ *  Everything else falls through to the Lambda, which remains authoritative for
+ *  click accounting and every conditional gate. */
+export function isEdgeEligible(link: ProjectedLink): boolean {
+  return (
+    link.hasPassword === false &&
+    link.rules.length === 0 &&
+    link.clickLimit == null &&
+    link.expiresAt == null &&
+    link.activatesAt == null &&
+    link.archived === false &&
+    link.safeBrowsingStatus === "clean" &&
+    link.forwardQuery === false &&
+    link.utm == null &&
+    link.deepLink === false &&
+    link.hideReferrer === false &&
+    link.redirectType === "302"
+  );
+}
+
+/** The KeyValueStore value for a link: the minimum the edge needs to answer a
+ *  redirect. JSON `{ destination, redirectType }` — a URL plus a 3-char code is
+ *  far under the 1 KB per-value limit (and 5 MB per-store), so no truncation
+ *  guard is needed. The CloudFront Function JSON.parses this and reads exactly
+ *  these two fields. */
+export function kvsValue(link: ProjectedLink): string {
+  return JSON.stringify({ destination: link.destination, redirectType: link.redirectType });
+}
+
 /** ProjectedDomain -> stored DomainItem. */
 export function toDomainItem(host: string, domain: ProjectedDomain): DomainItem {
   return {

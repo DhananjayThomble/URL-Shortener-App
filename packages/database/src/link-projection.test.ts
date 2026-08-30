@@ -4,6 +4,9 @@ import {
   domainMetaKey,
   fromDomainItem,
   fromLinkItem,
+  isEdgeEligible,
+  kvsKey,
+  kvsValue,
   linkKey,
   normaliseHost,
   toDomainItem,
@@ -97,6 +100,137 @@ describe("toLinkItem / fromLinkItem round-trip", () => {
     expect(item.utm).toBeNull();
 
     expect(fromLinkItem(item)).toEqual(minimal);
+  });
+});
+
+/* The edge fast path (#289): the eligibility rule, the KVS key format and the
+   stored value are the contract the worker's writer and the CloudFront Function
+   share. These lock the exact format the Function re-implements inline. */
+
+/** A plain, unconditional, edge-eligible link. Each eligibility case below
+    starts from this and flips exactly one field. */
+const plain: ProjectedLink = {
+  id: "11111111-1111-1111-1111-111111111111",
+  workspaceId: "22222222-2222-2222-2222-222222222222",
+  destination: "https://example.com/dest",
+  redirectType: "302",
+  rules: [],
+  expiresAt: null,
+  expiresTo: null,
+  activatesAt: null,
+  scheduledTo: null,
+  clickLimit: null,
+  clicks: 0,
+  hasPassword: false,
+  forwardQuery: false,
+  deepLink: false,
+  hideReferrer: false,
+  publicPreview: false,
+  archived: false,
+  safeBrowsingStatus: "clean",
+  utm: null,
+};
+
+describe("isEdgeEligible", () => {
+  it("is true for a plain unconditional clean link", () => {
+    expect(isEdgeEligible(plain)).toBe(true);
+  });
+
+  it("is false when the link has a password", () => {
+    expect(isEdgeEligible({ ...plain, hasPassword: true })).toBe(false);
+  });
+
+  it("is false when the link has routing rules", () => {
+    expect(
+      isEdgeEligible({
+        ...plain,
+        rules: [
+          {
+            id: "33333333-3333-3333-3333-333333333333",
+            when: { country: "US" },
+            then: "https://example.com/us",
+            weight: 1,
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when the link has a click limit", () => {
+    expect(isEdgeEligible({ ...plain, clickLimit: 100 })).toBe(false);
+  });
+
+  it("is false when the link has an expiry", () => {
+    expect(isEdgeEligible({ ...plain, expiresAt: new Date("2030-01-01T00:00:00.000Z") })).toBe(false);
+  });
+
+  it("is false when the link has an activation time", () => {
+    expect(isEdgeEligible({ ...plain, activatesAt: new Date("2030-01-01T00:00:00.000Z") })).toBe(false);
+  });
+
+  it("is false when the link is archived", () => {
+    expect(isEdgeEligible({ ...plain, archived: true })).toBe(false);
+  });
+
+  it("is false when safe-browsing is not clean", () => {
+    expect(isEdgeEligible({ ...plain, safeBrowsingStatus: "flagged" })).toBe(false);
+  });
+
+  /* Transform behaviours the Lambda applies on the happy path and the edge
+     cannot reproduce — each independently makes a link ineligible so the raw
+     stored destination is never served in place of the transformed one. */
+  it("is false when the link forwards the incoming query", () => {
+    expect(isEdgeEligible({ ...plain, forwardQuery: true })).toBe(false);
+  });
+
+  it("is false when the link injects stored UTM params", () => {
+    expect(
+      isEdgeEligible({
+        ...plain,
+        utm: { source: "print", medium: "qr", campaign: null, content: null },
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when the link uses Android deep-linking", () => {
+    expect(isEdgeEligible({ ...plain, deepLink: true })).toBe(false);
+  });
+
+  it("is false when the link suppresses the referrer", () => {
+    expect(isEdgeEligible({ ...plain, hideReferrer: true })).toBe(false);
+  });
+
+  /* Only a plain 302 is edge-served. A 301's permanence (cacheHeadersFor =>
+     public, max-age=300) would not be honoured by the edge's always-no-store
+     response, and a 307's exact status the edge Function cannot emit (its
+     status mapping collapses every non-301 to 302), so both 301 and 307 stay
+     on the authoritative Lambda. */
+  it("is false when the redirect is a 301 (permanence not honoured at the edge)", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "301" })).toBe(false);
+  });
+
+  it("is false when the redirect is a 307 (edge Function cannot emit 307 exactly)", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "307" })).toBe(false);
+  });
+
+  it("is true for a plain 302", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "302" })).toBe(true);
+  });
+});
+
+describe("kvsKey / kvsValue", () => {
+  it("builds a lowercased host/slug key a CloudFront Function can reproduce", () => {
+    expect(kvsKey("SNAP.TO", "Foo")).toBe("snap.to/foo");
+    expect(kvsKey("  snap.to  ", "bar")).toBe("snap.to/bar");
+    // The port is kept (normaliseHost only lowercases + trims).
+    expect(kvsKey("LOCALHOST:3002", "X")).toBe("localhost:3002/x");
+  });
+
+  it("serialises exactly {destination, redirectType} and round-trips", () => {
+    const value = kvsValue(plain);
+    expect(JSON.parse(value)).toEqual({ destination: "https://example.com/dest", redirectType: "302" });
+    // Well under the 1 KB per-value KVS limit.
+    expect(value.length).toBeLessThan(1024);
   });
 });
 

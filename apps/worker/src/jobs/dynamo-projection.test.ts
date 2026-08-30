@@ -3,6 +3,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { Database } from "@snapurl/database";
 import { DynamoProjection } from "./dynamo-projection.js";
+import type { KvsWriter } from "./kvs-projection.js";
 
 /* MOCK-based unit tests, mirroring packages/cache/dynamodb-cache-store.test.ts.
    No live DynamoDB and no Postgres: the db is a chainable fake whose terminal
@@ -444,5 +445,152 @@ describe("DynamoProjection.apply deduplicates the shared domain-meta item", () =
     // Reaching the transport proves the item marshalled cleanly and the
     // BatchWriteCommand was built (no duplicate-key rejection, no marshal throw).
     await expect(projection.upsert("link-rich")).rejects.toThrow("transport-reached-sentinel");
+  });
+});
+
+describe("DynamoProjection edge fast path (#289) — optional KvsWriter", () => {
+  /* When a KvsWriter is injected, DynamoProjection must ALSO drive the edge
+     fast path: an upsert calls putIfEligible(link, host, slug) and a delete
+     calls deleteKey(host, slug) — after the DynamoDB write. When NO writer is
+     injected it must make ZERO KVS calls, so NoProjection and the non-KVS AWS
+     path stay byte-for-byte unchanged. A spy stands in for the real writer. */
+
+  /** A spy KvsWriter recording every call, structurally a KvsWriter. */
+  function spyWriter() {
+    const putIfEligible = vi.fn(async () => {});
+    const deleteKey = vi.fn(async () => {});
+    return {
+      putIfEligible,
+      deleteKey,
+      writer: { putIfEligible, deleteKey } as unknown as KvsWriter,
+    };
+  }
+
+  it("upsert writes DynamoDB AND drives putIfEligible with the link + host + slug", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const kvs = spyWriter();
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE, undefined, kvs.writer);
+
+    await projection.upsert("link-1");
+
+    // DynamoDB still written.
+    expect(batches).toHaveLength(1);
+    expect(batches[0].RequestItems[TABLE]).toHaveLength(2);
+    // KVS driven with the projected link and the row's (domain, slug).
+    expect(kvs.putIfEligible).toHaveBeenCalledTimes(1);
+    const [link, host, slug] = kvs.putIfEligible.mock.calls[0] as any[];
+    expect(link.destination).toBe("https://example.com/1");
+    expect(link.redirectType).toBe("302");
+    expect(host).toBe("snap.to");
+    expect(slug).toBe("one");
+    expect(kvs.deleteKey).not.toHaveBeenCalled();
+  });
+
+  it("remove queries the GSI, DeleteItems in DynamoDB AND drives deleteKey with host + slug", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      QueryCommand: () => ({ Items: [{ PK: "d#snap.to", SK: "s#one", linkId: "link-1" }] }),
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const kvs = spyWriter();
+    const projection = new DynamoProjection(makeDb([], []), client, TABLE, undefined, kvs.writer);
+
+    await projection.remove("link-1");
+
+    // DynamoDB delete still issued.
+    expect(batches[0].RequestItems[TABLE][0].DeleteRequest.Key).toEqual({
+      PK: "d#snap.to",
+      SK: "s#one",
+    });
+    // KVS deleteKey driven with the host + slug recovered from the item key.
+    expect(kvs.deleteKey).toHaveBeenCalledTimes(1);
+    expect(kvs.deleteKey).toHaveBeenCalledWith("snap.to", "one");
+    expect(kvs.putIfEligible).not.toHaveBeenCalled();
+  });
+
+  it("apply() drives the writer per-op (upsert -> putIfEligible, delete -> deleteKey)", async () => {
+    let call = 0;
+    const upsertRows = [linkRow({ id: "link-up", slug: "up" })];
+    const db = {
+      select: () => {
+        // Even calls: link row for the upsert op; odd: its (empty) rules.
+        const which = call++;
+        const rows = which === 0 ? upsertRows : [];
+        const builder: any = {
+          from: () => builder,
+          innerJoin: () => builder,
+          leftJoin: () => builder,
+          where: () => builder,
+          limit: () => Promise.resolve(rows),
+          orderBy: () => Promise.resolve(rows),
+        };
+        return builder;
+      },
+    } as unknown as Database;
+    const { client } = makeClient({
+      QueryCommand: () => ({ Items: [{ PK: "d#snap.to", SK: "s#del", linkId: "link-del" }] }),
+      BatchWriteCommand: () => ({}),
+    });
+    const kvs = spyWriter();
+    const projection = new DynamoProjection(db, client, TABLE, undefined, kvs.writer);
+
+    const results = await projection.apply([
+      { linkId: "link-up", operation: "upsert" },
+      { linkId: "link-del", operation: "delete" },
+    ]);
+
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(kvs.putIfEligible).toHaveBeenCalledTimes(1);
+    expect(kvs.putIfEligible.mock.calls[0]![1]).toBe("snap.to");
+    expect(kvs.putIfEligible.mock.calls[0]![2]).toBe("up");
+    expect(kvs.deleteKey).toHaveBeenCalledTimes(1);
+    expect(kvs.deleteKey).toHaveBeenCalledWith("snap.to", "del");
+  });
+
+  it("a KVS write failure fails only that op (DynamoDB already written), not the batch", async () => {
+    const { client } = makeClient({
+      BatchWriteCommand: () => ({}),
+    });
+    const kvs = spyWriter();
+    kvs.putIfEligible.mockRejectedValueOnce(new Error("kvs boom"));
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE, undefined, kvs.writer);
+
+    const results = await projection.apply([{ linkId: "link-1", operation: "upsert" }]);
+
+    // The op is marked failed so the outbox retries it, even though the
+    // DynamoDB item was written first (durability preserved).
+    expect(results[0]!.ok).toBe(false);
+    expect(String((results[0] as any).error)).toContain("kvs boom");
+  });
+
+  it("makes ZERO KVS calls when no KvsWriter is injected (byte-for-byte unchanged)", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      QueryCommand: () => ({ Items: [{ PK: "d#snap.to", SK: "s#one", linkId: "link-1" }] }),
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    // No fifth constructor arg — writer is undefined.
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE);
+
+    await projection.upsert("link-1");
+    await projection.remove("link-1");
+    await projection.apply([{ linkId: "link-1", operation: "upsert" }]);
+
+    // Only DynamoDB was touched; nothing could have called a non-existent
+    // writer. The assertion here is that the calls above all succeed without a
+    // KvsWriter present (a KVS call would have thrown on undefined).
+    expect(batches.length).toBeGreaterThan(0);
   });
 });

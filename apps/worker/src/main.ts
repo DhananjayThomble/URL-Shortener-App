@@ -1,10 +1,12 @@
 import pino from "pino";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
+import { KvsWriter } from "./jobs/kvs-projection.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 
 /* ============================================================
@@ -101,6 +103,19 @@ function dynamoEndpoint(): string | undefined {
   return process.env.AWS_ENDPOINT_URL_DYNAMODB ?? process.env.AWS_ENDPOINT_URL ?? undefined;
 }
 
+/* The same endpoint-override pattern as dynamoEndpoint(), for the CloudFront
+   KeyValueStore client (#289 edge fast path). Unset in production so the SDK
+   resolves the real (global) cloudfront-keyvaluestore endpoint;
+   AWS_ENDPOINT_URL_CLOUDFRONT_KEYVALUESTORE (or the generic AWS_ENDPOINT_URL)
+   points it at a stub in CI. Both unset returns undefined, a genuine no-op. */
+function kvsEndpoint(): string | undefined {
+  return (
+    process.env.AWS_ENDPOINT_URL_CLOUDFRONT_KEYVALUESTORE ??
+    process.env.AWS_ENDPOINT_URL ??
+    undefined
+  );
+}
+
 function projectionFor(database: Database): ProjectionTarget {
   if (!projectionTarget) {
     if (LINK_PROJECTION === "dynamo") {
@@ -126,13 +141,32 @@ function projectionFor(database: Database): ProjectionTarget {
         new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
         { marshallOptions: { removeUndefinedValues: true } },
       );
+      /* #289 edge fast path: OPT-IN. Only when LINK_PROJECTION_KVS_ARN is set do
+         we construct a CloudFront KeyValueStore client and a KvsWriter and hand
+         it to the DynamoProjection, so each edge-eligible upsert ALSO PutKeys
+         {destination, redirectType} into the store the CloudFront Function
+         reads, and each ineligible-or-removed link DeleteKeys it. When the env
+         is UNSET the writer is undefined and behaviour is exactly as today: the
+         DynamoDB projection still writes; nothing touches KVS. The client uses
+         the standard AWS_REGION and the same optional endpoint-override pattern
+         as the DynamoDB client (for CI/local). */
+      const kvsArn = process.env.LINK_PROJECTION_KVS_ARN;
+      const kvsWriter = kvsArn
+        ? new KvsWriter(
+            new CloudFrontKeyValueStoreClient({
+              region: process.env.AWS_REGION,
+              endpoint: kvsEndpoint(),
+            }),
+            kvsArn,
+          )
+        : undefined;
       /* Pass the worker's logger so a projection resolve/write failure surfaces
          the ACTUAL error (DynamoDB ValidationException name + message) at error
          level. drainOutbox only stores String(err) in projection_outbox
          .last_error and counts the failure, so before this the real cause never
          reached a log line — a projection that wrote nothing looked silent even
          at LOG_LEVEL=debug. */
-      projectionTarget = new DynamoProjection(database, client, table, log);
+      projectionTarget = new DynamoProjection(database, client, table, log, kvsWriter);
     } else {
       projectionTarget = new NoProjection();
     }

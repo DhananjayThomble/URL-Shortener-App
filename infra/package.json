@@ -9,14 +9,17 @@
     "synth": "cdk synth",
     "diff": "cdk diff",
     "deploy": "cdk deploy",
-    "destroy": "cdk destroy"
+    "destroy": "cdk destroy",
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@snapurl/database": "workspace:*",
     "@types/node": "^22",
     "aws-cdk": "^2.1029.4",
     "aws-cdk-lib": "^2.221.0",
     "constructs": "^10.4.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
   }
 }

@@ -22,6 +22,7 @@ import {
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import type { ProjectionOp, ProjectionResult, ProjectionTarget } from "./outbox.js";
+import type { KvsWriter } from "./kvs-projection.js";
 
 /* ============================================================
    DynamoProjection — the real projection writer (AWS profile).
@@ -61,6 +62,31 @@ type WriteRequest =
   | { PutRequest: { Item: LinkItem | DomainItem } }
   | { DeleteRequest: { Key: { PK: string; SK: string } } };
 
+/** What an upsert resolves to: the DynamoDB write requests plus, for the #289
+ *  edge fast path, the ProjectedLink and its (host, slug) so the KVS writer can
+ *  PutKey/DeleteKey it. `edge` is undefined when the link no longer exists (the
+ *  requests are then empty too). */
+interface UpsertResolution {
+  requests: WriteRequest[];
+  edge?: { link: ProjectedLink; host: string; slug: string };
+}
+
+/** Recover (host, slug) from a LINK item's DynamoDB key. The projection stores
+ *  PK = 'd#' + normalised host and SK = 's#' + lowercased slug, so stripping
+ *  those prefixes yields exactly the values kvsKey() re-normalises — the KVS
+ *  key derived here matches the one the writer used on the corresponding
+ *  upsert. Domain-meta keys (SK 'd#meta') are not link keys and are skipped. */
+function edgeTargetsOf(requests: WriteRequest[]): Array<{ host: string; slug: string }> {
+  const targets: Array<{ host: string; slug: string }> = [];
+  for (const request of requests) {
+    if (!("DeleteRequest" in request)) continue;
+    const { PK, SK } = request.DeleteRequest.Key;
+    if (!PK.startsWith("d#") || !SK.startsWith("s#")) continue;
+    targets.push({ host: PK.slice(2), slug: SK.slice(2) });
+  }
+  return targets;
+}
+
 /** The minimum a logger must offer so the writer can surface the ACTUAL
  *  DynamoDB error when a batch fails. drainOutbox only records the error's
  *  stringified form in projection_outbox.last_error and counts the failure;
@@ -89,18 +115,37 @@ export class DynamoProjection implements ProjectionTarget {
      *  error (name + message) at error level so a failed projection is never
      *  silent again. */
     private readonly log?: ProjectionLogger,
+    /** Optional CloudFront KeyValueStore writer (#289). Present ONLY on the AWS
+     *  profile when LINK_PROJECTION_KVS_ARN is set; undefined everywhere else,
+     *  so NoProjection and the non-KVS AWS path make ZERO KVS calls and behave
+     *  byte-for-byte as before. When present, each upsert also projects the
+     *  link to the edge fast path (PutKey if edge-eligible, DeleteKey if not)
+     *  and each remove DeleteKeys it. The DynamoDB item is ALWAYS written first
+     *  so a KVS-only failure never loses the authoritative DynamoDB projection;
+     *  a KVS failure then fails the outbox row so the next drain retries it. */
+    private readonly kvs?: KvsWriter,
   ) {}
 
   /* ---- per-row fallback (used when drainOutbox does not batch) ---- */
 
   async upsert(linkId: string): Promise<void> {
-    const requests = await this.buildUpsertRequests(linkId);
-    await this.flush(requests);
+    const resolved = await this.buildUpsertRequests(linkId);
+    // DynamoDB first: the authoritative projection must never be lost to a
+    // KVS-only failure.
+    await this.flush(resolved.requests);
+    if (this.kvs && resolved.edge) {
+      await this.kvs.putIfEligible(resolved.edge.link, resolved.edge.host, resolved.edge.slug);
+    }
   }
 
   async remove(linkId: string): Promise<void> {
     const requests = await this.buildDeleteRequests(linkId);
     await this.flush(requests);
+    if (this.kvs) {
+      for (const { host, slug } of edgeTargetsOf(requests)) {
+        await this.kvs.deleteKey(host, slug);
+      }
+    }
   }
 
   /* ---- batched path (drainOutbox hands the whole claimed batch here) ----
@@ -131,6 +176,12 @@ export class DynamoProjection implements ProjectionTarget {
        contributed that key. */
     const byKey = new Map<string, { request: WriteRequest; owners: Set<number> }>();
 
+    /* Per-op KVS work, keyed by result index, applied ONLY after the op's
+       DynamoDB requests have flushed successfully (DynamoDB first: a KVS-only
+       failure must never lose the authoritative projection). undefined for any
+       op when no KvsWriter is configured, so the non-KVS path is unchanged. */
+    const edgeByIndex = new Map<number, () => Promise<void>>();
+
     for (const op of ops) {
       const index = results.length;
       try {
@@ -145,10 +196,25 @@ export class DynamoProjection implements ProjectionTarget {
            per-key result stitching). Revisit only if bulk deletes become a hot
            path. Upserts take the same per-op read but there is no cheaper bulk
            form for them either (each reads a different link's full row set). */
-        const requests =
-          op.operation === "delete"
-            ? await this.buildDeleteRequests(op.linkId)
-            : await this.buildUpsertRequests(op.linkId);
+        let requests: WriteRequest[];
+        if (op.operation === "delete") {
+          requests = await this.buildDeleteRequests(op.linkId);
+          if (this.kvs) {
+            const targets = edgeTargetsOf(requests);
+            const kvs = this.kvs;
+            edgeByIndex.set(index, async () => {
+              for (const { host, slug } of targets) await kvs.deleteKey(host, slug);
+            });
+          }
+        } else {
+          const resolved = await this.buildUpsertRequests(op.linkId);
+          requests = resolved.requests;
+          if (this.kvs && resolved.edge) {
+            const kvs = this.kvs;
+            const { link, host, slug } = resolved.edge;
+            edgeByIndex.set(index, () => kvs.putIfEligible(link, host, slug));
+          }
+        }
         results.push({ linkId: op.linkId, ok: true });
         for (const request of requests) {
           const key = requestKey(request);
@@ -204,6 +270,27 @@ export class DynamoProjection implements ProjectionTarget {
       }
     }
 
+    /* #289 edge fast path: drive the KVS writer per-op, but ONLY for ops whose
+       DynamoDB write has already succeeded (DynamoDB first — a KVS-only failure
+       must never lose the authoritative projection). A KVS write failure marks
+       that row failed so the outbox retries it on the next drain, exactly as a
+       DynamoDB failure would; it does not touch any other row. No-op when no
+       KvsWriter is configured (edgeByIndex is empty), so the non-KVS path is
+       byte-for-byte unchanged. */
+    for (const [index, run] of edgeByIndex) {
+      const result = results[index]!;
+      if (!result.ok) continue; // DynamoDB write for this op failed; skip KVS.
+      try {
+        await run();
+      } catch (err) {
+        this.log?.error(
+          { err: serialiseError(err), linkId: result.linkId },
+          "projection KVS write failed",
+        );
+        results[index] = { linkId: result.linkId, ok: false, error: err };
+      }
+    }
+
     return results;
   }
 
@@ -213,7 +300,7 @@ export class DynamoProjection implements ProjectionTarget {
    *  LINK put + the domain-meta put. Returns [] if the link no longer exists
    *  (a delete that raced ahead of this upsert) so the row is marked processed
    *  rather than retried forever. */
-  private async buildUpsertRequests(linkId: string): Promise<WriteRequest[]> {
+  private async buildUpsertRequests(linkId: string): Promise<UpsertResolution> {
     const [[row], rules] = await Promise.all([
       this.db
         .select({
@@ -236,7 +323,7 @@ export class DynamoProjection implements ProjectionTarget {
         .orderBy(routingRules.position),
     ]);
 
-    if (!row) return [];
+    if (!row) return { requests: [] };
 
     const projectedLink: ProjectedLink = {
       id: row.link.id,
@@ -283,7 +370,10 @@ export class DynamoProjection implements ProjectionTarget {
     /* The domain-meta item is (re)written alongside every link upsert for that
        domain — the simplest way to keep resolveDomain() current without a
        separate outbox stream, and cheap (one extra put per upsert). */
-    return [{ PutRequest: { Item: linkItem } }, { PutRequest: { Item: domainItem } }];
+    return {
+      requests: [{ PutRequest: { Item: linkItem } }, { PutRequest: { Item: domainItem } }],
+      edge: { link: projectedLink, host: row.domain, slug: row.link.slug },
+    };
   }
 
   /** Query the GSI for the LINK item(s) with this link id and build deletes.
