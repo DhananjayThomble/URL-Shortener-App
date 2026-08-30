@@ -60,7 +60,18 @@ export async function createCacheStore(
       const { DynamoDBClient } = await import("@aws-sdk/client-dynamodb");
       const { DynamoDBDocumentClient } = await import("@aws-sdk/lib-dynamodb");
       const { DynamoDbCacheStore } = await import("./dynamodb-cache-store.js");
-      const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+      /* endpoint is left to the SDK in production (real regional endpoint) and
+         overridden ONLY when AWS_ENDPOINT_URL_DYNAMODB / AWS_ENDPOINT_URL is
+         set, so CI can point the shared cache/salt store at a dynamodb-local
+         container exactly as the resolver and writer clients do — a no-op when
+         unset. removeUndefinedValues matches the projection clients so a cache
+         entry with absent optional fields marshals rather than throwing. */
+      const endpoint =
+        process.env.AWS_ENDPOINT_URL_DYNAMODB ?? process.env.AWS_ENDPOINT_URL ?? undefined;
+      const client = DynamoDBDocumentClient.from(
+        new DynamoDBClient({ region: process.env.AWS_REGION, endpoint }),
+        { marshallOptions: { removeUndefinedValues: true } },
+      );
       return new DynamoDbCacheStore(client, config.dynamoTable);
     }
 

@@ -12,6 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1121.0",
+    "@aws-sdk/client-sqs": "^3.1121.0",
+    "@aws-sdk/lib-dynamodb": "^3.1121.0",
     "@snapurl/cache": "workspace:*",
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",

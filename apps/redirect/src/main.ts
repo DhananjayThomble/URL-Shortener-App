@@ -17,10 +17,13 @@ import {
   clientIpFromXff,
 } from "@snapurl/domain";
 import { createCacheStore, type CacheDriver } from "@snapurl/cache";
-import { PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { SQSClient } from "@aws-sdk/client-sqs";
+import { DynamoLinkResolver, PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
 import { CachingLinkResolver } from "./caching-resolver.js";
-import { PostgresClickSink, type ClickSink } from "./click-sink.js";
-import { DailySaltCache } from "./salt.js";
+import { PostgresClickSink, SqsClickSink, type ClickSink } from "./click-sink.js";
+import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
 
 /* ============================================================
    The redirect service.
@@ -64,13 +67,58 @@ const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
    behind CloudFront sets it to 1 (or higher for additional appending hops). */
 const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
 
-/* Which CacheStore backs the hot-link cache. 'memory' (the default) is a
-   per-instance in-memory cache, which is all local/CI/compose and any
-   single-node deployment needs. The scaled profile sets 'redis' + REDIS_URL so
-   the cache is shared across instances; the AWS profile uses 'dynamodb'. See
-   docs/DECISIONS.md for the per-profile reasoning. */
+/* Which CacheStore backs the hot-link cache and the daily-salt cache. 'memory'
+   (the default) is a per-instance in-memory cache, which is all local/CI/compose
+   and any single-node deployment needs. The scaled profile sets 'redis' +
+   REDIS_URL so the cache is shared across instances; the AWS profile sets
+   'dynamodb' + CACHE_DYNAMO_TABLE so it is shared via DynamoDB — which is what
+   lets the out-of-VPC redirect share one daily salt across instances instead of
+   each holding its own. See docs/DECISIONS.md for the per-profile reasoning. */
 const CACHE_DRIVER = (process.env.CACHE_DRIVER ?? "memory") as CacheDriver;
 const REDIS_URL = process.env.REDIS_URL;
+/* The cache table name, required only when CACHE_DRIVER=dynamodb (the AWS
+   profile). It backs both the hot-link cache and — crucially — the shared
+   daily-salt cache: with the redirect out of the VPC, this shared DynamoDB
+   store is what lets every instance agree on today's salt instead of each
+   holding its own per-instance value. The factory throws if the driver is
+   'dynamodb' and this is unset, so a misconfigured deploy fails loudly at boot
+   rather than silently falling back to a per-instance store. */
+const CACHE_DYNAMO_TABLE = process.env.CACHE_DYNAMO_TABLE;
+
+/* Which store the redirect resolves link config from, keyed on LINK_PROJECTION:
+   'dynamo' reads the DynamoDB projection the worker writes (the AWS profile);
+   anything else / unset reads Postgres directly, which is what local dev,
+   compose, the single-node and the Kubernetes profiles all use — byte-for-byte
+   the behaviour before this switch existed. LINK_PROJECTION_TABLE names the
+   DynamoDB table on the 'dynamo' path. */
+const LINK_PROJECTION = process.env.LINK_PROJECTION ?? "none";
+const LINK_PROJECTION_TABLE = process.env.LINK_PROJECTION_TABLE;
+
+/* Where a click goes after the redirect, keyed on CLICK_SINK:
+   'sqs' sends an awaited SendMessage to CLICK_QUEUE_URL (the AWS profile — the
+   worker drains it back into click_events); anything else / unset writes
+   straight to Postgres, which is what local dev, compose, the single-node and
+   Kubernetes profiles all use — byte-for-byte the behaviour before this switch.
+   Under LINK_PROJECTION=dynamo + CLICK_SINK=sqs the redirect touches only
+   DynamoDB + SQS (public AWS endpoints) and opens NO Postgres connection, which
+   is what lets it leave the VPC (#288 3b). */
+const CLICK_SINK = process.env.CLICK_SINK ?? "postgres";
+const CLICK_QUEUE_URL = process.env.CLICK_QUEUE_URL;
+
+/* OPTIONAL endpoint-url overrides for the AWS SDK clients. Both return
+   undefined in production, so the DynamoDB and SQS clients resolve their real
+   regional endpoints and `endpoint` is simply omitted — a genuine no-op. CI
+   sets AWS_ENDPOINT_URL_DYNAMODB (a dynamodb-local container) and, if it ever
+   runs an SQS emulator, AWS_ENDPOINT_URL_SQS, so the same adapters can be
+   exercised against local emulators without any code change. The
+   service-specific env wins over the service-agnostic AWS_ENDPOINT_URL,
+   matching the SDK's own precedence. */
+function dynamoEndpoint(): string | undefined {
+  return process.env.AWS_ENDPOINT_URL_DYNAMODB ?? process.env.AWS_ENDPOINT_URL ?? undefined;
+}
+function sqsEndpoint(): string | undefined {
+  return process.env.AWS_ENDPOINT_URL_SQS ?? process.env.AWS_ENDPOINT_URL ?? undefined;
+}
 /* A short bounded-staleness window: an edited link stops serving its old
    destination within this many seconds even before edit-invalidation lands.
    Ten seconds keeps the database out of the hot path for the common repeated
@@ -93,34 +141,96 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustP
 let close: () => Promise<void> = async () => {};
 let resolver: LinkResolver;
 let clicks: ClickSink;
-let salts: DailySaltCache;
+let salts: SaltSource;
 let JWT_SECRET = JWT_SECRET_DEFAULT;
 
 /** Resolve secrets, open the connection and wire up the adapters. Called once
  *  at the start of main(), before the server starts accepting requests. */
 async function init(): Promise<void> {
-  const url =
-    (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
   JWT_SECRET = (await resolveJwtSecret("JWT_ACCESS_SECRET_ARN", "JWT_ACCESS_SECRET")) ?? "";
 
-  const database = createDatabase({
-    url,
-    replicaUrl: process.env.DATABASE_REPLICA_URL,
-    ssl: process.env.DATABASE_SSL === "true",
-    sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
-    sslCaCert: process.env.DATABASE_CA_CERT,
-    max: POOL_MAX,
+  /* Which of the three hot-path stores each adapter reads from decides whether
+     the redirect needs Postgres at all:
+
+       - the resolver reads Postgres UNLESS LINK_PROJECTION=dynamo;
+       - the click sink writes Postgres UNLESS CLICK_SINK=sqs;
+       - the salt source reads Postgres only when the db handle exists,
+         otherwise it reads the shared CacheStore (DynamoDB on the AWS profile).
+
+     So Postgres is opened only when the resolver or the sink needs it. Under
+     LINK_PROJECTION=dynamo + CLICK_SINK=sqs both are off Postgres and the
+     redirect opens NO connection — no pool, no ENI, no ~109-connection RDS
+     ceiling — which is exactly what lets it leave the VPC (#288 3b). We never
+     resolve DATABASE_URL or build a pool on that path. */
+  const resolverUsesPostgres = LINK_PROJECTION !== "dynamo";
+  const sinkUsesPostgres = CLICK_SINK !== "sqs";
+  const needsPostgres = resolverUsesPostgres || sinkUsesPostgres;
+
+  let database: ReturnType<typeof createDatabase> | undefined;
+  if (needsPostgres) {
+    const url =
+      (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
+    database = createDatabase({
+      url,
+      replicaUrl: process.env.DATABASE_REPLICA_URL,
+      ssl: process.env.DATABASE_SSL === "true",
+      sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+      sslCaCert: process.env.DATABASE_CA_CERT,
+      max: POOL_MAX,
+    });
+    close = database.close;
+  }
+
+  /* The base resolver: DynamoDB projection on the AWS profile, Postgres
+     everywhere else. Under 'dynamo' the redirect does NOT need Postgres to
+     RESOLVE a link — the projection carries everything. */
+  let baseResolver: LinkResolver;
+  if (LINK_PROJECTION === "dynamo") {
+    if (!LINK_PROJECTION_TABLE) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
+    /* removeUndefinedValues mirrors the worker's writer client. The resolver
+       only reads (GetItem/Query), but keeping the marshall options identical on
+       both sides means the reader and writer never disagree about how an
+       optional/absent field is represented, and a future write on this client
+       (none today) could not reintroduce the undefined-marshalling throw that
+       silently emptied the projection. */
+    const dynamo = DynamoDBDocumentClient.from(
+      new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
+      { marshallOptions: { removeUndefinedValues: true } },
+    );
+    baseResolver = new DynamoLinkResolver(dynamo, LINK_PROJECTION_TABLE);
+  } else {
+    baseResolver = new PostgresLinkResolver(database!.db);
+  }
+  /* Wrap the base resolver in the short-lived cache. With the default 'memory'
+     driver this is a per-instance cache with a 10s TTL — a safe optimization
+     that never changes redirect correctness: a hot link still 302s to the
+     right place and the click is still recorded per request. DynamoDB is
+     already fast, but the wrap is kept uniform (it cuts read cost and keeps hit
+     and miss returning an identical link); the 'none' path wraps
+     PostgresLinkResolver exactly as before. */
+  const cacheStore = await createCacheStore({
+    driver: CACHE_DRIVER,
+    redisUrl: REDIS_URL,
+    dynamoTable: CACHE_DYNAMO_TABLE,
   });
-  close = database.close;
-  const postgresResolver = new PostgresLinkResolver(database.db);
-  /* Wrap the Postgres resolver in the short-lived cache. With the default
-     'memory' driver this is a per-instance cache with a 10s TTL — a safe
-     optimization that never changes redirect correctness: a hot link still
-     302s to the right place and the click is still recorded per request. */
-  const cacheStore = await createCacheStore({ driver: CACHE_DRIVER, redisUrl: REDIS_URL });
-  resolver = new CachingLinkResolver(postgresResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
-  clicks = new PostgresClickSink(database.db);
-  salts = new DailySaltCache(database.db);
+  resolver = new CachingLinkResolver(baseResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
+
+  /* The click sink: an awaited SQS SendMessage on the AWS profile (freeze-safe,
+     drained by the worker), a Postgres INSERT everywhere else. */
+  if (CLICK_SINK === "sqs") {
+    if (!CLICK_QUEUE_URL) throw new Error("CLICK_SINK=sqs requires CLICK_QUEUE_URL to be set.");
+    clicks = new SqsClickSink(
+      new SQSClient({ region: process.env.AWS_REGION, endpoint: sqsEndpoint() }),
+      CLICK_QUEUE_URL,
+    );
+  } else {
+    clicks = new PostgresClickSink(database!.db);
+  }
+
+  /* The salt source: the daily_salts table when a Postgres handle exists,
+     otherwise the shared CacheStore so a redirect that has left Postgres can
+     still salt its visitor hashes without a connection. */
+  salts = database ? new PostgresSaltCache(database.db) : new CacheStoreSaltCache(cacheStore);
 }
 
 app.get("/health", async () => ({ status: "ok" }));

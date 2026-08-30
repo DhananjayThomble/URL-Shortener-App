@@ -47,12 +47,37 @@ import { sql, type Database } from "@snapurl/database";
    claimed again — it is a real alert that the edge is stale.
    ============================================================ */
 
+/** One claimed outbox row, reduced to what a projection target acts on. */
+export interface ProjectionOp {
+  linkId: string;
+  operation: string;
+}
+
+/** The per-op outcome of a batched apply(): the batch method must report each
+ *  op independently so drainOutbox keeps its per-row processed_at / attempts
+ *  bookkeeping — one poisonous row must not fail the whole batch's rows. */
+export interface ProjectionResult {
+  linkId: string;
+  ok: boolean;
+  error?: unknown;
+}
+
 export interface ProjectionTarget {
   upsert(linkId: string): Promise<void>;
   remove(linkId: string): Promise<void>;
+  /* Optional batch entry point. When a target implements it, drainOutbox hands
+     it the whole claimed batch so the target can coalesce its writes (e.g. a
+     DynamoDB projection batches into <=25-item BatchWrites — a 100-link import
+     is O(N/25) round trips, not 100). A target without it (NoProjection) keeps
+     the per-row upsert/remove path, so the default no-op behaviour is
+     unchanged. The result array MUST carry one entry per input op, in order. */
+  apply?(ops: ProjectionOp[]): Promise<ProjectionResult[]>;
 }
 
-/** The no-op target: the redirect reads Postgres, so there is nothing to project. */
+/** The no-op target: the redirect reads Postgres, so there is nothing to
+ *  project. Deliberately does NOT implement apply(), so drainOutbox uses the
+ *  per-row path and its behaviour is byte-for-byte what it was before batching
+ *  existed. This is the default under LINK_PROJECTION=none. */
 export class NoProjection implements ProjectionTarget {
   async upsert(): Promise<void> {}
   async remove(): Promise<void> {}
@@ -92,30 +117,64 @@ export async function drainOutbox(
   let processed = 0;
   let failed = 0;
 
-  /* Processed outside any long transaction: target.upsert/remove may be a
+  /* Mark one claimed row processed (success) or bump its attempts (failure).
+     Kept as one helper so the per-row path and the batched path record the
+     exact same bookkeeping.
+
+     Success: leaving claimed_at set is fine — the claim filters on
+     processed_at is null, and pruneOutbox only looks at processed_at.
+
+     Failure: attempts are recorded so a permanently poisonous row stops being
+     retried forever and starts being visible instead. A row at MAX_ATTEMPTS is
+     a real alert: the edge is serving stale config. claimed_at is cleared so
+     the row is retryable on the next drain rather than waiting out the lease. */
+  const markProcessed = async (id: string) => {
+    await db.execute(sql`update projection_outbox set processed_at = now() where id = ${id}::uuid`);
+    processed++;
+  };
+  const markFailed = async (id: string, err: unknown) => {
+    failed++;
+    await db.execute(sql`
+      update projection_outbox
+      set attempts = attempts + 1, last_error = ${String(err).slice(0, 500)}, claimed_at = null
+      where id = ${id}::uuid
+    `);
+  };
+
+  /* Processed outside any long transaction: the projection write may be a
      DynamoDB network call, and each row is marked on its own so a slow or
      failing dependency never holds locks across I/O. */
+  if (target.apply) {
+    /* Batched path: hand the whole claimed batch to the target so it can
+       coalesce its writes (a DynamoDB target batches into <=25-item
+       BatchWrites). The result carries one entry per op, in order, so each
+       row's processed_at / attempts bookkeeping is still recorded per row —
+       one poisonous row fails alone, exactly as the per-row path does. */
+    let results: ProjectionResult[];
+    try {
+      results = await target.apply(rows.map((r) => ({ linkId: r.link_id, operation: r.operation })));
+    } catch (err) {
+      /* apply() itself threw (not a per-op failure): fail every claimed row so
+         the whole batch is retried on the next drain. */
+      for (const row of rows) await markFailed(row.id, err);
+      return { processed, failed };
+    }
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      const result = results[i];
+      if (result && result.ok) await markProcessed(row.id);
+      else await markFailed(row.id, result?.error ?? new Error("projection apply() returned no result for row"));
+    }
+    return { processed, failed };
+  }
+
   for (const row of rows) {
     try {
       if (row.operation === "delete") await target.remove(row.link_id);
       else await target.upsert(row.link_id);
-
-      /* Success. Leaving claimed_at set is fine: the claim filters on
-         processed_at is null, and pruneOutbox only looks at processed_at. */
-      await db.execute(sql`update projection_outbox set processed_at = now() where id = ${row.id}::uuid`);
-      processed++;
+      await markProcessed(row.id);
     } catch (err) {
-      /* Attempts are recorded so a permanently poisonous row stops being
-         retried forever and starts being visible instead. A row at
-         MAX_ATTEMPTS is a real alert: the edge is serving stale config.
-         claimed_at is cleared so the row is retryable on the next drain
-         rather than waiting out the lease. */
-      failed++;
-      await db.execute(sql`
-        update projection_outbox
-        set attempts = attempts + 1, last_error = ${String(err).slice(0, 500)}, claimed_at = null
-        where id = ${row.id}::uuid
-      `);
+      await markFailed(row.id, err);
     }
   }
 

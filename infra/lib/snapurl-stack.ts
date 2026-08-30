@@ -8,11 +8,14 @@ import {
 } from "aws-cdk-lib";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as ecrAssets from "aws-cdk-lib/aws-ecr-assets";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as apigw from "aws-cdk-lib/aws-apigatewayv2";
@@ -236,6 +239,127 @@ export class SnapUrlStack extends Stack {
     vpc.addGatewayEndpoint("DynamoEndpoint", { service: ec2.GatewayVpcEndpointAwsService.DYNAMODB });
 
     /* ---------------------------------------------------------
+       Link projection table (Phase 7, #288)
+
+       The redirect hot path resolves link config from this DynamoDB projection
+       rather than Postgres: one GetItem, no connection pool, no ~109-connection
+       RDS ceiling — which is what makes the redirect viable on Lambda and, once
+       the SQS click sink lands (#288 3b / FEAT-003), lets it leave the VPC. The
+       worker drains projection_outbox into it; the redirect reads it back. The
+       item shape is @snapurl/database's link-projection module.
+
+       PAY_PER_REQUEST: the redirect's traffic is spiky and mostly served by the
+       hot-link cache, so there is no steady RPS to provision against — on-demand
+       is both cheaper and one less number to tune. PITR is on: the projection is
+       derivable from Postgres (re-drain the outbox), but point-in-time recovery
+       is free-tier-cheap insurance against an operational mistake.
+
+       The GSI on `linkId` closes the delete-key gap: the API's outbox row for a
+       delete carries only the link id and the link row is gone by drain time, so
+       the worker cannot compute the (domain, slug) key from Postgres. It queries
+       this index for the item(s) with that id and deletes them instead. The
+       index name and the `linkId` attribute match LINK_ID_GSI / LINK_ID_ATTR in
+       @snapurl/database. */
+    const linkProjectionTable = new dynamodb.Table(this, "LinkProjectionTable", {
+      partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      /* RETAIN, not DESTROY: like the database's SNAPSHOT policy, a `cdk
+         destroy` should not silently take the edge's link config with it. The
+         table is cheap to keep and re-derivable, but losing it unprompted is
+         the wrong default. */
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    linkProjectionTable.addGlobalSecondaryIndex({
+      indexName: "linkId-index",
+      partitionKey: { name: "linkId", type: dynamodb.AttributeType.STRING },
+      /* KEYS_ONLY: the delete path only needs each matching item's PK/SK to
+         issue the DeleteItem, so projecting the full item into the index would
+         be storage and write cost for nothing. */
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
+
+    /* ---------------------------------------------------------
+       Cache table (Phase 7, #288)
+
+       The CacheStore for the AWS profile: DynamoDbCacheStore (@snapurl/cache)
+       reads and writes this table. It backs the redirect's daily-salt cache —
+       and this is the load-bearing point of #288 3b. The redirect out of the
+       VPC generates today's salt once per new day and writes it here; every
+       other redirect instance reads the SAME salt back, so a visitor is hashed
+       under one shared salt rather than one salt per warm instance. Without a
+       SHARED store the salt cache falls back to per-instance in-memory and the
+       unique-visitor count double-counts by the instance fan-out (the exact gap
+       the v1 review flagged). See apps/redirect/src/salt.ts (CacheStoreSaltCache)
+       and RedirectFn's CACHE_DRIVER=dynamodb below.
+
+       Separate from LinkProjectionTable on purpose: the two have different key
+       schemas. The cache adapter is single-key on `pk` (no sort key), matching
+       DynamoDbCacheStore's item shape, whereas the projection is a PK/SK table.
+
+       PAY_PER_REQUEST: the salt is written at most once per day per new instance
+       and read from the in-process day cache thereafter, so there is no steady
+       RPS to provision against. TTL is on `expiresAt` (the attribute the cache
+       adapter stamps in unix epoch seconds), so a day's salt is retired
+       automatically once its TTL passes — no rotation job needed for this table.
+
+       DESTROY, not RETAIN (unlike the projection): the only thing stored here is
+       a day-scoped salt that is regenerated on demand, so there is nothing worth
+       keeping across a `cdk destroy`. */
+    const cacheTable = new dynamodb.Table(this, "CacheTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expiresAt",
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
+    /* ---------------------------------------------------------
+       Click queue (Phase 7, #288 3b)
+
+       On the AWS profile the redirect no longer INSERTs a click on its hot
+       path — it sends the click to this queue (CLICK_SINK=sqs), and the worker
+       drains it back into click_events via an event source mapping (below). An
+       awaited SendMessage is the freeze-safe write the redirect needs under the
+       Lambda Web Adapter, and SQS is a public AWS endpoint, so a redirect that
+       also resolves from DynamoDB needs neither Postgres nor the VPC — which is
+       why the redirect leaves the VPC further down.
+
+       SQS has no gateway VPC endpoint (only a ~$7/month interface endpoint), so
+       this queue is why 3b depended on 3a: an in-VPC redirect calling
+       SendMessage would either cost that money or not reach the queue at all.
+       With the redirect out of the VPC it reaches SQS over the public internet
+       for free.
+
+       A dead-letter queue catches a message the worker fails to insert
+       maxReceiveCount times (a poison message: an unparseable body, a row the
+       database rejects). Without it such a message would redrive forever. The
+       consumer reports per-record failures (batchItemFailures), so only the
+       genuinely bad message is retried toward this DLQ; the rest of its batch
+       still lands. */
+    const clickDlq = new sqs.Queue(this, "ClickDlq", {
+      /* 14 days, the SQS maximum: a poison message should sit here long enough
+         for someone to notice and inspect it, not silently age out. */
+      retentionPeriod: Duration.days(14),
+    });
+    const clickQueue = new sqs.Queue(this, "ClickQueue", {
+      /* At least the worker's function timeout (5 min): while the worker is
+         mid-batch a message must stay invisible to other pollers, or it could
+         be delivered twice and the click double-counted. Six times the timeout
+         is the AWS-recommended headroom for a consumer that can retry within
+         one visibility window. */
+      visibilityTimeout: Duration.minutes(30),
+      deadLetterQueue: {
+        queue: clickDlq,
+        /* Five attempts before a message is parked in the DLQ. The consumer's
+           partial-batch-failure reporting means this counts per-message, not
+           per-batch, so a transient blip gets a few honest retries while a
+           truly poison message is quarantined rather than looping. */
+        maxReceiveCount: 5,
+      },
+    });
+
+    /* ---------------------------------------------------------
        Database
        --------------------------------------------------------- */
 
@@ -414,11 +538,18 @@ export class SnapUrlStack extends Stack {
        ISecurityGroup[], and a readonly tuple will not satisfy it. */
     const vpcSettings = {
       vpc,
-      /* Egress-aware: PRIVATE_WITH_EGRESS when NAT is on so the API, redirect
-         and worker can call Safe Browsing / webhooks / OAuth / mail; the
-         isolated group under natStrategy === 'none'. Redirect shares this
-         object for RDS access — giving it egress when NAT is on is harmless
-         and consistent, and Phase 7 may rely on it. */
+      /* Egress-aware: PRIVATE_WITH_EGRESS when NAT is on so the API and worker
+         can call Safe Browsing / webhooks / OAuth / mail / RDS; the isolated
+         group under natStrategy === 'none'.
+
+         The REDIRECT no longer shares this. Phase 7 (#288) moved it to the
+         DynamoDB projection (3a) and the SQS click sink (3b), so on the AWS
+         profile it touches only DynamoDB and SQS — both public AWS endpoints —
+         and needs no Postgres, no ENI and no VPC. Removing it from the VPC is
+         the payoff: no cold-start ENI attach, no connection pool, no
+         ~109-connection RDS ceiling, and the 10-second timeout failure mode
+         goes with it. See RedirectFn below, which deliberately omits
+         ...vpcSettings. The API and worker KEEP it. */
       vpcSubnets: appLambdaSubnets,
       securityGroups: [lambdaSecurityGroup] as ec2.ISecurityGroup[],
     };
@@ -563,9 +694,64 @@ export class SnapUrlStack extends Stack {
          is the highest-volume function — two JSON lines per request at `info`
          is ~60GB/month of ingest at 100M redirects — so the hot path stays
          quiet while api and worker keep the configured level. */
-      environment: { ...commonEnv, AWS_LWA_READINESS_CHECK_PATH: "/health", LOG_LEVEL: "warn" },
-      ...vpcSettings,
+      environment: {
+        ...commonEnv,
+        AWS_LWA_READINESS_CHECK_PATH: "/health",
+        LOG_LEVEL: "warn",
+        /* AWS profile: resolve link config from the DynamoDB projection, not
+           Postgres. On redirectFn/workerFn only (not commonEnv), so this stays
+           the AWS profile's choice — the single-node/k8s profiles are
+           compose/Helm and never see it, and the free/none topology is
+           unaffected. */
+        LINK_PROJECTION: "dynamo",
+        LINK_PROJECTION_TABLE: linkProjectionTable.tableName,
+        /* AWS profile: send clicks to the SQS queue rather than INSERT them on
+           the hot path. An awaited SendMessage is freeze-safe under the Lambda
+           Web Adapter (a Postgres INSERT is not), and the worker drains the
+           queue back into click_events. Together with LINK_PROJECTION=dynamo
+           this takes the redirect off Postgres entirely — the precondition for
+           removing it from the VPC below (#288 3b). */
+        CLICK_SINK: "sqs",
+        CLICK_QUEUE_URL: clickQueue.queueUrl,
+        /* AWS profile: back the CacheStore with DynamoDB, not the per-instance
+           in-memory default. This is what makes the redirect's daily salt
+           SHARED across all warm instances: CacheStoreSaltCache reads/writes
+           the salt through this store (see apps/redirect/src/salt.ts), so once
+           any instance has written today's salt every other instance reads the
+           same value back. Left to the 'memory' default each instance would
+           generate its own salt and hash the same visitor differently all day,
+           inflating unique counts by the instance fan-out. The table is
+           single-key on `pk`, matching DynamoDbCacheStore. Set on redirectFn
+           only (not commonEnv): the api/worker keep their own CACHE_DRIVER
+           story and the single-node/k8s profiles never see it. */
+        CACHE_DRIVER: "dynamodb",
+        CACHE_DYNAMO_TABLE: cacheTable.tableName,
+      },
+      /* NOT in the VPC — this is the #288 payoff. With LINK_PROJECTION=dynamo +
+         CLICK_SINK=sqs the redirect resolves from DynamoDB, sends clicks to SQS
+         and reads its daily salt from the DynamoDB-backed CacheStore — all
+         public AWS endpoints — so it needs no Postgres, no ENI and no VPC.
+         Dropping ...vpcSettings removes the cold-start ENI attach, the
+         connection pool and the ~109-connection RDS ceiling, and the 10-second
+         redirect timeout failure mode goes with it. A no-VPC Lambda still
+         reaches Secrets Manager, DynamoDB and SQS over the public internet, so
+         the JWT-access grant below still works. The API and worker keep the
+         VPC (they still need RDS). */
     });
+
+    /* The redirect only reads the projection. */
+    linkProjectionTable.grantReadData(redirectFn);
+
+    /* The redirect sends each click to the queue; the worker (below) consumes
+       it. grantSendMessages is the least-privilege grant for a producer. */
+    clickQueue.grantSendMessages(redirectFn);
+
+    /* The redirect reads AND writes the cache table: CacheStoreSaltCache does a
+       get() for today's salt and, on the first request of a new day, a set() to
+       publish the salt it generated so every other instance reads it back.
+       grantReadWriteData covers both. This shared write is what closes the
+       per-instance-salt gap that leaving the VPC would otherwise open. */
+    cacheTable.grantReadWriteData(redirectFn);
 
 
     /* IAM auth, not NONE: a NONE Function URL is reachable by anyone on the
@@ -691,9 +877,40 @@ export class SnapUrlStack extends Stack {
       /* No WORKER_MODE: nothing reads it. The long-running process takes
          `--once` from argv, and the Lambda entrypoint (apps/worker/src/lambda.ts)
          skips that path entirely and calls the two jobs directly. */
-      environment: commonEnv,
+      environment: {
+        ...commonEnv,
+        /* AWS profile: drain projection_outbox into the DynamoDB projection.
+           On workerFn only, matching redirectFn — see the note there. */
+        LINK_PROJECTION: "dynamo",
+        LINK_PROJECTION_TABLE: linkProjectionTable.tableName,
+      },
       ...vpcSettings,
     });
+
+    /* The worker writes the projection (puts on upsert) and deletes on remove,
+       and queries the linkId GSI to find what to delete — readWriteData covers
+       the table and its indexes. */
+    linkProjectionTable.grantReadWriteData(workerFn);
+
+    /* The SQS event source mapping the issue explicitly chose over a
+       self-managed ReceiveMessage: the Lambda service POLLS the queue from
+       OUTSIDE the VPC and invokes the worker with the batch, so no SQS VPC
+       endpoint is needed even though the worker itself stays in the VPC (it
+       needs RDS to insert click_events and run the rollups). SqsEventSource
+       also grants the worker the consume permissions (Receive/Delete/GetAttrs).
+
+       reportBatchItemFailures pairs with the handler returning
+       { batchItemFailures: [...] }: only the reported records are redriven, so
+       one poison message does not reprocess or DLQ the whole batch. batchSize
+       10 keeps each invocation small and latency low for a hot click stream;
+       the visibility timeout on the queue (>= the worker's 5-min timeout) keeps
+       an in-flight batch invisible to other pollers. */
+    workerFn.addEventSource(
+      new lambdaEventSources.SqsEventSource(clickQueue, {
+        batchSize: 10,
+        reportBatchItemFailures: true,
+      }),
+    );
 
 
     /* EventBridge rather than an in-process interval: a scheduled rule
@@ -751,9 +968,17 @@ export class SnapUrlStack extends Stack {
        here, after apiFn, redirectFn and workerFn all exist. */
     if (hasEgress) {
       database.secret!.grantRead(apiFn);
-      database.secret!.grantRead(redirectFn);
+      /* No DB-secret grant for the redirect any more (#288 3b): with
+         LINK_PROJECTION=dynamo + CLICK_SINK=sqs it never opens Postgres, so it
+         never resolves DATABASE_SECRET_ARN and reading the DB secret would be a
+         grant it cannot use. The DATABASE_SECRET_ARN env var still arrives via
+         commonEnv but is harmless unread. The API and worker keep the grant. */
       database.secret!.grantRead(workerFn);
       config.jwtAccessSecret.grantRead(apiFn);
+      /* The redirect KEEPS its JWT-access grant: it still verifies the
+         short-lived unlock token on password-protected links, and a no-VPC
+         Lambda resolves JWT_ACCESS_SECRET_ARN from Secrets Manager over the
+         public internet just as it reaches DynamoDB and SQS. */
       config.jwtAccessSecret.grantRead(redirectFn);
       config.jwtRefreshSecret.grantRead(apiFn);
     }
