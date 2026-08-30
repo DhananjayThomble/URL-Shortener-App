@@ -287,6 +287,15 @@ echo "== deployment showstoppers =="
 #       via the DB in DB-available mode (local/compose/CI, no worker required),
 #       and via the analytics countries[] poll in deployed mode (no DB, but a
 #       worker is running there to roll clicks up). See below.
+#
+# TODO (Phase 7 / #276, #289): once a real deploy exists, add a deployed-only
+# assertion that a DIRECT (unsigned) request to the raw redirect Function URL
+# returns 403 — proof that OAC + AWS_IAM auth keep the origin reachable only
+# through CloudFront. The stack exposes that URL as the RedirectFunctionUrl
+# CfnOutput; wire it in here (e.g. via a FUNCTION_URL env var) and assert 403,
+# while $RD (the CloudFront base) continues to prove the via-CDN 302s above.
+# Not done locally/in compose: there is no Function URL there (compose hits the
+# container directly), so this must stay gated to the deployed target.
 
 # Drive a real redirect through the country-ruled $RUN-geo link with a non-bot
 # browser UA and a CloudFront-Viewer-Country header. This is what populates

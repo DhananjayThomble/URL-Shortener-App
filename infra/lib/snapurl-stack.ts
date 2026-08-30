@@ -275,8 +275,14 @@ export class SnapUrlStack extends Stack {
     });
 
 
+    /* IAM auth, not NONE: a NONE Function URL is reachable by anyone on the
+       public internet, which skips CloudFront entirely and with it the WAF,
+       edge rate limiting, the viewer-country header, and the edge cache — and
+       opens a second uncapped path into the redirect Lambda. With AWS_IAM the
+       URL only answers to a SigV4-signed request; CloudFront signs via the
+       Origin Access Control wired below, and any direct caller gets 403. */
     const redirectUrl = redirectFn.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
+      authType: lambda.FunctionUrlAuthType.AWS_IAM,
     });
 
     /* The origin is a Lambda Function URL, and a Function URL rejects any
@@ -330,7 +336,19 @@ export class SnapUrlStack extends Stack {
 
     const distribution = new cloudfront.Distribution(this, "RedirectCdn", {
       defaultBehavior: {
-        origin: new origins.FunctionUrlOrigin(redirectUrl),
+        /* Origin Access Control, not a plain FunctionUrlOrigin: this helper
+           creates the OAC, sets signing to SIGV4_ALWAYS, and grants CloudFront
+           permission to invoke the AWS_IAM Function URL — so only CloudFront
+           can reach the origin and direct callers get 403. SigV4 validation
+           requires the signed Host to match the origin's own hostname, so
+           CloudFront must send the origin Host rather than the viewer's. That
+           is exactly what the RedirectOrigReqPolicy below does (Host is not in
+           its allow-list), and the RedirectViewerRequest function (#274) copies
+           the viewer Host into x-forwarded-host for the app to read. That
+           x-forwarded-host function is therefore a prerequisite for this OAC,
+           not a nicety — without it the app could not resolve the viewer's
+           domain once Host is pinned to the origin. */
+        origin: origins.FunctionUrlOrigin.withOriginAccessControl(redirectUrl),
         // Redirects must never be cached at the edge. The product promise is
         // "print it once, change where it points forever" — a cached 302 makes
         // a destination edit invisible to anyone who already clicked.
@@ -389,6 +407,15 @@ export class SnapUrlStack extends Stack {
     new CfnOutput(this, "RedirectDomain", {
       value: `https://${distribution.distributionDomainName}`,
       description: "CNAME your short domain here.",
+    });
+    /* The raw redirect Function URL. It is IAM-signed behind OAC, so a direct
+       (unsigned) request must return 403 while the same path through
+       RedirectDomain succeeds — that is the guarantee #276 is about. Exposed
+       here so the Phase 7 (#289) deployed smoke gate can assert the direct 403;
+       see scripts/smoke-redirect.sh. */
+    new CfnOutput(this, "RedirectFunctionUrl", {
+      value: redirectUrl.url,
+      description: "IAM-signed origin behind CloudFront OAC; a direct request must return 403.",
     });
     new CfnOutput(this, "DatabaseSecretArn", {
       value: database.secret?.secretArn ?? "(none)",
