@@ -364,4 +364,95 @@ connection strings. You have two options:
    - `database-ca-cert` (optional)
 
 The render fails if you provide neither inline secrets nor an existing Secret,
-so you cannot accidentally deploy with no secret.
+so you cannot accidentally deploy with no secret. When you provide inline
+secrets, the chart also enforces the advertised contract **at `helm install`
+time** (not late at app boot): `helm install`/`helm template` fails if either
+JWT secret is shorter than 32 characters or if the two are identical.
+
+> **Required keys when using `secrets.existingSecret`.** The chart does not (and
+> for an externally-managed Secret cannot) validate the contents of a Secret it
+> did not create. A missing key surfaces only as a pod `CrashLoopBackOff` with a
+> `secretKeyRef` error, not as a render failure. Before you deploy with
+> `secrets.existingSecret`, make sure your Secret carries **exactly** these
+> keys: `jwt-access-secret`, `jwt-refresh-secret`, `database-url` (all
+> required), plus `redis-url`, `database-replica-url` and `database-ca-cert`
+> where those features are enabled. The `redis-url` key is required for any
+> multi-replica deployment (see [Why Redis is
+> required](#why-redis-is-required-multi-replica-rate-limiting)).
+
+## Lifecycle of the chart-managed Secret and ConfigMap
+
+The chart-managed `<release>-secrets` Secret and `<release>-config` ConfigMap
+are registered as `helm.sh/hook: pre-install,pre-upgrade` hooks (weight `-10`)
+carrying `helm.sh/resource-policy: keep`. This is deliberate: the migrate Job is
+itself a pre-install hook (weight `-5`), and on a fresh install Helm creates
+normal release resources only **after** pre-install hooks have run. Making the
+Secret a hook at an earlier weight guarantees `database-url` exists in the
+cluster before the migrate Job tries to read it.
+
+That choice has two consequences an operator should know about:
+
+1. **`helm uninstall` orphans them.** Because they are hook resources with
+   `resource-policy: keep`, `helm uninstall snapurl` removes the Deployments,
+   Services, HPA and PDBs but **leaves `<release>-secrets` and
+   `<release>-config` behind**. A later reinstall with the same release name
+   inherits those stale objects. Clean them up explicitly when you tear a
+   release down for good:
+
+   ```bash
+   helm uninstall snapurl --namespace snapurl
+   # the Secret and ConfigMap are NOT removed by uninstall — delete them too:
+   kubectl delete secret,configmap \
+     -n snapurl snapurl-secrets snapurl-config --ignore-not-found
+   ```
+
+   (Substitute your release name for `snapurl` if you installed under a
+   different one; the object names are `<release>-secrets` and
+   `<release>-config`.)
+
+2. **Their update path on `helm upgrade` differs from a normal resource.**
+   Because they are re-applied as `pre-upgrade` hooks, a changed value (for
+   example a rotated `redis.url`) is re-applied to the in-cluster object on
+   `helm upgrade`. The app pods pick up a changed **ConfigMap** value
+   automatically because every Deployment carries a `checksum/config` annotation
+   over the rendered ConfigMap, so a config change rolls the pods. The Secret is
+   deliberately **not** hashed into an annotation (to keep secret material out
+   of pod metadata), so a rotated credential in the Secret does not by itself
+   roll the pods — see [Rotating credentials](#rotating-credentials).
+
+**Why not make the migrate Job read a normally-managed Secret instead?** That
+would remove the hook/`keep` semantics, but the create-ordering problem is real:
+on a fresh install the Secret would not exist when the pre-install migrate hook
+runs. The alternatives (a Job-scoped throwaway Secret, or leaning on hook
+weights without making the long-lived Secret a hook) each add moving parts to a
+security-sensitive path for a one-time ordering concern. The current design is a
+deliberate, documented tradeoff: predictable ordering in exchange for two
+objects you clean up by hand on teardown. (The ConfigMap does not strictly need
+to be a hook — the migrate Job inlines the two env values it needs rather than
+reading the ConfigMap — but it is kept symmetric with the Secret for a single,
+consistent lifecycle story.)
+
+### Rotating credentials
+
+To rotate a credential-bearing value (`postgres.url`, `redis.url`,
+`postgres.replicaUrl`, `postgres.caCert`, or either JWT secret):
+
+- **With `secrets.existingSecret` (recommended for production):** rotate the
+  value in the Secret you manage (via your external secrets operator or
+  `kubectl`), then roll the consuming Deployments so pods pick up the new value:
+
+  ```bash
+  kubectl rollout restart -n snapurl \
+    deploy/snapurl-api deploy/snapurl-redirect deploy/snapurl-worker
+  ```
+
+- **With inline chart-managed secrets:** run `helm upgrade` with the new value
+  (for example `--set-string redis.url=...`). The `pre-upgrade` hook re-applies
+  the Secret, but because the Secret is not hashed into the pod template you
+  must then roll the Deployments with the same `kubectl rollout restart` as
+  above so running pods read the rotated value.
+
+  If you would rather have Helm delete and recreate the object outright,
+  `helm uninstall` + the `kubectl delete` cleanup above, then a fresh
+  `helm upgrade --install`, guarantees a clean Secret — at the cost of a brief
+  outage. For zero-downtime rotation, prefer the `existingSecret` path.

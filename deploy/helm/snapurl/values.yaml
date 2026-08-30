@@ -212,7 +212,10 @@ logLevel: info
 #
 # NEVER commit real secret values to a values file. For production prefer
 # existingSecret. The render FAILS if neither inline secrets nor existingSecret
-# are provided, so you cannot accidentally deploy with no secret.
+# are provided, so you cannot accidentally deploy with no secret. When inline
+# secrets ARE provided, the render also FAILS if either is shorter than 32
+# characters or if the two are identical — the ">=32 chars, must differ"
+# contract is enforced at `helm install` time, not late at app boot.
 secrets:
   jwtAccessSecret: ""
   jwtRefreshSecret: ""
