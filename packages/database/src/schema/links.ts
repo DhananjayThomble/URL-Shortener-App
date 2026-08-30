@@ -190,6 +190,11 @@ export const projectionOutbox = pgTable(
     payload: jsonb("payload").notNull(),
     attempts: smallint("attempts").notNull().default(0),
     lastError: text("last_error"),
+    /* A claim lease. A drain stamps this under FOR UPDATE SKIP LOCKED so a
+       concurrent worker skips the row; a stale claim (older than the lease)
+       is reclaimable, so a worker that crashed after claiming but before
+       processing cannot strand the row. Null means unclaimed. */
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
     processedAt: timestamp("processed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -28,15 +28,23 @@ export interface RollupResult {
  */
 export async function rollupClicks(db: Database, batchSize = 50_000): Promise<RollupResult> {
   return db.transaction(async (tx) => {
-    /* Claim a batch by id. Selecting rows and deleting them later would race
-       with a concurrent worker; taking an explicit id list means two workers
-       cannot claim the same clicks. */
+    /* Claim a batch by id, locked. The inner SELECT ... FOR UPDATE SKIP LOCKED
+       runs inside this transaction, so the row locks are held until the same
+       transaction sets rolled_up_at at the end — a concurrent worker's SKIP
+       LOCKED skips these rows and cannot fold them into the additive
+       click_daily counts a second time. click_events is partitioned with a
+       (id, occurred_at) primary key; FOR UPDATE on a partitioned table locks
+       the matching rows, so `id in (...) for update` is valid here. */
     const claimed = await tx.execute(sql`
       create temporary table rollup_batch on commit drop as
       select * from click_events
-      where rolled_up_at is null
-      order by occurred_at
-      limit ${batchSize}
+      where id in (
+        select id from click_events
+        where rolled_up_at is null
+        order by occurred_at
+        limit ${batchSize}
+        for update skip locked
+      )
     `);
     void claimed;
 
