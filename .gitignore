@@ -35,3 +35,6 @@ logs/
 # never repo state. Listed here rather than only in .git/info/exclude so a
 # contributor following the same convention is protected too.
 .gh-token
+
+# Internal agent task-state (planning artifacts, not product code)
+.tasks/
