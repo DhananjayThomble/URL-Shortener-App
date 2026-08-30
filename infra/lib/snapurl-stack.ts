@@ -279,6 +279,55 @@ export class SnapUrlStack extends Stack {
       authType: lambda.FunctionUrlAuthType.NONE,
     });
 
+    /* The origin is a Lambda Function URL, and a Function URL rejects any
+       request whose Host is not its own hostname — so CloudFront must forward
+       the origin's Host, never the viewer's (that is what the managed
+       ALL_VIEWER_EXCEPT_HOST_HEADER policy did). But the redirect app resolves
+       a link by the viewer's domain, so it still needs to see it somewhere.
+       This viewer-request function copies the viewer Host into
+       x-forwarded-host, which the origin request policy below forwards while
+       leaving Host alone. apps/redirect/src/main.ts reads exactly that header.
+
+       It is a named, standalone function on purpose: Phase 7 (#289) extends
+       this same function with the KeyValueStore edge fast path. */
+    const redirectViewerRequest = new cloudfront.Function(this, "RedirectViewerRequest", {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      comment: "Copies the viewer Host into x-forwarded-host for the redirect origin.",
+      code: cloudfront.FunctionCode.fromInline(
+        [
+          "function handler(event) {",
+          "  var request = event.request;",
+          "  request.headers['x-forwarded-host'] = { value: request.headers.host.value };",
+          "  return request;",
+          "}",
+        ].join("\n"),
+      ),
+    });
+
+    /* Host is deliberately NOT in this allow-list: CloudFront always sends the
+       origin's own Host (required by the Function URL origin above), and the
+       app reads the viewer's host from x-forwarded-host that the function set.
+       queryStringBehavior.all() is required because the unlock token (`k`) and
+       the UTM / forwardQuery overrides both ride the query string — dropping it
+       would silently break password-protected links and campaign tracking.
+       CloudFront-Viewer-Country and CloudFront-Viewer-City are CloudFront-
+       generated headers: CloudFront adds them to the origin request precisely
+       because they are allow-listed here, which is what powers country routing
+       and click_events.country/city. */
+    const redirectOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "RedirectOrigReqPolicy", {
+      comment: "Forwards viewer headers plus CloudFront geo headers to the redirect origin; excludes Host.",
+      headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
+        "user-agent",
+        "referer",
+        "accept-language",
+        "x-forwarded-host",
+        "CloudFront-Viewer-Country",
+        "CloudFront-Viewer-City",
+      ),
+      cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
+      queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
+    });
+
     const distribution = new cloudfront.Distribution(this, "RedirectCdn", {
       defaultBehavior: {
         origin: new origins.FunctionUrlOrigin(redirectUrl),
@@ -286,12 +335,18 @@ export class SnapUrlStack extends Stack {
         // "print it once, change where it points forever" — a cached 302 makes
         // a destination edit invisible to anyone who already clicked.
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        originRequestPolicy: redirectOriginRequestPolicy,
+        functionAssociations: [
+          { function: redirectViewerRequest, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
       },
-      // CloudFront-Viewer-Country is what makes country routing work without
-      // storing an IP address anywhere. PriceClass 100 keeps egress cheapest.
+      // Country routing and click_events.country/city work without storing an
+      // IP address: the custom origin request policy above forwards CloudFront's
+      // CloudFront-Viewer-Country / -City headers, and the viewer-request
+      // function supplies x-forwarded-host so the app can resolve the link's
+      // domain. PriceClass 100 keeps egress cheapest.
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       comment: "SnapURL redirect edge",
     });
