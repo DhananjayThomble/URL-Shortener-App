@@ -19,10 +19,10 @@ import { isForeignKeyViolation, isUniqueViolation, postgresErrorCode } from "@sn
 
 /* Re-exported, not redefined.
  *
- * These moved to @snapurl/database because the redirect and worker now need the
- * same cause-chain walk to recognise a transient partition-routing failure on the
- * click write. Two copies of it would be two things to keep in step, and the bug
- * this walk exists to prevent — a code sitting one level down being missed — is
+ * These moved to @snapurl/database because the shared click INSERT lives there
+ * and needs the same cause-chain walk to recognise a transient partition-routing
+ * failure. Two copies of it would be two things to keep in step, and the bug this
+ * walk exists to prevent — a code sitting one level down being missed — is
  * exactly the kind that drift reintroduces. Re-exporting keeps every existing
  * importer in this app working unchanged. */
 export { postgresErrorCode, isUniqueViolation, isForeignKeyViolation };

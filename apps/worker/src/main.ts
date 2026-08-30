@@ -18,7 +18,9 @@ import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
    test. Nothing about the schedule lives inside the jobs.
    ============================================================ */
 
-const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
+/* Exported so the Lambda entrypoint logs through the same instance rather than
+   creating a second pino with its own level and destination. */
+export const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
 const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3600);
 

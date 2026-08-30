@@ -5,20 +5,27 @@ import { isTransientPartitionRoutingError, postgresErrorCode } from "./postgres-
    Recognising the one insert failure that is worth retrying.
 
    The detector has to be narrow. 23514 is what *any* CHECK
-   constraint raises, and retrying one of those would burn a
-   round trip to arrive at the same answer. So the message is
-   checked too, and these tests pin both halves — including that
-   a plain check violation is NOT retried, which is the assertion
-   that stops the detector quietly widening later.
+   constraint raises, and two of the four things that raise it
+   here are permanent failures. So `routine` is checked too, and
+   the negative cases below are the ones that matter: they are
+   what stops the check quietly widening later.
+
+   Every fixture is a real observation. The routine names and
+   message strings were provoked against Postgres 18.6 and copied
+   from its output, not recalled — a detector and its fakes
+   written from the same assumption cannot contradict each other,
+   and this one is only worth having if it fires in production.
+   `partitions.test.ts` pins the same strings against a live
+   server so this file cannot drift from reality unnoticed.
    ============================================================ */
 
 /** How the error actually arrives: Drizzle wraps the driver error and the
  *  SQLSTATE sits on `.cause`. Every case here goes through that shape rather
  *  than a bare object, because a detector that only works on the unwrapped
  *  error is the original bug this walk exists to prevent. */
-const wrapped = (code: string, message: string) =>
+const wrapped = (code: string, message: string, routine?: string) =>
   Object.assign(new Error("Failed query: insert into click_events"), {
-    cause: Object.assign(new Error(message), { code }),
+    cause: Object.assign(new Error(message), routine ? { code, routine } : { code }),
   });
 
 describe("isTransientPartitionRoutingError", () => {
@@ -28,37 +35,93 @@ describe("isTransientPartitionRoutingError", () => {
     const err = wrapped(
       "23514",
       'new row for relation "click_events_default" violates partition constraint',
+      "ExecPartitionCheckEmitError",
     );
     expect(isTransientPartitionRoutingError(err)).toBe(true);
   });
 
   it("matches a row with nowhere to go", () => {
-    // Only reachable if the DEFAULT partition is missing, but a retry is still
-    // the right response: a provisioning pass may have just created the day.
-    const err = wrapped("23514", 'no partition of relation "click_events" found for row');
+    /* Only reachable with no DEFAULT partition attached — which migration 0007
+       makes permanent, so in this schema it should never happen. Retried anyway
+       because the cost of being wrong is one round trip, and the alternative is
+       dropping a click on the one failure mode nobody predicted. */
+    const err = wrapped(
+      "23514",
+      'no partition of relation "click_events" found for row',
+      "ExecFindPartition",
+    );
     expect(isTransientPartitionRoutingError(err)).toBe(true);
   });
 
   it("does NOT match an ordinary check constraint violation", () => {
-    /* The assertion that keeps the detector narrow. 23514 is shared with every
-       CHECK constraint, and retrying a genuinely invalid row would cost a round
-       trip to fail identically — while making a real data problem look
-       intermittent. */
-    const err = wrapped("23514", 'new row for relation "workspaces" violates check constraint "retention_years_check"');
+    /* 23514 is shared with every CHECK constraint, and retrying a genuinely
+       invalid row would cost a round trip to fail identically — while making a
+       real data problem look intermittent. */
+    const err = wrapped(
+      "23514",
+      'new row for relation "workspaces" violates check constraint "retention_years_check"',
+      "ExecConstraints",
+    );
+    expect(isTransientPartitionRoutingError(err)).toBe(false);
+  });
+
+  it("does NOT match an ATTACH refused because the default already holds the row", () => {
+    /* The case that keeps the message test specific. This is a *permanent*
+       failure — the fix is to drain the default, not to try again — and its
+       message mentions a partition constraint, so a looser needle such as
+       `includes("partition")` would sweep it in. Raised by DDL rather than by an
+       insert, but `isTransientPartitionRoutingError` is exported from the package
+       under a general name, so it should be right for any caller. */
+    const err = wrapped(
+      "23514",
+      'updated partition constraint for default partition "click_events_default" would be violated by some row',
+      "ATRewriteTable",
+    );
     expect(isTransientPartitionRoutingError(err)).toBe(false);
   });
 
   it("does not match other SQLSTATEs, even with a partition-shaped message", () => {
     // Code and message both have to agree, so a message that happens to mention
     // partitions cannot drag an unrelated failure into the retry path.
-    expect(isTransientPartitionRoutingError(wrapped("23505", "violates partition constraint"))).toBe(false);
-    expect(isTransientPartitionRoutingError(wrapped("42P01", "no partition of relation found"))).toBe(false);
+    expect(
+      isTransientPartitionRoutingError(wrapped("23505", "violates partition constraint")),
+    ).toBe(false);
+    expect(
+      isTransientPartitionRoutingError(wrapped("42P01", "no partition of relation found")),
+    ).toBe(false);
+  });
+
+  it("falls back to the message when no routine reaches it", () => {
+    /* `routine` is preferred because it is not translated, but it is not
+       guaranteed to survive — an error rebuilt from a log, or a driver that drops
+       the field, still has to be recognised. */
+    const err = wrapped(
+      "23514",
+      'new row for relation "click_events_default" violates partition constraint',
+    );
+    expect(isTransientPartitionRoutingError(err)).toBe(true);
+  });
+
+  it("matches on the routine even when the message is not English", () => {
+    /* `errmsg()` output is translated through `lc_messages`. RDS and the official
+       Docker image both default to English, so today the message check holds —
+       but if that ever changed, matching only on text would stop the retry firing
+       with nothing failing to say so. */
+    const err = wrapped(
+      "23514",
+      'la nueva fila para la relación "click_events_default" viola la restricción de partición',
+      "ExecPartitionCheckEmitError",
+    );
+    expect(isTransientPartitionRoutingError(err)).toBe(true);
   });
 
   it("finds the code through several levels of wrapping", () => {
     const deep = {
       message: "outer",
-      cause: { message: "middle", cause: { code: "23514", message: "violates partition constraint" } },
+      cause: {
+        message: "middle",
+        cause: { code: "23514", message: "violates partition constraint" },
+      },
     };
     expect(isTransientPartitionRoutingError(deep)).toBe(true);
   });

@@ -1,5 +1,5 @@
 import { deserializeClickEvent, insertClickEvents, resolveDatabaseUrl, runMigrations, type Database } from "@snapurl/database";
-import { initDb, runFrequent, runMaintenance } from "./main.js";
+import { initDb, log, runFrequent, runMaintenance } from "./main.js";
 
 /* The worker as a Lambda, dispatched by a `task` discriminator.
  *
@@ -79,7 +79,16 @@ async function drainClickBatch(db: Database, records: SqsRecord[]): Promise<SqsB
   for (const record of records) {
     try {
       const event = deserializeClickEvent(record.body);
-      await insertClickEvents(db, [event]);
+      /* A retry means the click was saved, so this is a warn, not an error. The
+         rate is the signal: steady retries mean partition provisioning has
+         fallen behind and the DEFAULT partition is taking live traffic (#329). */
+      await insertClickEvents(db, [event], {
+        onRetry: (err) =>
+          log.warn(
+            { err, messageId: record.messageId },
+            "click insert lost its partition route to a concurrent attach — retried",
+          ),
+      });
     } catch {
       /* Report this one for redrive and keep going. The mapping retries only
          the reported ids up to the queue's maxReceiveCount, after which they

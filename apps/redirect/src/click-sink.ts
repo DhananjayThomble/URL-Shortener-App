@@ -27,10 +27,18 @@ export interface ClickSink {
 }
 
 export class PostgresClickSink implements ClickSink {
-  constructor(private readonly db: Database) {}
+  /** `onRetry` surfaces a click that had to be re-inserted because a concurrent
+   *  partition ATTACH invalidated its route (#329). Optional so a test can build
+   *  the sink with a bare handle; main.ts wires it to the app logger, because a
+   *  retry firing constantly means partition provisioning has stopped and the
+   *  DEFAULT partition is absorbing live traffic. */
+  constructor(
+    private readonly db: Database,
+    private readonly onRetry?: (err: unknown) => void,
+  ) {}
 
   async record(event: ClickEvent): Promise<void> {
-    await insertClickEvents(this.db, [event]);
+    await insertClickEvents(this.db, [event], { onRetry: this.onRetry });
   }
 }
 
