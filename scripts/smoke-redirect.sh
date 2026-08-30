@@ -163,13 +163,21 @@ fi
 # even if a link-creation or an assertion below fails and the script exits.
 trap cleanup EXIT
 
-# mklink <json> -> POSTs a new link, captures its id for cleanup. Keeps the
-# response out of stdout to preserve the previous quiet behaviour.
+# The id of the most recently created link, set by mklink. Captured into a
+# global (rather than echoed and read via command substitution) so mklink runs
+# in the current shell and its CREATED_IDS append is not lost to a subshell.
+# Read this straight after a mklink call to grab a specific link's id.
+LAST_ID=""
+
+# mklink <json> -> POSTs a new link, appends its id to CREATED_IDS for cleanup,
+# and records the created id in the global LAST_ID (empty string if creation
+# failed). Keeps the response body off stdout to preserve the previous quiet
+# behaviour.
 mklink() {
-  local resp id
+  local resp
   resp=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' -d "$1")
-  id=$(echo "$resp" | node -pe 'try{JSON.parse(require("fs").readFileSync(0,"utf8")).id||""}catch(e){""}')
-  [ -n "$id" ] && CREATED_IDS+=("$id")
+  LAST_ID=$(echo "$resp" | node -pe 'try{JSON.parse(require("fs").readFileSync(0,"utf8")).id||""}catch(e){""}')
+  [ -n "$LAST_ID" ] && CREATED_IDS+=("$LAST_ID")
 }
 
 mklink "{\"destination\":\"https://example.com/plain\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-plain\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
@@ -183,8 +191,24 @@ mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"$LINK_DOMAIN
 mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-deep\",\"deepLink\":true,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-nodeep\",\"deepLink\":false,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}"
+# Capture the geo link's id explicitly at creation time. The always-run
+# country-population poll below needs THIS link's id; deriving it from the last
+# CREATED_IDS entry would silently query the wrong link if the fixtures are ever
+# reordered or another link is appended after this one. mklink still appends to
+# CREATED_IDS, so cleanup is unaffected.
 mklink "{\"destination\":\"https://example.com/rest\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-geo\",\"tags\":[],\"redirectType\":\"302\",\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true,\"rules\":[{\"id\":\"r-in\",\"when\":{\"country\":\"IN\"},\"then\":\"https://example.in/store\"},{\"id\":\"r-ios\",\"when\":{\"device\":\"ios\"},\"then\":\"https://apps.apple.com/app\"}]}"
-ok "created twelve links"
+GEO_ID="$LAST_ID"
+
+# Assert every fixture was actually created rather than reporting an
+# unconditional pass. If fewer links exist than the number of mklink calls
+# (e.g. a bad LINK_DOMAIN causing 400 domain-mismatch rejections), fail here at
+# the real problem instead of only via downstream redirect failures.
+EXPECTED_LINKS=12
+if [ "${#CREATED_IDS[@]}" -eq "$EXPECTED_LINKS" ]; then
+  ok "created $EXPECTED_LINKS links"
+else
+  bad "created $EXPECTED_LINKS links" "expected $EXPECTED_LINKS, got ${#CREATED_IDS[@]} (check LINK_DOMAIN matches DEFAULT_DOMAIN)"
+fi
 
 echo
 echo "== basic redirect =="
@@ -273,9 +297,10 @@ echo "== deployment showstoppers =="
 # three cycles, matching integration-assertions.sh). The API maps country codes
 # to names via COUNTRY_NAMES (IN -> "India"), so match on either the code or the
 # mapped name as returned.
-# $RUN-geo was created last; guard against an empty array (all creates failed).
-GEO_ID=""
-[ "${#CREATED_IDS[@]}" -gt 0 ] && GEO_ID="${CREATED_IDS[${#CREATED_IDS[@]}-1]}"
+# GEO_ID was captured explicitly when the $RUN-geo link was created (above), so
+# this targets the geo link by identity, not by array position. The empty-id
+# guard below keeps set -u from aborting and lets the assertion fail cleanly if
+# the geo link was never created.
 loc "$RUN-geo" -H "User-Agent: $BROWSER_UA" -H 'CloudFront-Viewer-Country: IN' -H 'CloudFront-Viewer-City: Pune' >/dev/null
 COUNTRY_FOUND=0
 if [ -n "$GEO_ID" ]; then
