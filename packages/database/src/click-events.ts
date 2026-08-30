@@ -1,5 +1,6 @@
 import { clickEvents } from "./schema/index.js";
 import type { Database } from "./client.js";
+import { isTransientPartitionRoutingError } from "./postgres-errors.js";
 
 /* ============================================================
    The click event, and the one INSERT that lands it.
@@ -56,11 +57,47 @@ export function deserializeClickEvent(body: string): ClickEvent {
   return { ...wire, occurredAt: new Date(wire.occurredAt) };
 }
 
-/** The single INSERT path into click_events, shared by PostgresClickSink and
- *  the worker's SQS consumer so a click recorded either way is the same row.
- *  A no-op on an empty batch. */
+/**
+ * The single INSERT path into click_events, shared by PostgresClickSink and the
+ * worker's SQS consumer so a click recorded either way is the same row. A no-op
+ * on an empty batch.
+ *
+ * **Retried once on a partition-routing failure.** `click_events` is partitioned
+ * by day with a DEFAULT partition, and the worker attaches new day-partitions
+ * while the redirect path is inserting. A row routed to the default can fail its
+ * partition constraint when an `ATTACH` for that row's day commits in between —
+ * measured at roughly 0.6% of inserts under load, and clustering exactly when
+ * provisioning has fallen behind, which is when the default is receiving traffic
+ * in the first place.
+ *
+ * That matters more than it sounds. Since click writes became awaited, this is a
+ * failed write rather than a delayed one: the visitor still gets their redirect,
+ * the error is caught and logged, and the click is simply gone. It is also the
+ * exact case the DEFAULT partition exists to prevent — the whole argument for
+ * keeping a default is that an insert must never fail for want of a partition,
+ * and here one fails *because* a partition arrived.
+ *
+ * One retry, not more. The failure is a single relcache invalidation, so the
+ * second attempt plans against fresh catalogue state and routes the row to the
+ * partition that now exists. A row that fails twice is failing for some other
+ * reason and should surface rather than be retried into silence.
+ *
+ * The alternative was making `ATTACH` take ACCESS EXCLUSIVE on the parent, which
+ * would serialise the insert against the attach and close the window — at the
+ * cost of blocking every insert for the duration of every attach. That trade was
+ * considered and rejected when the lock modes were chosen.
+ */
 export async function insertClickEvents(db: Database, events: ClickEvent[]): Promise<void> {
   if (events.length === 0) return;
+  try {
+    await insertOnce(db, events);
+  } catch (err) {
+    if (!isTransientPartitionRoutingError(err)) throw err;
+    await insertOnce(db, events);
+  }
+}
+
+async function insertOnce(db: Database, events: ClickEvent[]): Promise<void> {
   await db.insert(clickEvents).values(
     events.map((event) => ({
       linkId: event.linkId,

@@ -1,5 +1,6 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
+import { isForeignKeyViolation, isUniqueViolation, postgresErrorCode } from "@snapurl/database";
 
 /* ============================================================
    A backstop so a database constraint can never reach a user as
@@ -16,24 +17,15 @@ import type { FastifyReply } from "fastify";
    message that does not leak schema details.
    ============================================================ */
 
-/** Walks the cause chain — the code can be several levels down. */
-export function postgresErrorCode(err: unknown): string | null {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === "string" && /^\d{5}$/.test(code)) return code;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return null;
-}
-
-export function isUniqueViolation(err: unknown): boolean {
-  return postgresErrorCode(err) === "23505";
-}
-
-export function isForeignKeyViolation(err: unknown): boolean {
-  return postgresErrorCode(err) === "23503";
-}
+/* Re-exported, not redefined.
+ *
+ * These moved to @snapurl/database because the redirect and worker now need the
+ * same cause-chain walk to recognise a transient partition-routing failure on the
+ * click write. Two copies of it would be two things to keep in step, and the bug
+ * this walk exists to prevent — a code sitting one level down being missed — is
+ * exactly the kind that drift reintroduces. Re-exporting keeps every existing
+ * importer in this app working unchanged. */
+export { postgresErrorCode, isUniqueViolation, isForeignKeyViolation };
 
 const STATUS_FOR: Record<string, { status: number; message: string }> = {
   "23505": { status: 409, message: "That already exists." },
