@@ -442,6 +442,78 @@ describeDb("click_events partitioning", () => {
     }
   });
 
+  it("reports false instead of raising when the partition is already gone", async () => {
+    /* The #326 regression.
+     *
+     * Both drop paths read partition names in one statement and act on them in
+     * a later one, so a concurrent pass can remove a partition in between. The
+     * cap loop used to probe for un-rolled-up rows with an interpolated
+     * `select ... from only "<part>"`, which raised undefined_table when the
+     * partition had gone — uncaught, so it escaped pruneRetention and took the
+     * rest of the maintenance pass with it.
+     *
+     * That check now lives inside click_events_drop_partition, which has always
+     * treated a missing partition as "somebody else got there first". This
+     * asserts the whole function tolerates it, including the new LOCK and probe
+     * that run before the DETACH. */
+    const ghost = partitionName(-900);
+    await dropPartition(ghost);
+    expect(await partitionExists(ghost)).toBe(false);
+
+    const [{ ok }] = (await db.execute(sql`
+      select click_events_drop_partition(${ghost}) as ok
+    `)) as unknown as [{ ok: boolean }];
+
+    expect(ok).toBe(false);
+  });
+
+  it("refuses a partition holding un-rolled-up clicks, from inside the function", async () => {
+    /* The same invariant the cap loop and the age pass both rely on, asserted
+       against the function directly now that it owns the check rather than
+       trusting callers to probe first. Checking inside means it happens after
+       the partition is locked, so a row cannot arrive between deciding and
+       dropping. */
+    const stamp = Date.now();
+    const target = partitionName(-901);
+    await dropPartition(target);
+
+    try {
+      const day = utcDay(-901);
+      day.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${day.toISOString().slice(0, 10)}::date)`);
+      await db.insert(clickEvents).values({
+        linkId,
+        workspaceId,
+        occurredAt: day,
+        visitorHash: `fn-pending-${stamp}`,
+        rolledUpAt: null,
+      });
+
+      const [{ refused }] = (await db.execute(sql`
+        select click_events_drop_partition(${target}) as refused
+      `)) as unknown as [{ refused: boolean }];
+
+      expect(refused).toBe(false);
+      expect(await isAttached(target)).toBe(true);
+
+      // Counted, so now it is droppable — proving the refusal was about the
+      // pending row and not about something incidental to this partition.
+      await db.execute(sql`
+        update click_events set rolled_up_at = now()
+        where visitor_hash = ${`fn-pending-${stamp}`}
+      `);
+
+      const [{ ok }] = (await db.execute(sql`
+        select click_events_drop_partition(${target}) as ok
+      `)) as unknown as [{ ok: boolean }];
+
+      expect(ok).toBe(true);
+      expect(await partitionExists(target)).toBe(false);
+    } finally {
+      await dropPartition(target);
+    }
+  });
+
   it("never drops a capped partition that still holds un-rolled-up clicks", async () => {
     /* The cap honours the same invariant as the age pass: raw detail is never
        discarded before it has been counted. A partition pinned by an

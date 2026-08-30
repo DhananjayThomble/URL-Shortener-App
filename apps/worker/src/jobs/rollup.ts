@@ -515,21 +515,22 @@ export async function pruneRetention(
         // short even after a sudden cap change.
         if (overCap <= 0 || partitionsDropped >= maxDropsPerPass) break;
 
-        /* The un-rolled-up guard, mirroring click_events_spent_partitions: raw
-           detail is never discarded before it has been counted. `FROM ONLY` and
-           the `rolled_up_at IS NULL` predicate hit the partial
-           click_events_pending_idx, so this is a cheap index probe. The name is
-           regex-validated above, so sql.raw here cannot inject. A pinned
-           partition is left attached (it is retained until a rollup consumes
-           it) but is NOT decremented from overCap, so the cap is still enforced
-           by dropping the next droppable day. */
-        const [{ pending }] = (await db.execute(
-          sql.raw(
-            `select exists (select 1 from only "${part}" where rolled_up_at is null) as pending`,
-          ),
-        )) as unknown as [{ pending: boolean }];
-        if (pending) continue;
-
+        /* The un-rolled-up guard lives inside click_events_drop_partition,
+           which refuses a partition still holding uncounted clicks and reports
+           false — the same outcome this loop used to produce by probing first
+           and skipping.
+           
+           It used to be a separate `sql.raw` probe here, and that was a bug once
+           passes could overlap: the name came from the listing statement above,
+           so a concurrent pass dropping that partition made the probe raise
+           undefined_table with nothing to catch it, which took the rest of the
+           maintenance pass down. Inside the function the check also happens
+           *after* the partition is locked, so a row can no longer arrive between
+           deciding and dropping.
+           
+           A pinned partition stays attached and is deliberately NOT decremented
+           from overCap, so the cap is still enforced by taking the next
+           droppable day instead. */
         const [{ ok }] = (await db.execute(sql`
           select click_events_drop_partition(${part}) as ok
         `)) as unknown as [{ ok: boolean }];

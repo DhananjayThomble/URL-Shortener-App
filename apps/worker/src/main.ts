@@ -208,19 +208,41 @@ export async function runMaintenance(database: Database) {
      partition lock is the wrong trade, and provisioning is an optimisation
      anyway: the DEFAULT partition is what actually guarantees an insert cannot
      fail, so a pass that provisions nothing still loses no clicks. */
-  let partitions = 0;
-  try {
-    partitions = await ensureClickPartitions(database);
-  } catch (err) {
-    log.error({ err }, "partition provisioning failed; clicks will land in the default partition");
-  }
+  const failed: string[] = [];
 
-  const expired = await sweepExpired(database);
-  const salts = await rotateSalts(database);
-  const pruned = await pruneRetention(database);
-  const outbox = await pruneOutbox(database);
-  const deliveries = await pruneDeliveries(database);
-  const stuck = await stuckProjections(database);
+  /** Run one maintenance job without letting it take the others down.
+   *
+   *  Every job in this pass is independent — expiring salts has nothing to do
+   *  with pruning webhook deliveries — so one throwing should cost that job, not
+   *  the rest of the pass. Before this, only provisioning was isolated, and an
+   *  unexpected error anywhere after it silently skipped everything below,
+   *  including the privacy jobs. Silently is the operative word: the pass logged
+   *  nothing, because it never reached its own log line.
+   *
+   *  Failures are collected and reported together, so a pass that half-worked
+   *  says so instead of looking like a pass that had nothing to do. */
+  const step = async <T>(name: string, job: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await job();
+    } catch (err) {
+      log.error({ err, job: name }, "maintenance job failed");
+      failed.push(name);
+      return fallback;
+    }
+  };
+
+  /* Provisioning first, because it is what keeps a partition ready for every day
+     that could receive a click. */
+  const partitions = await step("ensureClickPartitions", () => ensureClickPartitions(database), 0);
+  const expired = await step("sweepExpired", () => sweepExpired(database), 0);
+  const salts = await step("rotateSalts", () => rotateSalts(database), 0);
+  const pruned = await step("pruneRetention", () => pruneRetention(database), {
+    partitionsDropped: 0,
+    rowsDeleted: 0,
+  });
+  const outbox = await step("pruneOutbox", () => pruneOutbox(database), 0);
+  const deliveries = await step("pruneDeliveries", () => pruneDeliveries(database), 0);
+  const stuck = await step("stuckProjections", () => stuckProjections(database), 0);
 
   log.info(
     {
@@ -235,8 +257,11 @@ export async function runMaintenance(database: Database) {
       clickRowsDeleted: pruned.rowsDeleted,
       outboxPruned: outbox,
       deliveriesPruned: deliveries,
+      /* Present only when something went wrong, so the happy path stays quiet
+         and a partial pass is impossible to mistake for a complete one. */
+      ...(failed.length > 0 ? { failedJobs: failed } : {}),
     },
-    "maintenance pass",
+    failed.length > 0 ? "maintenance pass completed with failures" : "maintenance pass",
   );
 
   /* A stuck projection means the edge is serving link config that the
@@ -246,7 +271,7 @@ export async function runMaintenance(database: Database) {
     log.error({ stuck }, "projection rows have exhausted their retries — the edge may be serving stale link config");
   }
 
-  return { partitions, expired, salts, pruned, outbox, deliveries, stuck };
+  return { partitions, expired, salts, pruned, outbox, deliveries, stuck, failed };
 }
 
 /** Guard against a slow pass overlapping the next tick. */

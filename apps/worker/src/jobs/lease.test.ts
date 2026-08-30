@@ -142,20 +142,32 @@ describeDb("withLease", () => {
        touch the TTL — reading the argument as minutes instead of seconds, or
        ignoring it entirely, would pass the whole suite. This is the only case
        that pins the unit. */
-    const held = await withLease(db, NAME, 1, async () => "held");
+    /* Three seconds, not one.
+     *
+     * The window between claiming the lease and asserting a second caller is
+     * refused has to be comfortably shorter than the TTL, and it contains real
+     * database round trips. At a one-second TTL this raced on a loaded machine
+     * and failed intermittently — the lease had already lapsed by the time the
+     * refusal was checked. Three seconds keeps the test honest about what it is
+     * measuring at the cost of a couple of seconds' runtime. */
+    const TTL_SECONDS = 3;
+
+    const held = await withLease(db, NAME, TTL_SECONDS, async () => "held");
     expect(held.acquired).toBe(true);
 
-    // Immediately after release the lease is free, so re-take it and let this
-    // one lapse on the clock rather than by releasing.
+    // Released on the way out, so re-take it directly and let this one lapse on
+    // the clock rather than by releasing.
     await db.execute(sql`
-      update job_leases set locked_until = now() + make_interval(secs => 1), holder = 'ttl-holder'
+      update job_leases
+      set locked_until = now() + make_interval(secs => ${TTL_SECONDS}), holder = 'ttl-holder'
       where name = ${NAME}
     `);
 
     const tooSoon = await withLease(db, NAME, 60, async () => "should not run");
     expect(tooSoon.acquired).toBe(false);
 
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Past the TTL, with margin.
+    await new Promise((resolve) => setTimeout(resolve, TTL_SECONDS * 1000 + 400));
 
     const afterExpiry = await withLease(db, NAME, 60, async () => "expired naturally");
     expect(afterExpiry.acquired).toBe(true);
