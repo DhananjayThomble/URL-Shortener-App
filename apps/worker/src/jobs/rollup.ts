@@ -281,6 +281,30 @@ const PARTITION_LOOKBACK_DAYS = 7;
  *  days become spent at once. The rest are dropped by later passes. */
 const MAX_PARTITION_DROPS = 20;
 
+/** Hard ceiling on the number of retained day-partitions, as a storage cliff
+ *  backstop that is independent of per-workspace age retention.
+ *
+ *  The arithmetic: at the design load of ~86M click rows a day, one day is a
+ *  large partition. RDS storage autoscales up to `maxAllocatedStorage` (50 GB
+ *  in infra/lib/snapurl-stack.ts) and then stops — at which point the instance
+ *  goes READ-ONLY, and RDS allocated storage can never be reduced afterwards.
+ *  That is a cliff, not a slope: once hit, the database stops accepting writes
+ *  and the only recovery is a costly rebuild.
+ *
+ *  Age-based retention (the per-workspace `retention_years`, default 3) does
+ *  not defend against this, because the *count* of partitions past the cutoff
+ *  is unbounded — a workspace configured for a long retention keeps years of
+ *  days attached. Partitioning largely supersedes the old row-level prune, but
+ *  it does not by itself cap total volume. So this is a coarse, age-independent
+ *  ceiling: keep at most this many day-partitions attached, dropping the oldest
+ *  beyond it, so storage cannot silently walk into the read-only cliff.
+ *
+ *  Default 1100 (~3 years of daily partitions, matching the default retention)
+ *  so it never fires under normal operation and only acts as a true backstop.
+ *  Override with CLICK_EVENTS_MAX_RETAINED_DAYS when the storage budget or the
+ *  ingest rate demands a tighter cap. */
+const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1100);
+
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
@@ -349,8 +373,28 @@ export async function ensureClickPartitions(
  * the `DELETE` does not disappear, it just stops carrying the volume. When
  * every workspace uses the same retention (the common case, and the default),
  * `rowsDeleted` is zero and the whole job is a partition drop.
+ *
+ * **A third pass: the volume cap.** After age-based expiry, this also enforces
+ * `MAX_RETAINED_DAYS` — an age-*independent* ceiling on how many day-partitions
+ * stay attached. Age retention bounds how *old* data is, not how *much* of it
+ * there is, and RDS storage autoscales to a hard 50 GB ceiling past which the
+ * instance goes read-only and can never be shrunk. The cap is the backstop that
+ * keeps total volume from silently walking into that cliff. It is deliberately
+ * a no-op under normal operation (the default cap matches the default 3-year
+ * retention); it only bites when partition count runs ahead of the storage
+ * budget. Like the age pass it never drops a partition still holding
+ * un-rolled-up rows, and it respects `maxDropsPerPass`. Cap-driven drops are
+ * folded into the returned `partitionsDropped`.
  */
-export async function pruneRetention(db: Database, maxDropsPerPass = MAX_PARTITION_DROPS): Promise<RetentionResult> {
+export async function pruneRetention(
+  db: Database,
+  maxDropsPerPass = MAX_PARTITION_DROPS,
+  /* The volume cap, defaulting to the env-overridable module constant. Exposed
+     as a parameter so the cap can be exercised directly in tests without
+     provisioning MAX_RETAINED_DAYS+1 partitions; production always uses the
+     default. */
+  maxRetainedDays = MAX_RETAINED_DAYS,
+): Promise<RetentionResult> {
   /* One expiry pass at a time. Without this, two overlapping passes both read
      the same list of spent partitions and the second fails on one the first
      already dropped — which would abort every maintenance job queued behind it.
@@ -395,6 +439,77 @@ export async function pruneRetention(db: Database, maxDropsPerPass = MAX_PARTITI
         select click_events_drop_partition(${part}) as ok
       `)) as unknown as [{ ok: boolean }];
       if (ok) partitionsDropped++;
+    }
+
+    /* The volume cap, an age-independent backstop. See MAX_RETAINED_DAYS.
+     *
+     * The age pass above bounds how *old* the retained data is; it does not
+     * bound how *many* day-partitions are attached, and past the RDS 50 GB
+     * autoscale ceiling the instance goes read-only for good. So if more than
+     * MAX_RETAINED_DAYS day-partitions remain attached, drop the OLDEST ones
+     * beyond the cap.
+     *
+     * The candidate list matches click_events_spent_partitions' own selection:
+     * attached day-partitions (relname ~ ^click_events_[0-9]{8}$), excluding the
+     * DEFAULT partition, and — crucially — only those with NO un-rolled-up rows,
+     * so a cap-driven drop can never discard clicks that have not yet been
+     * counted into the rollups (the same invariant the age pass and the SQL
+     * helper both hold). The EXISTS(... rolled_up_at IS NULL) guard is checked
+     * against ONLY the partition, matching the helper. Ordered oldest-first by
+     * name (names are YYYYMMDD, so lexical order is chronological), and the
+     * count of *all* attached day-partitions decides how many are over the cap
+     * — but only the rolled-up, droppable ones are offered as candidates, so a
+     * partition pinned by pending rows is skipped rather than lost. */
+    const capBudget = maxDropsPerPass - partitionsDropped;
+    if (capBudget > 0) {
+      /* Every attached day-partition, oldest first. Names are YYYYMMDD, so
+         lexical order is chronological. The DEFAULT partition does not match
+         the ^click_events_[0-9]{8}$ pattern, so it is excluded here exactly as
+         it is by click_events_spent_partitions. */
+      const attached = (await db.execute(sql`
+        select c.relname as part
+        from pg_class c
+        join pg_inherits i on i.inhrelid = c.oid
+        where i.inhparent = 'public.click_events'::regclass
+          and c.relname ~ '^click_events_[0-9]{8}$'
+        order by c.relname
+      `)) as unknown as Array<{ part: string }>;
+
+      /* How many attached day-partitions are over the ceiling. The count is of
+         ALL attached days, not just droppable ones, so a partition pinned by
+         un-rolled-up rows still counts against the cap — a younger droppable
+         partition is taken in its place, which keeps total volume falling
+         without ever discarding uncounted clicks. */
+      let overCap = attached.length - maxRetainedDays;
+      for (const { part } of attached) {
+        // Stop once volume is back under the cap or the per-pass drop budget is
+        // spent — the rest are dropped by later passes, keeping the parent lock
+        // short even after a sudden cap change.
+        if (overCap <= 0 || partitionsDropped >= maxDropsPerPass) break;
+
+        /* The un-rolled-up guard, mirroring click_events_spent_partitions: raw
+           detail is never discarded before it has been counted. `FROM ONLY` and
+           the `rolled_up_at IS NULL` predicate hit the partial
+           click_events_pending_idx, so this is a cheap index probe. The name is
+           regex-validated above, so sql.raw here cannot inject. A pinned
+           partition is left attached (it is retained until a rollup consumes
+           it) but is NOT decremented from overCap, so the cap is still enforced
+           by dropping the next droppable day. */
+        const [{ pending }] = (await db.execute(
+          sql.raw(
+            `select exists (select 1 from only "${part}" where rolled_up_at is null) as pending`,
+          ),
+        )) as unknown as [{ pending: boolean }];
+        if (pending) continue;
+
+        const [{ ok }] = (await db.execute(sql`
+          select click_events_drop_partition(${part}) as ok
+        `)) as unknown as [{ ok: boolean }];
+        if (ok) {
+          partitionsDropped++;
+          overCap--;
+        }
+      }
     }
 
     /* Only workspaces retaining less than the maximum.

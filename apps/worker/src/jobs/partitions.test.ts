@@ -383,6 +383,120 @@ describeDb("click_events partitioning", () => {
     }
   });
 
+  it("drops the oldest partitions beyond MAX_RETAINED_DAYS as an age-independent cap", async () => {
+    /* The volume cap, distinct from age retention. These partitions sit ~2
+       years back — old, but well inside the default 3-year retention, so the
+       age-based pass leaves them alone. What removes them here is the cap: with
+       an explicit maxRetainedDays low enough that the table is over the ceiling,
+       pruneRetention drops the OLDEST attached day-partitions until the count is
+       back under the cap. This is the storage-cliff backstop: age bounds how old
+       data is, the cap bounds how much of it there is. */
+    const stamp = Date.now();
+
+    // A contiguous block of days ~2 years back, older than anything the other
+    // tests provision (today/future and the -730 mixed-retention day, which is
+    // dropped in its own finally). Lexical order on YYYYMMDD is chronological,
+    // so these are the globally-oldest attached day-partitions.
+    const capOffsets = [-760, -759, -758, -757];
+    const capPartitions = capOffsets.map((o) => partitionName(o));
+
+    // Start clean so a previous run's leftovers do not skew the attached count.
+    for (const name of capPartitions) await dropPartition(name);
+
+    try {
+      for (const offset of capOffsets) {
+        const day = utcDay(offset);
+        day.setUTCHours(11);
+        await db.execute(sql`select click_events_ensure_partition(${day.toISOString().slice(0, 10)}::date)`);
+        // Rolled up, so the un-rolled-up guard never pins them — the cap alone
+        // decides whether they survive.
+        await addClickAt(day, `cap-${stamp}-${offset}`);
+        expect(await isAttached(partitionName(offset))).toBe(true);
+      }
+
+      // How many day-partitions are attached right now. Set the cap two below
+      // that so exactly the two globally-oldest (the two oldest of this block)
+      // are over the ceiling and get dropped.
+      const [{ attached }] = (await db.execute(sql`
+        select count(*)::int as attached
+        from pg_class c
+        join pg_inherits i on i.inhrelid = c.oid
+        where i.inhparent = 'public.click_events'::regclass
+          and c.relname ~ '^click_events_[0-9]{8}$'
+      `)) as unknown as [{ attached: number }];
+
+      const cap = attached - 2;
+      const result = await pruneRetention(db, 20, cap);
+
+      // The two oldest of the block are dropped; the two newer ones remain.
+      expect(await partitionExists(capPartitions[0]!)).toBe(false);
+      expect(await partitionExists(capPartitions[1]!)).toBe(false);
+      expect(await isAttached(capPartitions[2]!)).toBe(true);
+      expect(await isAttached(capPartitions[3]!)).toBe(true);
+      expect(result.partitionsDropped).toBeGreaterThanOrEqual(2);
+
+      // And the DEFAULT partition is never a cap candidate.
+      expect(await isAttached("click_events_default")).toBe(true);
+    } finally {
+      for (const name of capPartitions) await dropPartition(name);
+    }
+  });
+
+  it("never drops a capped partition that still holds un-rolled-up clicks", async () => {
+    /* The cap honours the same invariant as the age pass: raw detail is never
+       discarded before it has been counted. A partition pinned by an
+       un-rolled-up row is skipped even when it is the oldest and the table is
+       over the cap — the cap falls on the next droppable day instead. */
+    const stamp = Date.now();
+    const capOffsets = [-756, -755];
+    const capPartitions = capOffsets.map((o) => partitionName(o));
+
+    for (const name of capPartitions) await dropPartition(name);
+
+    try {
+      // Oldest of the pair: provisioned with a PENDING (un-rolled-up) click, so
+      // it must survive the cap.
+      const oldest = utcDay(capOffsets[0]!);
+      oldest.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${oldest.toISOString().slice(0, 10)}::date)`);
+      await db.insert(clickEvents).values({
+        linkId,
+        workspaceId,
+        occurredAt: oldest,
+        visitorHash: `cap-pending-${stamp}`,
+        rolledUpAt: null,
+      });
+
+      // Newer of the pair: rolled up, so it is droppable.
+      const newer = utcDay(capOffsets[1]!);
+      newer.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${newer.toISOString().slice(0, 10)}::date)`);
+      await addClickAt(newer, `cap-rolled-${stamp}`);
+
+      const [{ attached }] = (await db.execute(sql`
+        select count(*)::int as attached
+        from pg_class c
+        join pg_inherits i on i.inhrelid = c.oid
+        where i.inhparent = 'public.click_events'::regclass
+          and c.relname ~ '^click_events_[0-9]{8}$'
+      `)) as unknown as [{ attached: number }];
+
+      // One over the cap. The oldest is pinned by its pending row, so the cap
+      // must fall on the newer, rolled-up partition instead — the pinned one is
+      // still counted against the cap, so a droppable day is dropped in its
+      // place rather than nothing happening.
+      const cap = attached - 1;
+      await pruneRetention(db, 20, cap);
+
+      expect(await isAttached(capPartitions[0]!)).toBe(true); // pinned, kept
+      expect(await partitionExists(capPartitions[1]!)).toBe(false); // dropped in its place
+    } finally {
+      // The pending row blocks a plain drop path only via the guard; teardown
+      // removes the table regardless.
+      for (const name of capPartitions) await dropPartition(name);
+    }
+  });
+
   it("does not drop a partition whose range extends past the cutoff", async () => {
     /* Boundary. A partition covers [day, day + 1), so it is only spent once
        day + 1 has reached the cutoff. Dropping the partition that straddles the

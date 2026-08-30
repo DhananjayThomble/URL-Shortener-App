@@ -63,33 +63,53 @@ export class PostgresLinkResolver implements LinkResolver {
   constructor(private readonly db: Database) {}
 
   async resolve(host: string, slug: string): Promise<ResolvedLink | null> {
-    const [row] = await this.db
-      .select({ link: links, domainId: domains.id, clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)` })
-      .from(links)
-      .innerJoin(domains, eq(links.domainId, domains.id))
-      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
-      .where(
-        and(
-          sql`lower(${domains.domain}) = ${normaliseHost(host)}`,
-          sql`lower(${links.slug}) = ${slug.toLowerCase()}`,
-        ),
-      )
-      .limit(1);
+    const normalisedHost = normaliseHost(host);
+    const normalisedSlug = slug.toLowerCase();
+
+    /* The link row (with its counter) and the routing rules are independent
+       lookups, so they run concurrently — one RTT saved on every redirect.
+       The rules query used to filter on `routingRules.linkId = row.link.id`,
+       which forced it to wait for the link query first. Keying it off the same
+       (host, slug) predicate via a join to links -> domains removes that
+       dependency without changing the result: a (host, slug) pair resolves to
+       at most one link, so the rules matched are exactly the ones that link
+       owns. The rules query usually returns zero rows, so this is a cheap
+       parallel query on the hot path. */
+    const [[row], rules] = await Promise.all([
+      this.db
+        .select({ link: links, domainId: domains.id, clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)` })
+        .from(links)
+        .innerJoin(domains, eq(links.domainId, domains.id))
+        .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
+        .where(
+          and(
+            sql`lower(${domains.domain}) = ${normalisedHost}`,
+            sql`lower(${links.slug}) = ${normalisedSlug}`,
+          ),
+        )
+        .limit(1),
+      this.db
+        .select({ rule: routingRules })
+        .from(routingRules)
+        .innerJoin(links, eq(routingRules.linkId, links.id))
+        .innerJoin(domains, eq(links.domainId, domains.id))
+        .where(
+          and(
+            sql`lower(${domains.domain}) = ${normalisedHost}`,
+            sql`lower(${links.slug}) = ${normalisedSlug}`,
+          ),
+        )
+        .orderBy(routingRules.position),
+    ]);
 
     if (!row) return null;
-
-    const rules = await this.db
-      .select()
-      .from(routingRules)
-      .where(eq(routingRules.linkId, row.link.id))
-      .orderBy(routingRules.position);
 
     return {
       id: row.link.id,
       workspaceId: row.link.workspaceId,
       destination: row.link.destination,
       redirectType: row.link.redirectType as ResolvedLink["redirectType"],
-      rules: rules.map((r) => ({
+      rules: rules.map(({ rule: r }) => ({
         id: r.id,
         when: {
           country: r.whenCountry,

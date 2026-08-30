@@ -13,6 +13,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as ecrAssets from "aws-cdk-lib/aws-ecr-assets";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as apigw from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -472,6 +473,21 @@ export class SnapUrlStack extends Stack {
         file: "Dockerfile",
         buildArgs: { APP: app },
         target,
+        /* arm64/Graviton. A container-image Lambda's architecture MUST match
+           the architecture the image was built for, so this platform and the
+           `architecture: lambda.Architecture.ARM_64` on each function below are
+           a pair — set one without the other and the function fails to invoke.
+           The base images (node:22-alpine, public.ecr.aws/lambda/nodejs:22,
+           public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1) are all multi-arch
+           and publish arm64, so no Dockerfile change is needed.
+
+           Build-host caveat: cross-building an arm64 image on an x86 CI/deploy
+           host needs `docker buildx` with QEMU emulation registered (e.g.
+           `docker run --privileged tonistiigi/binfmt --install arm64`), or an
+           arm64 build host. `cdk synth` does NOT build images, so it succeeds
+           regardless of host arch — the emulation is only needed at `cdk
+           deploy` / asset-publish time on an x86 host. */
+        platform: ecrAssets.Platform.LINUX_ARM64,
         // Staging writes into `infra/cdk.out`, which is inside `repoRoot` —
         // the directory being staged. Left alone, each asset copies the
         // previous one's output into itself until `cdk synth` dies with
@@ -493,6 +509,9 @@ export class SnapUrlStack extends Stack {
 
     const apiFn = new lambda.DockerImageFunction(this, "ApiFn", {
       code: imageFor("api", "lambda-web"),
+      // arm64/Graviton: ~20% cheaper per GB-s and typically faster. Must match
+      // the image's LINUX_ARM64 platform set in imageFor().
+      architecture: lambda.Architecture.ARM_64,
       memorySize: 1024, // CPU scales with memory; 1024 is the usual sweet spot.
       timeout: Duration.seconds(30),
       reservedConcurrentExecutions: API_RESERVED_CONCURRENCY,
@@ -521,9 +540,17 @@ export class SnapUrlStack extends Stack {
 
     const redirectFn = new lambda.DockerImageFunction(this, "RedirectFn", {
       code: imageFor("redirect", "lambda-web"),
-      // Smaller than the API on purpose: this function does one key lookup and
-      // a 302. Paying for memory it never uses is paying for nothing.
-      memorySize: 512,
+      // arm64/Graviton: ~20% cheaper per GB-s and typically faster. Must match
+      // the image's LINUX_ARM64 platform set in imageFor().
+      architecture: lambda.Architecture.ARM_64,
+      /* 1024 MB, not 512, even though this function does one key lookup and a
+         302. Lambda scales CPU with memory: at 512 MB it gets ~1/3 of a vCPU,
+         so the work is CPU-starved and runs longer. Doubling memory roughly
+         halves wall time, so the GB-s billed is about the same — you pay for
+         the same compute either way — while p50/p99 latency and cold start
+         both roughly halve. On the redirect hot path that latency is the whole
+         point. Independent of the reservedConcurrentExecutions cap (#278). */
+      memorySize: 1024,
       timeout: Duration.seconds(10),
       reservedConcurrentExecutions: REDIRECT_RESERVED_CONCURRENCY,
       logGroup: logGroupFor("RedirectLogGroup"),
@@ -651,6 +678,10 @@ export class SnapUrlStack extends Stack {
 
     const workerFn = new lambda.DockerImageFunction(this, "WorkerFn", {
       code: imageFor("worker", "lambda-job"),
+      // arm64/Graviton: ~20% cheaper per GB-s and typically faster, and the RDS
+      // instance is already Graviton. Must match the image's LINUX_ARM64
+      // platform set in imageFor().
+      architecture: lambda.Architecture.ARM_64,
       memorySize: 1024,
       // Rollups over a day of clicks; generous because it runs once a minute,
       // not once a request.
@@ -667,11 +698,38 @@ export class SnapUrlStack extends Stack {
 
     /* EventBridge rather than an in-process interval: a scheduled rule
        survives a redeploy and a scale-to-zero, which the v1 node-cron did
-       not — it died with the process that started it. */
+       not — it died with the process that started it.
+
+       Two rules, not one, because the handler runs one job per invocation
+       keyed on the `task` payload (see apps/worker/src/lambda.ts). Previously
+       a single 1-minute rule with no payload ran BOTH the frequent rollup and
+       the hourly maintenance on every tick — so the hourly job actually ran
+       60x/hour against a shared t4g.micro that is also serving redirects.
+       Splitting the schedule runs maintenance once an hour as intended. The
+       DEFAULT click_events partition guarantees inserts never fail between
+       the hourly ensureClickPartitions passes, so the slower maintenance
+       cadence loses no clicks. Migrate stays on no schedule — it is invoked
+       manually with {"task":"migrate"}. */
     new events.Rule(this, "WorkerSchedule", {
       schedule: events.Schedule.rate(Duration.minutes(1)),
-      targets: [new targets.LambdaFunction(workerFn, { retryAttempts: 2 })],
-      description: "Drains the click queue and refreshes the rollup tables.",
+      targets: [
+        new targets.LambdaFunction(workerFn, {
+          event: events.RuleTargetInput.fromObject({ task: "frequent" }),
+          retryAttempts: 2,
+        }),
+      ],
+      description: "Frequent pass: drains the click queue and refreshes the rollup tables (every minute).",
+    });
+
+    new events.Rule(this, "WorkerMaintenanceSchedule", {
+      schedule: events.Schedule.rate(Duration.hours(1)),
+      targets: [
+        new targets.LambdaFunction(workerFn, {
+          event: events.RuleTargetInput.fromObject({ task: "maintenance" }),
+          retryAttempts: 2,
+        }),
+      ],
+      description: "Hourly maintenance: partition provisioning, salt rotation, retention and pruning.",
     });
 
     /* ---------------------------------------------------------
