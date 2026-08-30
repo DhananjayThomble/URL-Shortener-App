@@ -19,10 +19,11 @@ import {
 import { createCacheStore, type CacheDriver } from "@snapurl/cache";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoLinkResolver, PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
 import { CachingLinkResolver } from "./caching-resolver.js";
-import { PostgresClickSink, type ClickSink } from "./click-sink.js";
-import { DailySaltCache } from "./salt.js";
+import { PostgresClickSink, SqsClickSink, type ClickSink } from "./click-sink.js";
+import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
 
 /* ============================================================
    The redirect service.
@@ -82,6 +83,17 @@ const REDIS_URL = process.env.REDIS_URL;
    DynamoDB table on the 'dynamo' path. */
 const LINK_PROJECTION = process.env.LINK_PROJECTION ?? "none";
 const LINK_PROJECTION_TABLE = process.env.LINK_PROJECTION_TABLE;
+
+/* Where a click goes after the redirect, keyed on CLICK_SINK:
+   'sqs' sends an awaited SendMessage to CLICK_QUEUE_URL (the AWS profile — the
+   worker drains it back into click_events); anything else / unset writes
+   straight to Postgres, which is what local dev, compose, the single-node and
+   Kubernetes profiles all use — byte-for-byte the behaviour before this switch.
+   Under LINK_PROJECTION=dynamo + CLICK_SINK=sqs the redirect touches only
+   DynamoDB + SQS (public AWS endpoints) and opens NO Postgres connection, which
+   is what lets it leave the VPC (#288 3b). */
+const CLICK_SINK = process.env.CLICK_SINK ?? "postgres";
+const CLICK_QUEUE_URL = process.env.CLICK_QUEUE_URL;
 /* A short bounded-staleness window: an edited link stops serving its old
    destination within this many seconds even before edit-invalidation lands.
    Ten seconds keeps the database out of the hot path for the common repeated
@@ -104,39 +116,56 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustP
 let close: () => Promise<void> = async () => {};
 let resolver: LinkResolver;
 let clicks: ClickSink;
-let salts: DailySaltCache;
+let salts: SaltSource;
 let JWT_SECRET = JWT_SECRET_DEFAULT;
 
 /** Resolve secrets, open the connection and wire up the adapters. Called once
  *  at the start of main(), before the server starts accepting requests. */
 async function init(): Promise<void> {
-  const url =
-    (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
   JWT_SECRET = (await resolveJwtSecret("JWT_ACCESS_SECRET_ARN", "JWT_ACCESS_SECRET")) ?? "";
 
-  const database = createDatabase({
-    url,
-    replicaUrl: process.env.DATABASE_REPLICA_URL,
-    ssl: process.env.DATABASE_SSL === "true",
-    sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
-    sslCaCert: process.env.DATABASE_CA_CERT,
-    max: POOL_MAX,
-  });
-  close = database.close;
+  /* Which of the three hot-path stores each adapter reads from decides whether
+     the redirect needs Postgres at all:
+
+       - the resolver reads Postgres UNLESS LINK_PROJECTION=dynamo;
+       - the click sink writes Postgres UNLESS CLICK_SINK=sqs;
+       - the salt source reads Postgres only when the db handle exists,
+         otherwise it reads the shared CacheStore (DynamoDB on the AWS profile).
+
+     So Postgres is opened only when the resolver or the sink needs it. Under
+     LINK_PROJECTION=dynamo + CLICK_SINK=sqs both are off Postgres and the
+     redirect opens NO connection — no pool, no ENI, no ~109-connection RDS
+     ceiling — which is exactly what lets it leave the VPC (#288 3b). We never
+     resolve DATABASE_URL or build a pool on that path. */
+  const resolverUsesPostgres = LINK_PROJECTION !== "dynamo";
+  const sinkUsesPostgres = CLICK_SINK !== "sqs";
+  const needsPostgres = resolverUsesPostgres || sinkUsesPostgres;
+
+  let database: ReturnType<typeof createDatabase> | undefined;
+  if (needsPostgres) {
+    const url =
+      (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
+    database = createDatabase({
+      url,
+      replicaUrl: process.env.DATABASE_REPLICA_URL,
+      ssl: process.env.DATABASE_SSL === "true",
+      sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+      sslCaCert: process.env.DATABASE_CA_CERT,
+      max: POOL_MAX,
+    });
+    close = database.close;
+  }
+
   /* The base resolver: DynamoDB projection on the AWS profile, Postgres
      everywhere else. Under 'dynamo' the redirect does NOT need Postgres to
-     RESOLVE a link — the projection carries everything — though it still opens
-     the connection below for the click sink (CLICK_SINK=postgres) and the
-     daily salt cache; moving those off Postgres (and the redirect out of the
-     VPC) is FEAT-003. The real payoff of the projection — the redirect leaving
-     the VPC entirely — lands there, once the SQS click sink exists. */
+     RESOLVE a link — the projection carries everything. */
   let baseResolver: LinkResolver;
   if (LINK_PROJECTION === "dynamo") {
     if (!LINK_PROJECTION_TABLE) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
     const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION }));
     baseResolver = new DynamoLinkResolver(dynamo, LINK_PROJECTION_TABLE);
   } else {
-    baseResolver = new PostgresLinkResolver(database.db);
+    baseResolver = new PostgresLinkResolver(database!.db);
   }
   /* Wrap the base resolver in the short-lived cache. With the default 'memory'
      driver this is a per-instance cache with a 10s TTL — a safe optimization
@@ -147,8 +176,20 @@ async function init(): Promise<void> {
      PostgresLinkResolver exactly as before. */
   const cacheStore = await createCacheStore({ driver: CACHE_DRIVER, redisUrl: REDIS_URL });
   resolver = new CachingLinkResolver(baseResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
-  clicks = new PostgresClickSink(database.db);
-  salts = new DailySaltCache(database.db);
+
+  /* The click sink: an awaited SQS SendMessage on the AWS profile (freeze-safe,
+     drained by the worker), a Postgres INSERT everywhere else. */
+  if (CLICK_SINK === "sqs") {
+    if (!CLICK_QUEUE_URL) throw new Error("CLICK_SINK=sqs requires CLICK_QUEUE_URL to be set.");
+    clicks = new SqsClickSink(new SQSClient({ region: process.env.AWS_REGION }), CLICK_QUEUE_URL);
+  } else {
+    clicks = new PostgresClickSink(database!.db);
+  }
+
+  /* The salt source: the daily_salts table when a Postgres handle exists,
+     otherwise the shared CacheStore so a redirect that has left Postgres can
+     still salt its visitor hashes without a connection. */
+  salts = database ? new PostgresSaltCache(database.db) : new CacheStoreSaltCache(cacheStore);
 }
 
 app.get("/health", async () => ({ status: "ok" }));

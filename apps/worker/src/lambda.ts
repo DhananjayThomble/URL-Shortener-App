@@ -1,4 +1,4 @@
-import { resolveDatabaseUrl, runMigrations } from "@snapurl/database";
+import { deserializeClickEvent, insertClickEvents, resolveDatabaseUrl, runMigrations, type Database } from "@snapurl/database";
 import { initDb, runFrequent, runMaintenance } from "./main.js";
 
 /* The worker as a Lambda, dispatched by a `task` discriminator.
@@ -36,13 +36,70 @@ import { initDb, runFrequent, runMaintenance } from "./main.js";
  * migrations should run when someone decides to run them. A scheduled
  * migration is a schema change nobody was watching — which is why migrate is
  * on no schedule at all and only ever runs on a manual invocation.
+ *
+ * The SECOND invocation path (#288 3b): an SQS event source mapping. On the
+ * AWS profile the redirect sends each click to an SQS queue (SqsClickSink), and
+ * the Lambda service polls that queue OUTSIDE the VPC and invokes this function
+ * with an event shaped { Records: [{ messageId, body, ... }] } — no `task`. We
+ * detect that shape before the task branches and drain the batch into
+ * click_events, the same table PostgresClickSink writes, using the shared
+ * insertClickEvents. Failed records are reported back via batchItemFailures so
+ * the mapping (configured with reportBatchItemFailures) redrives only those,
+ * not the whole batch. The rollups then fold these rows as usual.
  */
 export interface WorkerEvent {
   task?: "frequent" | "maintenance" | "rollup" | "migrate";
 }
 
-export const handler = async (event: WorkerEvent = {}) => {
-  if (event.task === "migrate") {
+/** One record as an SQS event source mapping delivers it. Only the two fields
+ *  the consumer needs are typed; the mapping supplies many more. */
+interface SqsRecord {
+  messageId: string;
+  body: string;
+}
+
+/** The event an SQS event source mapping invokes the Lambda with. */
+interface SqsEvent {
+  Records: SqsRecord[];
+}
+
+/** The partial-batch-failure response the mapping expects when
+ *  reportBatchItemFailures is on: the messageId of every record that must be
+ *  retried, and only those. An empty list means the whole batch succeeded. */
+interface SqsBatchResponse {
+  batchItemFailures: Array<{ itemIdentifier: string }>;
+}
+
+/** Drain a batch of click messages into click_events with partial-batch-failure
+ *  reporting. Each record is inserted independently so one poison message (an
+ *  unparseable body, a row the database rejects) is the only one redriven — the
+ *  rest still land. Returns the messageIds that failed. */
+async function drainClickBatch(db: Database, records: SqsRecord[]): Promise<SqsBatchResponse> {
+  const batchItemFailures: Array<{ itemIdentifier: string }> = [];
+  for (const record of records) {
+    try {
+      const event = deserializeClickEvent(record.body);
+      await insertClickEvents(db, [event]);
+    } catch {
+      /* Report this one for redrive and keep going. The mapping retries only
+         the reported ids up to the queue's maxReceiveCount, after which they
+         land in the DLQ — one bad message never fails the batch. */
+      batchItemFailures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return { batchItemFailures };
+}
+
+export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
+  /* The SQS event source mapping path: detected by the Records array BEFORE the
+     task discriminator, because an SQS event carries no `task`. */
+  if (Array.isArray((event as SqsEvent).Records)) {
+    const { db } = await initDb();
+    return drainClickBatch(db, (event as SqsEvent).Records);
+  }
+
+  const workerEvent = event as WorkerEvent;
+  if (workerEvent.task === "migrate") {
     /* Resolve via the shared resolver so migrations work under the ARN path
        too: with DATABASE_SECRET_ARN set this fetches the credentials from
        Secrets Manager; with no ARN it returns process.env.DATABASE_URL
@@ -62,7 +119,7 @@ export const handler = async (event: WorkerEvent = {}) => {
      connection is made. Shared by both the frequent and maintenance branches. */
   const { db } = await initDb();
 
-  if (event.task === "maintenance") {
+  if (workerEvent.task === "maintenance") {
     const maintenance = await runMaintenance(db);
     return { task: "maintenance", maintenance };
   }
