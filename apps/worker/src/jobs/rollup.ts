@@ -254,80 +254,84 @@ export async function ensureClickPartitions(
  * `rowsDeleted` is zero and the whole job is a partition drop.
  */
 export async function pruneRetention(db: Database, maxDropsPerPass = MAX_PARTITION_DROPS): Promise<RetentionResult> {
-  /* One expiry pass at a time. Without this, two overlapping passes both read
-     the same list of spent partitions and the second fails on one the first
-     already dropped — which would abort every maintenance job queued behind it.
-     EventBridge fires every minute with retryAttempts: 2 and the Lambda path has
-     no equivalent of the in-process overlap guard, so this is reachable.
-     pg_try_advisory_lock rather than the _xact_ variant, because the drops
-     deliberately span several transactions. */
-  const [{ locked }] = (await db.execute(sql`
-    select pg_try_advisory_lock(hashtext('click_events_prune_retention')) as locked
-  `)) as unknown as [{ locked: boolean }];
-  if (!locked) return { partitionsDropped: 0, rowsDeleted: 0 };
+  /* Safe under concurrency without a lock, deliberately.
+   *
+   * Two overlapping passes can read the same list of spent partitions —
+   * EventBridge fires every minute with retryAttempts: 2 and the Lambda path
+   * has no equivalent of the in-process overlap guard — so the second one will
+   * try to drop a partition the first already took. `click_events_drop_partition`
+   * catches undefined_table and returns false, so that converges rather than
+   * colliding, and the count stays honest because only a true return is
+   * counted.
+   *
+   * An earlier revision guarded this with a session-level pg_try_advisory_lock.
+   * That was a worse failure mode than the problem: a session lock lives on the
+   * connection, postgres.js pools connections, and the deployment runs
+   * DATABASE_POOL_MAX=1. A pass that died between acquire and release — or a
+   * Lambda frozen mid-invocation, which this codebase documents as a real
+   * hazard elsewhere — would leave the lock held on a pooled backend, and every
+   * later pass would return early. Retention would stop permanently and
+   * silently, with a disk graph as the only symptom. Idempotent operations beat
+   * a lock that can outlive the process holding it. */
 
-  try {
-    /* The longest retention in use decides which partitions are safe to drop.
-       No workspaces at all still needs a sane answer, hence the coalesce: a
-       fresh install has nothing to expire and should not drop today's data.
+  /* The longest retention in use decides which partitions are safe to drop.
+     No workspaces at all still needs a sane answer, hence the coalesce: a fresh
+     install has nothing to expire and should not drop today's data.
 
-       `now() at time zone 'UTC'` rather than `current_date`: every partition
-       bound in the migration is explicitly UTC, and current_date resolves in the
-       session TimeZone. Mixing the two is the exact bug the migration header
-       warns about. */
-    const [{ cutoff, maxYears }] = (await db.execute(sql`
-      select
-        ((now() at time zone 'UTC')::date - (coalesce(max(retention_years), 3) * interval '1 year'))::date as cutoff,
-        coalesce(max(retention_years), 3)::int as "maxYears"
-      from workspaces
-    `)) as unknown as [{ cutoff: string; maxYears: number }];
+     `now() at time zone 'UTC'` rather than `current_date`: every partition
+     bound in the migration is explicitly UTC, and current_date resolves in the
+     session TimeZone. Mixing the two is the exact bug the migration header
+     warns about. */
+  const [{ cutoff, maxYears }] = (await db.execute(sql`
+    select
+      ((now() at time zone 'UTC')::date - (coalesce(max(retention_years), 3) * interval '1 year'))::date as cutoff,
+      coalesce(max(retention_years), 3)::int as "maxYears"
+    from workspaces
+  `)) as unknown as [{ cutoff: string; maxYears: number }];
 
-    /* Listed and dropped separately, one transaction per partition, so the
-       ACCESS EXCLUSIVE lock DETACH takes on the parent is released between
-       each one instead of being held across the whole batch. Capped as well:
-       steady state is one partition a day, but the moment the longest retention
-       drops — a workspace lowering its setting, or the longest-retention
-       workspace being deleted — hundreds of days become spent at once. */
-    const spent = (await db.execute(sql`
-      select part from click_events_spent_partitions(${cutoff}::date) as part
-    `)) as unknown as Array<{ part: string }>;
+  /* Listed and dropped separately, one statement per partition, so the ACCESS
+     EXCLUSIVE lock DETACH takes on the parent is released between each one
+     instead of being held across the whole batch. Capped as well: steady state
+     is one partition a day, but the moment the longest retention drops — a
+     workspace lowering its setting, or the longest-retention workspace being
+     deleted — hundreds of days become spent at once. */
+  const spent = (await db.execute(sql`
+    select part from click_events_spent_partitions(${cutoff}::date) as part
+  `)) as unknown as Array<{ part: string }>;
 
-    let partitionsDropped = 0;
-    for (const { part } of spent.slice(0, maxDropsPerPass)) {
-      const [{ ok }] = (await db.execute(sql`
-        select click_events_drop_partition(${part}) as ok
-      `)) as unknown as [{ ok: boolean }];
-      if (ok) partitionsDropped++;
-    }
-
-    /* Only workspaces retaining less than the maximum.
-     *
-     * Deliberately *not* bounded below by the cutoff. An earlier version had
-     * `occurred_at >= cutoff` on the theory that it would let the planner prune
-     * — it does not, because after the drop pass every attached day partition is
-     * already at or above the cutoff, and a lower bound cannot prune a DEFAULT
-     * partition at all. What it did do was exclude rows stranded in the default
-     * once they aged past the cutoff, so nothing would ever expire them: the
-     * drop pass skips the default by design, and this was the only other
-     * mechanism. Rows reach the default whenever provisioning falls behind, so
-     * that was a slow permanent leak in a partition no query can prune. */
-    const [{ n }] = (await db.execute(sql`
-      with expired as (
-        delete from click_events ce
-        using workspaces w
-        where ce.workspace_id = w.id
-          and w.retention_years < ${maxYears}::int
-          and ce.rolled_up_at is not null
-          and ce.occurred_at < now() - (w.retention_years * interval '1 year')
-        returning 1
-      )
-      select count(*)::int as n from expired
-    `)) as unknown as [{ n: number }];
-
-    return { partitionsDropped, rowsDeleted: n ?? 0 };
-  } finally {
-    await db.execute(sql`select pg_advisory_unlock(hashtext('click_events_prune_retention'))`);
+  let partitionsDropped = 0;
+  for (const { part } of spent.slice(0, maxDropsPerPass)) {
+    const [{ ok }] = (await db.execute(sql`
+      select click_events_drop_partition(${part}) as ok
+    `)) as unknown as [{ ok: boolean }];
+    if (ok) partitionsDropped++;
   }
+
+  /* Only workspaces retaining less than the maximum.
+   *
+   * Deliberately *not* bounded below by the cutoff. An earlier version had
+   * `occurred_at >= cutoff` on the theory that it would let the planner prune —
+   * it does not, because after the drop pass every attached day partition is
+   * already at or above the cutoff, and a lower bound cannot prune a DEFAULT
+   * partition at all. What it did do was exclude rows stranded in the default
+   * once they aged past the cutoff, so nothing would ever expire them: the drop
+   * pass skips the default by design, and this was the only other mechanism.
+   * Rows reach the default whenever provisioning falls behind, so that was a
+   * slow permanent leak in a partition no query can prune. */
+  const [{ n }] = (await db.execute(sql`
+    with expired as (
+      delete from click_events ce
+      using workspaces w
+      where ce.workspace_id = w.id
+        and w.retention_years < ${maxYears}::int
+        and ce.rolled_up_at is not null
+        and ce.occurred_at < now() - (w.retention_years * interval '1 year')
+      returning 1
+    )
+    select count(*)::int as n from expired
+  `)) as unknown as [{ n: number }];
+
+  return { partitionsDropped, rowsDeleted: n ?? 0 };
 }
 
 /**
