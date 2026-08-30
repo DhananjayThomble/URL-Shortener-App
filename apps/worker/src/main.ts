@@ -315,6 +315,21 @@ export async function runMaintenance(database: Database) {
     );
   }
 
+  /* The provisioning half of the same signal, and it warns for the same reason.
+   *
+   * A declined day has no partition, so its clicks land in the DEFAULT
+   * partition — which no query can prune and which the retention pass skips by
+   * design. One declined day is nothing; a provisioner that never wins its lock
+   * quietly accumulates rows somewhere they will sit for ever. That deserves the
+   * same visibility as a retention pass making no progress, rather than being a
+   * field on an info line that reads as success. */
+  if (partitions.declined > 0) {
+    log.warn(
+      { declined: partitions.declined, ready: partitions.ready },
+      "partition provisioning lost locks — those days' clicks will land in the default partition",
+    );
+  }
+
   return { partitions, expired, salts, pruned, outbox, deliveries, stuck, failed };
 }
 

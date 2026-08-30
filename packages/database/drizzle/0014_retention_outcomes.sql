@@ -2,27 +2,43 @@
    Two changes to partition maintenance, both about being able
    to tell what happened.
 
-   1. click_events_ensure_partition takes the parent lock first,
-      matching click_events_drop_partition.
+   1. click_events_ensure_partition locks the parent explicitly,
+      and first, matching click_events_drop_partition.
 
       Since 0013 the drop path goes parent -> partition ->
-      default (DETACH needs the default too). Provisioning went
-      default -> parent, because it locks the default to make
-      the drain safe and only touches the parent when ATTACH
-      does. Opposite orders on the same two objects is a
-      deadlock cycle, and two overlapping maintenance passes are
-      ordinary rather than exotic once a lapsed lease can be
-      taken over.
+      default, because DETACH needs the default too.
+      Provisioning reached the default before taking any
+      explicit lock on the parent, so the two read as opposite
+      orders on the same pair of objects.
 
-      The parent lock here is SHARE UPDATE EXCLUSIVE, not ACCESS
-      EXCLUSIVE. That is the mode ATTACH already needs, and
-      crucially it does not conflict with ROW EXCLUSIVE, so
-      provisioning still does not block the redirect path's
-      inserts. Taking ACCESS EXCLUSIVE would have ordered the
-      locks correctly and blocked every insert for the duration,
-      which trades one problem for a worse one. Consistent order
-      is what removes the cycle; matching strength is not
-      required.
+      Worth being accurate about what this fixes, because the
+      obvious claim is too strong: the cycle was already
+      unreachable. `CREATE TABLE ... (LIKE "click_events" ...)`
+      a few statements up takes ACCESS SHARE on the parent and
+      holds it to the end of the transaction, so provisioning
+      was in fact parent-first already, just implicitly and at a
+      weaker mode. A drop could never take parent ACCESS
+      EXCLUSIVE while a provisioner held ACCESS SHARE on it, so
+      neither side could get one step into the other's ordering.
+      Measured: 30k mixed ensure/drop/insert/rollup
+      transactions, zero deadlocks, on this revision and on the
+      one before it.
+
+      What it buys is that the ordering is now explicit and
+      deliberate rather than an accident of which statement
+      happens to touch the parent first — and it takes the
+      parent at the mode ATTACH actually needs, so nothing
+      upgrades to a stronger lock mid-function, which is the
+      shape that *would* reintroduce a cycle.
+
+      SHARE UPDATE EXCLUSIVE, not ACCESS EXCLUSIVE. It is what
+      ATTACH needs anyway and it does not conflict with the ROW
+      EXCLUSIVE an insert takes, so provisioning still does not
+      block the redirect path. ACCESS EXCLUSIVE would have
+      ordered the locks just as well and blocked every insert
+      for the duration, trading one problem for a worse one.
+      Consistent order is what matters; matching strength is
+      not required.
 
    2. click_events_drop_partition reports *why* it did not drop.
 
@@ -78,15 +94,27 @@ BEGIN
 		END IF;
 	END IF;
 
-	EXECUTE format(
-		'CREATE TABLE IF NOT EXISTS %I (LIKE "click_events" INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
-		part_name
-	);
-
+	/* The timeout is set BEFORE the CREATE TABLE, not after it.
+	
+	   `LIKE "click_events"` takes an ACCESS SHARE lock on the parent, and that is
+	   the function's *first* parent lock — one statement earlier than the explicit
+	   LOCK TABLE below. Left outside the timeout it waits without bound, so a pass
+	   racing a drop that holds the parent exclusively would block for as long as
+	   the drop took and then go on to succeed, reporting the day as provisioned.
+	   The caller's `declined` counter exists to make "provisioning is losing to
+	   write traffic" visible, and that is exactly the collision it could not see.
+	
+	   Bounding this also bounds the schema-mismatch DROP TABLE above, which is
+	   the right trade: neither is worth waiting on. */
 	prev_timeout := current_setting('lock_timeout');
 	SET LOCAL lock_timeout = '2s';
 
 	BEGIN
+		EXECUTE format(
+			'CREATE TABLE IF NOT EXISTS %I (LIKE "click_events" INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
+			part_name
+		);
+
 		/* Parent first, then the default. See the header: the drop path locks
 		   parent -> partition -> default, and taking them in the opposite order
 		   here closes a deadlock cycle between two maintenance passes.

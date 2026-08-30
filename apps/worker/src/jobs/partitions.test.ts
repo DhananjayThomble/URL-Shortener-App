@@ -563,8 +563,22 @@ describeDb("click_events partitioning", () => {
         await new Promise((resolve) => setTimeout(resolve, 4000));
       });
 
-      // Let the blocker take the lock first.
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      /* Wait for the lock to actually be granted, rather than sleeping and
+         hoping. `createDatabase` connects lazily, so a fixed head start has to
+         cover a TCP connect, auth, BEGIN and the LOCK — and losing that race
+         makes the test assert the wrong thing. Polling pg_locks makes it
+         deterministic. */
+      for (let i = 0; i < 100; i++) {
+        const [{ granted }] = (await db.execute(sql`
+          select exists(
+            select 1 from pg_locks
+            where relation = 'public.click_events'::regclass
+              and mode = 'AccessExclusiveLock' and granted
+          ) as granted
+        `)) as unknown as [{ granted: boolean }];
+        if (granted) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
 
       const [{ outcome }] = (await db.execute(sql`
         select click_events_drop_partition(${target}) as outcome
