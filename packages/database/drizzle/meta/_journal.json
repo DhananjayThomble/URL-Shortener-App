@@ -71,6 +71,13 @@
       "when": 1788032631179,
       "tag": "0009_third_kang",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788067972592,
+      "tag": "0010_ambitious_talos",
+      "breakpoints": true
     }
   ]
 }

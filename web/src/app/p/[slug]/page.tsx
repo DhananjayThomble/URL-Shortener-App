@@ -3,7 +3,7 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button, Chip, ErrorState, Field, Input, Skeleton } from "@/components/ui";
-import { useLinkPreview, useUnlockLink } from "@/lib/api/hooks";
+import { useLinkPreview, useReportLink, useUnlockLink } from "@/lib/api/hooks";
 import { formatDate, relativeDate } from "@/lib/utils";
 
 /** shortUrl is "domain/slug" with no scheme; localhost is the dev redirect. */
@@ -25,9 +25,20 @@ export default function LinkPreviewPage() {
   const unlockRequested = useSearchParams().get("unlock") === "1";
   const { data, isLoading, isError, error, refetch } = useLinkPreview(slug);
   const unlock = useUnlockLink(slug);
+  const report = useReportLink(slug);
 
   const [password, setPassword] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+
+  /* The report form is a disclosure: closed by default so the trust page stays
+     calm, opened by the "Report this link" button. `reported` only flips true
+     after the request resolves — the whole point of #291 is that we never tell
+     a victim their report landed before it actually did. */
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reason, setReason] = useState("Phishing / scam");
+  const [contact, setContact] = useState("");
+  const [reportProblem, setReportProblem] = useState<string | null>(null);
+  const [reported, setReported] = useState(false);
 
   async function submitPassword() {
     if (!password) return;
@@ -38,6 +49,18 @@ export default function LinkPreviewPage() {
       window.location.href = withUnlockKey(data!.shortUrl, unlockToken);
     } catch (err) {
       setProblem((err as Error).message);
+    }
+  }
+
+  async function submitReport() {
+    if (!reason) return;
+    setReportProblem(null);
+    try {
+      await report.mutateAsync({ reason, reporterContact: contact || undefined });
+      // Only now, after the server acknowledged, do we say it was received.
+      setReported(true);
+    } catch (err) {
+      setReportProblem((err as Error).message);
     }
   }
 
@@ -164,7 +187,50 @@ export default function LinkPreviewPage() {
                 })()}{" "}
                 →
               </a>
-              <Button className="justify-center">Report this link</Button>
+              {reported ? (
+                <Chip tone="good" dot>
+                  Report received — thank you
+                </Chip>
+              ) : reportOpen ? (
+                <div className="flex flex-col gap-[9px]">
+                  <Field label="What's wrong with this link?">
+                    <select
+                      value={reason}
+                      onChange={(e) => { setReason(e.target.value); setReportProblem(null); }}
+                      className="w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[13px] text-ink focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash"
+                    >
+                      <option>Phishing / scam</option>
+                      <option>Malware</option>
+                      <option>Spam</option>
+                      <option>Other</option>
+                    </select>
+                  </Field>
+                  <Field
+                    label="Your email (optional)"
+                    help="Only if you'd like the operator to be able to follow up. We never share it."
+                    error={reportProblem ?? undefined}
+                  >
+                    <Input
+                      type="email"
+                      value={contact}
+                      placeholder="you@example.com"
+                      onChange={(e) => { setContact(e.target.value); setReportProblem(null); }}
+                    />
+                  </Field>
+                  <Button
+                    variant="primary"
+                    className="justify-center w-full"
+                    onClick={submitReport}
+                    disabled={report.isPending || !reason}
+                  >
+                    {report.isPending ? "Reporting…" : "Submit report"}
+                  </Button>
+                </div>
+              ) : (
+                <Button className="justify-center" onClick={() => setReportOpen(true)}>
+                  Report this link
+                </Button>
+              )}
             </div>
           </>
         )}

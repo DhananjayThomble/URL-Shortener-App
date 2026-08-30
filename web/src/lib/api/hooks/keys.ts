@@ -21,4 +21,5 @@ export const qk = {
   bioPages: ["bio-pages"] as const,
   conversions: (range: string) => ["conversions", range] as const,
   preview: (slug: string) => ["preview", slug] as const,
+  reports: ["reports"] as const,
 };
