@@ -396,3 +396,84 @@ Until that work lands, the apps run anywhere Node 22 runs. They read all
 configuration from the environment, expose health endpoints
 (`/api/v1/health` and `/health`), and shut down their database pools cleanly on
 `SIGTERM`.
+
+---
+
+## Post-deploy smoke gate
+
+A deploy that produces a 404-on-everything stack passes every unit test and all
+of CI, because the two things most likely to be broken — a real slug returning
+302 instead of 404, and a country-scoped routing rule matching so
+`click_events.country` is populated — only exist once CloudFront is in front of
+the origin. `scripts/smoke-redirect.sh` is the answer to "does the deployed
+thing actually redirect?": the same assertions run against localhost, the
+composed stack, or a real deployed environment, and it exits non-zero if any
+one fails.
+
+### The env contract
+
+The script is target-agnostic; it reads where to point itself from the
+environment. All of these are optional and default to a local dev stack.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `API` | `http://localhost:3001/api/v1` | API base URL, including `/api/v1`. |
+| `RD` | `http://localhost:3002` | Redirect service base URL. |
+| `LINK_DOMAIN` | derived from `RD` | Domain new fixture links are created on. |
+| `SMOKE_EMAIL` / `SMOKE_PASSWORD` | unset | Optional; see below. |
+
+`LINK_DOMAIN` is the one that has to be right. It **must equal the API's
+`DEFAULT_DOMAIN`**: on register the API seeds exactly one system domain equal
+to `DEFAULT_DOMAIN` for the new workspace, and link creation rejects any other
+domain with `400 "isn't a domain you can use"`, so a freshly-registered
+throwaway user can only create links on `DEFAULT_DOMAIN`. It must *also* match
+the `Host` the script sends to `RD`, because the redirect resolver matches on
+the domain byte-for-byte and does not strip the port. Deriving it from `RD`
+(strip the scheme and any path) keeps both requirements aligned by
+construction, as long as the deployment sets `DEFAULT_DOMAIN` to the redirect
+host. Set `LINK_DOMAIN` explicitly only when it cannot be derived that way.
+
+By default the script self-registers a unique throwaway user per run. When the
+deployed environment has open registration disabled, set `SMOKE_EMAIL` and
+`SMOKE_PASSWORD` to a pre-provisioned account instead; that account's workspace
+must own `LINK_DOMAIN`. The script creates its own fixture links and `DELETE`s
+every one of them on exit, even on failure, so it is safe to point at a real
+environment.
+
+### Running it by hand against a deployed URL
+
+```bash
+API=https://api.example.com/api/v1 \
+RD=https://snap.example.com \
+bash scripts/smoke-redirect.sh
+```
+
+Add `SMOKE_EMAIL=... SMOKE_PASSWORD=...` if registration is closed, and
+`LINK_DOMAIN=...` only if it does not derive correctly from `RD`.
+
+### Deployed mode skips the DB-backed assertions
+
+The script's privacy assertions read the database directly and only run where
+the database is reachable (local dev, CI, the composed stack) — that is, where
+`DATABASE_URL` is set and Postgres is actually accessible. A deployed CDN does
+not expose the database, so those checks are **skipped, not failed**. In that
+mode the always-run check that drives a real redirect and then polls
+`GET /analytics` until the country appears in the breakdown carries the
+`click_events.country` proof instead. That is why the workflow below sets no
+`DATABASE_URL`.
+
+### The reusable hook a Phase 7 deploy job calls
+
+`.github/workflows/smoke-deployed.yml` wraps the script as a reusable workflow.
+It takes `redirect_base_url` and `api_base_url` (and an optional `link_domain`,
+plus optional `smoke_email` / `smoke_password` secrets), runs
+`scripts/smoke-redirect.sh` against them, and fails the job when any assertion
+fails. An operator can trigger it by hand with `workflow_dispatch`.
+
+It exists so the Phase 7 deploy pipeline (#288/#289) can wire it in as a
+post-deploy gate — a job with `needs: deploy` and
+`uses: ./.github/workflows/smoke-deployed.yml`, passing the freshly-deployed
+URLs — so **a 404-on-everything deploy fails loudly** and a deploy is not
+considered successful until this passes. Nothing calls it yet: there is no
+deploy workflow today, so it can only be fully exercised once a real deploy
+target exists.
