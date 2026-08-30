@@ -111,10 +111,15 @@ describeDb("ReportsService.list / review", () => {
   let wsA: string;
   let wsB: string;
   let linkA: string;
+  let linkB: string;
   let reportOnLinkA: string;
   let reportOnLinkA2: string;
   let reportInWsB: string;
   let reportNullWorkspace: string;
+  // A report owned by workspace A whose linkId points at workspace B's link —
+  // as if the link moved workspaces after intake. getOwned finds it under wsA,
+  // but the flag write (scoped to links.workspaceId = wsA) matches zero rows.
+  let reportMovedLink: string;
 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
@@ -151,6 +156,7 @@ describeDb("ReportsService.list / review", () => {
       .insert(links)
       .values({ workspaceId: wsB, domainId: domB!.id, slug: `rev-b-${stamp}`, destination: "https://example.com/b" })
       .returning({ id: links.id });
+    linkB = lB!.id;
 
     // Two reports for workspace A's link, one for B's link, one that never
     // resolved (null workspace).
@@ -174,6 +180,14 @@ describeDb("ReportsService.list / review", () => {
       .values({ slug: `rev-nowhere-${stamp}`, linkId: null, workspaceId: null, reason: "unresolved", status: "open" })
       .returning({ id: abuseReports.id });
     reportNullWorkspace = r4!.id;
+
+    // Owned by wsA, but its linkId names wsB's link — a link that moved
+    // workspaces after the report was filed.
+    const [r5] = await db
+      .insert(abuseReports)
+      .values({ slug: `rev-a-${stamp}`, linkId: linkB, workspaceId: wsA, reason: "moved link on A", status: "open" })
+      .returning({ id: abuseReports.id });
+    reportMovedLink = r5!.id;
   });
 
   afterAll(async () => {
@@ -188,11 +202,12 @@ describeDb("ReportsService.list / review", () => {
     const ids = list.map((r) => r.id);
     expect(ids).toContain(reportOnLinkA);
     expect(ids).toContain(reportOnLinkA2);
+    expect(ids).toContain(reportMovedLink);
     expect(ids).not.toContain(reportInWsB);
     expect(ids).not.toContain(reportNullWorkspace);
     // Every returned report genuinely belongs to A.
     expect(list.every((r) => ids.includes(r.id))).toBe(true);
-    expect(list.length).toBe(2);
+    expect(list.length).toBe(3);
   });
 
   it("flags the resolved link and marks the report 'actioned' when flagLink is true", async () => {
@@ -234,5 +249,23 @@ describeDb("ReportsService.list / review", () => {
     await expect(service.review(wsA, reportInWsB, reviewer, { status: "dismissed" })).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it("does not flag or mark 'actioned' when the link has moved out of the workspace", async () => {
+    // The report is owned by wsA, but its linkId names wsB's link. The flag
+    // UPDATE is scoped to links.workspaceId = wsA, so it matches zero rows. The
+    // report must NOT be marked 'actioned' and wsB's link must NOT be flagged —
+    // otherwise the report claims an enforcement that never happened.
+    const dto = await service.review(wsA, reportMovedLink, reviewer, { flagLink: true });
+    expect(dto.status).not.toBe("actioned");
+    expect(dto.status).toBe("open");
+
+    // wsB's link is untouched: no cross-workspace enforcement leaked through.
+    const [row] = await db
+      .select({ status: links.safeBrowsingStatus })
+      .from(links)
+      .where(eq(links.id, linkB))
+      .limit(1);
+    expect(row!.status).not.toBe("flagged");
   });
 });

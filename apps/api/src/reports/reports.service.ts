@@ -84,6 +84,15 @@ export class ReportsService {
    * When flagLink flips a link and the caller passed no explicit status, the
    * report is defaulted to 'actioned' — flagging a link IS the action, and a
    * report left 'open' after enforcement would misrepresent the queue.
+   *
+   * The recorded outcome (status + audit entry) reflects the ACTUAL result of
+   * the links UPDATE, not the report's intake-time linkId. The flag write is
+   * scoped to links.workspaceId, so a link that has since moved to another
+   * workspace (or been otherwise removed from this one) matches zero rows even
+   * though report.linkId still names it. In that case we do NOT default the
+   * report to 'actioned' and do NOT write a 'link.flagged' audit entry — a
+   * moved/deleted link must never let a report claim an enforcement that did
+   * not occur (review issue #2, #291).
    */
   async review(workspaceId: string, id: string, actor: Actor, input: UpdateAbuseReportInput): Promise<AbuseReport> {
     if (input.status === undefined && input.flagLink === undefined) {
@@ -92,13 +101,31 @@ export class ReportsService {
 
     const report = await this.getOwned(workspaceId, id);
 
-    // Only flag when there is a resolved link in this workspace to flag.
-    const willFlag = input.flagLink === true && report.linkId !== null;
-    // Flagging a link is itself the action, so default to 'actioned' when the
-    // caller did not state a status of their own.
-    const nextStatus = input.status ?? (willFlag ? "actioned" : undefined);
+    // We only attempt to flag when there is a resolved link on the report; but
+    // whether the flag actually took effect is decided by the UPDATE below, not
+    // by the intake-time linkId.
+    const attemptFlag = input.flagLink === true && report.linkId !== null;
 
-    await this.db.transaction(async (tx) => {
+    const flagged = await this.db.transaction(async (tx) => {
+      let didFlag = false;
+
+      if (attemptFlag) {
+        // .returning() yields exactly the rows the UPDATE changed. An empty
+        // array means the link no longer matches (id, workspaceId) — it moved
+        // or is gone — so the flag did NOT take effect.
+        const updated = await tx
+          .update(links)
+          .set({ safeBrowsingStatus: "flagged", safeBrowsingCheckedAt: new Date() })
+          .where(and(eq(links.id, report.linkId!), eq(links.workspaceId, workspaceId)))
+          .returning({ id: links.id });
+        didFlag = updated.length > 0;
+      }
+
+      // Flagging a link is itself the action, so default to 'actioned' when the
+      // caller did not state a status of their own — but only if the flag
+      // actually landed. A no-op flag falls back to the reviewed path (or an
+      // explicit input.status, if the caller gave one).
+      const nextStatus = input.status ?? (didFlag ? "actioned" : undefined);
       if (nextStatus !== undefined) {
         await tx
           .update(abuseReports)
@@ -106,22 +133,19 @@ export class ReportsService {
           .where(and(eq(abuseReports.id, id), eq(abuseReports.workspaceId, workspaceId)));
       }
 
-      if (willFlag) {
-        await tx
-          .update(links)
-          .set({ safeBrowsingStatus: "flagged", safeBrowsingCheckedAt: new Date() })
-          .where(and(eq(links.id, report.linkId!), eq(links.workspaceId, workspaceId)));
-      }
+      return didFlag;
     });
 
-    // Audit after the commit, never inside it (see recordActivity's contract).
+    // The audit reflects what actually happened: a 'link.flagged' entry only
+    // when a link row was truly updated, otherwise the plain reviewed entry.
+    const recordedStatus = input.status ?? (flagged ? "actioned" : report.status);
     await recordActivity(this.db, this.logger, {
       workspaceId,
       actor,
-      auditAction: willFlag ? "link.flagged" : "abuse_report.reviewed",
-      targetType: willFlag ? "link" : "abuse_report",
-      targetId: willFlag ? report.linkId! : id,
-      metadata: { reportId: id, slug: report.slug, status: nextStatus ?? report.status, flagged: willFlag },
+      auditAction: flagged ? "link.flagged" : "abuse_report.reviewed",
+      targetType: flagged ? "link" : "abuse_report",
+      targetId: flagged ? report.linkId! : id,
+      metadata: { reportId: id, slug: report.slug, status: recordedStatus, flagged },
     });
 
     return this.get(workspaceId, id);
