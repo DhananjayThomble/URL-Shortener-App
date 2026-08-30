@@ -1,7 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, links, lt, sql, type Database } from "@snapurl/database";
 import type { Analytics, AnalyticsQuery, Breakdown, TimeseriesPoint } from "@snapurl/contract";
-import { DB, READ_DB } from "../database/database.module.js";
+import { ANALYTICS_READER, type AnalyticsReader } from "./analytics.reader.js";
 
 const RANGE_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
 
@@ -21,11 +20,13 @@ const COUNTRY_NAMES: Record<string, string> = {
 @Injectable()
 export class AnalyticsService {
   constructor(
-    @Inject(DB) private readonly db: Database,
-    // Read-only handle. Every query in this service is a pure dashboard
-    // aggregation over rollup tables with no write in the same operation, so
-    // all of them are replica-safe — see overview().
-    @Inject(READ_DB) private readonly readDb: Database,
+    // The analytics READ path lives behind AnalyticsReader (see
+    // analytics.reader.ts). The Postgres adapter reads the rollup tables off
+    // the read replica; this service never touches Drizzle. All the
+    // store-agnostic logic — the city floor, country-name/flag mapping, top-N
+    // slice, period math, deltas, and the zero-filled series — stays here, so
+    // swapping the store for ClickHouse or Timescale changes no numbers.
+    @Inject(ANALYTICS_READER) private readonly reader: AnalyticsReader,
   ) {}
 
   /* Everything here reads rollup tables, never click_events.
@@ -34,174 +35,86 @@ export class AnalyticsService {
      unusable at ten million; the rollups exist precisely so this endpoint's
      cost is bounded by the date range rather than by traffic.
 
-     Replica-safe: overview (and the breakdown/tagBreakdown/topLinks helpers it
-     calls) only read rollup tables and never write, so they route through
-     this.readDb. No read-then-write here, so replica lag cannot produce a
-     wrong answer relative to a write in the same operation. */
+     Replica-safe: the reader only reads rollup tables and never writes, so it
+     is constructed off the read replica. No read-then-write here, so replica
+     lag cannot produce a wrong answer relative to a write in the same
+     operation. */
   async overview(workspaceId: string, query: AnalyticsQuery): Promise<Analytics> {
     const days = RANGE_DAYS[query.range] ?? 30;
     const { start, previousStart } = windowFor(days);
 
-    const scope = query.linkId ? and(eq(clickDaily.workspaceId, workspaceId), eq(clickDaily.linkId, query.linkId)) : eq(clickDaily.workspaceId, workspaceId);
+    const [current, previous, series] = await Promise.all([
+      this.reader.totals(workspaceId, query.linkId, start),
+      this.reader.previousTotals(workspaceId, query.linkId, previousStart, start),
+      this.reader.series(workspaceId, query.linkId, start),
+    ]);
 
-    const [current] = await this.readDb
-      .select({
-        clicks: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int`,
-        unique: sql<number>`coalesce(sum(${clickDaily.uniques}), 0)::int`,
-        scans: sql<number>`coalesce(sum(${clickDaily.scans}), 0)::int`,
-        blocked: sql<number>`coalesce(sum(${clickDaily.blocked}), 0)::int`,
-      })
-      .from(clickDaily)
-      .where(and(scope, gte(clickDaily.day, iso(start))));
-
-    const [previous] = await this.readDb
-      .select({
-        clicks: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int`,
-        unique: sql<number>`coalesce(sum(${clickDaily.uniques}), 0)::int`,
-        scans: sql<number>`coalesce(sum(${clickDaily.scans}), 0)::int`,
-      })
-      .from(clickDaily)
-      .where(and(scope, gte(clickDaily.day, iso(previousStart)), lt(clickDaily.day, iso(start))));
-
-    const series = await this.readDb
-      .select({
-        date: clickDaily.day,
-        clicks: sql<number>`coalesce(sum(${clickDaily.clicks}), 0)::int`,
-        unique: sql<number>`coalesce(sum(${clickDaily.uniques}), 0)::int`,
-        scans: sql<number>`coalesce(sum(${clickDaily.scans}), 0)::int`,
-      })
-      .from(clickDaily)
-      .where(and(scope, gte(clickDaily.day, iso(start))))
-      .groupBy(clickDaily.day)
-      .orderBy(clickDaily.day);
-
-    const [countries, cities, devices, browsers, referrers] = await Promise.all([
-      this.breakdown(workspaceId, "country", start, query.linkId),
+    const [countries, cityRows, devices, browsers, referrers] = await Promise.all([
+      this.reader.breakdown(workspaceId, "country", start, query.linkId),
       /* Unlimited, because the k-anonymity floor has to see the whole tail to
          fold it — taking the top 8 first would discard the small cities rather
-         than aggregate them, and the total would stop adding up. */
-      this.breakdown(workspaceId, "city", start, query.linkId, 0).then(applyCityFloor),
-      this.breakdown(workspaceId, "device", start, query.linkId),
-      this.breakdown(workspaceId, "browser", start, query.linkId),
-      this.breakdown(workspaceId, "referrer", start, query.linkId),
+         than aggregate them, and the total would stop adding up. The reader
+         returns every city; applyCityFloor does the folding and the trim. */
+      this.reader.breakdown(workspaceId, "city", start, query.linkId),
+      this.reader.breakdown(workspaceId, "device", start, query.linkId),
+      this.reader.breakdown(workspaceId, "browser", start, query.linkId),
+      this.reader.breakdown(workspaceId, "referrer", start, query.linkId),
     ]);
 
     const [tags, topLinks] = await Promise.all([
-      this.tagBreakdown(workspaceId, start),
-      this.topLinks(workspaceId, start),
+      this.reader.tagBreakdown(workspaceId, start),
+      this.reader.topLinks(workspaceId, start),
     ]);
 
     /* Conversions live in their own table rather than the click rollups, so
        the stat tile needs its own count. Without this the analytics page reads
        zero while the conversions page reports hundreds — the kind of
        contradiction that makes someone stop trusting both numbers. */
-    const [conversionTotals] = await this.readDb
-      .select({ n: sql<number>`count(*)::int` })
-      .from(conversions)
-      .where(
-        and(
-          eq(conversions.workspaceId, workspaceId),
-          gte(conversions.occurredAt, start),
-          ...(query.linkId ? [eq(conversions.linkId, query.linkId)] : []),
-        ),
-      );
+    const [conversionCount, previousConversions] = await Promise.all([
+      this.reader.conversionTotals(workspaceId, query.linkId, start),
+      this.reader.previousConversionTotals(workspaceId, query.linkId, previousStart, start),
+    ]);
 
-    const [previousConversions] = await this.readDb
-      .select({ n: sql<number>`count(*)::int` })
-      .from(conversions)
-      .where(
-        and(
-          eq(conversions.workspaceId, workspaceId),
-          gte(conversions.occurredAt, previousStart),
-          lt(conversions.occurredAt, start),
-          ...(query.linkId ? [eq(conversions.linkId, query.linkId)] : []),
-        ),
-      );
-
-    const conversionCount = conversionTotals?.n ?? 0;
+    const cities = applyCityFloor(cityRows);
 
     return {
       totals: {
-        clicks: current?.clicks ?? 0,
-        unique: current?.unique ?? 0,
-        scans: current?.scans ?? 0,
+        clicks: current.clicks,
+        unique: current.unique,
+        scans: current.scans,
         conversions: conversionCount,
-        blocked: current?.blocked ?? 0,
+        blocked: current.blocked,
       },
       deltas: {
-        clicks: percentChange(previous?.clicks ?? 0, current?.clicks ?? 0),
-        unique: percentChange(previous?.unique ?? 0, current?.unique ?? 0),
-        scans: percentChange(previous?.scans ?? 0, current?.scans ?? 0),
-        conversions: percentChange(previousConversions?.n ?? 0, conversionCount),
+        clicks: percentChange(previous.clicks, current.clicks),
+        unique: percentChange(previous.unique, current.unique),
+        scans: percentChange(previous.scans, current.scans),
+        conversions: percentChange(previousConversions, conversionCount),
       },
       series: fillSeries(series as TimeseriesPoint[], start, days),
-      countries: countries.map((c) => ({
+      countries: topN(countries).map((c) => ({
         label: COUNTRY_NAMES[c.label] ?? c.label,
         value: c.value,
         icon: FLAGS[c.label] ?? "🌐",
       })),
       cities,
-      devices,
-      browsers,
-      referrers,
+      /* Top 8 for the other dimensions. The reader returns the full,
+         value-descending tail (unlimited), so the slice — like the city floor —
+         is store-agnostic logic that stays here. */
+      devices: topN(devices),
+      browsers: topN(browsers),
+      referrers: topN(referrers),
       tags,
       topLinks,
     };
   }
+}
 
-  private async breakdown(
-    workspaceId: string,
-    dimension: string,
-    start: Date,
-    linkId?: string,
-    limit = 8,
-  ): Promise<Breakdown[]> {
-    const filters = [
-      eq(breakdownDaily.workspaceId, workspaceId),
-      eq(breakdownDaily.dimension, dimension),
-      gte(breakdownDaily.day, iso(start)),
-    ];
-    if (linkId) filters.push(eq(breakdownDaily.linkId, linkId));
-
-    // Replica-safe: pure read of the breakdown rollup.
-    const rows = await this.readDb
-      .select({ label: breakdownDaily.value, value: sql<number>`sum(${breakdownDaily.count})::int` })
-      .from(breakdownDaily)
-      .where(and(...filters))
-      .groupBy(breakdownDaily.value)
-      .orderBy(desc(sql`sum(${breakdownDaily.count})`));
-
-    return (limit > 0 ? rows.slice(0, limit) : rows).map((r) => ({ label: r.label, value: r.value }));
-  }
-
-  /** Tags live on the link, not on the click, so this joins rather than
-   *  reading a breakdown row. A click inherits whatever tags the link has now. */
-  private async tagBreakdown(workspaceId: string, start: Date): Promise<Breakdown[]> {
-    // Replica-safe: pure read of the click rollup joined to links.
-    const rows = await this.readDb
-      .select({ label: sql<string>`tag`, value: sql<number>`sum(${clickDaily.clicks})::int` })
-      .from(clickDaily)
-      .innerJoin(links, eq(clickDaily.linkId, links.id))
-      .innerJoin(sql`unnest(${links.tags}) as tag`, sql`true`)
-      .where(and(eq(clickDaily.workspaceId, workspaceId), gte(clickDaily.day, iso(start))))
-      .groupBy(sql`tag`)
-      .orderBy(desc(sql`sum(${clickDaily.clicks})`))
-      .limit(8);
-    return rows.map((r) => ({ label: r.label, value: r.value }));
-  }
-
-  private async topLinks(workspaceId: string, start: Date): Promise<Breakdown[]> {
-    // Replica-safe: pure read of the click rollup joined to links.
-    const rows = await this.readDb
-      .select({ slug: links.slug, value: sql<number>`sum(${clickDaily.clicks})::int` })
-      .from(clickDaily)
-      .innerJoin(links, eq(clickDaily.linkId, links.id))
-      .where(and(eq(clickDaily.workspaceId, workspaceId), gte(clickDaily.day, iso(start))))
-      .groupBy(links.slug)
-      .orderBy(desc(sql`sum(${clickDaily.clicks})`))
-      .limit(8);
-    return rows.map((r) => ({ label: r.slug, value: r.value }));
-  }
+/** The top-N slice applied to the non-city breakdowns. The reader returns rows
+ *  ordered by value descending and UNLIMITED; taking 8 here (rather than in the
+ *  adapter) keeps the slice identical across any store. */
+function topN(rows: Breakdown[], limit = 8): Breakdown[] {
+  return rows.slice(0, limit);
 }
 
 /**

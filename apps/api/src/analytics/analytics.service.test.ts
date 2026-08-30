@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CITY_MIN_CLICKS, OTHER_CITIES, applyCityFloor, fillSeries, iso, percentChange, windowFor } from "./analytics.service.js";
+import type { AnalyticsQuery } from "@snapurl/contract";
+import type { AnalyticsReader, BreakdownRow, PreviousTotals, SeriesPoint, Totals } from "./analytics.reader.js";
+import { AnalyticsService, CITY_MIN_CLICKS, OTHER_CITIES, applyCityFloor, fillSeries, iso, percentChange, windowFor } from "./analytics.service.js";
 
 /* The three pure helpers behind every number on the analytics screen. Each has
    a failure mode that renders as a plausible-looking chart rather than an
@@ -192,5 +194,138 @@ describe("applyCityFloor", () => {
 
   it("handles an empty window", () => {
     expect(applyCityFloor([])).toEqual([]);
+  });
+});
+
+/* The service reads through the AnalyticsReader port (analytics.reader.ts) and
+   never touches Drizzle. A fake reader lets us prove overview() still applies
+   all the store-agnostic logic — the city floor, country-name/flag mapping, the
+   top-8 slice, the period deltas, the zero-filled series, and the conversion
+   totals — against canned rows, which is exactly what the port decouples from
+   the store. If the service stopped folding, mapping, slicing, or computing
+   deltas, this test fails. */
+describe("AnalyticsService.overview through a fake reader", () => {
+  /** A reader that returns whatever canned rows the test hands it. */
+  class FakeReader implements AnalyticsReader {
+    constructor(
+      private readonly data: {
+        totals: Totals;
+        previousTotals: PreviousTotals;
+        series: SeriesPoint[];
+        breakdowns: Record<string, BreakdownRow[]>;
+        tagBreakdown: BreakdownRow[];
+        topLinks: BreakdownRow[];
+        conversionTotals: number;
+        previousConversionTotals: number;
+      },
+    ) {}
+
+    async totals(): Promise<Totals> {
+      return this.data.totals;
+    }
+    async previousTotals(): Promise<PreviousTotals> {
+      return this.data.previousTotals;
+    }
+    async series(): Promise<SeriesPoint[]> {
+      return this.data.series;
+    }
+    async breakdown(_workspaceId: string, dimension: string): Promise<BreakdownRow[]> {
+      return this.data.breakdowns[dimension] ?? [];
+    }
+    async tagBreakdown(): Promise<BreakdownRow[]> {
+      return this.data.tagBreakdown;
+    }
+    async topLinks(): Promise<BreakdownRow[]> {
+      return this.data.topLinks;
+    }
+    async conversionTotals(): Promise<number> {
+      return this.data.conversionTotals;
+    }
+    async previousConversionTotals(): Promise<number> {
+      return this.data.previousConversionTotals;
+    }
+  }
+
+  const query: AnalyticsQuery = { range: "30d" } as AnalyticsQuery;
+
+  function build(overrides: Partial<ConstructorParameters<typeof FakeReader>[0]> = {}) {
+    const reader = new FakeReader({
+      totals: { clicks: 200, unique: 150, scans: 20, blocked: 3 },
+      previousTotals: { clicks: 100, unique: 75, scans: 10 },
+      series: [],
+      breakdowns: {
+        country: [
+          { label: "IN", value: 120 },
+          { label: "US", value: 60 },
+          { label: "ZZ", value: 20 },
+        ],
+        city: [
+          { label: "Mumbai", value: 40 },
+          { label: "Pune", value: 3 },
+          { label: "Nashik", value: 2 },
+          { label: "Unknown", value: 1 },
+        ],
+        device: [],
+        browser: [],
+        referrer: [],
+      },
+      tagBreakdown: [{ label: "launch", value: 12 }],
+      topLinks: [{ label: "promo", value: 90 }],
+      conversionTotals: 30,
+      previousConversionTotals: 15,
+      ...overrides,
+    });
+    return new AnalyticsService(reader);
+  }
+
+  it("assembles totals and deltas from the reader's current/previous windows", async () => {
+    const out = await build().overview("ws_1", query);
+    expect(out.totals).toEqual({ clicks: 200, unique: 150, scans: 20, conversions: 30, blocked: 3 });
+    // Deltas use percentChange against the previous window and the conversion totals.
+    expect(out.deltas).toEqual({
+      clicks: percentChange(100, 200),
+      unique: percentChange(75, 150),
+      scans: percentChange(10, 20),
+      conversions: percentChange(15, 30),
+    });
+  });
+
+  it("maps country codes to names and flags, unknown codes to a globe", async () => {
+    const out = await build().overview("ws_1", query);
+    expect(out.countries).toEqual([
+      { label: "India", value: 120, icon: "🇮🇳" },
+      { label: "United States", value: 60, icon: "🇺🇸" },
+      { label: "ZZ", value: 20, icon: "🌐" },
+    ]);
+  });
+
+  it("applies the city floor over the whole tail the reader returns", async () => {
+    const out = await build().overview("ws_1", query);
+    // Pune (3) and Nashik (2) fall under the floor and fold; Unknown passes
+    // through; Mumbai is named. Total volume is preserved.
+    expect(out.cities).toEqual([
+      { label: "Mumbai", value: 40 },
+      { label: "Unknown", value: 1 },
+      { label: OTHER_CITIES, value: 5 },
+    ]);
+  });
+
+  it("slices non-city breakdowns to the top 8", async () => {
+    const devices = Array.from({ length: 12 }, (_, i) => ({ label: `d${i}`, value: 100 - i }));
+    const out = await build({ breakdowns: { country: [], city: [], device: devices, browser: [], referrer: [] } }).overview("ws_1", query);
+    expect(out.devices).toHaveLength(8);
+    expect(out.devices.map((d) => d.label)).toEqual(["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"]);
+  });
+
+  it("zero-fills the series via fillSeries for the whole window", async () => {
+    const out = await build().overview("ws_1", query);
+    expect(out.series).toHaveLength(30);
+    expect(out.series.every((p) => p.clicks === 0 && p.unique === 0 && p.scans === 0)).toBe(true);
+  });
+
+  it("passes tags and top links through from the reader", async () => {
+    const out = await build().overview("ws_1", query);
+    expect(out.tags).toEqual([{ label: "launch", value: 12 }]);
+    expect(out.topLinks).toEqual([{ label: "promo", value: 90 }]);
   });
 });
