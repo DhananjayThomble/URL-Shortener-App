@@ -1,5 +1,6 @@
 import { sql, type Database } from "@snapurl/database";
 import { addHashed, createSketch, deserialize, estimate, merge, serialize } from "@snapurl/domain";
+import { withLease } from "./lease.js";
 
 /* ============================================================
    Turning raw clicks into the numbers the dashboards read.
@@ -305,6 +306,18 @@ const MAX_PARTITION_DROPS = 20;
  *  ingest rate demands a tighter cap. */
 const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1100);
 
+/** How long a retention pass holds its lease.
+ *
+ *  Has to exceed the worst-case pass or a slow one has its lease taken from
+ *  underneath it and ends up running twice. The ceiling is bounded by design:
+ *  MAX_PARTITION_DROPS drops across the two loops, each capped by a 2s
+ *  lock_timeout, so a pass cannot run long even when every drop times out.
+ *
+ *  Five minutes because that is the worker Lambda's own timeout, which is the
+ *  real limit on how long a pass can be alive at all — a holder that has hit it
+ *  is gone, not slow, and its lease should be available again shortly after. */
+const RETENTION_LEASE_SECONDS = 300;
+
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
@@ -395,19 +408,25 @@ export async function pruneRetention(
      default. */
   maxRetainedDays = MAX_RETAINED_DAYS,
 ): Promise<RetentionResult> {
-  /* One expiry pass at a time. Without this, two overlapping passes both read
-     the same list of spent partitions and the second fails on one the first
-     already dropped — which would abort every maintenance job queued behind it.
-     EventBridge fires every minute with retryAttempts: 2 and the Lambda path has
-     no equivalent of the in-process overlap guard, so this is reachable.
-     pg_try_advisory_lock rather than the _xact_ variant, because the drops
-     deliberately span several transactions. */
-  const [{ locked }] = (await db.execute(sql`
-    select pg_try_advisory_lock(hashtext('click_events_prune_retention')) as locked
-  `)) as unknown as [{ locked: boolean }];
-  if (!locked) return { partitionsDropped: 0, rowsDeleted: 0 };
-
-  try {
+  /* One expiry pass at a time.
+   *
+   * Two overlapping passes would both read the same list of spent partitions,
+   * and the cap pass below adds a second, independent drop loop whose targets
+   * `click_events_spent_partitions` never listed — so per-drop idempotence is
+   * not enough on its own and the guard has to be at pass level. EventBridge
+   * fires every minute with retryAttempts: 2 and the Lambda path has no
+   * equivalent of the in-process overlap guard, so this is reachable.
+   *
+   * A lease rather than a session-scoped advisory lock, which is what this used
+   * to be. The drops deliberately span several transactions, so a *_xact_* lock
+   * would release at the first commit — but a session lock lives on the
+   * connection, and the worker pools connections with DATABASE_POOL_MAX=1 on
+   * the AWS profile. A pass that vanished mid-run (a Lambda frozen or
+   * reclaimed) stranded the lock on a backend Postgres still considered
+   * healthy, and every later pass declined: retention stopped for good, with no
+   * error and nothing in the logs to distinguish it from having nothing to do.
+   * A lease expires by the clock, so the same crash costs one late pass. */
+  const lease = await withLease(db, "click_events_prune_retention", RETENTION_LEASE_SECONDS, async () => {
     /* The longest retention in use decides which partitions are safe to drop.
        No workspaces at all still needs a sane answer, hence the coalesce: a
        fresh install has nothing to expire and should not drop today's data.
@@ -537,9 +556,11 @@ export async function pruneRetention(
     `)) as unknown as [{ n: number }];
 
     return { partitionsDropped, rowsDeleted: n ?? 0 };
-  } finally {
-    await db.execute(sql`select pg_advisory_unlock(hashtext('click_events_prune_retention'))`);
-  }
+  });
+
+  /* Another holder had the lease, so this pass did nothing. Reported as zeroes
+     rather than as a failure, because it is the mechanism working. */
+  return lease.value ?? { partitionsDropped: 0, rowsDeleted: 0 };
 }
 
 /**

@@ -85,6 +85,13 @@
       "when": 1788074200290,
       "tag": "0011_illegal_kabuki",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788102275275,
+      "tag": "0012_job_leases",
+      "breakpoints": true
     }
   ]
 }
