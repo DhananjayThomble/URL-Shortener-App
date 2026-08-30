@@ -17,7 +17,9 @@ import {
   clientIpFromXff,
 } from "@snapurl/domain";
 import { createCacheStore, type CacheDriver } from "@snapurl/cache";
-import { PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoLinkResolver, PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
 import { CachingLinkResolver } from "./caching-resolver.js";
 import { PostgresClickSink, type ClickSink } from "./click-sink.js";
 import { DailySaltCache } from "./salt.js";
@@ -71,6 +73,15 @@ const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
    docs/DECISIONS.md for the per-profile reasoning. */
 const CACHE_DRIVER = (process.env.CACHE_DRIVER ?? "memory") as CacheDriver;
 const REDIS_URL = process.env.REDIS_URL;
+
+/* Which store the redirect resolves link config from, keyed on LINK_PROJECTION:
+   'dynamo' reads the DynamoDB projection the worker writes (the AWS profile);
+   anything else / unset reads Postgres directly, which is what local dev,
+   compose, the single-node and the Kubernetes profiles all use — byte-for-byte
+   the behaviour before this switch existed. LINK_PROJECTION_TABLE names the
+   DynamoDB table on the 'dynamo' path. */
+const LINK_PROJECTION = process.env.LINK_PROJECTION ?? "none";
+const LINK_PROJECTION_TABLE = process.env.LINK_PROJECTION_TABLE;
 /* A short bounded-staleness window: an edited link stops serving its old
    destination within this many seconds even before edit-invalidation lands.
    Ten seconds keeps the database out of the hot path for the common repeated
@@ -112,13 +123,30 @@ async function init(): Promise<void> {
     max: POOL_MAX,
   });
   close = database.close;
-  const postgresResolver = new PostgresLinkResolver(database.db);
-  /* Wrap the Postgres resolver in the short-lived cache. With the default
-     'memory' driver this is a per-instance cache with a 10s TTL — a safe
-     optimization that never changes redirect correctness: a hot link still
-     302s to the right place and the click is still recorded per request. */
+  /* The base resolver: DynamoDB projection on the AWS profile, Postgres
+     everywhere else. Under 'dynamo' the redirect does NOT need Postgres to
+     RESOLVE a link — the projection carries everything — though it still opens
+     the connection below for the click sink (CLICK_SINK=postgres) and the
+     daily salt cache; moving those off Postgres (and the redirect out of the
+     VPC) is FEAT-003. The real payoff of the projection — the redirect leaving
+     the VPC entirely — lands there, once the SQS click sink exists. */
+  let baseResolver: LinkResolver;
+  if (LINK_PROJECTION === "dynamo") {
+    if (!LINK_PROJECTION_TABLE) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
+    const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION }));
+    baseResolver = new DynamoLinkResolver(dynamo, LINK_PROJECTION_TABLE);
+  } else {
+    baseResolver = new PostgresLinkResolver(database.db);
+  }
+  /* Wrap the base resolver in the short-lived cache. With the default 'memory'
+     driver this is a per-instance cache with a 10s TTL — a safe optimization
+     that never changes redirect correctness: a hot link still 302s to the
+     right place and the click is still recorded per request. DynamoDB is
+     already fast, but the wrap is kept uniform (it cuts read cost and keeps hit
+     and miss returning an identical link); the 'none' path wraps
+     PostgresLinkResolver exactly as before. */
   const cacheStore = await createCacheStore({ driver: CACHE_DRIVER, redisUrl: REDIS_URL });
-  resolver = new CachingLinkResolver(postgresResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
+  resolver = new CachingLinkResolver(baseResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
   clicks = new PostgresClickSink(database.db);
   salts = new DailySaltCache(database.db);
 }

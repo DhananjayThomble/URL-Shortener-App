@@ -8,6 +8,7 @@ import {
 } from "aws-cdk-lib";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as events from "aws-cdk-lib/aws-events";
@@ -234,6 +235,48 @@ export class SnapUrlStack extends Stack {
        only S3 and DynamoDB get one — the two that happen to be gateways. */
     vpc.addGatewayEndpoint("S3Endpoint", { service: ec2.GatewayVpcEndpointAwsService.S3 });
     vpc.addGatewayEndpoint("DynamoEndpoint", { service: ec2.GatewayVpcEndpointAwsService.DYNAMODB });
+
+    /* ---------------------------------------------------------
+       Link projection table (Phase 7, #288)
+
+       The redirect hot path resolves link config from this DynamoDB projection
+       rather than Postgres: one GetItem, no connection pool, no ~109-connection
+       RDS ceiling — which is what makes the redirect viable on Lambda and, once
+       the SQS click sink lands (#288 3b / FEAT-003), lets it leave the VPC. The
+       worker drains projection_outbox into it; the redirect reads it back. The
+       item shape is @snapurl/database's link-projection module.
+
+       PAY_PER_REQUEST: the redirect's traffic is spiky and mostly served by the
+       hot-link cache, so there is no steady RPS to provision against — on-demand
+       is both cheaper and one less number to tune. PITR is on: the projection is
+       derivable from Postgres (re-drain the outbox), but point-in-time recovery
+       is free-tier-cheap insurance against an operational mistake.
+
+       The GSI on `linkId` closes the delete-key gap: the API's outbox row for a
+       delete carries only the link id and the link row is gone by drain time, so
+       the worker cannot compute the (domain, slug) key from Postgres. It queries
+       this index for the item(s) with that id and deletes them instead. The
+       index name and the `linkId` attribute match LINK_ID_GSI / LINK_ID_ATTR in
+       @snapurl/database. */
+    const linkProjectionTable = new dynamodb.Table(this, "LinkProjectionTable", {
+      partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      /* RETAIN, not DESTROY: like the database's SNAPSHOT policy, a `cdk
+         destroy` should not silently take the edge's link config with it. The
+         table is cheap to keep and re-derivable, but losing it unprompted is
+         the wrong default. */
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    linkProjectionTable.addGlobalSecondaryIndex({
+      indexName: "linkId-index",
+      partitionKey: { name: "linkId", type: dynamodb.AttributeType.STRING },
+      /* KEYS_ONLY: the delete path only needs each matching item's PK/SK to
+         issue the DeleteItem, so projecting the full item into the index would
+         be storage and write cost for nothing. */
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
 
     /* ---------------------------------------------------------
        Database
@@ -563,9 +606,25 @@ export class SnapUrlStack extends Stack {
          is the highest-volume function — two JSON lines per request at `info`
          is ~60GB/month of ingest at 100M redirects — so the hot path stays
          quiet while api and worker keep the configured level. */
-      environment: { ...commonEnv, AWS_LWA_READINESS_CHECK_PATH: "/health", LOG_LEVEL: "warn" },
+      environment: {
+        ...commonEnv,
+        AWS_LWA_READINESS_CHECK_PATH: "/health",
+        LOG_LEVEL: "warn",
+        /* AWS profile: resolve link config from the DynamoDB projection, not
+           Postgres. On redirectFn/workerFn only (not commonEnv), so this stays
+           the AWS profile's choice — the single-node/k8s profiles are
+           compose/Helm and never see it, and the free/none topology is
+           unaffected. */
+        LINK_PROJECTION: "dynamo",
+        LINK_PROJECTION_TABLE: linkProjectionTable.tableName,
+      },
+      /* Still IN the VPC for now — the redirect leaves it in FEAT-003, once the
+         SQS click sink exists so it no longer needs Postgres on the hot path. */
       ...vpcSettings,
     });
+
+    /* The redirect only reads the projection. */
+    linkProjectionTable.grantReadData(redirectFn);
 
 
     /* IAM auth, not NONE: a NONE Function URL is reachable by anyone on the
@@ -691,9 +750,20 @@ export class SnapUrlStack extends Stack {
       /* No WORKER_MODE: nothing reads it. The long-running process takes
          `--once` from argv, and the Lambda entrypoint (apps/worker/src/lambda.ts)
          skips that path entirely and calls the two jobs directly. */
-      environment: commonEnv,
+      environment: {
+        ...commonEnv,
+        /* AWS profile: drain projection_outbox into the DynamoDB projection.
+           On workerFn only, matching redirectFn — see the note there. */
+        LINK_PROJECTION: "dynamo",
+        LINK_PROJECTION_TABLE: linkProjectionTable.tableName,
+      },
       ...vpcSettings,
     });
+
+    /* The worker writes the projection (puts on upsert) and deletes on remove,
+       and queries the linkId GSI to find what to delete — readWriteData covers
+       the table and its indexes. */
+    linkProjectionTable.grantReadWriteData(workerFn);
 
 
     /* EventBridge rather than an in-process interval: a scheduled rule

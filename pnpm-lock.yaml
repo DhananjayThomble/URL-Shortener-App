@@ -96,6 +96,12 @@ importers:
 
   apps/redirect:
     dependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: ^3.1121.0
+        version: 3.1121.0
+      '@aws-sdk/lib-dynamodb':
+        specifier: ^3.1121.0
+        version: 3.1121.0(@aws-sdk/client-dynamodb@3.1121.0)
       '@snapurl/cache':
         specifier: workspace:*
         version: link:../../packages/cache
@@ -133,6 +139,12 @@ importers:
 
   apps/worker:
     dependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: ^3.1121.0
+        version: 3.1121.0
+      '@aws-sdk/lib-dynamodb':
+        specifier: ^3.1121.0
+        version: 3.1121.0(@aws-sdk/client-dynamodb@3.1121.0)
       '@snapurl/contract':
         specifier: workspace:*
         version: link:../../packages/contract

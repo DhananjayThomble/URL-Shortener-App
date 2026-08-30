@@ -1,5 +1,28 @@
-import { and, domains, eq, linkCounters, links, routingRules, sql, type Database } from "@snapurl/database";
+import {
+  and,
+  domains,
+  domainMetaKey,
+  eq,
+  fromDomainItem,
+  fromLinkItem,
+  linkCounters,
+  linkKey,
+  links,
+  normaliseHost,
+  routingRules,
+  sql,
+  type Database,
+  type DomainItem,
+  type LinkItem,
+} from "@snapurl/database";
+import { GetCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { RoutingRule } from "@snapurl/contract";
+
+/* normaliseHost lives in @snapurl/database's link-projection module now — the
+   single source of truth shared by the Postgres lookup here and the DynamoDB
+   projection key-builders — and is re-exported so existing importers
+   (main.ts, caching-resolver.ts, the tests) keep importing it from here. */
+export { normaliseHost };
 
 /* ============================================================
    Resolving (host, slug) to everything the redirect needs.
@@ -51,12 +74,6 @@ export interface ResolvedDomain {
 export interface LinkResolver {
   resolve(host: string, slug: string): Promise<ResolvedLink | null>;
   resolveDomain(host: string): Promise<ResolvedDomain | null>;
-}
-
-/** Strips the port so links created against "localhost:3002" resolve when the
- *  request arrives with a Host header of "localhost:3002" or "localhost". */
-export function normaliseHost(host: string): string {
-  return host.toLowerCase().trim();
 }
 
 export class PostgresLinkResolver implements LinkResolver {
@@ -146,10 +163,40 @@ export class PostgresLinkResolver implements LinkResolver {
   }
 }
 
-/* The DynamoDB adapter is deliberately not written yet.
+/* ============================================================
+   DynamoLinkResolver — the AWS-serverless-profile adapter.
 
-   Writing it against a table that does not exist would be code nobody has run.
-   The API already emits the projection_outbox rows it needs (see
-   LinksService.enqueueProjection), so the remaining work is: create the table
-   in CDK, have the worker drain the outbox into it, and implement this
-   interface over GetItem. The shape above is exactly what one item holds. */
+   Reads the projection the worker writes (see the worker's
+   DynamoProjection and @snapurl/database/link-projection). One
+   GetItem per resolve, no connection pool, which is what makes the
+   redirect viable on Lambda without the ~109-connection RDS
+   ceiling — and, in FEAT-003, lets it leave the VPC entirely.
+
+   The DynamoDBDocumentClient and table name are injected via the
+   constructor so the command shapes can be unit-tested against a
+   mocked client, exactly like DynamoDbCacheStore. The item shape
+   and the Date revival are the shared mapper's, so a field this
+   returns cannot drift from a field the worker projected.
+   ============================================================ */
+export class DynamoLinkResolver implements LinkResolver {
+  constructor(
+    private readonly client: DynamoDBDocumentClient,
+    private readonly table: string,
+  ) {}
+
+  async resolve(host: string, slug: string): Promise<ResolvedLink | null> {
+    const result = await this.client.send(
+      new GetCommand({ TableName: this.table, Key: linkKey(host, slug) }),
+    );
+    if (!result.Item) return null;
+    return fromLinkItem(result.Item as LinkItem);
+  }
+
+  async resolveDomain(host: string): Promise<ResolvedDomain | null> {
+    const result = await this.client.send(
+      new GetCommand({ TableName: this.table, Key: domainMetaKey(host) }),
+    );
+    if (!result.Item) return null;
+    return fromDomainItem(result.Item as DomainItem);
+  }
+}

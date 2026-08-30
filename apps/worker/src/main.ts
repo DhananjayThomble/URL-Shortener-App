@@ -1,7 +1,10 @@
 import pino from "pino";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
-import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired } from "./jobs/outbox.js";
+import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
+import { DynamoProjection } from "./jobs/dynamo-projection.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 
 /* ============================================================
@@ -72,12 +75,42 @@ export async function close(): Promise<void> {
   if (dbHandle) await dbHandle.close();
 }
 
-const projection = new NoProjection();
+/* Which projection target the outbox drains into, keyed on LINK_PROJECTION:
+
+     'dynamo' -> DynamoProjection, writing the DynamoDB projection the AWS
+                 redirect resolves against (LINK_PROJECTION_TABLE names the
+                 table; region from the standard AWS_REGION env).
+     anything else / unset -> NoProjection, the no-op default. The single-node
+                 and Kubernetes workers keep using it — the redirect reads
+                 Postgres directly there, so there is nothing to project.
+
+   Built once and reused across warm Lambda invocations, mirroring the memoised
+   db handle. The DynamoDB path needs the db handle to read a link's config for
+   an upsert, so the target is resolved lazily against the passed database
+   rather than at import (which would open no Postgres connection either way). */
+const LINK_PROJECTION = process.env.LINK_PROJECTION ?? "none";
+let projectionTarget: ProjectionTarget | undefined;
+
+function projectionFor(database: Database): ProjectionTarget {
+  if (!projectionTarget) {
+    if (LINK_PROJECTION === "dynamo") {
+      const table = process.env.LINK_PROJECTION_TABLE;
+      if (!table) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
+      const client = DynamoDBDocumentClient.from(
+        new DynamoDBClient({ region: process.env.AWS_REGION }),
+      );
+      projectionTarget = new DynamoProjection(database, client, table);
+    } else {
+      projectionTarget = new NoProjection();
+    }
+  }
+  return projectionTarget;
+}
 
 /** Runs often: this is the loop that makes the dashboards current. */
 export async function runFrequent(database: Database) {
   const rolled = await rollupClicks(database);
-  const outbox = await drainOutbox(database, projection);
+  const outbox = await drainOutbox(database, projectionFor(database));
   const webhooks = await deliverWebhooks(database);
 
   if (rolled.events || outbox.processed || outbox.failed || webhooks.sent || webhooks.failed) {
