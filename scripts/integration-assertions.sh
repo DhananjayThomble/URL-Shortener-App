@@ -80,21 +80,25 @@ else
 fi
 
 echo
-echo "== the click lands in click_events =="
-# The redirect service records clicks asynchronously, so poll rather than
-# assume the row is there the instant the 302 came back. Note: this count is
-# over click_events regardless of is_bot, so it would pass even for a bot UA;
-# the click_daily check below is the one that requires a non-bot UA.
+echo "== the click lands in click_events, exactly once =="
+# The redirect now AWAITS the click write before it sends the 302 (issue #277),
+# so the row exists synchronously by the time the redirect returns. We still
+# poll briefly to absorb commit/visibility lag, but the assertion is now
+# EXACTLY ONE row: this script drives exactly one redirect to this slug, so a
+# single click_events row is the correct count. A count other than 1 means
+# either the write was lost (fire-and-forget regression) or duplicated. Note:
+# this count is over click_events regardless of is_bot, so it holds for a bot
+# UA too; the click_daily check below is the one that requires a non-bot UA.
 EVENTS=0
 for i in $(seq 1 20); do
   EVENTS="$(dbq "select count(*) from click_events where link_id in (select id from links where slug = '$SLUG')" | tr -d '[:space:]')"
   [ "${EVENTS:-0}" -ge 1 ] && break
   sleep 1
 done
-if [ "${EVENTS:-0}" -ge 1 ]; then
-  ok "the redirect recorded a click in click_events ($EVENTS)"
+if [ "${EVENTS:-0}" -eq 1 ]; then
+  ok "the redirect recorded exactly one click in click_events ($EVENTS)"
 else
-  bad "click not recorded in click_events" "count=$EVENTS after 20s"
+  bad "redirect did not record exactly one click in click_events" "expected exactly 1, got count=$EVENTS after 20s"
 fi
 
 echo
