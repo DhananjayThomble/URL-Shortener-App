@@ -180,9 +180,15 @@ importers:
         specifier: ^4.1.12
         version: 4.4.3
     devDependencies:
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@8.1.1)(terser@5.51.0)(tsx@4.23.12)
 
   packages/database:
     dependencies:

@@ -4,6 +4,7 @@
  * change it here — tsc then points at every call site that needs updating,
  * which is the whole reason this package exists.
  */
+export * from "./http-url.js";
 export * from "./link.js";
 export * from "./analytics.js";
 export * from "./workspace.js";

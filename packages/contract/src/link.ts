@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HttpUrl } from "./http-url.js";
 
 /* ============================================================
    Links, routing rules, and the inputs that create and edit them.
@@ -25,7 +26,7 @@ export const RoutingRule = z.object({
     device: DeviceType.nullable().optional(),
     language: z.string().nullable().optional(),
   }),
-  then: z.string().url(),
+  then: HttpUrl,
   weight: z.number().min(0).max(100).nullable().optional(),
 });
 export type RoutingRule = z.infer<typeof RoutingRule>;
@@ -92,7 +93,8 @@ export const Link = z.object({
     .object({
       title: z.string().nullable().optional(),
       description: z.string().nullable().optional(),
-      image: z.string().nullable().optional(),
+      /** Lands in an og:image; must be a real http(s) URL, never javascript:/data:. */
+      image: HttpUrl.nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -104,7 +106,7 @@ export const Link = z.object({
 export type Link = z.infer<typeof Link>;
 
 export const CreateLinkInput = z.object({
-  destination: z.string().min(1, "Where should this link go?").url("That doesn't look like a URL — include https://"),
+  destination: z.string().min(1, "Where should this link go?").pipe(HttpUrl),
   domain: z.string().min(1),
   slug: z
     .string()
@@ -138,7 +140,8 @@ export const CreateLinkInput = z.object({
     .object({
       title: z.string().optional(),
       description: z.string().optional(),
-      image: z.string().optional(),
+      /** Lands in an og:image; must be a real http(s) URL, never javascript:/data:. */
+      image: HttpUrl.optional(),
     })
     .optional(),
 });

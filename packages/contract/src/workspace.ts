@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HttpUrl } from "./http-url.js";
 import { RedirectType } from "./link.js";
 import { CurrencyCode } from "./analytics.js";
 
@@ -62,8 +63,8 @@ export const AddDomainInput = z.object({
     .string()
     .min(3)
     .regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, "That doesn't look like a domain name"),
-  rootRedirect: z.string().url().nullable().optional(),
-  notFoundRedirect: z.string().url().nullable().optional(),
+  rootRedirect: HttpUrl.nullable().optional(),
+  notFoundRedirect: HttpUrl.nullable().optional(),
 });
 export type AddDomainInput = z.infer<typeof AddDomainInput>;
 
@@ -141,7 +142,7 @@ export const Webhook = z.object({
 export type Webhook = z.infer<typeof Webhook>;
 
 export const CreateWebhookInput = z.object({
-  endpoint: z.string().url("Webhook endpoints must be absolute https URLs"),
+  endpoint: HttpUrl,
   events: z.array(z.enum(WEBHOOK_EVENTS)).min(1),
 });
 export type CreateWebhookInput = z.infer<typeof CreateWebhookInput>;
@@ -186,7 +187,7 @@ export const UpsertBioPageInput = z.object({
     .array(
       BioBlock.omit({ id: true }).extend({
         id: z.string().optional(),
-        href: z.string().url().optional(),
+        href: HttpUrl.optional(),
       }),
     )
     .default([]),
