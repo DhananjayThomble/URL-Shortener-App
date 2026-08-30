@@ -28,6 +28,12 @@ new SnapUrlStack(app, "SnapUrl", {
      (managed NAT, ~$32/mo) or `-c natStrategy=none` (free, no egress). Context
      is untyped, so the stack validates it and throws on anything else. */
   natStrategy: app.node.tryGetContext("natStrategy"),
+  /* Where AWS Budgets alarms are delivered. Optional and deploy-time (a per-
+     deploy destination, not stage config), so it lives here rather than SSM.
+     Left unset, the budget + SNS topic are not created and the stack still
+     deploys; set it with `-c budgetEmail=you@example.com` to turn the $25/$50/
+     $75 spend alarms on. */
+  budgetEmail: app.node.tryGetContext("budgetEmail"),
   description: "SnapURL: API, redirect service, worker, and the Postgres they share.",
   tags: {
     Project: "SnapURL",

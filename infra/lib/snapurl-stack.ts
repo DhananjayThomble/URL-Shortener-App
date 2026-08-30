@@ -8,11 +8,16 @@ import {
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as logs from "aws-cdk-lib/aws-logs";
 import * as apigw from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import * as budgets from "aws-cdk-lib/aws-budgets";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as rds from "aws-cdk-lib/aws-rds";
 import type { Construct } from "constructs";
 import * as path from "node:path";
@@ -89,6 +94,14 @@ export interface SnapUrlStackProps extends StackProps {
    * topology at the cost of those features. See {@link NatStrategy}.
    */
   natStrategy?: NatStrategy;
+  /**
+   * Where AWS Budgets alarms are delivered. Optional: budgets are only useful
+   * with a destination, and a subscription to an empty address fails at deploy
+   * time, so when this is unset the budget + SNS topic are simply not created
+   * (the stack still synths and deploys). Set it per deploy with
+   * `-c budgetEmail=you@example.com`. See the Budgets block below.
+   */
+  budgetEmail?: string;
 }
 
 export class SnapUrlStack extends Stack {
@@ -358,6 +371,45 @@ export class SnapUrlStack extends Stack {
 
     const repoRoot = path.resolve(__dirname, "..", "..");
 
+    /* Log retention. CDK's default for a Lambda's auto-created log group is
+       "never expire", and Fastify writes two JSON lines per request at `info`
+       — at 100M redirects/month that is ~60GB/month ingested with storage
+       compounding forever. So each function gets an explicit LogGroup with a
+       two-week retention, wired through the function's `logGroup` prop.
+
+       `logGroup` is deliberately used over the older `logRetention` prop: the
+       latter provisions a custom-resource Lambda (a LogRetention singleton)
+       that calls PutRetentionPolicy on every deploy, whereas an explicit
+       LogGroup sets RetentionInDays natively on the CloudFormation resource
+       with no extra Lambda. When `logGroup` is supplied, CDK sends the
+       function's logs there instead of creating the default group, so the two
+       do not collide.
+
+       removalPolicy DESTROY (not the LogGroup default of RETAIN): a hobby
+       stack should not leave orphaned log groups behind on `cdk destroy`. The
+       logs here are operational, not records to preserve; the database keeps
+       its SNAPSHOT policy for the data that matters. */
+    const logGroupFor = (id: string) =>
+      new logs.LogGroup(this, id, {
+        retention: logs.RetentionDays.TWO_WEEKS,
+        removalPolicy: RemovalPolicy.DESTROY,
+      });
+
+    /* Reserved concurrency caps. Every function shares one db.t4g.micro, which
+       allows ~112 connections; 3 are reserved for the superuser and 1 is
+       needed by the migrate task, leaving ~108 usable. Each Lambda instance
+       holds one connection (DATABASE_POOL_MAX=1 above), so the sum of the caps
+       below is the peak connection count: 80 + 20 + 2 = 102, under the ceiling
+       with headroom. Uncapped, the 10-second redirect timeout turns a traffic
+       spike into exhausted connections plus a bill; the caps make excess
+       invocations fail fast instead. Do NOT raise one of these without
+       re-checking that the three still sum to under ~108. (The original audit
+       proposed 100/20/2 = 122, which exceeds the very ceiling it meant to
+       respect; these are the corrected values.) */
+    const REDIRECT_RESERVED_CONCURRENCY = 80;
+    const API_RESERVED_CONCURRENCY = 20;
+    const WORKER_RESERVED_CONCURRENCY = 2;
+
     /* Container images rather than zip bundles.
        The Dockerfile that builds these is the same one verified locally with
        `docker compose --profile full`, so what runs in Lambda is what was
@@ -390,6 +442,8 @@ export class SnapUrlStack extends Stack {
       code: imageFor("api", "lambda-web"),
       memorySize: 1024, // CPU scales with memory; 1024 is the usual sweet spot.
       timeout: Duration.seconds(30),
+      reservedConcurrentExecutions: API_RESERVED_CONCURRENCY,
+      logGroup: logGroupFor("ApiLogGroup"),
       environment: {
         ...commonEnv,
         API_PREFIX,
@@ -418,10 +472,18 @@ export class SnapUrlStack extends Stack {
       // a 302. Paying for memory it never uses is paying for nothing.
       memorySize: 512,
       timeout: Duration.seconds(10),
+      reservedConcurrentExecutions: REDIRECT_RESERVED_CONCURRENCY,
+      logGroup: logGroupFor("RedirectLogGroup"),
       /* "/" is a real route here — it serves a domain's root redirect, and
          answering it costs a database round trip. /health is the cheap one and
-         the one that actually reports whether Postgres is reachable. */
-      environment: { ...commonEnv, AWS_LWA_READINESS_CHECK_PATH: "/health" },
+         the one that actually reports whether Postgres is reachable.
+
+         LOG_LEVEL is pinned to `warn` here, overriding commonEnv's configured
+         level (the override wins because it comes later in the spread). This
+         is the highest-volume function — two JSON lines per request at `info`
+         is ~60GB/month of ingest at 100M redirects — so the hot path stays
+         quiet while api and worker keep the configured level. */
+      environment: { ...commonEnv, AWS_LWA_READINESS_CHECK_PATH: "/health", LOG_LEVEL: "warn" },
       ...vpcSettings,
     });
 
@@ -530,6 +592,8 @@ export class SnapUrlStack extends Stack {
       // Rollups over a day of clicks; generous because it runs once a minute,
       // not once a request.
       timeout: Duration.minutes(5),
+      reservedConcurrentExecutions: WORKER_RESERVED_CONCURRENCY,
+      logGroup: logGroupFor("WorkerLogGroup"),
       /* No WORKER_MODE: nothing reads it. The long-running process takes
          `--once` from argv, and the Lambda entrypoint (apps/worker/src/lambda.ts)
          skips that path entirely and calls the two jobs directly. */
@@ -546,6 +610,77 @@ export class SnapUrlStack extends Stack {
       targets: [new targets.LambdaFunction(workerFn, { retryAttempts: 2 })],
       description: "Drains the click queue and refreshes the rollup tables.",
     });
+
+    /* ---------------------------------------------------------
+       Budget alarms
+
+       The account runs on $100 of credits, and credits mask overspend until
+       they are gone — by which point the design premise (the credits last the
+       year) may already be false. A budget with early alarms turns that from a
+       surprise into a warning.
+
+       One monthly COST budget with three ACTUAL notifications at absolute
+       dollar thresholds ($25 / $50 / $75), rather than three separate budgets:
+       a single budget keeps the thresholds together and each fires when actual
+       spend crosses that dollar figure. thresholdType is ABSOLUTE_VALUE (a
+       dollar amount) rather than PERCENTAGE, so the alarm points are exactly
+       $25/$50/$75 regardless of the budget's own limit. The limit is set to
+       $100 to mirror the credit balance; the notifications, not the limit, are
+       what actually alert.
+
+       AWS Budgets is a global service (it lives in the account, not a region),
+       so this CfnBudget synthesises and deploys fine from the stack's
+       ap-south-1 region — it does not need to be pinned to us-east-1.
+
+       Notifications go to an SNS topic with an email subscription (rather than
+       a bare EMAIL subscriber on the budget) so more subscribers — a second
+       address, a chatops webhook — can be added later without touching the
+       budget. Guarded on props.budgetEmail: with no destination a budget is
+       useless and a subscription to an empty address fails at deploy, so when
+       the email is unset the topic and budget are simply not created and the
+       stack still deploys. Set it with `-c budgetEmail=you@example.com`. */
+    if (props.budgetEmail) {
+      const budgetTopic = new sns.Topic(this, "BudgetAlarmTopic", {
+        displayName: "SnapURL budget alarms",
+      });
+      budgetTopic.addSubscription(new subscriptions.EmailSubscription(props.budgetEmail));
+
+      /* AWS Budgets publishes to the topic, so the topic policy must allow the
+         budgets service principal to Publish. */
+      budgetTopic.grantPublish(new iam.ServicePrincipal("budgets.amazonaws.com"));
+
+      const budgetSubscribers: budgets.CfnBudget.SubscriberProperty[] = [
+        { subscriptionType: "SNS", address: budgetTopic.topicArn },
+      ];
+      const notificationAt = (
+        threshold: number,
+      ): budgets.CfnBudget.NotificationWithSubscribersProperty => ({
+        notification: {
+          notificationType: "ACTUAL",
+          comparisonOperator: "GREATER_THAN",
+          threshold,
+          thresholdType: "ABSOLUTE_VALUE",
+        },
+        subscribers: budgetSubscribers,
+      });
+
+      new budgets.CfnBudget(this, "MonthlyCostBudget", {
+        budget: {
+          budgetName: "SnapURL-monthly-cost",
+          budgetType: "COST",
+          timeUnit: "MONTHLY",
+          // Mirrors the $100 credit balance. The notifications below, not this
+          // limit, are what alert; absolute-value thresholds fire at the dollar
+          // figures regardless of it.
+          budgetLimit: { amount: 100, unit: "USD" },
+        },
+        notificationsWithSubscribers: [
+          notificationAt(25),
+          notificationAt(50),
+          notificationAt(75),
+        ],
+      });
+    }
 
     /* ---------------------------------------------------------
        Outputs
