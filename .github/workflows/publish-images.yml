@@ -75,7 +75,12 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            # Publish `latest` on any v* release tag. {{is_default_branch}} is
+            # FALSE on a tag push (the ref is refs/tags/v*, not the default
+            # branch), so gating on it would mean a release publishes the
+            # version tags but never `latest` — breaking a clean-machine
+            # `docker compose pull` where .env.example defaults SNAPURL_TAG=latest.
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push
         uses: docker/build-push-action@v6

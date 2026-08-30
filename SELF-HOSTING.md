@@ -63,8 +63,12 @@ $EDITOR .env
 - `APP_DOMAIN` and `SHORT_DOMAIN`: the two domains from the prerequisites.
 - `ACME_EMAIL` (optional but recommended): your contact email for Let's Encrypt,
   so the CA can warn you about expiries. Leave blank to skip.
-- `MAIL_TRANSPORT` (optional): defaults to `outbox`, which records mail to the
-  database without sending it.
+- `MAIL_TRANSPORT` (optional): defaults to `outbox`, which writes each message
+  to a file in a local outbox directory (`os.tmpdir()/snapurl-outbox` by
+  default, override with `MAIL_OUTBOX_DIR`) instead of sending it. On this
+  compose that directory is inside the `api` container and is ephemeral unless
+  you mount a volume for it; a real deployment configures SES or another
+  transport instead.
 
 About the JWT secrets: `init.sh` generates each as 64 hex characters, which is
 well over the minimum. Each secret **must stay at least 32 characters** or the
@@ -188,9 +192,10 @@ Being honest about this matters, so here is the split:
 This profile is deliberately simple, with no Redis and no DynamoDB:
 
 - **Postgres adapters throughout.** The redirect service reads link config
-  straight from Postgres and writes clicks straight to Postgres
-  (`LINK_RESOLVER=postgres`, `CLICK_SINK=postgres`). Postgres is the single
-  source of truth.
+  straight from Postgres and writes clicks straight to Postgres. This is the
+  redirect image's built-in behavior (it wires the Postgres resolver and click
+  sink directly), not a runtime switch you flip, so there is nothing to
+  configure here. Postgres is the single source of truth.
 - **In-memory `CacheStore`** (`CACHE_DRIVER=memory`). The cache is in-process,
   so there is no external cache to run or scale.
 - **In-process click batching.** Click rollups run in the long-running worker's

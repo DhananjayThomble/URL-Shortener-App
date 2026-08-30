@@ -118,10 +118,12 @@ services:
       # service verifies unlock tokens the API signed.
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       WEB_ORIGIN: https://${APP_DOMAIN}
-      # Self-hosting path: read link config straight from Postgres and write
-      # clicks straight to Postgres (no DynamoDB projection).
-      LINK_RESOLVER: postgres
-      CLICK_SINK: postgres
+      # This profile reads link config straight from Postgres and writes clicks
+      # straight to Postgres (no DynamoDB projection). That is the redirect
+      # service's built-in behavior — it constructs the Postgres resolver and
+      # sink unconditionally (apps/redirect/src/main.ts), so there is no runtime
+      # switch to set here. The DynamoDB path is selected by the AWS profile's
+      # own image/adapters, not by an env var on this image.
       CACHE_DRIVER: memory
       TRUSTED_PROXY_HOPS: "1"
       LOG_LEVEL: ${LOG_LEVEL:-info}
