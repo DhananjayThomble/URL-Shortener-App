@@ -17,7 +17,9 @@ function commandName(command: unknown): string {
 }
 
 /** A plain, edge-eligible link: no password, no rules, no click limit, no time
- *  gate, not archived, safe-browsing clean. */
+ *  gate, not archived, safe-browsing clean, AND no transform the edge cannot
+ *  reproduce (no forwardQuery, no utm, no deepLink, no hideReferrer) and not a
+ *  301 (whose permanence the edge would not honour). */
 function eligibleLink(overrides: Partial<ProjectedLink> = {}): ProjectedLink {
   return {
     id: "link-1",
@@ -32,7 +34,7 @@ function eligibleLink(overrides: Partial<ProjectedLink> = {}): ProjectedLink {
     clickLimit: null,
     clicks: 0,
     hasPassword: false,
-    forwardQuery: true,
+    forwardQuery: false,
     deepLink: false,
     hideReferrer: false,
     publicPreview: true,
@@ -100,6 +102,14 @@ describe("KvsWriter.putIfEligible", () => {
     ["activatesAt", { activatesAt: new Date("2099-01-01T00:00:00.000Z") }],
     ["archived", { archived: true }],
     ["unsafe", { safeBrowsingStatus: "malware" }],
+    /* Transform behaviours the edge cannot reproduce (each independently makes a
+       link ineligible so it stays on the authoritative Lambda). */
+    ["forwardQuery", { forwardQuery: true }],
+    ["utm", { utm: { source: "print", medium: "qr", campaign: null, content: null } }],
+    ["deepLink", { deepLink: true }],
+    ["hideReferrer", { hideReferrer: true }],
+    /* A 301's permanence would not be honoured at the edge. */
+    ["301", { redirectType: "301" }],
   ];
 
   for (const [label, overrides] of ineligible) {

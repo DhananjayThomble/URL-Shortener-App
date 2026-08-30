@@ -254,13 +254,30 @@ export function kvsKey(host: string, slug: string): string {
 
 /** Whether a link may be served from the edge fast path.
  *
- *  Edge-eligible iff it is a plain unconditional redirect: no password, no
- *  routing rules, no click limit, and no time gate at all (neither expiry nor
- *  activation — the edge cannot reliably evaluate time), not archived, and
- *  safe-browsing clean. Everything else falls through to the Lambda, which
- *  remains authoritative for click accounting and every conditional gate. This
- *  is the click-accounting decision (option c): the edge only serves links
- *  where per-click accuracy does not matter. */
+ *  Edge-eligible iff it is a plain unconditional redirect the edge can answer
+ *  byte-for-byte the way the Lambda would. That means:
+ *
+ *  - No BLOCKING gate: no password, no routing rules, no click limit, and no
+ *    time gate at all (neither expiry nor activation — the edge cannot reliably
+ *    evaluate time), not archived, and safe-browsing clean. This is the
+ *    click-accounting decision (option c): the edge only serves links where
+ *    per-click accuracy does not matter.
+ *
+ *  - No TRANSFORM the Lambda applies on the happy path and the edge cannot
+ *    reproduce: the redirect Lambda runs buildDestination (which merges the
+ *    forwarded query when `forwardQuery` and injects stored `utm`), buildDeepLink
+ *    (when `deepLink`), and sets `Referrer-Policy: no-referrer` (when
+ *    `hideReferrer`). The edge returns only the raw stored destination, so any of
+ *    `forwardQuery`, a non-null `utm`, `deepLink`, or `hideReferrer` would make
+ *    the edge response materially wrong. Keep those links on the Lambda.
+ *
+ *  - Not a 301: cacheHeadersFor("301") honours the author's chosen permanence
+ *    with `public, max-age=300`, whereas the edge answers every hit with
+ *    `no-store`. Rather than special-case the Function, only 302/307 links are
+ *    edge-served; a 301 stays on the Lambda so its permanence is honoured.
+ *
+ *  Everything else falls through to the Lambda, which remains authoritative for
+ *  click accounting and every conditional gate. */
 export function isEdgeEligible(link: ProjectedLink): boolean {
   return (
     link.hasPassword === false &&
@@ -269,7 +286,12 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
     link.expiresAt == null &&
     link.activatesAt == null &&
     link.archived === false &&
-    link.safeBrowsingStatus === "clean"
+    link.safeBrowsingStatus === "clean" &&
+    link.forwardQuery === false &&
+    link.utm == null &&
+    link.deepLink === false &&
+    link.hideReferrer === false &&
+    link.redirectType !== "301"
   );
 }
 

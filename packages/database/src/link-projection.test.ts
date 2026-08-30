@@ -175,6 +175,41 @@ describe("isEdgeEligible", () => {
   it("is false when safe-browsing is not clean", () => {
     expect(isEdgeEligible({ ...plain, safeBrowsingStatus: "flagged" })).toBe(false);
   });
+
+  /* Transform behaviours the Lambda applies on the happy path and the edge
+     cannot reproduce — each independently makes a link ineligible so the raw
+     stored destination is never served in place of the transformed one. */
+  it("is false when the link forwards the incoming query", () => {
+    expect(isEdgeEligible({ ...plain, forwardQuery: true })).toBe(false);
+  });
+
+  it("is false when the link injects stored UTM params", () => {
+    expect(
+      isEdgeEligible({
+        ...plain,
+        utm: { source: "print", medium: "qr", campaign: null, content: null },
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when the link uses Android deep-linking", () => {
+    expect(isEdgeEligible({ ...plain, deepLink: true })).toBe(false);
+  });
+
+  it("is false when the link suppresses the referrer", () => {
+    expect(isEdgeEligible({ ...plain, hideReferrer: true })).toBe(false);
+  });
+
+  /* A 301's permanence (cacheHeadersFor => public, max-age=300) would not be
+     honoured by the edge's always-no-store response, so 301 links stay on the
+     Lambda. Only 302/307 are edge-served. */
+  it("is false when the redirect is a 301 (permanence not honoured at the edge)", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "301" })).toBe(false);
+  });
+
+  it("is true for a 307 (same non-permanent semantics as 302)", () => {
+    expect(isEdgeEligible({ ...plain, redirectType: "307" })).toBe(true);
+  });
 });
 
 describe("kvsKey / kvsValue", () => {

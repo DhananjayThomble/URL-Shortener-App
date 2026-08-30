@@ -751,9 +751,28 @@ guards conservatively before it looks anything up: only a bare `GET` of a single
 non-empty path segment, no `?k=` unlock token, no trailing `+` trust-preview convention;
 anything else, plus any KVS miss or error, returns the request unchanged so CloudFront
 forwards it to the authoritative Lambda origin. A link is **edge-eligible** only when it
-is a plain unconditional redirect (no password, no rules, no click limit, no expiry, no
-activation, not archived, Safe-Browsing clean) — the edge cannot reliably evaluate time
-or conditions, so the safest rule is to keep everything else on the Lambda.
+is a plain unconditional redirect that the edge can answer exactly the way the Lambda
+would. It is **edge-INELIGIBLE** (kept on the authoritative Lambda) when *any* of these
+hold:
+
+- a **blocking gate** the edge cannot evaluate: a password, routing rules, a click limit,
+  an expiry, an activation time, archived, or a non-`clean` Safe-Browsing status — the
+  edge cannot reliably evaluate time or conditions;
+- a **transform** the Lambda applies on the happy path and the edge cannot reproduce:
+  `forwardQuery` (the Lambda merges the incoming query via `buildDestination`), a non-null
+  `utm` (the Lambda injects the stored campaign params), `deepLink` (the Lambda rewrites
+  Android destinations into `intent://…` via `buildDeepLink`), or `hideReferrer` (the
+  Lambda sets `Referrer-Policy: no-referrer`). The edge returns only the raw stored
+  destination, so serving any of these at the edge would drop query forwarding, campaign
+  params, Android deep-linking, or the no-referrer header the author asked for;
+- a **301**: `cacheHeadersFor("301")` honours the author's chosen permanence with
+  `public, max-age=300`, whereas the edge answers every hit with `no-store`. Rather than
+  special-case the Function, only 302/307 are edge-served and a 301 stays on the Lambda so
+  its permanence is honoured.
+
+Because the edge cannot reproduce the Lambda's query-forwarding, UTM injection,
+deep-linking, referrer suppression, or 301 permanence, those links stay authoritative on
+the Lambda; keeping everything else there too is the safest rule.
 
 **The blocking decision — click accounting for edge-served redirects. Chose (c).** A
 redirect served at the edge never reaches the click pipeline, and the three ways to
