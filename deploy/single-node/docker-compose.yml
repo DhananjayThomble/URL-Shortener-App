@@ -1,0 +1,177 @@
+# Single-node production deployment (Profile 1).
+#
+# This is the profile most self-hosters run: one host, one Postgres, Caddy for
+# automatic TLS, and the three server images pulled from GHCR rather than built
+# locally. It is intentionally SEPARATE from the repo-root docker-compose.yml,
+# which is the dev/CI file (built from source, throwaway secrets, host ports).
+#
+# First run on a clean machine:
+#
+#   git clone https://github.com/DhananjayThomble/URL-Shortener-App.git
+#   cd URL-Shortener-App/deploy/single-node
+#   ./init.sh                       # writes .env and generates secrets
+#   $EDITOR .env                    # set APP_DOMAIN / SHORT_DOMAIN / ACME_EMAIL
+#   docker compose --profile migrate up migrate   # apply schema (one-shot)
+#   docker compose up -d                          # start the stack
+#
+# See SELF-HOSTING.md for the full walk-through (DNS, upgrades, backups).
+#
+# Nothing in this file has a secret or a localhost default: every value comes
+# from .env. init.sh generates the secrets; the operator sets the domains.
+
+name: snapurl-prod
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: snapurl-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - snapurl-pgdata:/var/lib/postgresql
+    # No host port: Postgres is reachable only on the internal compose network.
+    # The apps connect to it by service name (postgres:5432). Back it up with
+    # backup.sh, not by exposing 5432 to the internet.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Applies pending migrations, then exits. Not part of the default stack:
+  # it lives under the "migrate" profile so `docker compose up -d` never runs
+  # it implicitly. Run it once before first boot and again after each upgrade:
+  #
+  #   docker compose --profile migrate up migrate
+  #
+  # It reuses the worker image because that image ships the drizzle/*.sql folder
+  # (packages/database lists "drizzle" in its package.json "files") and bundles
+  # @snapurl/database under /app/node_modules via `pnpm deploy`. The package
+  # main (dist/index.js) re-exports runMigrations (see packages/database/src/
+  # index.ts `export * from "./migrate.js"`), so the bare require resolves.
+  migrate:
+    profiles: ["migrate"]
+    image: ghcr.io/dhananjaythomble/snapurl-worker:${SNAPURL_TAG:-latest}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    command:
+      - node
+      - -e
+      - "require('@snapurl/database').runMigrations(process.env.DATABASE_URL, process.env.DATABASE_SSL==='true').then(r=>{console.log('migrations applied',r.folder);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+
+  api:
+    image: ghcr.io/dhananjaythomble/snapurl-api:${SNAPURL_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # The API signs the JWTs; the redirect service verifies them. Both read
+      # the SAME JWT_ACCESS_SECRET from .env (see below) or password-protected
+      # links break silently. Each must be >=32 chars or the zod schema at boot
+      # fails fast (apps/api/src/config/env.ts).
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      WEB_ORIGIN: https://${APP_DOMAIN}
+      DEFAULT_DOMAIN: ${SHORT_DOMAIN}
+      REDIRECT_ORIGIN: https://${SHORT_DOMAIN}
+      # This profile keeps the cache in-process (no Redis) and batches clicks
+      # in-process. Postgres is the single source of truth.
+      CACHE_DRIVER: memory
+      # Caddy is the single reverse proxy appending X-Forwarded-For, so the
+      # real client IP is exactly one hop from the right.
+      TRUSTED_PROXY_HOPS: "1"
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-outbox}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # No host port: only Caddy is public. The API is reached via caddy ->
+    # api:3001 on the internal network.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  redirect:
+    image: ghcr.io/dhananjaythomble/snapurl-redirect:${SNAPURL_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # MUST match the API's JWT_ACCESS_SECRET (same .env variable): the redirect
+      # service verifies unlock tokens the API signed.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      WEB_ORIGIN: https://${APP_DOMAIN}
+      # Self-hosting path: read link config straight from Postgres and write
+      # clicks straight to Postgres (no DynamoDB projection).
+      LINK_RESOLVER: postgres
+      CLICK_SINK: postgres
+      CACHE_DRIVER: memory
+      TRUSTED_PROXY_HOPS: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # No host port: reached via caddy -> redirect:3002 on the internal network.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    image: ghcr.io/dhananjaythomble/snapurl-worker:${SNAPURL_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # No healthcheck and no ports: the worker serves no HTTP. It runs the
+    # in-process rollup loop on timers; its liveness shows in the rollup tables.
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: snapurl-prod-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - redirect
+    # The ONLY published ports in this stack. Caddy terminates TLS for both
+    # domains and reverse-proxies inward. Ports 80 and 443 must be reachable
+    # from the internet for ACME (HTTP/TLS-ALPN challenge) to issue certs.
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Consumed by the Caddyfile via {$APP_DOMAIN} / {$SHORT_DOMAIN} / {$ACME_EMAIL}.
+      APP_DOMAIN: ${APP_DOMAIN}
+      SHORT_DOMAIN: ${SHORT_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named volumes so issued ACME certificates and OCSP staples survive
+      # restarts. Losing /data means re-issuing certs and risking rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  snapurl-pgdata:
+  caddy_data:
+  caddy_config:
