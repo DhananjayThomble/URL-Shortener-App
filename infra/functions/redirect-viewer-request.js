@@ -119,4 +119,12 @@ async function handler(event) {
   });
 }
 
-export { handler, decide, edgeKey };
+/*
+ * CloudFront Functions (JS_2_0) expect the module to export exactly the entry
+ * point `handler`. `decide` and `edgeKey` are deliberately NOT exported here —
+ * they are exercised through the byte-for-byte twin in
+ * redirect-viewer-request.logic.mjs (the DRIFT-GUARDED REGION above is what the
+ * test asserts is identical), so the deployed file stays a minimal, valid
+ * CloudFront Function while the logic remains fully unit-tested.
+ */
+export { handler };

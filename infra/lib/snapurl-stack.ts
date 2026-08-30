@@ -773,20 +773,25 @@ export class SnapUrlStack extends Stack {
        x-forwarded-host, which the origin request policy below forwards while
        leaving Host alone. apps/redirect/src/main.ts reads exactly that header.
 
-       It is a named, standalone function on purpose: Phase 7 (#289) extends
-       this same function with the KeyValueStore edge fast path. */
+       It is a named, standalone function on purpose: Phase 7 (#289) now extends
+       this same function with the KeyValueStore edge fast path — for a bare GET
+       of a simple link the function answers the 302 itself from a KVS entry the
+       worker writes, with no Lambda invocation, no DynamoDB and no VPC; anything
+       it cannot answer falls through to the origin unchanged. The source is the
+       tested/extended file in infra/functions (fromFile, so the deployed source
+       is the unit-tested source, not a divergent inline copy), and it reads the
+       RedirectLinkKvs store associated below. */
+    const linkKvs = new cloudfront.KeyValueStore(this, "RedirectLinkKvs", {
+      comment: "Edge fast-path redirects for simple links (#289): { destination, redirectType } per edge-eligible link.",
+    });
+
     const redirectViewerRequest = new cloudfront.Function(this, "RedirectViewerRequest", {
       runtime: cloudfront.FunctionRuntime.JS_2_0,
-      comment: "Copies the viewer Host into x-forwarded-host for the redirect origin.",
-      code: cloudfront.FunctionCode.fromInline(
-        [
-          "function handler(event) {",
-          "  var request = event.request;",
-          "  request.headers['x-forwarded-host'] = { value: request.headers.host.value };",
-          "  return request;",
-          "}",
-        ].join("\n"),
-      ),
+      comment: "x-forwarded-host + KVS edge fast path for simple redirects (#274/#289).",
+      keyValueStore: linkKvs,
+      code: cloudfront.FunctionCode.fromFile({
+        filePath: path.join(__dirname, "..", "functions", "redirect-viewer-request.js"),
+      }),
     });
 
     /* Host is deliberately NOT in this allow-list: CloudFront always sends the
@@ -828,10 +833,33 @@ export class SnapUrlStack extends Stack {
            not a nicety — without it the app could not resolve the viewer's
            domain once Host is pinned to the origin. */
         origin: origins.FunctionUrlOrigin.withOriginAccessControl(redirectUrl),
-        // Redirects must never be cached at the edge. The product promise is
-        // "print it once, change where it points forever" — a cached 302 makes
-        // a destination edit invisible to anyone who already clicked.
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        // A 1-5s edge TTL, NOT CACHING_DISABLED (#289). The product promise is
+        // "print it once, change where it points forever", and the layer that
+        // actually protects it is cacheHeadersFor() in
+        // packages/domain/src/destination.ts, which already sends `no-store` to
+        // the BROWSER — so no visitor ever caches a stale 302 regardless of the
+        // edge. CACHING_DISABLED was over-broad: a few seconds of edge TTL keeps
+        // a destination edit effectively instant (well under a printed-QR's
+        // reaction time) while absorbing QR-scan / burst storms that would
+        // otherwise each hit the fall-through Lambda origin. This TTL only helps
+        // the FALL-THROUGH path: the viewer-request Function answers simple
+        // links from KVS *before* the cache is consulted, so the fast path is
+        // separate. queryString is included in the cache key so the `?k=` unlock
+        // token and the UTM / forwardQuery overrides key distinct cache entries
+        // (they are already forwarded to the origin by RedirectOrigReqPolicy) —
+        // dropping the query string would let one visitor's unlock/UTM response
+        // be served to the next; headers/cookies stay out of the key.
+        cachePolicy: new cloudfront.CachePolicy(this, "RedirectShortTtl", {
+          comment: "Short 1-5s edge TTL for redirects (#289): absorbs burst on the fall-through Lambda; browser no-store keeps edits instant.",
+          defaultTtl: Duration.seconds(1),
+          minTtl: Duration.seconds(0),
+          maxTtl: Duration.seconds(5),
+          queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
+          headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+          cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+          enableAcceptEncodingGzip: true,
+          enableAcceptEncodingBrotli: true,
+        }),
         originRequestPolicy: redirectOriginRequestPolicy,
         functionAssociations: [
           { function: redirectViewerRequest, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
@@ -848,8 +876,8 @@ export class SnapUrlStack extends Stack {
       // PriceClass 200, not 100: India is in Price Class 200, and 100 (US /
       // Canada / Mexico / Europe / Israel) excludes it. Under 100 an Indian
       // visitor — the primary audience — routes to a European edge and back to
-      // ap-south-1 for every request, and since the behaviour is
-      // CACHING_DISABLED nothing is absorbed at the edge, so every request pays
+      // ap-south-1 for every request, and with only the short 1-5s fall-through
+      // TTL little is absorbed at the edge for a cold slug, so most requests pay
       // both legs (~150-210 ms of p50). 200 adds the Indian (and wider APAC/
       // South-American) edges; the marginally higher per-GB egress there is
       // immaterial at the payload size of a 302. (300 — the whole world,
@@ -883,6 +911,11 @@ export class SnapUrlStack extends Stack {
            On workerFn only, matching redirectFn — see the note there. */
         LINK_PROJECTION: "dynamo",
         LINK_PROJECTION_TABLE: linkProjectionTable.tableName,
+        /* #289 edge fast path: the presence of this ARN is what switches the
+           worker's KvsWriter on (see apps/worker/src/main.ts projectionFor).
+           On workerFn ONLY — the redirect never writes the KVS; the CloudFront
+           Function reads it via its association above. */
+        LINK_PROJECTION_KVS_ARN: linkKvs.keyValueStoreArn,
       },
       ...vpcSettings,
     });
@@ -891,6 +924,25 @@ export class SnapUrlStack extends Stack {
        and queries the linkId GSI to find what to delete — readWriteData covers
        the table and its indexes. */
     linkProjectionTable.grantReadWriteData(workerFn);
+
+    /* #289 edge fast path: the worker's KvsWriter maintains the RedirectLinkKvs
+       store on the same outbox drain that writes the DynamoDB projection —
+       PutKey on an edge-eligible upsert, DeleteKey when a link becomes
+       ineligible or is removed, and DescribeKeyValueStore to read the ETag each
+       conditional write needs. These are cloudfront-keyvaluestore DATA-plane
+       actions (distinct from the cloudfront:* control plane) and are scoped to
+       exactly this store's ARN. There is no CDK grant helper for the KVS data
+       plane, so the least-privilege statement is written by hand. */
+    workerFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "cloudfront-keyvaluestore:PutKey",
+          "cloudfront-keyvaluestore:DeleteKey",
+          "cloudfront-keyvaluestore:DescribeKeyValueStore",
+        ],
+        resources: [linkKvs.keyValueStoreArn],
+      }),
+    );
 
     /* The SQS event source mapping the issue explicitly chose over a
        self-managed ReceiveMessage: the Lambda service POLLS the queue from
