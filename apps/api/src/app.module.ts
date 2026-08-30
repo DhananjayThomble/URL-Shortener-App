@@ -21,6 +21,7 @@ import { BioPagesModule } from "./bio-pages/bio-pages.module.js";
 import { PublicModule } from "./public/public.module.js";
 import { HealthController } from "./common/health.controller.js";
 import { FormsModule } from "./forms/forms.module.js";
+import { ReportsModule } from "./reports/reports.module.js";
 import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
 import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.js";
 
@@ -68,6 +69,7 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
     DevelopersModule,
     BioPagesModule,
     FormsModule,
+    ReportsModule,
     PublicModule,
   ],
   controllers: [HealthController],

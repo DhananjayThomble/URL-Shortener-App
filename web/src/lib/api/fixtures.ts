@@ -16,6 +16,7 @@ import type {
   MemberRole,
   PublicLinkPreview,
   RecordConversionInput,
+  SubmitReportResult,
   TotpRecoveryCodes,
   TotpSetup,
   UnlockLinkResult,
@@ -939,6 +940,10 @@ export async function fixtureRequest<T>(
     // not the check — the real verification is argon2 on the server.
     if (!password) throw new Error("That password is not right.");
     data = { unlockToken: `unlock.${Math.random().toString(36).slice(2)}`, expiresIn: 300 } satisfies UnlockLinkResult;
+  } else if (m(/^\/public\/links\/([^/]+)\/report$/) && method === "POST") {
+    // The server always acknowledges, whether or not the slug resolves, so
+    // there is nothing to look up — the fixture mirrors that opaque success.
+    data = { ok: true } satisfies SubmitReportResult;
   } else if (m(/^\/public\/links\/([^/]+)\/preview$/)) {
     data = previewFor(m(/^\/public\/links\/([^/]+)\/preview$/)![1]);
   } else throw new Error(`No fixture for ${method} ${path}. Add one in src/lib/api/fixtures.ts.`);

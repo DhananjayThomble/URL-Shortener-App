@@ -1,10 +1,11 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { SubmitFormInput, UnlockLinkInput } from "@snapurl/contract";
+import { SubmitFormInput, SubmitReportInput, UnlockLinkInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Public } from "../auth/auth.guard.js";
 import { PublicService } from "./public.service.js";
 import { FormsService } from "../forms/forms.service.js";
+import { ReportsService } from "../reports/reports.service.js";
 
 /* Every route here is unauthenticated, and each one says so individually.
    @Public() on the controller would mean one forgotten decorator on a future
@@ -14,6 +15,7 @@ export class PublicController {
   constructor(
     private readonly publicService: PublicService,
     private readonly forms: FormsService,
+    private readonly reports: ReportsService,
   ) {}
 
   @Public()
@@ -73,5 +75,27 @@ export class PublicController {
   @HttpCode(200)
   submit(@Param("slug") slug: string, @Body(zodBody(SubmitFormInput)) input: SubmitFormInput) {
     return this.forms.submit(slug, input);
+  }
+
+  /* Abuse reports (#291). Unauthenticated — the whole point is that a victim
+     who never signed up can flag a phishing link.
+
+     10/min per trustworthy client IP, the same bound as the form submit above
+     and looser than unlock's 5/min. Unlock runs argon2id on every call, so it
+     is a CPU-burn and a password-guessing oracle if left open; a report is a
+     cheap single INSERT with none of that. But it is still an unauthenticated
+     write, so an unlimited path is a spam-and-DB-bloat vector. Ten a minute is
+     far more than any human filing a report and far less than a script is worth
+     writing — a floor, not a substitute for a honeypot if it is ever abused in
+     earnest.
+
+     Always returns { ok:true }; see ReportsService.submitReport for why it must
+     not vary by whether the slug exists. */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post("links/:slug/report")
+  @HttpCode(200)
+  report(@Param("slug") slug: string, @Body(zodBody(SubmitReportInput)) input: SubmitReportInput) {
+    return this.reports.submitReport(slug, input);
   }
 }
