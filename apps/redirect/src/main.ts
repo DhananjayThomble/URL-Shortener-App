@@ -67,13 +67,23 @@ const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
    behind CloudFront sets it to 1 (or higher for additional appending hops). */
 const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
 
-/* Which CacheStore backs the hot-link cache. 'memory' (the default) is a
-   per-instance in-memory cache, which is all local/CI/compose and any
-   single-node deployment needs. The scaled profile sets 'redis' + REDIS_URL so
-   the cache is shared across instances; the AWS profile uses 'dynamodb'. See
-   docs/DECISIONS.md for the per-profile reasoning. */
+/* Which CacheStore backs the hot-link cache and the daily-salt cache. 'memory'
+   (the default) is a per-instance in-memory cache, which is all local/CI/compose
+   and any single-node deployment needs. The scaled profile sets 'redis' +
+   REDIS_URL so the cache is shared across instances; the AWS profile sets
+   'dynamodb' + CACHE_DYNAMO_TABLE so it is shared via DynamoDB — which is what
+   lets the out-of-VPC redirect share one daily salt across instances instead of
+   each holding its own. See docs/DECISIONS.md for the per-profile reasoning. */
 const CACHE_DRIVER = (process.env.CACHE_DRIVER ?? "memory") as CacheDriver;
 const REDIS_URL = process.env.REDIS_URL;
+/* The cache table name, required only when CACHE_DRIVER=dynamodb (the AWS
+   profile). It backs both the hot-link cache and — crucially — the shared
+   daily-salt cache: with the redirect out of the VPC, this shared DynamoDB
+   store is what lets every instance agree on today's salt instead of each
+   holding its own per-instance value. The factory throws if the driver is
+   'dynamodb' and this is unset, so a misconfigured deploy fails loudly at boot
+   rather than silently falling back to a per-instance store. */
+const CACHE_DYNAMO_TABLE = process.env.CACHE_DYNAMO_TABLE;
 
 /* Which store the redirect resolves link config from, keyed on LINK_PROJECTION:
    'dynamo' reads the DynamoDB projection the worker writes (the AWS profile);
@@ -191,7 +201,11 @@ async function init(): Promise<void> {
      already fast, but the wrap is kept uniform (it cuts read cost and keeps hit
      and miss returning an identical link); the 'none' path wraps
      PostgresLinkResolver exactly as before. */
-  const cacheStore = await createCacheStore({ driver: CACHE_DRIVER, redisUrl: REDIS_URL });
+  const cacheStore = await createCacheStore({
+    driver: CACHE_DRIVER,
+    redisUrl: REDIS_URL,
+    dynamoTable: CACHE_DYNAMO_TABLE,
+  });
   resolver = new CachingLinkResolver(baseResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
 
   /* The click sink: an awaited SQS SendMessage on the AWS profile (freeze-safe,

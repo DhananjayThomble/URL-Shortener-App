@@ -68,6 +68,49 @@ describe("DynamoLinkResolver.resolve", () => {
     expect(link!.expiresAt).toBeInstanceOf(Date);
   });
 
+  it("round-trips a populated rules[] and a non-null utm verbatim", async () => {
+    /* storedLink above uses rules: [] and utm: null, so it never exercises the
+       mapper's copy of a populated routing chain or a UTM object. A projected
+       link that carries both must map back field-for-field identical, or the
+       DynamoDB-resolved link would hit evaluateRouting / buildDestination
+       differently from the Postgres-resolved one. */
+    const withRulesAndUtm: ProjectedLink = {
+      ...storedLink,
+      rules: [
+        {
+          id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          when: { device: "mobile", country: null, language: null },
+          then: "https://example.com/mobile",
+          weight: null,
+        },
+        {
+          id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          when: { country: "US", device: null, language: null },
+          then: "https://example.com/us",
+          weight: 30,
+        },
+      ],
+      utm: { source: "newsletter", medium: "email", campaign: "launch", content: "cta" },
+    };
+
+    const { resolver } = makeResolver({
+      GetCommand: () => ({ Item: toLinkItem(withRulesAndUtm, "snap.to", "foo") }),
+    });
+
+    const link = await resolver.resolve("snap.to", "foo");
+
+    expect(link).toEqual(withRulesAndUtm);
+    // The rule order and every field survive the item round-trip.
+    expect(link!.rules).toHaveLength(2);
+    expect(link!.rules.map((r) => r.then)).toEqual([
+      "https://example.com/mobile",
+      "https://example.com/us",
+    ]);
+    expect(link!.rules[1]!.weight).toBe(30);
+    // The UTM object is non-null and copied verbatim.
+    expect(link!.utm).toEqual({ source: "newsletter", medium: "email", campaign: "launch", content: "cta" });
+  });
+
   it("returns null when the item is absent", async () => {
     const { resolver } = makeResolver({ GetCommand: () => ({}) });
     expect(await resolver.resolve("snap.to", "missing")).toBeNull();

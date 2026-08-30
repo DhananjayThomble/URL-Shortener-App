@@ -80,23 +80,35 @@ export const DailySaltCache = PostgresSaltCache;
 /* The salt in the shared CacheStore (DynamoDB on the AWS profile).
 
    The key is namespaced and dated ("salt#<day>") and the value carries a TTL
-   that comfortably outlives one day. Once written, every instance that reads
-   the key before writing its own gets the shared value, and each instance
-   caches it in memory for the rest of the day. The salt is discarded when the
+   that comfortably outlives one day. This is a SHARED store on the AWS profile
+   (DynamoDB, provisioned by the CDK as CacheTable with CACHE_DRIVER=dynamodb on
+   the redirect), so once today's salt is written every instance reads the same
+   value back — load() re-reads after its own write to converge even on a race
+   (see below) — and each instance caches it in memory for the rest of the day.
+   That shared invariant is the whole reason the redirect can leave the VPC
+   without fragmenting the salt per-instance. The salt is discarded when the
    key expires, preserving the privacy promise — yesterday's hashes stay
    un-recomputable — and the TTL is what retires an old day's salt here (the
    worker's rotateSalts still governs the Postgres daily_salts table on the
    profiles that use it).
 
    The one race is the first request of a new day arriving at two cold
-   instances at once: both find the key absent and each writes its own salt, so
-   for that brief window a visitor could be hashed under two different salts and
-   counted twice. That is the SAME bounded imprecision the "no cookies" promise
-   already documents ("a visitor who changes network counts twice"), it only
-   affects unique counting (never a redirect's correctness), and it closes the
-   instant the key is populated. A true SETNX would remove even that window, but
-   the CacheStore port has no atomic first-write primitive and adding one for a
-   once-a-day cold-start window is not worth the surface area. */
+   instances at once: both find the key absent and each writes its own salt.
+   load() closes this the same way PostgresSaltCache.load does — it re-reads the
+   key AFTER writing and returns whatever value the store now holds, so both
+   racers converge on the SAME salt (the store keeps whichever set() it applied,
+   and every instance reads that one back) rather than each keeping its own for
+   the day. The residual window is only the instant between the two sets, and it
+   is the SAME bounded imprecision the "no cookies" promise already documents
+   ("a visitor who changes network counts twice"): it only affects unique
+   counting, never a redirect's correctness.
+
+   The re-read is best-effort convergence, not a lock: set() is a last-write-wins
+   overwrite (not an atomic SETNX — the CacheStore port has no first-write
+   primitive), so two sets racing to the microsecond can still land in either
+   order, but both instances then read back the surviving value and agree. A
+   true SETNX would make the winner deterministic, but adding one for a
+   once-a-day cold-start window is not worth the port surface area. */
 const SALT_KEY_PREFIX = "salt#";
 /* Two days: long enough that a salt written just before midnight is still
    present for the whole of its own day even accounting for clock skew, short
@@ -115,6 +127,14 @@ export class CacheStoreSaltCache extends CachingSaltSource {
 
     const salt = generateDailySalt();
     await this.store.set(key, salt, SALT_TTL_SECONDS);
-    return salt;
+
+    /* Re-read after the write so every instance converges on the shared value,
+       mirroring PostgresSaltCache's re-read after onConflictDoNothing: if
+       another instance's set() for this key landed, we read theirs back and
+       agree rather than keeping our own for the day. Falls back to our own salt
+       only if the read somehow returns empty (never expected right after a
+       write), so a new day always yields a usable salt. */
+    const shared = await this.store.get(key);
+    return shared ?? salt;
   }
 }

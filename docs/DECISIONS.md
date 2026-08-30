@@ -177,9 +177,11 @@ profile rather than globally, chosen at deploy time by `CACHE_DRIVER`.
   $12/mo minimum) to solve problems this profile does not have. That is the original reasoning,
   preserved and still correct.
 
-The DynamoDB adapter exists in code (`packages/cache`), but the CDK DynamoDB cache table is a
-Phase-7 follow-up (#288 territory), so `CACHE_DRIVER=dynamodb` is not wired into the stack yet. The
-point of the port is precisely that this stays a per-profile config choice, not a rewrite.
+The DynamoDB adapter exists in code (`packages/cache`); the CDK DynamoDB cache table was the
+Phase-7 follow-up (#288), and #288 wires it: the stack now provisions a `CacheTable` and sets
+`CACHE_DRIVER=dynamodb` on the redirect (see Profile 3 below), so the AWS profile's `CacheStore` is
+genuinely DynamoDB rather than the per-instance in-memory default. The point of the port is
+precisely that this stays a per-profile config choice, not a rewrite.
 
 **A GraphQL layer.** The frontend is TanStack Query over REST and the contract is already typed
 end to end. GraphQL would add a schema to keep in sync with no caller asking for it.
@@ -686,12 +688,22 @@ theirs. What that buys:
 visitor-hash salt was the last thing tying the redirect to Postgres — it read/wrote the
 `daily_salts` table on every request. `SaltSource` now has two implementations behind a
 shared caching base: `PostgresSaltCache` (unchanged, used whenever a Postgres handle
-exists) and `CacheStoreSaltCache`, which reads/writes the shared `CacheStore` — already
-DynamoDB on the AWS profile (`CACHE_DRIVER=dynamodb`, from #285) and reachable without a
-VPC. So a redirect that has left Postgres still salts its hashes from DynamoDB. The one
-race (two cold instances writing a salt on the first request of a new day) affects only
-unique-visitor counting, never redirect correctness, and closes the instant the key is
-populated — the same bounded imprecision the "no cookies" promise already documents.
+exists) and `CacheStoreSaltCache`, which reads/writes the shared `CacheStore`. For that
+store to actually be *shared* — the whole point, since a per-instance store would give
+every warm redirect its own salt and inflate unique counts by the instance fan-out —
+#288 provisions a dedicated `CacheTable` and sets `CACHE_DRIVER=dynamodb` +
+`CACHE_DYNAMO_TABLE` on the redirect (with a read/write grant). The `#285` adapter alone
+was not enough: without the table and the env var the factory would have defaulted to
+the per-instance in-memory store, so the redirect out of the VPC would have fragmented
+the salt. With them, a redirect that has left Postgres salts its hashes from a shared
+DynamoDB table reachable without a VPC. `CacheStoreSaltCache.load` re-reads the key after
+its own write (mirroring `PostgresSaltCache`'s re-read after `onConflictDoNothing`), so
+two cold instances racing a new day converge on the surviving value rather than each
+keeping its own for the day. The residual race is only the instant between two writes; it
+affects unique-visitor counting only, never redirect correctness — the same bounded
+imprecision the "no cookies" promise already documents. (`set()` is last-write-wins, not
+an atomic `SETNX`; the `CacheStore` port has no first-write primitive, and adding one for
+a once-a-day cold-start window is not worth the surface area.)
 
 **The freeze/thaw argument, asserted rather than assumed.** Under the Lambda Web Adapter
 the sandbox freezes the moment the redirect responds. A fire-and-forget Postgres
@@ -711,7 +723,7 @@ been exercised:
 | --- | --- | --- |
 | Redirect resolves from DynamoDB under `LINK_PROJECTION=dynamo` (Done-when #1) | **CI-proven** | The `dynamo-smoke` job stands up `amazon/dynamodb-local`, the worker drains the outbox into it, and `scripts/smoke-redirect.sh` passes with every 302/404 served from DynamoDB |
 | `SqsClickSink` awaits the send; the worker consumer drains a batch into `click_events` with partial-batch-failure isolation (freeze/thaw survival) | **Mock-proven** | Unit tests against a mocked SDK `send` keyed by command name; the resolver/writer/mapper round-trips are likewise unit-tested |
-| CDK shape: PAY_PER_REQUEST + PITR table + GSI, SQS queue + DLQ, worker ESM with `ReportBatchItemFailures`, `redirectFn` with no `VpcConfig` | **CI-proven** (synth) | `cdk synth` asserts every resource; no deploy |
+| CDK shape: PAY_PER_REQUEST + PITR projection table + GSI, single-key `CacheTable` (TTL on `expiresAt`), SQS queue + DLQ, worker ESM with `ReportBatchItemFailures`, `redirectFn` with no `VpcConfig` and `CACHE_DRIVER=dynamodb` + `CACHE_DYNAMO_TABLE` (api/worker keep the VPC, no `CACHE_DRIVER`) | **CI-proven** (synth) | `cdk synth` asserts every resource; no deploy |
 | Real no-VPC resolution and the real SQS round trip against AWS | **Deploy-deferred** | Needs a live stack; the sandbox and CI cannot run a real deploy. The CI smoke uses `AWS_ENDPOINT_URL_DYNAMODB` to point the adapters at dynamodb-local — the same optional endpoint override that is unset (a no-op) in production |
 
 **Revisit if** the point-in-time click count's overshoot ever needs to be tighter (a

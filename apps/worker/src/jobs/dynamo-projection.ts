@@ -99,6 +99,17 @@ export class DynamoProjection implements ProjectionTarget {
     for (const op of ops) {
       const index = results.length;
       try {
+        /* NOTE: resolution is per-op and sequential, so a batch of N deletes
+           issues N GSI QueryCommands here (one per linkId) BEFORE any writes
+           are coalesced — the read side is O(N) round trips even though the
+           writes below are batched to O(N / 25). This is a deliberate
+           trade-off: deletes are rare relative to upserts (a delete is a
+           user removing a link, an upsert is every edit and every new link),
+           so the read fan-out is not worth batching with a BatchGetItem across
+           the linkId GSI (which would also need its own <=100-key slicing and
+           per-key result stitching). Revisit only if bulk deletes become a hot
+           path. Upserts take the same per-op read but there is no cheaper bulk
+           form for them either (each reads a different link's full row set). */
         const requests =
           op.operation === "delete"
             ? await this.buildDeleteRequests(op.linkId)

@@ -281,6 +281,40 @@ export class SnapUrlStack extends Stack {
     });
 
     /* ---------------------------------------------------------
+       Cache table (Phase 7, #288)
+
+       The CacheStore for the AWS profile: DynamoDbCacheStore (@snapurl/cache)
+       reads and writes this table. It backs the redirect's daily-salt cache —
+       and this is the load-bearing point of #288 3b. The redirect out of the
+       VPC generates today's salt once per new day and writes it here; every
+       other redirect instance reads the SAME salt back, so a visitor is hashed
+       under one shared salt rather than one salt per warm instance. Without a
+       SHARED store the salt cache falls back to per-instance in-memory and the
+       unique-visitor count double-counts by the instance fan-out (the exact gap
+       the v1 review flagged). See apps/redirect/src/salt.ts (CacheStoreSaltCache)
+       and RedirectFn's CACHE_DRIVER=dynamodb below.
+
+       Separate from LinkProjectionTable on purpose: the two have different key
+       schemas. The cache adapter is single-key on `pk` (no sort key), matching
+       DynamoDbCacheStore's item shape, whereas the projection is a PK/SK table.
+
+       PAY_PER_REQUEST: the salt is written at most once per day per new instance
+       and read from the in-process day cache thereafter, so there is no steady
+       RPS to provision against. TTL is on `expiresAt` (the attribute the cache
+       adapter stamps in unix epoch seconds), so a day's salt is retired
+       automatically once its TTL passes — no rotation job needed for this table.
+
+       DESTROY, not RETAIN (unlike the projection): the only thing stored here is
+       a day-scoped salt that is regenerated on demand, so there is nothing worth
+       keeping across a `cdk destroy`. */
+    const cacheTable = new dynamodb.Table(this, "CacheTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expiresAt",
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
+    /* ---------------------------------------------------------
        Click queue (Phase 7, #288 3b)
 
        On the AWS profile the redirect no longer INSERTs a click on its hot
@@ -679,6 +713,19 @@ export class SnapUrlStack extends Stack {
            removing it from the VPC below (#288 3b). */
         CLICK_SINK: "sqs",
         CLICK_QUEUE_URL: clickQueue.queueUrl,
+        /* AWS profile: back the CacheStore with DynamoDB, not the per-instance
+           in-memory default. This is what makes the redirect's daily salt
+           SHARED across all warm instances: CacheStoreSaltCache reads/writes
+           the salt through this store (see apps/redirect/src/salt.ts), so once
+           any instance has written today's salt every other instance reads the
+           same value back. Left to the 'memory' default each instance would
+           generate its own salt and hash the same visitor differently all day,
+           inflating unique counts by the instance fan-out. The table is
+           single-key on `pk`, matching DynamoDbCacheStore. Set on redirectFn
+           only (not commonEnv): the api/worker keep their own CACHE_DRIVER
+           story and the single-node/k8s profiles never see it. */
+        CACHE_DRIVER: "dynamodb",
+        CACHE_DYNAMO_TABLE: cacheTable.tableName,
       },
       /* NOT in the VPC — this is the #288 payoff. With LINK_PROJECTION=dynamo +
          CLICK_SINK=sqs the redirect resolves from DynamoDB, sends clicks to SQS
@@ -698,6 +745,13 @@ export class SnapUrlStack extends Stack {
     /* The redirect sends each click to the queue; the worker (below) consumes
        it. grantSendMessages is the least-privilege grant for a producer. */
     clickQueue.grantSendMessages(redirectFn);
+
+    /* The redirect reads AND writes the cache table: CacheStoreSaltCache does a
+       get() for today's salt and, on the first request of a new day, a set() to
+       publish the salt it generated so every other instance reads it back.
+       grantReadWriteData covers both. This shared write is what closes the
+       per-instance-salt gap that leaving the VPC would otherwise open. */
+    cacheTable.grantReadWriteData(redirectFn);
 
 
     /* IAM auth, not NONE: a NONE Function URL is reachable by anyone on the
