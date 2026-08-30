@@ -1,0 +1,29 @@
+{
+  "project_type": "pnpm TypeScript monorepo (SnapURL): NestJS API (apps/api), Fastify redirect service (apps/redirect), worker (apps/worker), Next.js dashboard (web), shared packages (@snapurl/contract, @snapurl/domain, @snapurl/database). This issue (#273) is bash-script + CI/deploy wiring; no app code changes expected.",
+  "language": "TypeScript for apps; Bash for the smoke suites; YAML for GitHub Actions.",
+  "build_system": "pnpm workspaces. Root scripts: pnpm type-check, pnpm build, pnpm test, pnpm db:migrate.",
+  "test_framework": "vitest for unit/integration TS tests; bash+curl+node smoke scripts under scripts/. The DB-integration vitest suites skip when no live DB is present (same as baseline).",
+  "build_command": "pnpm type-check && pnpm build (not required to change for this task; the deliverable is bash + YAML).",
+  "test_command": "pnpm test (unit); bash -n scripts/*.sh to syntax-check the smoke scripts; the compose `integration` CI job in .github/workflows/verify.yml re-runs scripts/smoke-redirect.sh against the real composed stack on the PR.",
+  "verification_instructions": "1) bash -n scripts/smoke-redirect.sh and any new script must pass. 2) pnpm type-check and pnpm test stay green (no app code touched). 3) If a new workflow yml is added, it must be valid YAML and MUST NOT dump the environment (no env/printenv/set/export -p/process.env dumps); it goes to main via PR opened by the orchestrator. 4) The full composed run can only be validated by the CI `integration` job on the PR: Docker in this sandbox is podman-backed and cannot start containers. The local/compose path (DATABASE_URL set, RD=http://localhost:3002, domain localhost:3002) MUST stay green so the existing `integration` job does not break.",
+  "snapshot_or_generated_files": "none",
+  "setup_instructions": "Repo already installed. Run bash from workspace root as `cd URL-Shortener-App && bash -n scripts/...`. read_file uses absolute paths under /projects/sandbox/URL-Shortener-App/.",
+  "environment_constraints": "OPEN_INTERNET available. Docker/compose CANNOT run in this sandbox (podman-backed, cannot start containers), so a full composed smoke run is not runnable here; it is validated by the CI `integration` job on the PR. A new reusable deploy-smoke workflow cannot be fully exercised until Phase 7 (#288/#289) provides a real deploy target; make it syntactically valid + documented. There is currently NO deploy workflow, only verify.yml.",
+  "contribution_requirements": "Any change to .github/workflows/*.yml must not dump env and is delivered via PR (orchestrator opens it). Keep existing local/CI behavior of smoke-redirect.sh unchanged: the verify.yml `verify` job runs it against directly-started JS, and the `integration` job runs it against the composed stack with DATABASE_URL set. Neither must break.",
+  "key_patterns": "scripts/smoke-redirect.sh already parameterizes API and RD via env (API=${API:-http://localhost:3001/api/v1}, RD=${RD:-http://localhost:3002}). It self-registers a throwaway user per run (unique email), uses node -pe to parse JSON, and uses a loc() helper that prints STATUS|LOCATION from curl -D-. scripts/integration-assertions.sh shows the poll pattern for worker-dependent facts: a ~90s budget (worker rollup interval default ~30s, three cycles). BOT UA matters: the worker rollup (apps/worker/src/jobs/rollup.ts) folds only is_bot=false AND blocked_reason IS NULL clicks into breakdown_daily; curl's default UA matches BOT_PATTERN, so any redirect whose click must appear in analytics MUST be driven with a non-bot browser UA (see BROWSER_UA in integration-assertions.sh).",
+  "relevant_files": [
+    "scripts/smoke-redirect.sh (PRIMARY file to modify: add base-URL mode, configurable link domain, self-cleanup via trap, API-based deployed assertions, gate DB checks)",
+    "scripts/integration-assertions.sh (pattern reference: poll budget, non-bot BROWSER_UA, dbq gating)",
+    ".github/workflows/verify.yml (the `verify` and `integration` jobs both call smoke-redirect.sh; may add a new reusable smoke-deployed workflow, or document the invocation)",
+    "apps/api/src/links/links.controller.ts (DELETE /links/:id -> remove; returns 204; POST /links returns the created link incl id)",
+    "apps/api/src/analytics/analytics.controller.ts (GET /analytics, @Scope analytics:read, query AnalyticsQuery {range,linkId})",
+    "apps/api/src/analytics/analytics.service.ts (countries breakdown built from breakdown_daily rollup, scoped by workspaceId + optional linkId + date range; reads ROLLUP tables, so needs the worker)",
+    "apps/worker/src/jobs/rollup.ts (populates breakdown_daily country rows from click_events where is_bot=false and blocked_reason is null)",
+    "apps/redirect/src/resolver.ts (resolve(host,slug): matches lower(domains.domain)=normaliseHost(host); normaliseHost only lowercases/trims, does NOT strip port -> the link's stored domain must EXACTLY equal the Host curl sends)",
+    "apps/api/src/auth/auth.service.ts (on register, seeds a system domain equal to env.DEFAULT_DOMAIN for the new workspace -> a freshly-registered smoke user can create links on DEFAULT_DOMAIN)",
+    "apps/api/src/links/links.service.ts (resolveDomain: link create requires the domain to be a workspace-owned or live system domain, else 400 'isn't a domain you can use')",
+    "packages/contract/src/analytics.ts (AnalyticsQuery: range enum 24h/7d/30d/90d/12m default 30d, linkId optional)",
+    "docs/DEPLOYMENT.md (backend AWS/CloudFront topology; redirect behind CloudFront; DEFAULT_DOMAIN from SSM)"
+  ],
+  "directory_structure": "scripts/ = smoke.sh (dashboard API), smoke-redirect.sh (redirect hot path), integration-assertions.sh (worker rollup). .github/workflows/verify.yml = only workflow today (verify job + integration compose job). apps/{api,redirect,worker}. packages/{contract,domain,database}. docs/ = DEPLOYMENT.md, DECISIONS.md, etc."
+}

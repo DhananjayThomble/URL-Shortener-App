@@ -1,0 +1,113 @@
+# Post-deploy smoke gate (the hook Phase 7 will call).
+#
+# This is a reusable workflow that runs scripts/smoke-redirect.sh against an
+# already-running target — a composed stack or, the point of it, a real
+# deployed CloudFront-fronted environment. The script exits non-zero on any
+# failed assertion, so the job fails and whatever depends on it fails too. That
+# is what makes "a deploy is not considered successful until it passes" true:
+# the two deployment showstoppers (a real slug returning 302 instead of 404,
+# and a country-scoped rule matching so click_events.country is populated) only
+# exist once a CDN is in front of the origin, so a deploy that produces a
+# 404-on-everything stack must fail here rather than be found by hand.
+#
+# Today NOTHING calls this. There is no deploy workflow yet: the AWS/deploy
+# pipeline is sequenced for Phase 7 of the architecture epic (#288/#289). When
+# that lands, a deploy job will wire this in as a dependent gate, e.g.
+#
+#   smoke:
+#     needs: deploy
+#     uses: ./.github/workflows/smoke-deployed.yml
+#     with:
+#       redirect_base_url: ${{ needs.deploy.outputs.redirect_url }}
+#       api_base_url:      ${{ needs.deploy.outputs.api_url }}
+#     # secrets: inherit   # only if open registration is disabled there
+#
+# so the deploy is not marked successful until this passes against the
+# freshly-deployed URLs. Until a real deploy target exists this can only be
+# exercised by hand via workflow_dispatch; it cannot be fully validated before
+# Phase 7.
+
+name: Smoke (deployed)
+
+on:
+  # Called by a future Phase 7 deploy job as a post-deploy gate.
+  workflow_call:
+    inputs:
+      redirect_base_url:
+        description: Redirect service base URL (maps to RD), e.g. https://snap.example.com
+        required: true
+        type: string
+      api_base_url:
+        description: API base URL including /api/v1 (maps to API), e.g. https://api.example.com/api/v1
+        required: true
+        type: string
+      link_domain:
+        description: >-
+          Domain new fixture links are created on (maps to LINK_DOMAIN). Optional:
+          when omitted the script derives it from redirect_base_url. Must equal the
+          target's DEFAULT_DOMAIN.
+        required: false
+        type: string
+    secrets:
+      # Only needed when the deployed environment has open registration
+      # disabled. By default the script self-registers a throwaway user, so
+      # leave these unset. When set, the script logs in to this account instead.
+      smoke_email:
+        required: false
+      smoke_password:
+        required: false
+  # So an operator can run it by hand against any URL.
+  workflow_dispatch:
+    inputs:
+      redirect_base_url:
+        description: Redirect service base URL (maps to RD), e.g. https://snap.example.com
+        required: true
+        type: string
+      api_base_url:
+        description: API base URL including /api/v1 (maps to API), e.g. https://api.example.com/api/v1
+        required: true
+        type: string
+      link_domain:
+        description: >-
+          Domain new fixture links are created on (maps to LINK_DOMAIN). Optional:
+          derived from redirect_base_url when blank. Must equal the target's
+          DEFAULT_DOMAIN.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Redirect smoke against target
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      # node is needed only for the script's `node -pe` JSON parsing. No
+      # `pnpm install` is required because the script uses only curl + node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Runs the same smoke suite verify.yml uses, but against the target URLs
+      # from the inputs. Note there is deliberately NO DATABASE_URL here: a
+      # deployed target exposes no direct DB access, so the script runs in its
+      # API-only (deployed) mode and verifies click_events.country population
+      # through GET /analytics rather than a direct query. Only the specific
+      # vars the script needs are referenced; the environment is never dumped.
+      - name: Smoke — redirect path
+        run: bash scripts/smoke-redirect.sh
+        env:
+          RD: ${{ inputs.redirect_base_url }}
+          API: ${{ inputs.api_base_url }}
+          LINK_DOMAIN: ${{ inputs.link_domain }}
+          SMOKE_EMAIL: ${{ secrets.smoke_email }}
+          SMOKE_PASSWORD: ${{ secrets.smoke_password }}
