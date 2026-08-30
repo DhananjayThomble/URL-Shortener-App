@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
-import { createDatabase } from "@snapurl/database";
+import { createDatabase, resolveDatabaseUrl, resolveJwtSecret } from "@snapurl/database";
 import {
   REDIRECT_STATUS,
   buildDeepLink,
@@ -35,9 +35,18 @@ import { DailySaltCache } from "./salt.js";
    ============================================================ */
 
 const PORT = Number(process.env.PORT ?? 3002);
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
-const JWT_SECRET = process.env.JWT_ACCESS_SECRET ?? "";
 const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+
+/* DATABASE_URL and the JWT signing key used to be read at module top. They are
+   now resolved inside init() (called at the start of main()) so that, when a
+   *_SECRET_ARN env var is set, the values come from Secrets Manager at cold
+   start before the connection is opened or a token is verified. With no ARN
+   set, resolveDatabaseUrl / resolveJwtSecret return the plain env values (or
+   the compose defaults below) and make no SDK call, so the plain-env path is
+   unchanged. Building `db` lazily also keeps module import side-effect free:
+   nothing connects to Postgres just by importing this file, which matters for
+   the tests that import from ./resolver.js. */
+const JWT_SECRET_DEFAULT = process.env.JWT_ACCESS_SECRET ?? "";
 
 /* Five is right for a long-running process serving many requests at once. It
    is wrong on Lambda, where each instance handles one request at a time and
@@ -63,18 +72,35 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustP
    readDb) everywhere: the click-limit gate reads a link's click count and then
    records a click, so it is a read-then-write path. Serving that read from a
    replica would let lag hand back a stale count and overshoot the hard cap. */
-const { db, close } = createDatabase({
-  url: DATABASE_URL,
-  replicaUrl: process.env.DATABASE_REPLICA_URL,
-  ssl: process.env.DATABASE_SSL === "true",
-  sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
-  sslCaCert: process.env.DATABASE_CA_CERT,
-  max: POOL_MAX,
-});
+/* Assigned by init() before app.listen(), and used only from inside request
+   handlers (which cannot fire before the server is listening). Kept as
+   module-level bindings so the handlers below can close over them. */
+let close: () => Promise<void> = async () => {};
+let resolver: LinkResolver;
+let clicks: ClickSink;
+let salts: DailySaltCache;
+let JWT_SECRET = JWT_SECRET_DEFAULT;
 
-const resolver: LinkResolver = new PostgresLinkResolver(db);
-const clicks: ClickSink = new PostgresClickSink(db);
-const salts = new DailySaltCache(db);
+/** Resolve secrets, open the connection and wire up the adapters. Called once
+ *  at the start of main(), before the server starts accepting requests. */
+async function init(): Promise<void> {
+  const url =
+    (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
+  JWT_SECRET = (await resolveJwtSecret("JWT_ACCESS_SECRET_ARN", "JWT_ACCESS_SECRET")) ?? "";
+
+  const database = createDatabase({
+    url,
+    replicaUrl: process.env.DATABASE_REPLICA_URL,
+    ssl: process.env.DATABASE_SSL === "true",
+    sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+    sslCaCert: process.env.DATABASE_CA_CERT,
+    max: POOL_MAX,
+  });
+  close = database.close;
+  resolver = new PostgresLinkResolver(database.db);
+  clicks = new PostgresClickSink(database.db);
+  salts = new DailySaltCache(database.db);
+}
 
 app.get("/health", async () => ({ status: "ok" }));
 
@@ -290,6 +316,7 @@ async function record(
 }
 
 async function main() {
+  await init();
   if (!JWT_SECRET) {
     app.log.warn("JWT_ACCESS_SECRET is not set — password-protected links cannot be unlocked.");
   }

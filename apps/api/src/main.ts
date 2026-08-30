@@ -3,10 +3,26 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Logger } from "nestjs-pino";
 import cors from "@fastify/cors";
+import { resolveSecrets } from "@snapurl/database";
 import { AppModule } from "./app.module.js";
 import { ENV, type Env } from "./config/env.js";
 
+/* Resolve the database and JWT secrets from Secrets Manager (see
+   packages/database/src/secrets.ts) and assign them onto process.env BEFORE the
+   ConfigModule's useFactory runs loadEnv(). When no *_SECRET_ARN env var is set
+   this makes no SDK call and touches nothing, so the plain-env path (local dev,
+   compose, single-node, Kubernetes) is byte-identical. Nothing in the API reads
+   these vars at import time, so running this first is safe. */
+async function hydrateSecretsIntoEnv(): Promise<void> {
+  const { databaseUrl, jwtAccessSecret, jwtRefreshSecret } = await resolveSecrets();
+  if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
+  if (jwtAccessSecret !== undefined) process.env.JWT_ACCESS_SECRET = jwtAccessSecret;
+  if (jwtRefreshSecret !== undefined) process.env.JWT_REFRESH_SECRET = jwtRefreshSecret;
+}
+
 async function bootstrap() {
+  await hydrateSecretsIntoEnv();
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     /* Do NOT trust any proxy for Fastify's req.ip: `trustProxy: true` would

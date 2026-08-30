@@ -1,5 +1,5 @@
 import pino from "pino";
-import { createDatabase, type Database } from "@snapurl/database";
+import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired } from "./jobs/outbox.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
@@ -14,7 +14,6 @@ import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
    ============================================================ */
 
 const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
 const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3600);
 
@@ -27,15 +26,52 @@ const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 4);
    click_events then mark them consumed, retention prunes what it has just
    counted, and so on — every worker read is part of a read-then-write logical
    operation. Reading those from a lagging replica would double-count or skip
-   rows, so there is no readDb here on purpose. */
-export const { db, close } = createDatabase({
-  url: DATABASE_URL,
-  replicaUrl: process.env.DATABASE_REPLICA_URL,
-  ssl: process.env.DATABASE_SSL === "true",
-  sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
-  sslCaCert: process.env.DATABASE_CA_CERT,
-  max: POOL_MAX,
-});
+   rows, so there is no readDb here on purpose.
+
+   The connection used to be created at import. It is now deferred behind
+   initDb() so that, when DATABASE_SECRET_ARN is set, the credentials are
+   resolved from Secrets Manager at cold start BEFORE any connection is made.
+   With no ARN set, resolveDatabaseUrl returns the plain env value (or the
+   compose default below) and no SDK call happens — the plain-env path is
+   unchanged. The handle is memoised: created once and reused across warm Lambda
+   invocations, never closed between calls. */
+let dbHandle: { db: Database; close: () => Promise<void> } | undefined;
+let initPromise: Promise<{ db: Database; close: () => Promise<void> }> | undefined;
+
+/** Resolve secrets and create the database connection once, reusing it across
+ *  warm invocations. Concurrent callers share the same in-flight promise. */
+export function initDb(): Promise<{ db: Database; close: () => Promise<void> }> {
+  if (dbHandle) return Promise.resolve(dbHandle);
+  if (!initPromise) {
+    initPromise = (async () => {
+      const url =
+        (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
+      const handle = createDatabase({
+        url,
+        replicaUrl: process.env.DATABASE_REPLICA_URL,
+        ssl: process.env.DATABASE_SSL === "true",
+        sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+        sslCaCert: process.env.DATABASE_CA_CERT,
+        max: POOL_MAX,
+      });
+      dbHandle = handle;
+      return handle;
+    })();
+  }
+  return initPromise;
+}
+
+/** The resolved database handle. Throws if accessed before initDb() resolves. */
+export function getDb(): Database {
+  if (!dbHandle) throw new Error("initDb() must be awaited before getDb().");
+  return dbHandle.db;
+}
+
+/** Close the connection if one was opened. Safe to call when none was. */
+export async function close(): Promise<void> {
+  if (dbHandle) await dbHandle.close();
+}
+
 const projection = new NoProjection();
 
 /** Runs often: this is the loop that makes the dashboards current. */
@@ -132,6 +168,8 @@ function everyN(seconds: number, job: () => Promise<unknown>) {
 }
 
 async function main() {
+  const { db } = await initDb();
+
   if (process.argv.includes("--once")) {
     const frequent = await runFrequent(db);
     const maintenance = await runMaintenance(db);
