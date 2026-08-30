@@ -90,7 +90,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   if (blocked) {
     // Blocked clicks are still recorded — "how many people hit an expired
     // link" is exactly the number that tells someone to go renew it.
-    void record(link, request, userAgent, blocked, null, null);
+    await record(link, request, userAgent, blocked, null, null);
 
     if (blocked === "expired" && link.expiresTo) return reply.redirect(link.expiresTo, 302);
     if (blocked === "scheduled" && link.scheduledTo) return reply.redirect(link.scheduledTo, 302);
@@ -154,7 +154,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
      platform fallback to catch the miss, so this is a no-op for most clicks. */
   const target = buildDeepLink(destination, parseDevice(userAgent), link.deepLink);
 
-  void record(link, request, userAgent, null, decision.matchedRuleId, decision.variant, hash);
+  await record(link, request, userAgent, null, decision.matchedRuleId, decision.variant, hash);
 
   for (const [header, value] of Object.entries(cacheHeadersFor(link.redirectType))) {
     void reply.header(header, value);
@@ -204,13 +204,27 @@ function isValidUnlockToken(token: string, linkId: string): boolean {
 }
 
 /**
- * Push the click and do not await it.
+ * Record the click. Awaited by the handler, but never fatal.
  *
- * The redirect must not get slower because analytics is having a bad day. A
- * failure here is logged and dropped — a lost click is a worse outcome than a
- * slow redirect only if you are the one counting clicks, and the visitor is not.
+ * This is awaited so the INSERT completes within the invocation. Under the
+ * Lambda Web Adapter the sandbox freezes the moment Fastify responds, which
+ * suspends any in-flight query: a fire-and-forget write is not just lost, it
+ * pins a Postgres backend the pool cannot reclaim and — with DATABASE_POOL_MAX=1
+ * — the next request on that warm instance queues behind a query that never
+ * finishes, until the function times out. Awaiting the write costs one
+ * same-AZ round trip (single-digit ms) and is vastly cheaper than a deadlocked
+ * instance billing its full timeout.
+ *
+ * It stays non-fatal: the try/catch below logs and swallows every error, so
+ * awaiting this can never throw into the handler. Analytics being down still
+ * cannot break a redirect — a lost click is a worse outcome than a slow
+ * redirect only if you are the one counting clicks, and the visitor is not.
+ *
+ * Phase 7 direction (per the issue): move to the SQS ClickSink adapter the
+ * port was designed for. An HTTP send with a bounded flush survives
+ * freeze/thaw in a way a Postgres INSERT does not.
  */
-function record(
+async function record(
   link: ResolvedLink,
   request: { ip: string; headers: Record<string, unknown> },
   userAgent: string,
@@ -218,40 +232,38 @@ function record(
   matchedRuleId: string | null,
   variant: string | null,
   precomputedHash?: string,
-) {
-  void (async () => {
-    try {
-      const salt = await salts.today();
-      const hash =
-        precomputedHash ?? visitorHash({ dailySalt: salt, ip: request.ip, userAgent, linkId: link.id });
+): Promise<void> {
+  try {
+    const salt = await salts.today();
+    const hash =
+      precomputedHash ?? visitorHash({ dailySalt: salt, ip: request.ip, userAgent, linkId: link.id });
 
-      await clicks.record({
-        linkId: link.id,
-        workspaceId: link.workspaceId,
-        occurredAt: new Date(),
-        visitorHash: hash,
-        country: ((request.headers["cloudfront-viewer-country"] as string) ?? "").toUpperCase().slice(0, 2) || null,
-        /* Deliberately not paired with CloudFront-Viewer-Latitude/Longitude,
-           which the same header family offers: a city is a population, a
-           coordinate is a location. */
-        city: ((request.headers["cloudfront-viewer-city"] as string) ?? "").slice(0, 100) || null,
-        device: parseDevice(userAgent),
-        browser: parseBrowser(userAgent),
-        os: parseOs(userAgent),
-        referrerHost: parseReferrerHost(request.headers.referer as string),
-        // A QR scan arrives with no referrer and a mobile UA. Imperfect, and
-        // the honest alternative — a ?qr marker the printer must remember to
-        // add — is worse because it silently under-counts.
-        isQr: !request.headers.referer && parseDevice(userAgent) !== "desktop",
-        isBot: isBot(userAgent),
-        blockedReason,
-        matchedRuleId,
-        variant,
-      });
-    } catch (err) {
-      app.log.warn({ err, linkId: link.id }, "failed to record click");
-    }
-  })();
+    await clicks.record({
+      linkId: link.id,
+      workspaceId: link.workspaceId,
+      occurredAt: new Date(),
+      visitorHash: hash,
+      country: ((request.headers["cloudfront-viewer-country"] as string) ?? "").toUpperCase().slice(0, 2) || null,
+      /* Deliberately not paired with CloudFront-Viewer-Latitude/Longitude,
+         which the same header family offers: a city is a population, a
+         coordinate is a location. */
+      city: ((request.headers["cloudfront-viewer-city"] as string) ?? "").slice(0, 100) || null,
+      device: parseDevice(userAgent),
+      browser: parseBrowser(userAgent),
+      os: parseOs(userAgent),
+      referrerHost: parseReferrerHost(request.headers.referer as string),
+      // A QR scan arrives with no referrer and a mobile UA. Imperfect, and
+      // the honest alternative — a ?qr marker the printer must remember to
+      // add — is worse because it silently under-counts.
+      isQr: !request.headers.referer && parseDevice(userAgent) !== "desktop",
+      isBot: isBot(userAgent),
+      blockedReason,
+      matchedRuleId,
+      variant,
+    });
+  } catch (err) {
+    app.log.warn({ err, linkId: link.id }, "failed to record click");
+  }
 }
 
 async function main() {
