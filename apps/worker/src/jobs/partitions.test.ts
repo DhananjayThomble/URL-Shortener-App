@@ -443,19 +443,13 @@ describeDb("click_events partitioning", () => {
   });
 
   it("reports false instead of raising when the partition is already gone", async () => {
-    /* The #326 regression.
-     *
-     * Both drop paths read partition names in one statement and act on them in
-     * a later one, so a concurrent pass can remove a partition in between. The
-     * cap loop used to probe for un-rolled-up rows with an interpolated
-     * `select ... from only "<part>"`, which raised undefined_table when the
-     * partition had gone — uncaught, so it escaped pruneRetention and took the
-     * rest of the maintenance pass with it.
-     *
-     * That check now lives inside click_events_drop_partition, which has always
-     * treated a missing partition as "somebody else got there first". This
-     * asserts the whole function tolerates it, including the new LOCK and probe
-     * that run before the DETACH. */
+    /* The function's own tolerance for a missing partition, covering the LOCK
+       and the pending probe that now run before the DETACH.
+
+       Note this alone does NOT cover #326 — the old body returned false here too,
+       because its handler caught undefined_table from DETACH just as this one
+       catches it from LOCK. The regression was at the *caller*, and is covered by
+       the test below. */
     const ghost = partitionName(-900);
     await dropPartition(ghost);
     expect(await partitionExists(ghost)).toBe(false);
@@ -465,6 +459,77 @@ describeDb("click_events partitioning", () => {
     `)) as unknown as [{ ok: boolean }];
 
     expect(ok).toBe(false);
+  });
+
+  it("completes a retention pass when a candidate partition vanishes mid-pass", async () => {
+    /* **The actual #326 regression.**
+     *
+     * The cap loop lists attached partitions in one statement and acts on them in
+     * later ones, so a concurrent pass can remove one in between. It used to
+     * probe each candidate with an interpolated
+     * `select ... from only "<part>"`, which raised undefined_table when the
+     * partition had gone — uncaught, so it escaped pruneRetention and skipped
+     * every maintenance job behind it.
+     *
+     * Reproducing that needs the world to change *between* two of
+     * pruneRetention's own statements, which no amount of fixture setup can do.
+     * So the database handle is proxied: the moment the listing query returns,
+     * one of the partitions it just named is dropped out from under the loop.
+     * That is exactly the interleaving a concurrent pass produces, made
+     * deterministic. */
+    const stamp = Date.now();
+    const offsets = [-880, -879, -878];
+    const names = offsets.map((o) => partitionName(o));
+    for (const name of names) await dropPartition(name);
+
+    try {
+      for (const offset of offsets) {
+        const day = utcDay(offset);
+        day.setUTCHours(11);
+        await db.execute(sql`select click_events_ensure_partition(${day.toISOString().slice(0, 10)}::date)`);
+        // Rolled up, so nothing is pinned and the cap alone decides.
+        await addClickAt(day, `vanish-${stamp}-${offset}`);
+      }
+
+      const [{ attached }] = (await db.execute(sql`
+        select count(*)::int as attached
+        from pg_class c
+        join pg_inherits i on i.inhrelid = c.oid
+        where i.inhparent = 'public.click_events'::regclass
+          and c.relname ~ '^click_events_[0-9]{8}$'
+      `)) as unknown as [{ attached: number }];
+
+      /* Drop the oldest candidate as soon as the loop has been told it exists.
+         `sabotaged` guards against firing on the retention pass's other
+         pg_inherits reads. */
+      let sabotaged = false;
+      const victim = names[0]!;
+      const hooked = new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop !== "execute") return Reflect.get(target, prop, receiver);
+          return async (query: unknown) => {
+            const result = await (target as Database).execute(query as never);
+            if (!sabotaged && JSON.stringify(query).includes("pg_inherits")) {
+              sabotaged = true;
+              await dropPartition(victim);
+            }
+            return result;
+          };
+        },
+      }) as Database;
+
+      // Two over the cap, so the loop reaches past the vanished partition.
+      const result = await pruneRetention(hooked, 20, attached - 2);
+
+      expect(sabotaged).toBe(true);
+      // The pass survived rather than throwing, which is the whole point.
+      expect(result.partitionsDropped).toBeGreaterThanOrEqual(1);
+      // The vanished one is gone, and the loop still made progress past it.
+      expect(await partitionExists(victim)).toBe(false);
+      expect(await partitionExists(names[1]!)).toBe(false);
+    } finally {
+      for (const name of names) await dropPartition(name);
+    }
   });
 
   it("refuses a partition holding un-rolled-up clicks, from inside the function", async () => {

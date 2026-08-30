@@ -56,10 +56,28 @@ BEGIN
 	SET LOCAL lock_timeout = '2s';
 
 	BEGIN
-		/* Take the partition's lock before looking at its contents, so the
-		   answer cannot change underneath us. DETACH needs ACCESS EXCLUSIVE on
-		   the parent anyway, so this costs nothing extra and removes the window
-		   between deciding and acting. */
+		/* Lock the parent first, then the partition. The order is the whole
+		   point, not an accident of writing.
+		
+		   Every other route to a partition reaches it *through* click_events —
+		   the rollup's batch claim, its marker UPDATE, the row-level retention
+		   DELETE — so they all take their locks parent-then-child. Locking the
+		   partition first would put this function in the opposite order and close
+		   a genuine deadlock cycle against any of them. Worse, the other side
+		   starts waiting one step earlier, so its deadlock_timeout fires first
+		   and *it* is the process Postgres kills: the visible symptom would be a
+		   failed rollup, not a failed drop, and the handler below would never
+		   see it.
+		
+		   ONLY matters. Without it, LOCK TABLE on a partitioned table descends to
+		   every partition, which is a far heavier lock than this needs and would
+		   block inserts routing to today while an ancient day is dropped.
+		
+		   Holding the parent exclusively is also what makes the probe below
+		   trustworthy: no insert can route a row into this partition between
+		   deciding and dropping. DETACH requires this lock anyway, so the only
+		   thing changed by taking it up front is the order. */
+		EXECUTE 'LOCK TABLE ONLY "click_events" IN ACCESS EXCLUSIVE MODE';
 		EXECUTE format('LOCK TABLE %I IN ACCESS EXCLUSIVE MODE', part_name);
 
 		/* Raw detail is never discarded before it has been counted. Dropping a

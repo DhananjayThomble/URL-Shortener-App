@@ -198,17 +198,10 @@ export async function runFrequent(database: Database) {
 
 /** Runs hourly: housekeeping, and the jobs that keep the privacy promise. */
 export async function runMaintenance(database: Database) {
-  /* First, because click_events is partitioned by day and this is what keeps a
-     partition ready for every day that could receive a click.
-
-     Isolated, because being first means a throw here would skip everything
-     below it — including rotateSalts, which carries the hardest privacy
-     commitment in the product: once a day's salt is gone, that day's visitor
-     hashes cannot be recomputed from an IP by anyone. Losing that to a
-     partition lock is the wrong trade, and provisioning is an optimisation
-     anyway: the DEFAULT partition is what actually guarantees an insert cannot
-     fail, so a pass that provisions nothing still loses no clicks. */
   const failed: string[] = [];
+  /** Kept next to the calls below so the all-failed check cannot drift from the
+   *  number of jobs actually run. */
+  const MAINTENANCE_JOB_COUNT = 7;
 
   /** Run one maintenance job without letting it take the others down.
    *
@@ -232,7 +225,10 @@ export async function runMaintenance(database: Database) {
   };
 
   /* Provisioning first, because it is what keeps a partition ready for every day
-     that could receive a click. */
+     that could receive a click. Its failure is the least alarming of the seven:
+     the DEFAULT partition is what actually guarantees an insert cannot fail, so a
+     pass that provisions nothing still loses no clicks — it only makes the
+     queries less prunable until a later pass catches up. */
   const partitions = await step("ensureClickPartitions", () => ensureClickPartitions(database), 0);
   const expired = await step("sweepExpired", () => sweepExpired(database), 0);
   const salts = await step("rotateSalts", () => rotateSalts(database), 0);
@@ -243,6 +239,21 @@ export async function runMaintenance(database: Database) {
   const outbox = await step("pruneOutbox", () => pruneOutbox(database), 0);
   const deliveries = await step("pruneDeliveries", () => pruneDeliveries(database), 0);
   const stuck = await step("stuckProjections", () => stuckProjections(database), 0);
+
+  /* Isolation is per job, not for the pass as a whole.
+   *
+   * If every job failed, the cause is not a bad job — it is the database being
+   * unreachable, or credentials being wrong — and swallowing that would leave the
+   * invocation reporting success with a tidy object full of zeroes. That is the
+   * shape of failure #323 and #326 were both about: a pass that did nothing,
+   * looking exactly like a pass with nothing to do.
+   *
+   * Throwing hands the decision back to the scheduler, which is better placed to
+   * make it: the EventBridge rule carries retryAttempts: 2, so a transient
+   * outage gets two more chances inside the minute instead of waiting an hour. */
+  if (failed.length === MAINTENANCE_JOB_COUNT) {
+    throw new Error(`every maintenance job failed (${failed.join(", ")}) — the database is likely unreachable`);
+  }
 
   log.info(
     {
