@@ -126,7 +126,13 @@ function projectionFor(database: Database): ProjectionTarget {
         new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
         { marshallOptions: { removeUndefinedValues: true } },
       );
-      projectionTarget = new DynamoProjection(database, client, table);
+      /* Pass the worker's logger so a projection resolve/write failure surfaces
+         the ACTUAL error (DynamoDB ValidationException name + message) at error
+         level. drainOutbox only stores String(err) in projection_outbox
+         .last_error and counts the failure, so before this the real cause never
+         reached a log line — a projection that wrote nothing looked silent even
+         at LOG_LEVEL=debug. */
+      projectionTarget = new DynamoProjection(database, client, table, log);
     } else {
       projectionTarget = new NoProjection();
     }

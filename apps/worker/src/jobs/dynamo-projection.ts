@@ -61,11 +61,34 @@ type WriteRequest =
   | { PutRequest: { Item: LinkItem | DomainItem } }
   | { DeleteRequest: { Key: { PK: string; SK: string } } };
 
+/** The minimum a logger must offer so the writer can surface the ACTUAL
+ *  DynamoDB error when a batch fails. drainOutbox only records the error's
+ *  stringified form in projection_outbox.last_error and counts the failure;
+ *  the error's name/message never reached a log line, so a projection that
+ *  wrote nothing looked silent even at LOG_LEVEL=debug. A pino logger satisfies
+ *  this; it is optional so the per-row unit tests can omit it. */
+export interface ProjectionLogger {
+  error(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** The DynamoDB Key that identifies an item, used to deduplicate coalesced
+ *  write requests: two PutRequests (or a Put and a Delete) with the same
+ *  {PK, SK} in one BatchWriteCommand make DynamoDB reject the WHOLE request
+ *  with "Provided list of item keys contains duplicates". */
+function requestKey(request: WriteRequest): string {
+  const key = "PutRequest" in request ? request.PutRequest.Item : request.DeleteRequest.Key;
+  return `${key.PK}\u0000${key.SK}`;
+}
+
 export class DynamoProjection implements ProjectionTarget {
   constructor(
     private readonly db: Database,
     private readonly client: DynamoDBDocumentClient,
     private readonly table: string,
+    /** Optional: when present, a resolution or flush failure logs the ACTUAL
+     *  error (name + message) at error level so a failed projection is never
+     *  silent again. */
+    private readonly log?: ProjectionLogger,
   ) {}
 
   /* ---- per-row fallback (used when drainOutbox does not batch) ---- */
@@ -91,10 +114,22 @@ export class DynamoProjection implements ProjectionTarget {
      O(N / 25) round trips, not N. */
   async apply(ops: ProjectionOp[]): Promise<ProjectionResult[]> {
     const results: ProjectionResult[] = [];
-    const pending: WriteRequest[] = [];
-    /* Which result indices a given write request belongs to, so a flush
-       failure can be attributed back to the exact ops that were in it. */
-    const owners: number[][] = [];
+    /* The coalesced write requests, DEDUPLICATED by DynamoDB Key. Every link
+       upsert on a domain (re)writes that domain's single meta item, so a batch
+       of N upserts on one domain produces N IDENTICAL domain-meta PutRequests.
+       DynamoDB's BatchWriteItem rejects the ENTIRE request with a
+       ValidationException ("Provided list of item keys contains duplicates") if
+       any two operations target the same key — so without this dedup one
+       domain's N links all fail together, which is exactly the
+       "domain-meta succeeds, every LINK item fails" the smoke job hit: the
+       per-row upsert() path only ever has one meta put per flush, but the
+       batched path coalesced N of them into one command.
+
+       Deduping keeps the LAST request written for a key (upserts are
+       idempotent, so any of the identical meta puts is equivalent) and unions
+       the owning result-indices, so a flush failure still fails every op that
+       contributed that key. */
+    const byKey = new Map<string, { request: WriteRequest; owners: Set<number> }>();
 
     for (const op of ops) {
       const index = results.length;
@@ -116,25 +151,51 @@ export class DynamoProjection implements ProjectionTarget {
             : await this.buildUpsertRequests(op.linkId);
         results.push({ linkId: op.linkId, ok: true });
         for (const request of requests) {
-          pending.push(request);
-          owners.push([index]);
+          const key = requestKey(request);
+          const existing = byKey.get(key);
+          if (existing) {
+            existing.request = request;
+            existing.owners.add(index);
+          } else {
+            byKey.set(key, { request, owners: new Set([index]) });
+          }
         }
       } catch (err) {
         // Resolution failed (e.g. Postgres read error): this row alone fails.
+        this.log?.error(
+          { err: serialiseError(err), linkId: op.linkId, operation: op.operation },
+          "projection resolve failed",
+        );
         results.push({ linkId: op.linkId, ok: false, error: err });
       }
     }
 
-    /* Flush the coalesced requests in <=25-item batches. A batch that fails
-       after its bounded retries fails every op that contributed a request to
-       it — those rows are retried on the next drain, exactly as the per-row
-       path would have. */
+    const pending = [...byKey.values()].map((entry) => entry.request);
+    const owners = [...byKey.values()].map((entry) => [...entry.owners]);
+
+    /* Flush the coalesced (and deduped) requests in <=25-item batches. A batch
+       that fails after its bounded retries fails every op that contributed a
+       request to it — those rows are retried on the next drain, exactly as the
+       per-row path would have. */
     for (let start = 0; start < pending.length; start += BATCH_LIMIT) {
       const slice = pending.slice(start, start + BATCH_LIMIT);
       const sliceOwners = owners.slice(start, start + BATCH_LIMIT);
       try {
         await this.flush(slice);
       } catch (err) {
+        /* Surface the ACTUAL DynamoDB error (name + message) at error level.
+           drainOutbox only stores String(err) in last_error and counts the
+           failure, so before this the ValidationException text never reached a
+           log line and the empty projection looked silent even at debug. */
+        this.log?.error(
+          {
+            err: serialiseError(err),
+            table: this.table,
+            items: slice.length,
+            linkIds: [...new Set(sliceOwners.flat().map((i) => results[i]!.linkId))],
+          },
+          "projection batch write failed",
+        );
         for (const ownerList of sliceOwners) {
           for (const index of ownerList) {
             results[index] = { linkId: results[index]!.linkId, ok: false, error: err };
@@ -279,4 +340,17 @@ export class DynamoProjection implements ProjectionTarget {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Reduce an unknown thrown value to the fields worth logging. A DynamoDB
+ *  ValidationException carries its diagnosis in `name` + `message` (e.g.
+ *  "ValidationException: Provided list of item keys contains duplicates"); a
+ *  plain object logged as `{ err }` under pino can serialise to `{}` and hide
+ *  exactly that text, which is how the batched projection failure stayed
+ *  invisible. Pull the useful fields out explicitly. */
+function serialiseError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  return { value: String(err) };
 }

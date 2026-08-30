@@ -151,10 +151,33 @@ describe("DynamoProjection.apply (batching)", () => {
         return {};
       },
     });
-    // 20 upserts -> 40 write requests (a LINK + a meta each) -> ceil(40/25) = 2
-    // batches, proving N links are O(N/25) round trips rather than N.
-    const N = 20;
-    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE);
+    /* 30 DISTINCT links on ONE domain. Each contributes a distinct LINK put;
+       all 30 share the domain's single meta item, which apply() deduplicates to
+       ONE meta put. So 30 upserts -> 31 write requests (30 links + 1 shared
+       meta) -> ceil(31/25) = 2 batches, proving both the O(N/25) batching AND
+       that the shared meta is written once (before dedup this was 60 requests
+       carrying 30 IDENTICAL meta keys, which DynamoDB rejects wholesale — the
+       #288 failure). Each op resolves to a distinct link row (distinct slug) so
+       the fake mirrors reality rather than returning one identical row. */
+    const N = 30;
+    let call = 0;
+    const distinctDb = {
+      select: () => {
+        const which = call++;
+        // Even calls: the link-row query; odd calls: that link's rules (none).
+        const rows = which % 2 === 0 ? [linkRow({ id: `link-${which / 2}`, slug: `slug-${which / 2}` })] : [];
+        const builder: any = {
+          from: () => builder,
+          innerJoin: () => builder,
+          leftJoin: () => builder,
+          where: () => builder,
+          limit: () => Promise.resolve(rows),
+          orderBy: () => Promise.resolve(rows),
+        };
+        return builder;
+      },
+    } as unknown as Database;
+    const projection = new DynamoProjection(distinctDb, client, TABLE);
     const ops = Array.from({ length: N }, (_, i) => ({ linkId: `link-${i}`, operation: "upsert" }));
 
     const results = await projection.apply(ops);
@@ -163,7 +186,8 @@ describe("DynamoProjection.apply (batching)", () => {
     expect(results.every((r) => r.ok)).toBe(true);
     expect(batchSizes.length).toBe(2);
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(25);
-    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(N * 2);
+    // N distinct LINK puts + 1 deduplicated shared meta put.
+    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(N + 1);
   });
 
   it("retries UnprocessedItems then succeeds", async () => {
@@ -286,5 +310,139 @@ describe("DynamoProjection marshalling of optional/absent fields", () => {
        the transport sentinel. */
     await expect(projection.upsert("link-1")).rejects.toThrow();
     await expect(projection.upsert("link-1")).rejects.not.toThrow(TRANSPORT_REACHED);
+  });
+});
+
+describe("DynamoProjection.apply deduplicates the shared domain-meta item", () => {
+  /* Regression guard for the SECOND dynamo-smoke failure (#288): the
+     domain-meta item projected fine but every LINK item failed, and a scan
+     showed only the single d#meta item. The cause was NOT marshalling (the
+     removeUndefinedValues fix handled that) — it was that apply() coalesces the
+     LINK put AND the domain-meta put for EVERY upsert into one BatchWriteCommand
+     without dedup. Every link on a domain (re)writes the SAME meta key
+     (PK=d#<domain>, SK=d#meta), so N upserts on one domain put N identical meta
+     PutRequests in one command. DynamoDB rejects the whole request with
+     "Provided list of item keys contains duplicates", so all N links fail
+     together while the per-row upsert() path (one meta put per flush) never
+     did. These tests assert the batch now carries the meta key exactly ONCE and
+     never sends a duplicate key to DynamoDB. */
+
+  /** A link row on a fixed domain, so several of them share one meta item. */
+  function rowOnDomain(id: string, slug: string) {
+    return linkRow({ id, slug });
+  }
+
+  /** A chainable fake whose Nth select() (even calls) returns the link row for
+   *  the CURRENT op and whose odd calls return that op's rules. The link id and
+   *  slug are looked up by the eq() the writer passes, but the fake ignores the
+   *  predicate, so drive it from an ordered list of link rows: one per upsert. */
+  function makeMultiDb(linkRowsInOrder: any[][]): Database {
+    let call = 0;
+    const select = () => {
+      const which = call++;
+      const rows = which % 2 === 0 ? linkRowsInOrder[Math.floor(which / 2)] ?? [] : [];
+      const builder: any = {
+        from: () => builder,
+        innerJoin: () => builder,
+        leftJoin: () => builder,
+        where: () => builder,
+        limit: () => Promise.resolve(rows),
+        orderBy: () => Promise.resolve(rows),
+      };
+      return builder;
+    };
+    return { select } as unknown as Database;
+  }
+
+  it("writes the shared domain-meta item ONCE for many links on one domain, with no duplicate keys", async () => {
+    const sentBatches: any[][] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        sentBatches.push(input.RequestItems[TABLE]);
+        return {};
+      },
+    });
+
+    const N = 5;
+    const rows = Array.from({ length: N }, (_, i) => [rowOnDomain(`link-${i}`, `slug-${i}`)]);
+    const projection = new DynamoProjection(makeMultiDb(rows), client, TABLE);
+    const ops = Array.from({ length: N }, (_, i) => ({ linkId: `link-${i}`, operation: "upsert" }));
+
+    const results = await projection.apply(ops);
+
+    // Every op succeeded.
+    expect(results).toHaveLength(N);
+    expect(results.every((r) => r.ok)).toBe(true);
+
+    const allRequests = sentBatches.flat();
+    // No BatchWriteCommand slice contains a duplicate key — the exact thing
+    // DynamoDB's ValidationException rejects.
+    for (const batch of sentBatches) {
+      const keys = batch.map((r: any) => {
+        const item = r.PutRequest ? r.PutRequest.Item : r.DeleteRequest.Key;
+        return `${item.PK}#${item.SK}`;
+      });
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+
+    // The domain-meta item is written exactly once, not once per link.
+    const metaPuts = allRequests.filter((r: any) => r.PutRequest?.Item.SK === "d#meta");
+    expect(metaPuts).toHaveLength(1);
+
+    // All N LINK items are present, each with a non-empty linkId / PK / SK.
+    const linkPuts = allRequests.filter((r: any) => r.PutRequest?.Item.SK.startsWith("s#"));
+    expect(linkPuts).toHaveLength(N);
+    for (const put of linkPuts) {
+      const item = put.PutRequest.Item;
+      expect(item.linkId).toBeTruthy();
+      expect(item.PK).toBeTruthy();
+      expect(item.SK).toBeTruthy();
+    }
+  });
+
+  it("marshals a representative failing-fixture LINK item (rule + partial utm + expiry/activation) without throwing", async () => {
+    /* The $RUN-geo / $RUN-utm / $RUN-expired / $RUN-scheduled fixtures combined:
+       a link WITH a routing rule (partial when), WITH a partial utm object,
+       WITH an expiry AND an activation Date, and a non-null linkId — run through
+       a REAL DocumentClient so the marshaller executes for real, and asserting
+       the request reaches the stubbed transport (i.e. marshalling succeeded and
+       the batch carried no duplicate keys). */
+    const richRow = linkRow({
+      id: "link-rich",
+      slug: "geo",
+      utm: { source: "newsletter", campaign: "spring" },
+      expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+      expiresTo: "https://example.com/moved",
+      activatesAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    const richRules = [
+      {
+        rule: {
+          id: "r-in",
+          whenCountry: "IN",
+          whenDevice: undefined,
+          whenLanguage: undefined,
+          then: "https://example.in/store",
+          weight: undefined,
+        },
+      },
+    ];
+
+    const base = new DynamoDBClient({
+      region: "us-east-1",
+      endpoint: "http://localhost:8000",
+      credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
+      requestHandler: {
+        handle: () => Promise.reject(new Error("transport-reached-sentinel")),
+      } as never,
+    });
+    const client = DynamoDBDocumentClient.from(base, {
+      marshallOptions: { removeUndefinedValues: true },
+    });
+    const projection = new DynamoProjection(makeDb([richRow], richRules), client, TABLE);
+
+    // Reaching the transport proves the item marshalled cleanly and the
+    // BatchWriteCommand was built (no duplicate-key rejection, no marshal throw).
+    await expect(projection.upsert("link-rich")).rejects.toThrow("transport-reached-sentinel");
   });
 });
