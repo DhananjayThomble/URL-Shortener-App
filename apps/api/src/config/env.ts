@@ -13,6 +13,22 @@ export const EnvSchema = z.object({
   /** Optional read-replica connection string. Absent means reads use the
       primary — single-node behaviour is unchanged. */
   DATABASE_REPLICA_URL: z.string().optional(),
+
+  /* Runtime secret resolution (see packages/database/src/secrets.ts). When
+     these ARNs are set, main() resolves the values from Secrets Manager at
+     cold start and assigns them onto DATABASE_URL / JWT_ACCESS_SECRET /
+     JWT_REFRESH_SECRET before this schema runs — so by the time we parse, the
+     resolved secrets are already present and validate under the rules below.
+     They are optional passthroughs: absent on every non-AWS profile (local
+     dev, compose, single-node, Kubernetes), which keeps the escape hatch
+     byte-identical. DATABASE_HOST/PORT/NAME fill any fields a password-only
+     rotation secret omits when assembling the URL. */
+  DATABASE_SECRET_ARN: z.string().optional(),
+  JWT_ACCESS_SECRET_ARN: z.string().optional(),
+  JWT_REFRESH_SECRET_ARN: z.string().optional(),
+  DATABASE_HOST: z.string().optional(),
+  DATABASE_PORT: z.string().optional(),
+  DATABASE_NAME: z.string().optional(),
   DATABASE_SSL: z
     .string()
     .default("false")

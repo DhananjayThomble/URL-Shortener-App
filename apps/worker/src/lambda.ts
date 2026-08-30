@@ -1,5 +1,5 @@
-import { runMigrations } from "@snapurl/database";
-import { db, runFrequent, runMaintenance } from "./main.js";
+import { resolveDatabaseUrl, runMigrations } from "@snapurl/database";
+import { initDb, runFrequent, runMaintenance } from "./main.js";
 
 /* The worker as a Lambda, with two jobs.
  *
@@ -23,16 +23,24 @@ export interface WorkerEvent {
 
 export const handler = async (event: WorkerEvent = {}) => {
   if (event.task === "migrate") {
-    const url = process.env.DATABASE_URL;
+    /* Resolve via the shared resolver so migrations work under the ARN path
+       too: with DATABASE_SECRET_ARN set this fetches the credentials from
+       Secrets Manager; with no ARN it returns process.env.DATABASE_URL
+       unchanged and makes no SDK call. The throw stays for the case where
+       neither an ARN nor a plain URL yields a value. */
+    const url = await resolveDatabaseUrl();
     if (!url) throw new Error("DATABASE_URL is not set on this function.");
     const result = await runMigrations(url, process.env.DATABASE_SSL === "true");
     return { task: "migrate", ...result };
   }
 
-  /* `db` is module-level on purpose. Lambda reuses a warm container across
+  /* The db handle is created once by initDb() and memoised for the lifetime of
+     the execution environment. Lambda reuses a warm container across
      invocations, so the connection survives between runs rather than being
-     rebuilt every minute. It is deliberately not closed at the end of a call:
-     closing it would make the next warm invocation reconnect for nothing. */
+     rebuilt every minute, and it is deliberately never closed at the end of a
+     call. initDb() also resolves the secret at cold start before the first
+     connection is made. */
+  const { db } = await initDb();
   const frequent = await runFrequent(db);
   const maintenance = await runMaintenance(db);
   return { task: "rollup", frequent, maintenance };
