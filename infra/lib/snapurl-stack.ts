@@ -543,9 +543,14 @@ export class SnapUrlStack extends Stack {
       // arm64/Graviton: ~20% cheaper per GB-s and typically faster. Must match
       // the image's LINUX_ARM64 platform set in imageFor().
       architecture: lambda.Architecture.ARM_64,
-      // Smaller than the API on purpose: this function does one key lookup and
-      // a 302. Paying for memory it never uses is paying for nothing.
-      memorySize: 512,
+      /* 1024 MB, not 512, even though this function does one key lookup and a
+         302. Lambda scales CPU with memory: at 512 MB it gets ~1/3 of a vCPU,
+         so the work is CPU-starved and runs longer. Doubling memory roughly
+         halves wall time, so the GB-s billed is about the same — you pay for
+         the same compute either way — while p50/p99 latency and cold start
+         both roughly halve. On the redirect hot path that latency is the whole
+         point. Independent of the reservedConcurrentExecutions cap (#278). */
+      memorySize: 1024,
       timeout: Duration.seconds(10),
       reservedConcurrentExecutions: REDIRECT_RESERVED_CONCURRENCY,
       logGroup: logGroupFor("RedirectLogGroup"),
