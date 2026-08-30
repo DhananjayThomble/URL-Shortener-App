@@ -99,6 +99,13 @@
       "when": 1788105600000,
       "tag": "0013_drop_partition_checks_pending",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788112800000,
+      "tag": "0014_retention_outcomes",
+      "breakpoints": true
     }
   ]
 }

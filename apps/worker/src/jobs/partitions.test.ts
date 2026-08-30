@@ -247,9 +247,9 @@ describeDb("click_events partitioning", () => {
   it("is idempotent, so a repeated maintenance pass is a no-op", async () => {
     const first = await ensureClickPartitions(db);
     const second = await ensureClickPartitions(db);
-    // Same window, so the same number of days is reported ready both times and
-    // neither call throws on the partitions that already exist.
-    expect(second).toBe(first);
+    // Same window, so the same counts both times, and neither call throws on the
+    // partitions that already exist. toEqual, not toBe: the result is an object.
+    expect(second).toEqual(first);
     expect(await isAttached(partitionName(0))).toBe(true);
   });
 
@@ -454,11 +454,13 @@ describeDb("click_events partitioning", () => {
     await dropPartition(ghost);
     expect(await partitionExists(ghost)).toBe(false);
 
-    const [{ ok }] = (await db.execute(sql`
-      select click_events_drop_partition(${ghost}) as ok
-    `)) as unknown as [{ ok: boolean }];
+    const [{ outcome }] = (await db.execute(sql`
+      select click_events_drop_partition(${ghost}) as outcome
+    `)) as unknown as [{ outcome: string }];
 
-    expect(ok).toBe(false);
+    // 'missing' rather than a bare false: the caller can now tell this apart
+    // from a partition it was refused for holding uncounted clicks.
+    expect(outcome).toBe("missing");
   });
 
   it("completes a retention pass when a candidate partition vanishes mid-pass", async () => {
@@ -532,6 +534,136 @@ describeDb("click_events partitioning", () => {
     }
   });
 
+  it("reports contention separately from having nothing to drop", async () => {
+    /* **The #324 regression.**
+     *
+     * The drop helper used to return a bare boolean, so lock contention, a
+     * pinned partition and an already-dropped one all arrived as `false` and
+     * pruneRetention could only count successes. A pass losing every drop to
+     * write traffic reported `partitionsDropped: 0` — byte-identical to a pass
+     * with nothing to drop. Retention could stall indefinitely with no signal.
+     *
+     * Contention is forced by holding ACCESS EXCLUSIVE on the parent from a
+     * second connection, which is what the drop needs first. The 2s lock_timeout
+     * inside the function then expires and it reports 'contended'. */
+    const stamp = Date.now();
+    const target = partitionName(-870);
+    await dropPartition(target);
+
+    const blocker = createDatabase({ url: DATABASE_URL!, max: 1 });
+    try {
+      const day = utcDay(-870);
+      day.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${day.toISOString().slice(0, 10)}::date)`);
+      await addClickAt(day, `contend-${stamp}`);
+
+      // Held open for the duration of the attempt below.
+      const held = blocker.db.transaction(async (tx) => {
+        await tx.execute(sql`lock table only click_events in access exclusive mode`);
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+      });
+
+      // Let the blocker take the lock first.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const [{ outcome }] = (await db.execute(sql`
+        select click_events_drop_partition(${target}) as outcome
+      `)) as unknown as [{ outcome: string }];
+
+      await held;
+
+      expect(outcome).toBe("contended");
+      // Not dropped, and crucially not reported as a silent no-op.
+      expect(await isAttached(target)).toBe(true);
+    } finally {
+      await blocker.close();
+      await dropPartition(target);
+    }
+  });
+
+  it("counts pinned partitions so a rollup backlog is visible in the pass", async () => {
+    /* `partitionsPinned` exists so "we skipped days because the rollup is behind"
+       is not folded into the same zero as "there was nothing to do".
+       
+       Driven through the **cap** loop rather than the age loop, and that is not
+       incidental: `click_events_spent_partitions` filters pending partitions out
+       before the age pass ever sees them, so it cannot report a pinned day. The
+       filter is worth keeping — offering a candidate that will certainly be
+       refused means taking ACCESS EXCLUSIVE on the parent for nothing — so the
+       cap loop, which does not pre-filter, is where this count comes from. */
+    const stamp = Date.now();
+    const offsets = [-865, -864];
+    const names = offsets.map((o) => partitionName(o));
+    for (const name of names) await dropPartition(name);
+
+    try {
+      // Oldest: pinned by an un-rolled-up click, so the cap must skip it.
+      const oldest = utcDay(offsets[0]!);
+      oldest.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${oldest.toISOString().slice(0, 10)}::date)`);
+      await db.insert(clickEvents).values({
+        linkId,
+        workspaceId,
+        occurredAt: oldest,
+        visitorHash: `pinned-count-${stamp}`,
+        rolledUpAt: null,
+      });
+
+      // Newer: rolled up, so the cap falls on this one instead.
+      const newer = utcDay(offsets[1]!);
+      newer.setUTCHours(11);
+      await db.execute(sql`select click_events_ensure_partition(${newer.toISOString().slice(0, 10)}::date)`);
+      await addClickAt(newer, `pinned-rolled-${stamp}`);
+
+      const [{ attached }] = (await db.execute(sql`
+        select count(*)::int as attached
+        from pg_class c
+        join pg_inherits i on i.inhrelid = c.oid
+        where i.inhparent = 'public.click_events'::regclass
+          and c.relname ~ '^click_events_[0-9]{8}$'
+      `)) as unknown as [{ attached: number }];
+
+      const result = await pruneRetention(db, 20, attached - 1);
+
+      // The point: the skipped day is reported, not silently absent.
+      expect(result.partitionsPinned).toBeGreaterThanOrEqual(1);
+      expect(await isAttached(names[0]!)).toBe(true);
+      expect(await partitionExists(names[1]!)).toBe(false);
+    } finally {
+      await db.execute(sql`
+        update click_events set rolled_up_at = now() where visitor_hash = ${`pinned-count-${stamp}`}
+      `);
+      for (const name of names) await dropPartition(name);
+    }
+  });
+
+  it("provisions each day in its own statement so the default lock is not held across the window", async () => {
+    /* Provisioning used to be one `generate_series` statement with a lateral
+       call, so the ACCESS EXCLUSIVE lock taken on the DEFAULT partition for the
+       first day needing work was held until the whole statement committed —
+       measured at 7.9s of blocking for a 7ms attach.
+       
+       Asserted by counting statements rather than by timing, which would be
+       flaky: one query to resolve the window, then one per day. */
+    let executes = 0;
+    const counting = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== "execute") return Reflect.get(target, prop, receiver);
+        return async (query: unknown) => {
+          executes++;
+          return (target as Database).execute(query as never);
+        };
+      },
+    }) as Database;
+
+    const result = await ensureClickPartitions(counting, 3, 1);
+
+    // 1 window query + 5 days (-1 through +3).
+    expect(executes).toBe(6);
+    expect(result.ready + result.declined).toBe(5);
+    expect(result.ready).toBeGreaterThan(0);
+  });
+
   it("refuses a partition holding un-rolled-up clicks, from inside the function", async () => {
     /* The same invariant the cap loop and the age pass both rely on, asserted
        against the function directly now that it owns the check rather than
@@ -556,9 +688,9 @@ describeDb("click_events partitioning", () => {
 
       const [{ refused }] = (await db.execute(sql`
         select click_events_drop_partition(${target}) as refused
-      `)) as unknown as [{ refused: boolean }];
+      `)) as unknown as [{ refused: string }];
 
-      expect(refused).toBe(false);
+      expect(refused).toBe("pinned");
       expect(await isAttached(target)).toBe(true);
 
       // Counted, so now it is droppable — proving the refusal was about the
@@ -570,9 +702,9 @@ describeDb("click_events partitioning", () => {
 
       const [{ ok }] = (await db.execute(sql`
         select click_events_drop_partition(${target}) as ok
-      `)) as unknown as [{ ok: boolean }];
+      `)) as unknown as [{ ok: string }];
 
-      expect(ok).toBe(true);
+      expect(ok).toBe("dropped");
       expect(await partitionExists(target)).toBe(false);
     } finally {
       await dropPartition(target);

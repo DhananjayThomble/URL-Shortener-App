@@ -327,11 +327,60 @@ const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1
  *  lock or finds the partition already gone and reports false. */
 const RETENTION_LEASE_SECONDS = 300;
 
+/** What one drop attempt did. Mirrors click_events_drop_partition's return. */
+export type DropOutcome = "dropped" | "pinned" | "contended" | "missing";
+
+export interface PartitionProvisionResult {
+  /** Days with a partition attached and ready to receive clicks. */
+  ready: number;
+  /**
+   * Days the function declined to provision this pass.
+   *
+   * Almost always write traffic winning the lock, which is the intended trade —
+   * the DEFAULT partition is what guarantees an insert cannot fail, so a
+   * declined day costs query performance until a later pass catches up, not
+   * data. Counted rather than folded into a smaller `ready` so a provisioner
+   * that never wins is visible.
+   */
+  declined: number;
+}
+
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
   /** Rows removed individually, for workspaces retaining less than the longest. */
   rowsDeleted: number;
+  /**
+   * Days left attached because they still hold un-rolled-up clicks.
+   *
+   * Normal, and self-correcting: the rollup consumes them and a later pass drops
+   * the partition. Persistently non-zero means the rollup is behind.
+   *
+   * Comes from the **cap** loop in practice. The age pass never sees a pinned
+   * candidate, because `click_events_spent_partitions` filters them out before
+   * offering them — which is worth keeping, since attempting a drop that will
+   * certainly be refused means taking ACCESS EXCLUSIVE on the parent for
+   * nothing.
+   */
+  partitionsPinned: number;
+  /**
+   * Days that could not be locked within the timeout, or that deadlocked.
+   *
+   * **The number worth alerting on.** Everything else here is either progress or
+   * a benign no-op; this is partition maintenance losing to write traffic. A
+   * pass reporting it repeatedly is a pass making no progress, and before this
+   * existed that state was indistinguishable from having nothing to drop —
+   * both reported `partitionsDropped: 0`. Retention could stall indefinitely
+   * with no signal, which is the same silent-failure shape as #323 and #326.
+   */
+  partitionsContended: number;
+  /**
+   * Days already gone when we got to them, dropped by a concurrent pass.
+   *
+   * Expected rather than alarming — two passes can overlap once a lapsed lease
+   * is taken over — but counted so it cannot hide inside a "nothing happened".
+   */
+  partitionsMissing: number;
 }
 
 /**
@@ -358,21 +407,52 @@ export async function ensureClickPartitions(
   db: Database,
   daysAhead = PARTITION_LOOKAHEAD_DAYS,
   daysBack = PARTITION_LOOKBACK_DAYS,
-): Promise<number> {
-  /* UTC, not current_date: every partition bound is built with AT TIME ZONE
-     'UTC', and current_date resolves in the session TimeZone. */
-  const result = (await db.execute(sql`
-    select count(part)::int as n
+): Promise<PartitionProvisionResult> {
+  /* The window, resolved in UTC.
+   *
+   * `now() at time zone 'UTC'` rather than `current_date`: every partition bound
+   * is built with AT TIME ZONE 'UTC', and current_date resolves in the session
+   * TimeZone. Mixing the two files a day under the wrong date. */
+  const days = (await db.execute(sql`
+    select d::date::text as day
     from generate_series(
       (now() at time zone 'UTC')::date - ${daysBack}::int,
       (now() at time zone 'UTC')::date + ${daysAhead}::int,
       interval '1 day'
-    ) as d,
-    lateral click_events_ensure_partition(d::date) as part
-  `)) as unknown as [{ n: number }];
-  /* count(part) rather than count(*): the function returns NULL for a day it
-     declined to attach, and counting rows would report those as provisioned. */
-  return result[0]?.n ?? 0;
+    ) as d
+  `)) as unknown as Array<{ day: string }>;
+
+  /* One statement per day, not one for the whole window.
+   *
+   * This used to be a single `generate_series` with a lateral call, which meant
+   * the ACCESS EXCLUSIVE lock the function takes on the DEFAULT partition for
+   * the first day needing work was held until the *entire* statement committed —
+   * every day's attach, plus every day's drain. Measured: a concurrent insert
+   * routed to the default blocked for 7.9s while the ATTACH itself took 7ms.
+   *
+   * Only clicks routed to the default are affected, which is exactly the
+   * catch-up case where provisioning has fallen behind and the drain is large.
+   * Since click writes are awaited, that is redirect latency rather than lost
+   * clicks — still worth not doing. Each `db.execute` is its own transaction, so
+   * per day means the lock is released between days.
+   *
+   * The cost is one round trip per day instead of one for the window: 22 cheap
+   * catalogue lookups on a job that runs hourly. */
+  let ready = 0;
+  let declined = 0;
+  for (const { day } of days) {
+    const [{ part }] = (await db.execute(sql`
+      select click_events_ensure_partition(${day}::date) as part
+    `)) as unknown as [{ part: string | null }];
+    /* NULL means the function declined — it could not take a lock in time, or
+       hit an unrecoverable state it deliberately does not raise on. Counted
+       separately so "provisioning is losing to write traffic" is visible rather
+       than showing up as a slightly smaller number. */
+    if (part === null) declined++;
+    else ready++;
+  }
+
+  return { ready, declined };
 }
 
 /**
@@ -461,12 +541,23 @@ export async function pruneRetention(
       select part from click_events_spent_partitions(${cutoff}::date) as part
     `)) as unknown as Array<{ part: string }>;
 
-    let partitionsDropped = 0;
+    /* Tallied by outcome rather than by success alone.
+     *
+     * The function reports which of four things happened, and only 'contended'
+     * needs anybody's attention: it means partition maintenance is losing to
+     * write traffic. Counting just successes made that state look exactly like
+     * having nothing to drop. */
+    const outcomes: Record<DropOutcome, number> = { dropped: 0, pinned: 0, contended: 0, missing: 0 };
+    const attemptDrop = async (part: string): Promise<DropOutcome> => {
+      const [{ outcome }] = (await db.execute(sql`
+        select click_events_drop_partition(${part}) as outcome
+      `)) as unknown as [{ outcome: DropOutcome }];
+      outcomes[outcome]++;
+      return outcome;
+    };
+
     for (const { part } of spent.slice(0, maxDropsPerPass)) {
-      const [{ ok }] = (await db.execute(sql`
-        select click_events_drop_partition(${part}) as ok
-      `)) as unknown as [{ ok: boolean }];
-      if (ok) partitionsDropped++;
+      await attemptDrop(part);
     }
 
     /* The volume cap, an age-independent backstop. See MAX_RETAINED_DAYS.
@@ -488,7 +579,7 @@ export async function pruneRetention(
      * count of *all* attached day-partitions decides how many are over the cap
      * — but only the rolled-up, droppable ones are offered as candidates, so a
      * partition pinned by pending rows is skipped rather than lost. */
-    const capBudget = maxDropsPerPass - partitionsDropped;
+    const capBudget = maxDropsPerPass - outcomes.dropped;
     if (capBudget > 0) {
       /* Every attached day-partition, oldest first. Names are YYYYMMDD, so
          lexical order is chronological. The DEFAULT partition does not match
@@ -513,7 +604,7 @@ export async function pruneRetention(
         // Stop once volume is back under the cap or the per-pass drop budget is
         // spent — the rest are dropped by later passes, keeping the parent lock
         // short even after a sudden cap change.
-        if (overCap <= 0 || partitionsDropped >= maxDropsPerPass) break;
+        if (overCap <= 0 || outcomes.dropped >= maxDropsPerPass) break;
 
         /* The un-rolled-up guard lives inside click_events_drop_partition,
            which refuses a partition still holding uncounted clicks and reports
@@ -531,13 +622,7 @@ export async function pruneRetention(
            A pinned partition stays attached and is deliberately NOT decremented
            from overCap, so the cap is still enforced by taking the next
            droppable day instead. */
-        const [{ ok }] = (await db.execute(sql`
-          select click_events_drop_partition(${part}) as ok
-        `)) as unknown as [{ ok: boolean }];
-        if (ok) {
-          partitionsDropped++;
-          overCap--;
-        }
+        if ((await attemptDrop(part)) === "dropped") overCap--;
       }
     }
 
@@ -565,12 +650,26 @@ export async function pruneRetention(
       select count(*)::int as n from expired
     `)) as unknown as [{ n: number }];
 
-    return { partitionsDropped, rowsDeleted: n ?? 0 };
+    return {
+      partitionsDropped: outcomes.dropped,
+      rowsDeleted: n ?? 0,
+      partitionsPinned: outcomes.pinned,
+      partitionsContended: outcomes.contended,
+      partitionsMissing: outcomes.missing,
+    };
   });
 
   /* Another holder had the lease, so this pass did nothing. Reported as zeroes
      rather than as a failure, because it is the mechanism working. */
-  return lease.value ?? { partitionsDropped: 0, rowsDeleted: 0 };
+  return (
+    lease.value ?? {
+      partitionsDropped: 0,
+      rowsDeleted: 0,
+      partitionsPinned: 0,
+      partitionsContended: 0,
+      partitionsMissing: 0,
+    }
+  );
 }
 
 /**
