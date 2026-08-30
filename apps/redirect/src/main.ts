@@ -187,8 +187,15 @@ async function init(): Promise<void> {
   let baseResolver: LinkResolver;
   if (LINK_PROJECTION === "dynamo") {
     if (!LINK_PROJECTION_TABLE) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
+    /* removeUndefinedValues mirrors the worker's writer client. The resolver
+       only reads (GetItem/Query), but keeping the marshall options identical on
+       both sides means the reader and writer never disagree about how an
+       optional/absent field is represented, and a future write on this client
+       (none today) could not reintroduce the undefined-marshalling throw that
+       silently emptied the projection. */
     const dynamo = DynamoDBDocumentClient.from(
       new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
+      { marshallOptions: { removeUndefinedValues: true } },
     );
     baseResolver = new DynamoLinkResolver(dynamo, LINK_PROJECTION_TABLE);
   } else {

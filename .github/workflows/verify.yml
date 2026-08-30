@@ -320,7 +320,14 @@ jobs:
       REDIRECT_ORIGIN: http://localhost:3002
       MAIL_TRANSPORT: outbox
       THROTTLE_LIMIT: "100000"
-      LOG_LEVEL: warn
+      # debug (not warn) FOR THIS JOB ONLY: the projection writer's failures are
+      # logged by drainOutbox at info level (projectionFailures) and a swallowed
+      # per-op error is logged by the worker at debug/error — at warn they are
+      # invisible, which is exactly why a projection that wrote nothing looked
+      # silent. debug surfaces the resolver GetItem and writer BatchWrite errors
+      # in worker.log / redirect.log so a future failure localises immediately.
+      # The other jobs keep warn; this does not change any app default.
+      LOG_LEVEL: debug
       SNAPURL_ALLOW_UNCONFIGURED_BUILD: "true"
       # The AWS-profile switch under test. Only this job sets it.
       LINK_PROJECTION: dynamo
@@ -446,6 +453,31 @@ jobs:
           echo "--- api ---";      tail -200 /tmp/api.log      || true
           echo "--- redirect ---"; tail -200 /tmp/redirect.log || true
           echo "--- worker ---";   tail -200 /tmp/worker.log   || true
+
+      # The single most decisive diagnostic when the smoke step fails: dump what
+      # the worker actually projected into dynamodb-local. This localises the
+      # fault to ONE side with no guessing:
+      #   * empty / missing LINK items  -> the WRITER never projected (e.g. a
+      #     BatchWrite that threw — a marshalling error on an undefined attribute,
+      #     an endpoint the writer did not honour). Cross-check with worker.log.
+      #   * populated with the expected PK=d#localhost:3002 / SK=s#<run>-<name>
+      #     items -> the writer is fine and the READER is the bug (endpoint,
+      #     key derivation, or unmarshalling). Cross-check with redirect.log.
+      # AWS_ENDPOINT_URL_DYNAMODB + the dummy creds are already in the job env,
+      # so the preinstalled AWS CLI targets dynamodb-local directly. The creds
+      # are the literal string "dummy" (not a secret), so nothing sensitive is
+      # printed. --max-items caps the dump so a large table cannot flood the log.
+      - name: DynamoDB projection contents (diagnostic)
+        if: failure()
+        run: |
+          echo "--- item count (projected LINK + domain-meta items) ---"
+          aws dynamodb scan --table-name "$LINK_PROJECTION_TABLE" \
+            --select COUNT --output json || true
+          echo "--- first 20 projected items (PK/SK/linkId + destination) ---"
+          aws dynamodb scan --table-name "$LINK_PROJECTION_TABLE" \
+            --max-items 20 \
+            --projection-expression "PK, SK, linkId, destination" \
+            --output json || true
 
       - name: Stop services
         if: always()

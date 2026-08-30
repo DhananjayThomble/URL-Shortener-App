@@ -109,9 +109,22 @@ function projectionFor(database: Database): ProjectionTarget {
       /* endpoint is left undefined in production so the SDK talks to the real
          regional DynamoDB endpoint. It is set ONLY when AWS_ENDPOINT_URL_DYNAMODB
          (or the generic AWS_ENDPOINT_URL) is present, which is how CI points the
-         writer at a dynamodb-local container — a strict no-op when unset. */
+         writer at a dynamodb-local container — a strict no-op when unset.
+
+         removeUndefinedValues is REQUIRED, not an optimisation: a projected
+         link carries many optional fields (utm with only some of
+         source/medium/campaign/content set, routing rules whose when.device /
+         when.language / weight are absent), and a ResolvedLink read from
+         Postgres surfaces those absent JSON keys as `undefined`. Without this
+         flag lib-dynamodb's marshaller THROWS on the first undefined attribute
+         value, which fails the whole BatchWriteCommand — so a single link with
+         a partial utm object stops the entire projection batch and the redirect
+         resolves nothing (every /:slug 404s). Stripping undefined values here
+         projects exactly the fields that are set, and the reader revives them
+         identically, so the DynamoDB item matches the Postgres row. */
       const client = DynamoDBDocumentClient.from(
         new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
+        { marshallOptions: { removeUndefinedValues: true } },
       );
       projectionTarget = new DynamoProjection(database, client, table);
     } else {

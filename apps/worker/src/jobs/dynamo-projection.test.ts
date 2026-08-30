@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { Database } from "@snapurl/database";
 import { DynamoProjection } from "./dynamo-projection.js";
 
@@ -210,5 +211,80 @@ describe("DynamoProjection.apply (batching)", () => {
     expect(results[1]!.ok).toBe(false);
     // Sanity: the healthy client fixture is unused here but proves the harness.
     void client;
+  });
+});
+
+describe("DynamoProjection marshalling of optional/absent fields", () => {
+  /* Regression guard for the dynamo-smoke failure (#288): a real link carries
+     a PARTIAL utm object (e.g. {source, campaign} with medium/content absent)
+     and routing rules whose when.device / when.language / weight are absent.
+     Read back from Postgres those absent JSON keys are `undefined`, and
+     lib-dynamodb's marshaller THROWS on an undefined attribute value unless the
+     DocumentClient is built with removeUndefinedValues. A throw there fails the
+     whole BatchWriteCommand, so ONE partial-utm link stops the entire
+     projection batch and the redirect resolves nothing. These tests use a REAL
+     DynamoDBDocumentClient (its marshalling middleware runs for real) over a
+     stubbed base client (no network), so they exercise the actual marshaller
+     rather than a hand-rolled fake. */
+
+  /** A link row whose utm has only some keys set and whose rule omits the
+   *  optional when.device / when.language / weight — the exact shapes the smoke
+   *  fixtures ($RUN-utm, $RUN-geo) produce. */
+  function partialRow() {
+    return linkRow({
+      utm: { source: "newsletter", campaign: "spring" },
+    });
+  }
+  const partialRules = [
+    { rule: { id: "r-in", whenCountry: "IN", whenDevice: undefined, whenLanguage: undefined, then: "https://example.in/store", weight: undefined } },
+  ];
+
+  /* A sentinel the stubbed transport throws so a request that gets PAST
+     marshalling lands here deterministically — no network, no credentials, no
+     real endpoint. If marshalling throws first (the undefined case), this is
+     never reached, which is exactly the difference the two tests assert. */
+  const TRANSPORT_REACHED = "transport-reached-sentinel";
+
+  /** Build a real DocumentClient over a real base client whose HTTP transport
+   *  is replaced by a sentinel-throwing handler and whose credentials are
+   *  static (so nothing tries the credential-provider chain). The
+   *  DocumentClient's marshalling middleware runs for real; only the network
+   *  leg is stubbed. */
+  function realDocClient(removeUndefinedValues: boolean) {
+    const base = new DynamoDBClient({
+      region: "us-east-1",
+      endpoint: "http://localhost:8000",
+      credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
+      requestHandler: {
+        handle: () => Promise.reject(new Error(TRANSPORT_REACHED)),
+      } as never,
+    });
+    return DynamoDBDocumentClient.from(base, {
+      marshallOptions: { removeUndefinedValues },
+    });
+  }
+
+  it("marshals a partial-utm link WITHOUT throwing when removeUndefinedValues is set", async () => {
+    const client = realDocClient(true);
+    const projection = new DynamoProjection(makeDb([partialRow()], partialRules), client, TABLE);
+
+    /* The request marshalled cleanly (undefined stripped) and reached the
+       stubbed transport — proving the marshaller did NOT reject the undefined
+       utm/rule fields. The transport sentinel is the deliberate stop; the point
+       is that marshalling succeeded, not that a fake network returned 200. */
+    await expect(projection.upsert("link-1")).rejects.toThrow(TRANSPORT_REACHED);
+  });
+
+  it("throws a marshalling error on the same input WITHOUT removeUndefinedValues", async () => {
+    const client = realDocClient(false);
+    const projection = new DynamoProjection(makeDb([partialRow()], partialRules), client, TABLE);
+
+    /* This is the exact failure the dynamo-smoke job hit: the marshaller throws
+       on the first undefined attribute value, the BatchWrite never leaves the
+       process (the transport sentinel is never reached), and the projection is
+       left empty so every redirect 404s. The rejection must therefore NOT be
+       the transport sentinel. */
+    await expect(projection.upsert("link-1")).rejects.toThrow();
+    await expect(projection.upsert("link-1")).rejects.not.toThrow(TRANSPORT_REACHED);
   });
 });
