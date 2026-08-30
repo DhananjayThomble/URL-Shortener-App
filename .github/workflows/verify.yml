@@ -329,7 +329,11 @@ jobs:
           # Route the DATABASE_URL host (localhost) to the runner's network via
           # --network host, and mount /tmp so the backup file the scripts write
           # is visible to both the container and later steps.
-          pg_client="docker run --rm --network host -v /tmp:/tmp postgres:18-alpine"
+          # -i (attach stdin) is required so a host-side pipe reaches the
+          # containerized client — restore.sh does `gzip -dc file | $PSQL ...`,
+          # and without -i the container has no stdin, so gzip dies with
+          # "stdout: Broken pipe". Harmless for the `-c` and pg_dump steps.
+          pg_client="docker run --rm -i --network host -v /tmp:/tmp postgres:18-alpine"
           echo "PG_CLIENT=$pg_client" >> "$GITHUB_ENV"
           echo "PG_DUMP=$pg_client pg_dump" >> "$GITHUB_ENV"
           echo "PSQL=$pg_client psql" >> "$GITHUB_ENV"
