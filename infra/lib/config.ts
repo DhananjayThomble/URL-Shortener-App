@@ -26,15 +26,21 @@ import { Construct } from "constructs";
    contain no configuration at all, so the same image is
    deployable to any stage.
 
-   Why deploy-time and not a runtime lookup: these Lambdas sit in
-   isolated subnets with no NAT (see the VPC in snapurl-stack.ts,
-   where that is worth ~$32/month). Calling the SSM or Secrets
-   Manager API from inside one needs an interface VPC endpoint at
-   ~$7/month each — roughly half the database bill, per endpoint,
-   to move a value from one place the account owner can read to
-   another place the account owner can read. Deploy-time
-   resolution gets the property that matters here (nothing
-   secret in git, nothing secret in the image) for nothing.
+   Why deploy-time and not a runtime lookup: originally the
+   Lambdas sat in isolated subnets with no NAT, so calling the SSM
+   or Secrets Manager API from inside one needed an interface VPC
+   endpoint at ~$7/month each — roughly half the database bill, per
+   endpoint, to move a value from one place the account owner can
+   read to another place the account owner can read. That rationale
+   no longer strictly holds: natStrategy now defaults to a NAT
+   instance (see the VPC in snapurl-stack.ts), so the app Lambdas
+   have egress and a runtime SSM/Secrets Manager lookup is reachable
+   over the NAT without a dedicated endpoint. A runtime lookup is
+   therefore now a viable future change (issue #292); it is not
+   implemented here, and under natStrategy 'none' the old no-egress
+   constraint still applies. Deploy-time resolution stays as-is: it
+   gets the property that matters here (nothing secret in git,
+   nothing secret in the image) for nothing.
 
    What that costs: rotating a value takes a redeploy rather than
    taking effect on the next cold start. For a signing key that

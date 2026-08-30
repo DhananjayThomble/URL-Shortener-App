@@ -267,15 +267,20 @@ export class SnapUrlStack extends Stack {
 
     /* The database password ends up in the Lambda environment.
      *
-     * The alternative is reading it from Secrets Manager at cold start, which
-     * needs an interface VPC endpoint because these functions sit in isolated
-     * subnets with no NAT. That endpoint costs ~$7/month -- around 45% of the
-     * database itself -- to hide a password from the only person who can read
-     * a Lambda's configuration in the first place: the account owner.
+     * The alternative is reading it from Secrets Manager at cold start. Under
+     * the old zero-egress topology that required an interface VPC endpoint
+     * (~$7/month) because the functions sat in isolated subnets with no NAT.
+     * With natStrategy defaulting to a NAT instance the app Lambdas now sit in
+     * PRIVATE_WITH_EGRESS subnets (see the VPC block above), so a runtime
+     * Secrets Manager lookup is reachable over the NAT without a dedicated
+     * endpoint — that path is now viable future work (issue #292), not
+     * implemented here.
      *
-     * At this scale that is not a trade worth making. It becomes one the
-     * moment anyone else has console access to this account, and the fix is
-     * one endpoint plus a runtime lookup. */
+     * Either way, deploy-time resolution hides nothing from whoever can read a
+     * Lambda's configuration: the account owner. At this scale that is not a
+     * trade worth making; it becomes one the moment anyone else has console
+     * access to this account. Under natStrategy 'none' the old interface-
+     * endpoint constraint still applies. Behaviour is unchanged here. */
     const databaseUrl = `postgres://snapurl:${database.secret!.secretValueFromJson("password").unsafeUnwrap()}` +
       `@${database.instanceEndpoint.hostname}:${database.instanceEndpoint.port}/snapurl`;
 
