@@ -1,0 +1,53 @@
+# Caddy config for the single-node profile.
+#
+# Automatic HTTPS is on by default: Caddy obtains and renews TLS certificates
+# from Let's Encrypt (ACME) for every site address that is a real domain name.
+# There are deliberately NO `tls` directives here — adding one would opt out of
+# the automatic behaviour. The only prerequisites are DNS and open ports:
+#
+#   1. Public DNS A (and/or AAAA) records for BOTH domains must point at this
+#      host's public IP:
+#         APP_DOMAIN   -> your dashboard + API   (e.g. app.example.com)
+#         SHORT_DOMAIN -> the short-link host     (e.g. snap.example.com)
+#   2. Ports 80 and 443 on the host must be reachable from the internet
+#      (the compose file publishes exactly those two, on the caddy service).
+#
+# Both domains, and the optional ACME contact email, come from .env and are
+# passed into the container by docker-compose.yml, then substituted below with
+# Caddy's {$VAR} environment placeholder syntax.
+
+{
+	# Optional ACME account email. Recommended in production so the CA can warn
+	# you about expiries or account issues. Harmless when left blank.
+	email {$ACME_EMAIL}
+}
+
+# ---------------------------------------------------------------------------
+# APP_DOMAIN — dashboard + API.
+#
+# The web dashboard is out of scope for this compose (api + redirect + worker
+# + postgres + caddy only), so this host proxies the API under /api/* and
+# returns a clear note elsewhere. Point your own dashboard at https://APP_DOMAIN
+# once you deploy one, or serve it separately.
+# ---------------------------------------------------------------------------
+{$APP_DOMAIN} {
+	# X-Forwarded-For: Caddy appends the immediate client IP by default. It is
+	# the single appending proxy in front of the app, which is why the API and
+	# redirect services run with TRUSTED_PROXY_HOPS=1 — the real client IP is
+	# exactly one entry from the right of the chain.
+	handle /api/* {
+		reverse_proxy api:3001
+	}
+
+	# Everything else: the dashboard is not part of this deployment.
+	handle {
+		respond "SnapURL API is running. The API is served under /api/. Deploy the dashboard separately and point it at this domain." 200
+	}
+}
+
+# ---------------------------------------------------------------------------
+# SHORT_DOMAIN — the redirect hot path. Every path is a short link.
+# ---------------------------------------------------------------------------
+{$SHORT_DOMAIN} {
+	reverse_proxy redirect:3002
+}

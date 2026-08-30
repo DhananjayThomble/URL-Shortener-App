@@ -7,6 +7,7 @@ for the redirect hot path, a background worker, a Next.js dashboard, and four
 shared packages that keep them agreeing with each other.
 
 - **How to run it locally:** [docs/BACKEND.md](./docs/BACKEND.md)
+- **How to self-host it on your own domain:** [SELF-HOSTING.md](./SELF-HOSTING.md)
 - **Why it is built this way:** [docs/DECISIONS.md](./docs/DECISIONS.md)
 - **How to contribute:** [CONTRIBUTING.md](./CONTRIBUTING.md)
 

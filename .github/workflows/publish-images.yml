@@ -1,0 +1,98 @@
+# Publish the three server images (api, redirect, worker) as multi-arch
+# (linux/amd64 + linux/arm64) manifests to GHCR, so self-hosters pull them
+# instead of building on every machine.
+#
+# SAFETY — why the triggers are so narrow:
+#   This workflow PUSHES images to ghcr.io using the built-in GITHUB_TOKEN with
+#   packages:write. Publishing an image built from untrusted code is a
+#   supply-chain risk: a pull_request from a fork runs attacker-controlled code
+#   and could ship a poisoned `latest`. So it is gated to release tags
+#   (v*.*.*) and manual workflow_dispatch on the default branch ONLY. It never
+#   triggers on pull_request or on ordinary branch pushes.
+#
+#   It logs in with the BUILT-IN GITHUB_TOKEN (never a PAT) and never dumps the
+#   environment or echoes any secret.
+
+name: Publish images
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+# Only what pushing to GHCR needs: read the checkout, write packages.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and push ${{ matrix.app }} (amd64 + arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, redirect, worker]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64 layers are built under emulation on the amd64 runner.
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GHCR login with the built-in token. github.actor is the user/bot that
+      # triggered the run; GITHUB_TOKEN already carries packages:write from the
+      # permissions block above. No PAT, no hardcoded secret.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR requires lowercase image paths; the repository owner may contain
+      # uppercase (e.g. "DhananjayThomble"). metadata-action lowercases the
+      # image ref it emits, but we lowercase the owner explicitly here so the
+      # `images:` input is already correct and nothing downstream can regress.
+      - name: Compute lowercase owner
+        id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.owner.outputs.lc }}/snapurl-${{ matrix.app }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Publish `latest` on any v* release tag. {{is_default_branch}} is
+            # FALSE on a tag push (the ref is refs/tags/v*, not the default
+            # branch), so gating on it would mean a release publishes the
+            # version tags but never `latest` — breaking a clean-machine
+            # `docker compose pull` where .env.example defaults SNAPURL_TAG=latest.
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          build-args: |
+            APP=${{ matrix.app }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
