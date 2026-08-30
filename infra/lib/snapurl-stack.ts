@@ -667,11 +667,38 @@ export class SnapUrlStack extends Stack {
 
     /* EventBridge rather than an in-process interval: a scheduled rule
        survives a redeploy and a scale-to-zero, which the v1 node-cron did
-       not — it died with the process that started it. */
+       not — it died with the process that started it.
+
+       Two rules, not one, because the handler runs one job per invocation
+       keyed on the `task` payload (see apps/worker/src/lambda.ts). Previously
+       a single 1-minute rule with no payload ran BOTH the frequent rollup and
+       the hourly maintenance on every tick — so the hourly job actually ran
+       60x/hour against a shared t4g.micro that is also serving redirects.
+       Splitting the schedule runs maintenance once an hour as intended. The
+       DEFAULT click_events partition guarantees inserts never fail between
+       the hourly ensureClickPartitions passes, so the slower maintenance
+       cadence loses no clicks. Migrate stays on no schedule — it is invoked
+       manually with {"task":"migrate"}. */
     new events.Rule(this, "WorkerSchedule", {
       schedule: events.Schedule.rate(Duration.minutes(1)),
-      targets: [new targets.LambdaFunction(workerFn, { retryAttempts: 2 })],
-      description: "Drains the click queue and refreshes the rollup tables.",
+      targets: [
+        new targets.LambdaFunction(workerFn, {
+          event: events.RuleTargetInput.fromObject({ task: "frequent" }),
+          retryAttempts: 2,
+        }),
+      ],
+      description: "Frequent pass: drains the click queue and refreshes the rollup tables (every minute).",
+    });
+
+    new events.Rule(this, "WorkerMaintenanceSchedule", {
+      schedule: events.Schedule.rate(Duration.hours(1)),
+      targets: [
+        new targets.LambdaFunction(workerFn, {
+          event: events.RuleTargetInput.fromObject({ task: "maintenance" }),
+          retryAttempts: 2,
+        }),
+      ],
+      description: "Hourly maintenance: partition provisioning, salt rotation, retention and pruning.",
     });
 
     /* ---------------------------------------------------------
