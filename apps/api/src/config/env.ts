@@ -53,8 +53,12 @@ export const EnvSchema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   APPLE_OAUTH_CLIENT_ID: z.string().optional(),
 
-  /** Local dev writes mail to logs/outbox instead of sending. */
+  /** Local dev writes mail to an outbox dir instead of sending. */
   MAIL_TRANSPORT: z.enum(["outbox", "ses"]).default("outbox"),
+  /** Where the outbox transport writes; defaults to os.tmpdir()/snapurl-outbox
+      so it works on Lambda's read-only FS (only /tmp is writable) and locally.
+      Optional so nothing else changes. */
+  MAIL_OUTBOX_DIR: z.string().optional(),
   MAIL_FROM: z.string().default("SnapURL <no-reply@snapurl.local>"),
 
   THROTTLE_TTL_SECONDS: z.coerce.number().int().default(60),

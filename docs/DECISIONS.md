@@ -213,15 +213,29 @@ An internal transport would be ceremony.
     page, the create drawer and `/p/[slug]` no longer say anything is scanned. Set
     `GOOGLE_SAFE_BROWSING_API_KEY` and the claim can come back, this time truthfully.
 
+    **Egress caveat (see the natStrategy entry in Part 4b).** Even with a key set, Safe Browsing
+    calls Google's API from inside the backend, so it only *functions* when the AWS profile has
+    egress — i.e. `natStrategy != 'none'`. Under the default NAT-instance profile it works; under
+    `natStrategy = 'none'` (the free zero-egress topology) the call cannot leave the VPC, so the
+    feature is non-functional there regardless of the key.
+
 11. **Email is stubbed, and only one message exists.** `MailService.sendInvite` is the only mail
-    the system sends; with `MAIL_TRANSPORT=outbox` (the default) it writes to `logs/outbox/`
-    instead of sending. SES needs a verified domain and a sandbox exit request.
+    the system sends; with `MAIL_TRANSPORT=outbox` (the default) it writes each message to a file
+    instead of sending. The outbox directory defaults to `os.tmpdir()/snapurl-outbox` and is
+    overridable via `MAIL_OUTBOX_DIR`. It used to write to `process.cwd()/logs/outbox`, which
+    threw `EROFS` on Lambda — whose filesystem is read-only except for `/tmp` — so every invite
+    500'd; writing to a writable tmp dir fixes that crash. SES needs a verified domain and a
+    sandbox exit request and remains unwired (the `MAIL_TRANSPORT=ses` branch still logs "not
+    wired yet; message dropped") — future work, out of scope here.
 
     This entry used to say invitations, verification *and* password reset were stubbed. There is
     no verification flow and no password reset flow — not stubbed, absent: no endpoint on
     `AuthController`, no method on `MailService`. A user who forgets their password currently has
     no way back into their account. `MailerPort` was named here as the seam for wiring SES; it
     does not exist either, only a comment mentioning it. The seam is `MailService.send`.
+
+    **Egress caveat.** Once SES is wired, actually delivering mail (like Safe Browsing and
+    webhooks) needs egress, so it only functions when `natStrategy != 'none'`.
 
 12. **No rate limit on the redirect path.** Rate limiting the dashboard API protects the database;
     rate limiting redirects would mean a state lookup on the hot path, and CloudFront already
@@ -308,12 +322,19 @@ someone to distrust both. Analytics now counts the conversions table directly.
 
 ### Config is resolved at deploy time, not at cold start
 
-**The constraint:** the Lambdas sit in isolated subnets with no NAT, because a NAT
-gateway costs more per month than everything else in the stack combined. Nothing in
-there can call the SSM or Secrets Manager API without an interface VPC endpoint, at
-about $7/month each — roughly half the database bill, per endpoint, to move a value
-from one place the account owner can read into another place the account owner can
-read.
+**The constraint (as it originally stood).** The Lambdas sat in isolated subnets with no
+NAT, because a NAT gateway costs more per month than everything else in the stack
+combined. Nothing in there could call the SSM or Secrets Manager API without an
+interface VPC endpoint, at about $7/month each — roughly half the database bill, per
+endpoint, to move a value from one place the account owner can read into another place
+the account owner can read.
+
+**Update:** this rationale no longer strictly holds. `natStrategy` now defaults to a NAT
+instance (see the natStrategy entry below), so the app Lambdas have egress and a runtime
+SSM/Secrets Manager lookup is reachable over the NAT without a dedicated endpoint. That
+makes a runtime lookup a *viable future change* (issue #292) rather than a $7/month
+upgrade. It is deliberately not implemented here — deploy-time resolution stays as-is —
+and under `natStrategy = 'none'` the original no-egress constraint still applies.
 
 **What I did instead:** CloudFormation resolves both stores at deploy time.
 Ordinary config comes from SSM Parameter Store (`/snapurl/<stage>/*`, free at
@@ -326,9 +347,10 @@ same image deployable to any stage.
 **What it costs:** changing a value takes a redeploy rather than taking effect on
 the next cold start. For a signing key that is the right shape anyway — rotating one
 invalidates every token it signed, so it is a deliberate operation. For a log level
-it is mildly annoying. The upgrade path is one interface endpoint and a runtime
-lookup, and the day it becomes worth $7/month is the day someone else has console
-access to this account.
+it is mildly annoying. The upgrade path is a runtime lookup — no longer gated on a
+$7/month interface endpoint now that the default NAT profile gives these Lambdas
+egress (issue #292) — and the day it becomes worth doing is the day someone else has
+console access to this account.
 
 **The one thing this does not do** is hide a value from anyone who can read a
 Lambda's configuration. That was already true of the database password before this
@@ -509,6 +531,52 @@ that holds.
 
 Verified by synthesising twice from clean: three assets, 1.4 MB each, identical
 across runs, and the nested `cdk.out` directories left empty.
+
+### Egress is a property of the AWS profile: `natStrategy`, defaulting to a NAT instance
+
+**Forced by #281 (a #267 release blocker):** the AWS profile set `natGateways: 0` with
+every Lambda in `PRIVATE_ISOLATED` subnets, so nothing in the backend could reach the
+internet. Safe Browsing, customer webhooks, Google OAuth (JWKS) and mail all call out —
+so all four were dead on arrival, while the docs and UI presented Safe Browsing and
+webhooks as working features. That is the contradiction this entry resolves.
+
+**Decision.** Egress is now a configurable property of the stack via a
+`natStrategy: 'gateway' | 'instance' | 'none'` prop, wired from
+`app.node.tryGetContext('natStrategy')` in `bin/snapurl.ts`, **defaulting to
+`'instance'`**: a single t4g.nano NAT *instance* (`ec2.NatProvider.instanceV2`, ~$3/mo)
+rather than a managed NAT gateway. A hobby stack does not need the gateway's per-AZ
+redundancy, and $3/mo is a fraction of the ~$32/mo a gateway costs. RDS always stays in
+`PRIVATE_ISOLATED` (it never egresses); the app Lambdas move to `PRIVATE_WITH_EGRESS`
+when NAT is on.
+
+**NAT over IPv6 egress-only.** An egress-only IGW is free, but this was chosen against:
+arbitrary customer webhook endpoints cannot be relied on to publish `AAAA` records, so
+IPv6-only egress would leave webhook coverage patchy — some customers' endpoints would
+simply be unreachable. This was the decision recorded by epic #267; NAT trades a few
+dollars a month for reaching any IPv4 endpoint a customer configures.
+
+**The three options.**
+
+| `natStrategy` | Cost | What it is | Egress features |
+| --- | --- | --- | --- |
+| `'instance'` (default) | ~$3/mo | t4g.nano NAT instance, single AZ (a deliberate SPOF for a hobby stack) | Function |
+| `'gateway'` | ~$32/mo | Managed NAT gateway, highly available — the one-flag upgrade | Function |
+| `'none'` | $0 | The original zero-egress isolated-only topology, preserved exactly | **Non-functional** |
+
+Under `'none'`, Safe Browsing, webhooks, OAuth (JWKS) and mail delivery are all
+non-functional by design — it preserves the free option for an operator who does not
+need them and accepts that trade knowingly, rather than being surprised by it.
+
+**What this does and does not do.** This makes egress *capability* exist and be
+configurable. Actual end-to-end egress is a deploy-time concern (Phase 7); nothing here
+sends a real webhook or email in this environment. And because the default profile now
+gives the app Lambdas egress, a runtime SSM/Secrets Manager lookup becomes reachable
+without a dedicated interface endpoint — which unblocks, but does not implement, issue
+#292 (see the deploy-time-config entry above).
+
+**Revisit if** the single NAT instance's availability becomes a problem (flip to
+`'gateway'`), or if a deployment genuinely needs none of the egress features and wants
+to save the ~$3/mo (`'none'`).
 
 ---
 

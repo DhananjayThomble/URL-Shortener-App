@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { ENV, type Env } from "../config/env.js";
 
@@ -7,8 +8,10 @@ import { ENV, type Env } from "../config/env.js";
 
    SES needs a verified domain and a sandbox-exit request, neither of which I
    can do from here. The outbox transport writes each message to
-   logs/outbox/ so invitations and resets are testable end to end without a
-   mail provider. MailerPort is the seam — wiring SES is one adapter. */
+   os.tmpdir()/snapurl-outbox by default (writable on Lambda, whose filesystem
+   is read-only except for /tmp), overridable via MAIL_OUTBOX_DIR, so
+   invitations and resets are testable end to end without a mail provider.
+   MailerPort is the seam — wiring SES is one adapter. */
 
 export interface MailMessage {
   to: string;
@@ -24,7 +27,7 @@ export class MailService {
 
   async send(message: MailMessage): Promise<void> {
     if (this.env.MAIL_TRANSPORT === "outbox") {
-      const dir = resolve(process.cwd(), "logs/outbox");
+      const dir = this.env.MAIL_OUTBOX_DIR ?? resolve(tmpdir(), "snapurl-outbox");
       await mkdir(dir, { recursive: true });
       const file = resolve(dir, `${Date.now()}-${message.to.replace(/[^a-z0-9]/gi, "_")}.txt`);
       await writeFile(file, `To: ${message.to}\nSubject: ${message.subject}\n\n${message.body}\n`, "utf8");
