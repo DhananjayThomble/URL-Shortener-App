@@ -94,6 +94,21 @@ const LINK_PROJECTION_TABLE = process.env.LINK_PROJECTION_TABLE;
    is what lets it leave the VPC (#288 3b). */
 const CLICK_SINK = process.env.CLICK_SINK ?? "postgres";
 const CLICK_QUEUE_URL = process.env.CLICK_QUEUE_URL;
+
+/* OPTIONAL endpoint-url overrides for the AWS SDK clients. Both return
+   undefined in production, so the DynamoDB and SQS clients resolve their real
+   regional endpoints and `endpoint` is simply omitted — a genuine no-op. CI
+   sets AWS_ENDPOINT_URL_DYNAMODB (a dynamodb-local container) and, if it ever
+   runs an SQS emulator, AWS_ENDPOINT_URL_SQS, so the same adapters can be
+   exercised against local emulators without any code change. The
+   service-specific env wins over the service-agnostic AWS_ENDPOINT_URL,
+   matching the SDK's own precedence. */
+function dynamoEndpoint(): string | undefined {
+  return process.env.AWS_ENDPOINT_URL_DYNAMODB ?? process.env.AWS_ENDPOINT_URL ?? undefined;
+}
+function sqsEndpoint(): string | undefined {
+  return process.env.AWS_ENDPOINT_URL_SQS ?? process.env.AWS_ENDPOINT_URL ?? undefined;
+}
 /* A short bounded-staleness window: an edited link stops serving its old
    destination within this many seconds even before edit-invalidation lands.
    Ten seconds keeps the database out of the hot path for the common repeated
@@ -162,7 +177,9 @@ async function init(): Promise<void> {
   let baseResolver: LinkResolver;
   if (LINK_PROJECTION === "dynamo") {
     if (!LINK_PROJECTION_TABLE) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
-    const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION }));
+    const dynamo = DynamoDBDocumentClient.from(
+      new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
+    );
     baseResolver = new DynamoLinkResolver(dynamo, LINK_PROJECTION_TABLE);
   } else {
     baseResolver = new PostgresLinkResolver(database!.db);
@@ -181,7 +198,10 @@ async function init(): Promise<void> {
      drained by the worker), a Postgres INSERT everywhere else. */
   if (CLICK_SINK === "sqs") {
     if (!CLICK_QUEUE_URL) throw new Error("CLICK_SINK=sqs requires CLICK_QUEUE_URL to be set.");
-    clicks = new SqsClickSink(new SQSClient({ region: process.env.AWS_REGION }), CLICK_QUEUE_URL);
+    clicks = new SqsClickSink(
+      new SQSClient({ region: process.env.AWS_REGION, endpoint: sqsEndpoint() }),
+      CLICK_QUEUE_URL,
+    );
   } else {
     clicks = new PostgresClickSink(database!.db);
   }

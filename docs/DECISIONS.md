@@ -599,6 +599,125 @@ without a dedicated interface endpoint — which unblocks, but does not implemen
 `'gateway'`), or if a deployment genuinely needs none of the egress features and wants
 to save the ~$3/mo (`'none'`).
 
+### Profile 3: the AWS serverless projection and the click pipeline
+
+**Filled in by #288 (Phase 7 of #267):** the ports were already there — `LinkResolver`
+in `apps/redirect`, `ClickSink` in `apps/redirect`, `ProjectionTarget` in `apps/worker`
+— and Profile 3 is the AWS adapters behind them. Two switches turn them on, both
+defaulting OFF so every other profile is byte-for-byte unchanged:
+
+| Env switch | Default | `dynamo` / `sqs` (the AWS profile) |
+| --- | --- | --- |
+| `LINK_PROJECTION` | `none` — redirect reads Postgres via `PostgresLinkResolver`; worker's `NoProjection` is a no-op | `dynamo` — redirect reads a DynamoDB projection; worker drains `projection_outbox` into it |
+| `CLICK_SINK` | `postgres` — redirect `INSERT`s clicks straight into `click_events` | `sqs` — redirect sends an awaited SQS message; the worker drains it back into `click_events` |
+
+Local dev, compose, the single-node profile and the Kubernetes profile all leave both
+unset, so they run the exact Postgres paths they always did. Only the CDK stack sets
+`dynamo`/`sqs`, and only on `redirectFn`/`workerFn` (never `commonEnv`).
+
+**The projection is one DynamoDB table, keyed by domain.** A LINK item per `(domain,
+slug)` carries every field the redirect needs to make a routing decision:
+
+- `PK = 'd#' + normaliseHost(domain)`, `SK = 's#' + slug.toLowerCase()` — the same
+  normalisation `PostgresLinkResolver` uses, so a link created against `SNAP.TO/Foo`
+  resolves from a request whose Host is `snap.to` and slug is `foo`, identically to
+  Postgres.
+- a DOMAIN-META item per domain — `SK = 'd#meta'` — holding `{id, rootRedirect,
+  notFoundRedirect}` so the root (`/`) and not-found redirects resolve with one GetItem.
+  It is (re)written alongside every link upsert on that domain: the simplest way to keep
+  `resolveDomain()` current without a second outbox stream, and one cheap extra put.
+
+One `GetItem` per redirect, no join, no connection pool to warm. The item shape and the
+`Date`↔ISO-string conversion live in **one** place (`@snapurl/database`'s
+`link-projection` mapper), imported by both the worker (writer) and the redirect
+(reader), so a field the writer projects cannot drift from the field the reader revives.
+
+**Clicks are a point-in-time value, on purpose.** The projected `clicks` is read from
+`link_counters` at projection time, exactly as `gateFor()` already treats it: "the count
+is the last rollup's, not a live one." A hard click cap can therefore be overshot by a
+handful under concurrency — but it is the *same* overshoot the Postgres path already
+carries, so the DynamoDB and Postgres resolvers cannot disagree on the gate beyond the
+rollup lag both share. A synchronous live count would cost more latency than the
+accuracy is worth on the hot path.
+
+**The delete-key GSI, so the API never changes.** `enqueueProjection` stores only
+`{linkId, operation}` in the outbox and the API's delete removes the link row in the
+*same* transaction. So at drain time a `delete` cannot read `(domain, slug)` from
+Postgres to build the item key — the row is already gone. The issue's constraint is that
+the API stays untouched, so the resolution lives entirely on the projection side: the
+table carries a `linkId-index` GSI on a top-level `linkId` attribute present on every
+LINK item, and `remove(linkId)` queries the GSI for the matching item(s) and deletes
+them by their real PK/SK. (A reverse-pointer item was the alternative; the GSI is the
+DynamoDB idiom and needs no second write on the upsert path.) An upsert does *not* need
+the GSI — the link row still exists for an upsert, so `(domain, slug)` is read straight
+from Postgres. A writer test round-trips upsert→remove to prove it.
+
+**SQS as an event source mapping, not a self-managed `ReceiveMessage` loop.** The
+worker does not poll the queue. An SQS event source mapping (`SqsEventSource`,
+`reportBatchItemFailures: true`) is polled by the Lambda service *outside* the VPC and
+delivers a batch as an ordinary `{ Records: [...] }` invocation, which the worker drains
+into `click_events` with partial-batch-failure reporting so one bad message does not
+reprocess the whole batch. A self-managed `ReceiveMessage` loop would have had to run
+*inside* the redirect or a polling Lambda and, to reach SQS from a private subnet, would
+have needed an SQS interface VPC endpoint (hourly + per-GB cost) — the ESM needs none,
+because the poller lives on the AWS side of the boundary. **This sequencing depended on
+3a landing first:** the redirect could only be allowed to leave the VPC once it could
+resolve links from DynamoDB (3a) *and* record clicks without a Postgres connection (3b's
+SQS sink), so 3a (projection + resolver) had to precede 3b (SQS sink + VPC removal).
+
+**The payoff: the redirect leaves the VPC.** Under `dynamo` + `sqs` the redirect touches
+only DynamoDB and SQS — both public AWS endpoints — and `init()` opens no Postgres
+connection at all. `redirectFn` drops its `vpcSettings`; `apiFn` and `workerFn` keep
+theirs. What that buys:
+
+- **No ENI.** A VPC Lambda attaches an elastic network interface at cold start; a
+  no-VPC Lambda does not, so the cold start is faster — the thing that matters most on a
+  redirect hot path.
+- **No connection pool, no ~109-connection ceiling.** A db.t4g.micro caps at ~109
+  connections; a fleet of redirect instances each holding even one pooled connection is
+  how that ceiling is hit. DynamoDB and SQS are connectionless HTTP, so redirect
+  concurrency no longer competes for RDS connections at all.
+- **The 10s-timeout failure mode is gone.** The old fire-and-forget-or-await Postgres
+  `INSERT` under the Lambda Web Adapter could pin a backend the pool could not reclaim,
+  queueing the next request on a warm instance behind a query that never finishes until
+  the function times out. With no Postgres in the redirect there is nothing to pin.
+
+**What made leaving Postgres possible: the CacheStore-backed salt source.** The daily
+visitor-hash salt was the last thing tying the redirect to Postgres — it read/wrote the
+`daily_salts` table on every request. `SaltSource` now has two implementations behind a
+shared caching base: `PostgresSaltCache` (unchanged, used whenever a Postgres handle
+exists) and `CacheStoreSaltCache`, which reads/writes the shared `CacheStore` — already
+DynamoDB on the AWS profile (`CACHE_DRIVER=dynamodb`, from #285) and reachable without a
+VPC. So a redirect that has left Postgres still salts its hashes from DynamoDB. The one
+race (two cold instances writing a salt on the first request of a new day) affects only
+unique-visitor counting, never redirect correctness, and closes the instant the key is
+populated — the same bounded imprecision the "no cookies" promise already documents.
+
+**The freeze/thaw argument, asserted rather than assumed.** Under the Lambda Web Adapter
+the sandbox freezes the moment the redirect responds. A fire-and-forget Postgres
+`INSERT` is suspended mid-flight — the click is lost *and* it pins a backend the pool
+cannot reclaim. An **awaited** SQS `SendMessage` is an HTTP request that completes and is
+acknowledged *before* the response returns, so the click is durably on the queue by the
+time the invocation ends; the worker's ESM drains it into `click_events` later. That is
+the freeze-safe write #277 wanted, and it is a unit-test assertion, not a hope:
+`SqsClickSink` awaits the send, and the worker consumer test feeds it a batch and asserts
+every message lands in `click_events` while a single bad message is isolated to
+`batchItemFailures`.
+
+**CI-proven vs mock-proven vs deploy-deferred.** Being explicit about what has actually
+been exercised:
+
+| Claim | Status | How |
+| --- | --- | --- |
+| Redirect resolves from DynamoDB under `LINK_PROJECTION=dynamo` (Done-when #1) | **CI-proven** | The `dynamo-smoke` job stands up `amazon/dynamodb-local`, the worker drains the outbox into it, and `scripts/smoke-redirect.sh` passes with every 302/404 served from DynamoDB |
+| `SqsClickSink` awaits the send; the worker consumer drains a batch into `click_events` with partial-batch-failure isolation (freeze/thaw survival) | **Mock-proven** | Unit tests against a mocked SDK `send` keyed by command name; the resolver/writer/mapper round-trips are likewise unit-tested |
+| CDK shape: PAY_PER_REQUEST + PITR table + GSI, SQS queue + DLQ, worker ESM with `ReportBatchItemFailures`, `redirectFn` with no `VpcConfig` | **CI-proven** (synth) | `cdk synth` asserts every resource; no deploy |
+| Real no-VPC resolution and the real SQS round trip against AWS | **Deploy-deferred** | Needs a live stack; the sandbox and CI cannot run a real deploy. The CI smoke uses `AWS_ENDPOINT_URL_DYNAMODB` to point the adapters at dynamodb-local — the same optional endpoint override that is unset (a no-op) in production |
+
+**Revisit if** the point-in-time click count's overshoot ever needs to be tighter (a
+conditional-write cap on the item is the DynamoDB move), or if the salt race matters
+enough to warrant an atomic first-write primitive on the `CacheStore` port.
+
 ---
 
 ## Part 5 — Open questions for you

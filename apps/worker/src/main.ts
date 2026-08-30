@@ -91,13 +91,27 @@ export async function close(): Promise<void> {
 const LINK_PROJECTION = process.env.LINK_PROJECTION ?? "none";
 let projectionTarget: ProjectionTarget | undefined;
 
+/* An OPTIONAL endpoint override for the DynamoDB client. Unset in production
+   (the client resolves the real regional endpoint); set to something like
+   http://localhost:8000 in CI so the writer targets a dynamodb-local container.
+   AWS_ENDPOINT_URL_DYNAMODB takes precedence over the service-agnostic
+   AWS_ENDPOINT_URL, matching the SDK's own precedence, and both being unset
+   returns undefined so `endpoint` is simply omitted — a genuine no-op. */
+function dynamoEndpoint(): string | undefined {
+  return process.env.AWS_ENDPOINT_URL_DYNAMODB ?? process.env.AWS_ENDPOINT_URL ?? undefined;
+}
+
 function projectionFor(database: Database): ProjectionTarget {
   if (!projectionTarget) {
     if (LINK_PROJECTION === "dynamo") {
       const table = process.env.LINK_PROJECTION_TABLE;
       if (!table) throw new Error("LINK_PROJECTION=dynamo requires LINK_PROJECTION_TABLE to be set.");
+      /* endpoint is left undefined in production so the SDK talks to the real
+         regional DynamoDB endpoint. It is set ONLY when AWS_ENDPOINT_URL_DYNAMODB
+         (or the generic AWS_ENDPOINT_URL) is present, which is how CI points the
+         writer at a dynamodb-local container — a strict no-op when unset. */
       const client = DynamoDBDocumentClient.from(
-        new DynamoDBClient({ region: process.env.AWS_REGION }),
+        new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
       );
       projectionTarget = new DynamoProjection(database, client, table);
     } else {
