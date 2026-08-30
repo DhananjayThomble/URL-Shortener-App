@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Establish a green baseline for the analytics refactor. Install deps with the pinned toolchain, run type-check, build, and the test suite so the AnalyticsReader extraction in FEAT-002 can be verified as byte-for-byte behavior-preserving against a known-good starting point. Also capture the exact current Drizzle import line and query set in analytics.service.ts so FEAT-002 can move them verbatim.",
+  "status": "completed",
+  "steps": [
+    "Ensure Node 22 is on PATH (prepend the Node 22 bin dir), then enable corepack. Run `corepack pnpm install` at the repo root.",
+    "Run `corepack pnpm type-check` and confirm it passes.",
+    "Run `corepack pnpm test` and record the analytics test result. Note the current number of passing assertions in apps/api/src/analytics/analytics.service.test.ts (expected: 25 across windowFor/percentChange/fillSeries/iso/applyCityFloor). DB-gated integration tests SKIP locally; that is expected.",
+    "Run `corepack pnpm build` and confirm it passes.",
+    "Record the exact import line from apps/api/src/analytics/analytics.service.ts (the `import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, links, lt, sql, type Database } from \"@snapurl/database\";` line) and the DB/READ_DB import, so FEAT-002 knows exactly what must be removed from the service and moved to the adapter.",
+    "Write the baseline results (type-check pass/fail, build pass/fail, analytics assertion count, integration skip note) into this feature's findings field."
+  ],
+  "acceptance_criteria": [
+    "`corepack pnpm type-check` passes.",
+    "`corepack pnpm build` passes.",
+    "`corepack pnpm test` passes for non-DB tests; analytics.service.test.ts assertion count is recorded (expected 25).",
+    "The exact @snapurl/database import line and DB/READ_DB import in analytics.service.ts are recorded in findings for FEAT-002 to reference."
+  ],
+  "verification": [
+    "corepack pnpm type-check",
+    "corepack pnpm build",
+    "corepack pnpm test"
+  ],
+  "blocked_reason": null,
+  "findings": "BASELINE GREEN (2026-08-30). Toolchain: Node v22.23.2 at /opt/toolchains/.nvm/versions/node/v22.23.2/bin (prepend to PATH each command; corepack is NOT on the default shell PATH). pnpm v11.24.0 via corepack.\n\nRESULTS:\n- corepack pnpm install: OK (already up to date, 9 workspace projects).\n- corepack pnpm type-check: PASS (all 8 projects: infra, contract, domain, database, web, api, redirect, worker).\n- corepack pnpm build: PASS, but the `web` (snapurl-web) build REQUIRES env `NEXT_PUBLIC_API_URL` set to a non-localhost https URL (next.config.ts refuses to build without it and rejects localhost — documented production gate, see web/.env.example; NOT a code defect and unrelated to analytics). Built cleanly with NEXT_PUBLIC_API_URL=https://api.example.com/api/v1. apps/api (nest build), apps/redirect, apps/worker all build Done.\n- corepack pnpm test: PASS. apps/api: 8 files passed, 2 skipped; 94 tests passed, 27 skipped. apps/api/src/analytics/analytics.service.test.ts = 25 tests passed (matches expected 25 across windowFor/percentChange/fillSeries/iso/applyCityFloor). DB-gated integration tests SKIP locally as expected: reports.service.integration (8), links.service.integration (19), worker outbox/partitions/rollup (2/14/12), redirect resolver DB (3) — validated by CI, NOT failures.\n\nEXACT LINES IN apps/api/src/analytics/analytics.service.ts TO MOVE IN FEAT-002 (verbatim):\n- Line 2 (@snapurl/database import — ALL of these query builders/tables must leave the service and move into the Postgres adapter):\n  import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, links, lt, sql, type Database } from \"@snapurl/database\";\n- Line 4 (DI token import from database.module):\n  import { DB, READ_DB } from \"../database/database.module.js\";\n- Constructor injects both @Inject(DB) db: Database and @Inject(READ_DB) readDb: Database; the read path (overview()) uses this.readDb exclusively. In FEAT-002 the service should depend on ANALYTICS_READER (bound to PostgresAnalyticsReader off READ_DB) instead of Drizzle. The store-agnostic helpers (applyCityFloor/CITY_MIN_CLICKS/OTHER_CITIES, iso, windowFor, percentChange, fillSeries, FLAGS/COUNTRY_NAMES) STAY in the service.\n\nNO SOURCE FILES MODIFIED in FEAT-001 (baseline chore only)."
+}
