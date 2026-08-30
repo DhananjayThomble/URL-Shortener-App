@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type {
+  AbuseReport,
   Analytics,
   ApiKey,
   AuditEntry,
@@ -548,6 +549,32 @@ const webhookStore: Webhook[] = [...WEBHOOKS];
 const bioStore: BioPage[] = [...BIO_PAGES];
 const auditStore: AuditEntry[] = [...AUDIT];
 
+/* Two abuse reports for the operator queue (#291). One resolves to a real link
+   in the fixture set so "flag the link" has something to flag; the other is
+   still open. In the real API these are scoped to the caller's workspace. */
+const reportStore: AbuseReport[] = [
+  {
+    id: "rep_phish",
+    slug: "spring-sale",
+    reason: "This link redirects to a fake login page that steals passwords.",
+    reporterContact: "victim@example.com",
+    status: "open",
+    linkId: "lnk_spring",
+    createdAt: daysAgo(1),
+    updatedAt: daysAgo(1),
+  },
+  {
+    id: "rep_spam",
+    slug: "app",
+    reason: "Sends unsolicited bulk traffic to a spam site.",
+    reporterContact: null,
+    status: "reviewed",
+    linkId: "lnk_app",
+    createdAt: daysAgo(4),
+    updatedAt: daysAgo(2),
+  },
+];
+
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 /* Only the member actions write audit entries, because only the member actions
@@ -933,6 +960,24 @@ export async function fixtureRequest<T>(
     removeById(bioStore, m(/^\/bio-pages\/([^/]+)$/)![1]);
     data = undefined;
   } else if (m(/^\/bio-pages$/)) data = bioStore;
+  /* ---- abuse reports (operator side, #291) ---- */
+  else if (m(/^\/reports\/([^/]+)$/) && method === "PATCH") {
+    const report = reportStore.find((r) => r.id === m(/^\/reports\/([^/]+)$/)![1]);
+    if (!report) throw new Error(`No fixture report ${path}`);
+    const body = (opts.body as { status?: AbuseReport["status"]; flagLink?: boolean }) ?? {};
+    const willFlag = body.flagLink === true && report.linkId !== null;
+    // Mirrors the service: flagging a link defaults the report to 'actioned'
+    // unless the caller stated a status, and flags the underlying link.
+    report.status = body.status ?? (willFlag ? "actioned" : report.status);
+    report.updatedAt = new Date().toISOString();
+    if (willFlag) {
+      // Flagging pulls the link from circulation; 'archived' is the nearest
+      // fixture-visible equivalent of the server's safeBrowsingStatus='flagged'.
+      const link = findLink(report.linkId!);
+      if (link) link.status = "archived";
+    }
+    data = report;
+  } else if (m(/^\/reports$/)) data = reportStore;
   /* ---- public ---- */
   else if (m(/^\/public\/links\/([^/]+)\/unlock$/)) {
     const password = (opts.body as { password?: string })?.password ?? "";

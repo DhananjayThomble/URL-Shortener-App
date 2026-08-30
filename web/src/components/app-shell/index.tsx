@@ -23,6 +23,7 @@ const NAV: { group: string; items: { href: string; label: string; icon: string; 
     group: "Configure",
     items: [
       { href: "/domains", label: "Domains", icon: "◈", count: "domains" },
+      { href: "/reports", label: "Abuse reports", icon: "⚑" },
       { href: "/developers", label: "Developers", icon: "⌘" },
       { href: "/team", label: "Team", icon: "◐", count: "members" },
       { href: "/settings", label: "Settings", icon: "⚙" },
