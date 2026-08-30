@@ -20,33 +20,56 @@ import { Construct } from "constructs";
    that no human ever chooses them and no value is ever typed
    into this repository.
 
-   Both are read at *deploy* time, by CloudFormation, and land in
-   the Lambda's environment. Neither is baked into a container
-   image: the images are built from the repository alone and
-   contain no configuration at all, so the same image is
-   deployable to any stage.
+   Neither is baked into a container image: the images are built
+   from the repository alone and contain no configuration at all,
+   so the same image is deployable to any stage.
 
-   Why deploy-time and not a runtime lookup: originally the
-   Lambdas sat in isolated subnets with no NAT, so calling the SSM
-   or Secrets Manager API from inside one needed an interface VPC
-   endpoint at ~$7/month each — roughly half the database bill, per
-   endpoint, to move a value from one place the account owner can
-   read to another place the account owner can read. That rationale
-   no longer strictly holds: natStrategy now defaults to a NAT
-   instance (see the VPC in snapurl-stack.ts), so the app Lambdas
-   have egress and a runtime SSM/Secrets Manager lookup is reachable
-   over the NAT without a dedicated endpoint. A runtime lookup is
-   therefore now a viable future change (issue #292); it is not
-   implemented here, and under natStrategy 'none' the old no-egress
-   constraint still applies. Deploy-time resolution stays as-is: it
-   gets the property that matters here (nothing secret in git,
-   nothing secret in the image) for nothing.
+   Config (SSM) vs secrets (Secrets Manager), resolved differently:
 
-   What that costs: rotating a value takes a redeploy rather than
-   taking effect on the next cold start. For a signing key that
-   is the right shape anyway — rotating one invalidates every
-   token in flight, so it is a deliberate operation, not a
-   background one.
+   Ordinary config is read at *deploy* time, by CloudFormation,
+   and lands in the Lambda's environment as-is. Reading it is
+   harmless, so there is no reason to defer it.
+
+   The two JWT signing keys and the database password are handled
+   by issue #292, now IMPLEMENTED. Originally they too were read
+   at deploy time via `unsafeUnwrap()`, which writes their
+   plaintext into the synthesized CloudFormation template — copies
+   of every secret in the CDK assets bucket and in CloudFormation's
+   stack history, not just in the Lambda environment. The reason
+   given for accepting that was cost: the app Lambdas sat in
+   isolated subnets with no NAT, so a runtime Secrets Manager
+   lookup needed an interface VPC endpoint at ~$7/month, and the
+   only reader of a Lambda's configuration was the account owner.
+
+   Both halves of that trade changed. natStrategy now defaults to a
+   NAT instance (see snapurl-stack.ts), so the app Lambdas have
+   egress and reach Secrets Manager at runtime with no dedicated
+   endpoint — the $7/month is gone. And under the open-source
+   framing every operator is a different account with its own IAM
+   discipline, so "the account owner is the only reader" is not an
+   assumption to make on their behalf. So on the egress profiles
+   ('instance'/'gateway') the stack now passes Secrets Manager
+   *ARNs* into the environment and each function resolves the
+   secret(s) it needs at cold start, caching the result for the
+   life of the execution environment (a warm invocation pays
+   nothing). Per-function IAM grants restrict each function to only
+   the secrets it reads. No `unsafeUnwrap()` runs on these paths,
+   so no secret value reaches the template.
+
+   Two escape hatches keep the other profiles working. natStrategy
+   'none' is isolated with no egress, so a runtime lookup would
+   hang; there the deploy-time `unsafeUnwrap()` is preserved and the
+   plaintext-in-template tradeoff is accepted for that zero-cost
+   choice. And the single-node / Kubernetes profiles have no Secrets
+   Manager at all: the app-side resolver falls back to a plain
+   DATABASE_URL / JWT_* env var whenever the matching *_SECRET_ARN
+   is absent.
+
+   What deploy-time resolution costs, on the profiles that still use
+   it: rotating a value takes a redeploy rather than taking effect
+   on the next cold start. For a signing key that is the right shape
+   anyway — rotating one invalidates every token in flight, so it is
+   a deliberate operation, not a background one.
    ============================================================ */
 
 /** Parameters the stack reads. The names are the suffix under `prefix`. */

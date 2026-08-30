@@ -3,6 +3,7 @@ import {
   Duration,
   RemovalPolicy,
   Stack,
+  Token,
   type StackProps,
 } from "aws-cdk-lib";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
@@ -292,24 +293,50 @@ export class SnapUrlStack extends Stack {
       "Postgres from the SnapURL Lambdas only",
     );
 
-    /* The database password ends up in the Lambda environment.
+    /* How the database password and JWT signing keys reach the functions —
+     * and this is where issue #292 lands.
      *
-     * The alternative is reading it from Secrets Manager at cold start. Under
-     * the old zero-egress topology that required an interface VPC endpoint
-     * (~$7/month) because the functions sat in isolated subnets with no NAT.
-     * With natStrategy defaulting to a NAT instance the app Lambdas now sit in
-     * PRIVATE_WITH_EGRESS subnets (see the VPC block above), so a runtime
-     * Secrets Manager lookup is reachable over the NAT without a dedicated
-     * endpoint — that path is now viable future work (issue #292), not
-     * implemented here.
+     * The problem the old approach had was not really the Lambda environment
+     * variable (only the account owner reads that); it was `unsafeUnwrap()`.
+     * Unwrapping a secret at synth time writes its plaintext into the
+     * synthesized CloudFormation template, which is uploaded to the CDK assets
+     * bucket and kept in CloudFormation's own stack history — copies of the
+     * password and both signing keys in two more places, neither of them
+     * obvious. Under the open-source framing every operator is a different
+     * account with its own IAM discipline, so "the account owner is the only
+     * reader" is no longer an assumption to make on their behalf.
      *
-     * Either way, deploy-time resolution hides nothing from whoever can read a
-     * Lambda's configuration: the account owner. At this scale that is not a
-     * trade worth making; it becomes one the moment anyone else has console
-     * access to this account. Under natStrategy 'none' the old interface-
-     * endpoint constraint still applies. Behaviour is unchanged here. */
-    const databaseUrl = `postgres://snapurl:${database.secret!.secretValueFromJson("password").unsafeUnwrap()}` +
-      `@${database.instanceEndpoint.hostname}:${database.instanceEndpoint.port}/snapurl`;
+     * The fix, now that natStrategy defaults to a NAT instance and the app
+     * Lambdas sit in PRIVATE_WITH_EGRESS (see the VPC block above): pass the
+     * Secrets Manager *ARNs* as environment, not the values, and let each
+     * function resolve them at cold start over the NAT (the shared resolver in
+     * @snapurl/database caches the result for the life of the execution
+     * environment, so a warm invocation pays nothing). Per-function IAM grants
+     * further below give each function read access to only the secret(s) it
+     * needs. No plaintext secret is unwrapped, so none reaches the template.
+     *
+     * The one profile that cannot do this is natStrategy 'none': isolated
+     * subnets with no egress mean a runtime Secrets Manager call would hang.
+     * There the synth-time unwrap is kept as the documented escape hatch — the
+     * operator chose the zero-cost, no-egress profile and inherits the
+     * plaintext-in-template tradeoff for it. (The single-node and Kubernetes
+     * profiles, which have no Secrets Manager at all, get the same escape hatch
+     * on the app side: the resolver falls back to a plain DATABASE_URL / JWT_*
+     * env var whenever the corresponding *_SECRET_ARN is absent.)
+     *
+     * `hasEgress` is the switch: true for 'instance'/'gateway' (ARN + runtime
+     * lookup), false for 'none' (synth-time unwrap fallback). */
+    const hasEgress = natStrategy !== "none";
+
+    /* 'none'-only fallback: no NAT, no route to Secrets Manager, so resolve the
+       DB URL at synth time via unsafeUnwrap. This is the only path that still
+       places the plaintext password in the template, by necessity. Left as a
+       plain empty string on the egress path, where DATABASE_SECRET_ARN +
+       DATABASE_HOST/PORT/NAME drive a cold-start lookup instead. */
+    const databaseUrl = hasEgress
+      ? ""
+      : `postgres://snapurl:${database.secret!.secretValueFromJson("password").unsafeUnwrap()}` +
+        `@${database.instanceEndpoint.hostname}:${database.instanceEndpoint.port}/snapurl`;
 
     /* ---------------------------------------------------------
        Configuration
@@ -320,8 +347,8 @@ export class SnapUrlStack extends Stack {
     /* Nothing below is a literal. Ordinary settings come from Parameter Store
        and the two signing keys are generated into Secrets Manager, so this
        file contains no configuration to keep in step with anything and no
-       secret to leak. `config.ts` explains why both are resolved at deploy
-       time rather than read at cold start. */
+       secret to leak. `config.ts` explains how the secrets are resolved (at
+       cold start over NAT on the egress profiles; deploy-time on 'none'). */
     const commonEnv: Record<string, string> = {
       NODE_ENV: "production",
       // A Lambda instance serves one request at a time, so a pool larger than
@@ -329,7 +356,6 @@ export class SnapUrlStack extends Stack {
       // on a db.t4g.micro is small enough to exhaust under modest concurrency.
       DATABASE_POOL_MAX: "1",
       DATABASE_SSL: "true",
-      DATABASE_URL: databaseUrl,
       // Context wins over Parameter Store, so a one-off deploy against a
       // preview origin does not mean editing the stored value and remembering
       // to put it back.
@@ -341,15 +367,42 @@ export class SnapUrlStack extends Stack {
       MAIL_TRANSPORT: config.get("mail-transport"),
       THROTTLE_LIMIT: config.get("throttle-limit"),
       THROTTLE_TTL_SECONDS: config.get("throttle-ttl-seconds"),
-      /* Absent until this change, and the API would not have started without
-         them: apps/api/src/config/env.ts requires both, at 32 characters
-         minimum, and throws on boot when either is missing. The redirect
-         service needs the access key too — it verifies the short-lived unlock
-         token that password-protected links are opened with, and without it
-         every such link silently bounces back to the password page. */
-      JWT_ACCESS_SECRET: config.jwtAccessSecret.secretValue.unsafeUnwrap(),
-      JWT_REFRESH_SECRET: config.jwtRefreshSecret.secretValue.unsafeUnwrap(),
     };
+
+    if (hasEgress) {
+      /* Egress profiles ('instance'/'gateway'): pass ARNs, not values. Each
+         function resolves the secret it needs at cold start over the NAT and
+         caches it (see @snapurl/database's resolver). The DB URL is assembled
+         at runtime from the non-secret host/port/name below plus the password
+         fetched from DATABASE_SECRET_ARN. Nothing here is unwrapped, so no
+         secret value reaches the template.
+
+         DATABASE_SECRET_ARN is needed by all three functions (all talk to the
+         DB). The two JWT ARNs are set uniformly for simplicity — an env var a
+         function has no IAM permission to read is harmless, and the grants
+         further below enforce least privilege: api fetches both JWT secrets,
+         redirect fetches the access secret only, the worker fetches neither. */
+      commonEnv.DATABASE_SECRET_ARN = database.secret!.secretArn;
+      commonEnv.DATABASE_HOST = database.instanceEndpoint.hostname;
+      commonEnv.DATABASE_PORT = Token.asString(database.instanceEndpoint.port);
+      commonEnv.DATABASE_NAME = "snapurl";
+      commonEnv.JWT_ACCESS_SECRET_ARN = config.jwtAccessSecret.secretArn;
+      commonEnv.JWT_REFRESH_SECRET_ARN = config.jwtRefreshSecret.secretArn;
+    } else {
+      /* 'none'-only escape hatch: no egress means no runtime Secrets Manager
+         lookup is possible, so the values are unwrapped at synth time and set
+         directly. This is the one path that still bakes plaintext into the
+         template — an accepted tradeoff for the zero-cost, no-egress profile.
+
+         apps/api/src/config/env.ts requires both JWT secrets (>=32 chars) and
+         throws on boot without them. The redirect service needs the access key
+         too — it verifies the short-lived unlock token that password-protected
+         links open with, and without it every such link silently bounces back
+         to the password page. */
+      commonEnv.DATABASE_URL = databaseUrl;
+      commonEnv.JWT_ACCESS_SECRET = config.jwtAccessSecret.secretValue.unsafeUnwrap();
+      commonEnv.JWT_REFRESH_SECRET = config.jwtRefreshSecret.secretValue.unsafeUnwrap();
+    }
 
     /* The path each service answers a health probe on. Kept next to the value
        that decides it: the API mounts everything under a prefix, so hardcoding
@@ -620,6 +673,32 @@ export class SnapUrlStack extends Stack {
       targets: [new targets.LambdaFunction(workerFn, { retryAttempts: 2 })],
       description: "Drains the click queue and refreshes the rollup tables.",
     });
+
+    /* ---------------------------------------------------------
+       Secret read grants (issue #292)
+
+       Only on the egress profiles: under natStrategy 'none' nothing is
+       resolved at runtime (the values are baked in at synth time), so no grant
+       is needed or issued there. On 'instance'/'gateway' each function is
+       granted read on ONLY the secret(s) it actually fetches at cold start —
+       IAM enforces the least-privilege matrix even though the JWT ARNs are set
+       uniformly in commonEnv:
+
+         DB secret     -> api, redirect, worker  (all three talk to the DB)
+         JWT access    -> api, redirect           (redirect verifies unlock tokens)
+         JWT refresh   -> api only                (the only issuer/verifier of refresh tokens)
+
+       The worker gets no JWT grant (it never touches JWT); redirect gets no
+       refresh grant (it only verifies access-key-signed unlock tokens). Placed
+       here, after apiFn, redirectFn and workerFn all exist. */
+    if (hasEgress) {
+      database.secret!.grantRead(apiFn);
+      database.secret!.grantRead(redirectFn);
+      database.secret!.grantRead(workerFn);
+      config.jwtAccessSecret.grantRead(apiFn);
+      config.jwtAccessSecret.grantRead(redirectFn);
+      config.jwtRefreshSecret.grantRead(apiFn);
+    }
 
     /* ---------------------------------------------------------
        Budget alarms
