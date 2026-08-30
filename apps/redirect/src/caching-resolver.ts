@@ -31,6 +31,19 @@ import {
    integration assertions of exactly one click_events row per
    redirect and the click_daily rollup are unaffected.
 
+   One interaction to keep in mind: the cached ResolvedLink includes
+   link.clicks, which is frozen at cache-write time for the whole TTL.
+   gateFor() reads that field for the click-limit cap, so on a cache
+   hit the count it sees is up to LINK_CACHE_TTL_SECONDS stale on top
+   of the pre-existing rollup lag (gateFor's own comment already notes
+   the cap can overshoot "by a handful under concurrency"). This is a
+   deliberate trade: the whole ResolvedLink is cached as one shape so
+   callers get an identical link on hit and miss, and the short TTL
+   keeps the widened overshoot bounded. Time-based gates (expiry,
+   activation) are NOT frozen — they are evaluated against Date.now()
+   at request time from the revived Date fields, so only the click
+   count carries this staleness, not the expiry decision.
+
    Only positive hits are cached. Caching a miss (null) would make a
    link created just after a lookup 404 until the negative entry
    expired, which is a worse failure than one uncached DB read, so

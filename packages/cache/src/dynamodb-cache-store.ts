@@ -39,7 +39,13 @@ import type { CacheStore } from "./cache-store.js";
      - incr is a single UpdateCommand: `ADD` is an atomic counter,
        and `if_not_exists` sets the ttl only on the first write, so
        a fixed window is set once and never reset — the same
-       contract the port defines.
+       contract the port defines. This implies an invariant: `incr`
+       stores a Number under `value` while `set` stores a String
+       there, so a single key must never be used for both a counter
+       and a string value — `ADD` against a stored String would
+       fail with a type error. Nothing mixes them on one key today
+       (counter keys and value/cache keys are disjoint), and callers
+       must keep them so.
 
      - mergeSketch keeps OUR @snapurl/domain sketch bytes (stored
        as Binary), not any DynamoDB-native format, so the byte

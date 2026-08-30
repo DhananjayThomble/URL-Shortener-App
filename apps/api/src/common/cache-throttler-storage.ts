@@ -67,9 +67,14 @@ export class CacheStoreThrottlerStorage implements ThrottlerStorage {
     const timeToExpire = remaining >= 0 ? remaining : ttl;
 
     const isBlocked = totalHits > limit;
-    // Once blocked, callers stay blocked for the block duration. We do not
-    // have a separate block key, so mirror the stock behaviour closely:
-    // the block clears when the current window does.
+    // blockDuration is intentionally not honoured as a separate timer. The
+    // app configures only { ttl, limit } (no block), so a block always clears
+    // when the current window does and mirroring the window here is correct.
+    // If a block LONGER than the window is ever configured, this would need a
+    // dedicated block key (e.g. `block:${throttlerName}:${key}`) stamped with
+    // blockDuration on the first over-limit hit and read back for
+    // timeToBlockExpire; until then, tying the block to the window keeps the
+    // storage single-round-trip and matches the stock in-memory behaviour.
     const timeToBlockExpire = isBlocked ? timeToExpire : 0;
 
     return { totalHits, timeToExpire, isBlocked, timeToBlockExpire };

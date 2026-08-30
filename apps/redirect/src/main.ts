@@ -253,7 +253,11 @@ function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "
   if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) return "expired";
   /* The count is the last rollup's, not a live one, so a hard cap can be
      overshot by a handful under concurrency. A synchronous read-modify-write
-     here would cost more latency than the accuracy is worth. */
+     here would cost more latency than the accuracy is worth. Note the
+     CachingLinkResolver freezes link.clicks for up to LINK_CACHE_TTL_SECONDS
+     on a cache hit, so on the hot path the overshoot window widens by that
+     TTL on top of the rollup lag; still bounded, still cheaper than a live
+     count, and the short TTL keeps it small. */
   if (link.clickLimit != null && link.clicks >= link.clickLimit) return "click_limit";
   /* Nothing schedules this. The row carries a date and every request compares
      it against the clock, so the link starts working at exactly that moment
