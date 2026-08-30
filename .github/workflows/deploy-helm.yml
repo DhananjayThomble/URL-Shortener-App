@@ -279,16 +279,48 @@ jobs:
             --set ingress.enabled=false
 
       # The migrate Job is the whole point of running migrations OUT of the app
-      # boot path. Assert the pre-install hook Job reached Complete. Its name is
-      # <fullname>-migrate; with release name == chart name the fullname is just
-      # the release name (see snapurl.fullname), so the Job is
-      # "$RELEASE-migrate". helm --wait already blocks on hooks, so this is a
-      # belt-and-braces assertion with a clear failure message.
-      - name: Assert the migrate hook Job completed
+      # boot path. Prove it RAN by querying DURABLE evidence in the database —
+      # the drizzle bookkeeping table — NOT the hook Job object.
+      #
+      # WHY NOT `kubectl wait` on the Job: the migrate Job carries
+      # `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded`
+      # (templates/migrate-job.yaml), so Helm GARBAGE-COLLECTS the Job the
+      # instant it succeeds. By the time `helm install --wait` returns the Job
+      # is already gone, and `kubectl wait job/${RELEASE}-migrate` fails with
+      # `NotFound` even though migrations completed. The DB check below is
+      # independent of Helm's GC choice and of any timing.
+      #
+      # WHAT this proves: drizzle-orm's postgres-js migrator records every
+      # applied migration in `drizzle.__drizzle_migrations` (default schema
+      # `drizzle`, table `__drizzle_migrations`; see runMigrations in
+      # packages/database/src/migrate.ts, which passes no custom
+      # migrationsSchema/migrationsTable). A row count >= 1 means at least one
+      # migration was applied by the pre-install hook. If the migration had
+      # FAILED, `helm install --wait` would already have failed on the hook;
+      # and if somehow it did not run, this table would be empty (or absent)
+      # and the check exits non-zero — so a green step genuinely implies a
+      # migrated schema.
+      #
+      # HOW: exec psql INSIDE the throwaway ci-postgres pod (same in-cluster
+      # store the chart migrated against). Running inside the pod uses the
+      # container's local trust, so no password is passed or echoed on the
+      # command line — the same "no secret material in the log" discipline the
+      # Secret-creation step above follows.
+      - name: Assert migrations ran (durable DB check, not the ephemeral hook Job)
         run: |
-          kubectl wait --for=condition=complete "job/${RELEASE}-migrate" \
-            -n "$NS" --timeout=180s
-          echo "migrate Job completed"
+          set -euo pipefail
+          PG_POD="$(kubectl get pod -n "$NS" -l app=ci-postgres \
+            -o jsonpath='{.items[0].metadata.name}')"
+          # `-tAc` = tuples-only, unaligned, single command → a bare integer.
+          count="$(kubectl exec -n "$NS" "$PG_POD" -- \
+            psql -U snapurl -d snapurl -tAc \
+            'SELECT count(*) FROM drizzle.__drizzle_migrations')"
+          echo "applied migrations recorded in drizzle.__drizzle_migrations: $count"
+          if [ "${count:-0}" -lt 1 ]; then
+            echo "::error::the pre-install migrate hook left no rows in drizzle.__drizzle_migrations — migrations did NOT run before the pods rolled."
+            exit 1
+          fi
+          echo "migrate hook verified: schema is migrated (>=1 applied migration)"
 
       # api+redirect must be Available before smoke. --wait covered this, but an
       # explicit rollout status gives a precise failure if a Deployment is stuck.
