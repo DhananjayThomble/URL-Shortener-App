@@ -410,12 +410,28 @@ jobs:
           echo "REDIRECT_PID=$!" >> "$GITHUB_ENV"
 
           # The worker drains the projection_outbox into dynamodb-local. Run it
-          # as its normal loop with a fast (1s) frequent interval so links the
-          # smoke script creates up front are projected before it starts firing
-          # redirect assertions. The smoke script creates all 12 fixtures in its
-          # setup phase, THEN asserts, so a 1s drain loop has the outbox emptied
-          # into DynamoDB well before the first assertion.
-          ROLLUP_INTERVAL_SECONDS=1 node apps/worker/dist/main.js > /tmp/worker.log 2>&1 &
+          # as its normal loop with a SUB-SECOND (0.25s) frequent interval so a
+          # link is projected within a quarter second of the API writing its
+          # outbox row. runFrequent multiplies ROLLUP_INTERVAL_SECONDS by 1000
+          # for setInterval, so a fractional value is a valid 250ms tick.
+          #
+          # Why 0.25s and not 1s. The smoke script creates all 12 fixtures in
+          # its setup phase, THEN asserts. $RUN-plain is the FIRST fixture
+          # created and the FIRST asserted, so between its create and its
+          # assertion the script still issues the other 11 create round-trips —
+          # comfortably more than 250ms of wall time. A 250ms drain tick
+          # therefore always fires (and projects $RUN-plain into DynamoDB)
+          # before the first "302 to the destination" assertion runs, which
+          # removes the create-then-immediately-assert race. A 1s tick could, on
+          # a fast runner, land the whole create phase inside a single tick
+          # window and leave $RUN-plain unprojected when the first assertion
+          # fires — exactly the 404 this job was seeing.
+          #
+          # Belt and suspenders: the redirect above runs with
+          # LINK_CACHE_TTL_SECONDS=1 and the resolver never negative-caches, so
+          # even a sub-tick miss self-heals on the very next request within 1s
+          # rather than sticking for the default 10s.
+          ROLLUP_INTERVAL_SECONDS=0.25 node apps/worker/dist/main.js > /tmp/worker.log 2>&1 &
           echo "WORKER_PID=$!" >> "$GITHUB_ENV"
 
       - name: Wait for both HTTP services to be healthy
@@ -435,6 +451,46 @@ jobs:
               fi
               sleep 1
             done
+          done
+
+      # Barrier: prove the worker is actually draining the projection_outbox
+      # before the smoke assertions run. This does two things.
+      #
+      #   1. Liveness. It fails fast, with a clear message, if the worker never
+      #      came up or is not draining (e.g. a bad LINK_PROJECTION_TABLE or a
+      #      DynamoDB endpoint it cannot reach) — instead of that surfacing as
+      #      an opaque 404 inside the smoke run.
+      #   2. A clean starting line. It confirms projection_outbox has no
+      #      unprocessed rows at the moment smoke begins, so the run starts from
+      #      a fully-drained state.
+      #
+      # It does NOT (and cannot) cover the fixtures smoke creates INSIDE its own
+      # run: the script registers a user and creates all 12 links in its setup
+      # phase, then asserts. That race is closed by the sub-second (0.25s) worker
+      # drain interval set above (a link is projected within 250ms of its outbox
+      # row, far inside the create->assert gap) plus LINK_CACHE_TTL_SECONDS=1 and
+      # the resolver never negative-caching. This barrier is the determinism
+      # backstop around those.
+      #
+      # psql is preinstalled on the runner; DATABASE_URL points at the postgres
+      # service on 5433. The condition is the outbox drained: no row with
+      # processed_at IS NULL. 60s budget at 1s poll; a timeout is a hard error.
+      - name: Wait for the projection worker to drain the outbox
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 60); do
+            pending="$(psql "$DATABASE_URL" -tAc \
+              'select count(*) from projection_outbox where processed_at is null' 2>/dev/null | tr -d '[:space:]')"
+            if [ "${pending:-}" = "0" ]; then
+              echo "projection worker is draining: 0 unprocessed outbox rows after ${i}s"
+              exit 0
+            fi
+            if [ "$i" = "60" ]; then
+              echo "::error::projection_outbox still had unprocessed rows (pending=${pending:-unknown}) after 60s — the worker is not draining"
+              echo "--- worker.log ---"; tail -80 /tmp/worker.log || true
+              exit 1
+            fi
+            sleep 1
           done
 
       # The proof: every redirect assertion resolved out of DynamoDB. The script
