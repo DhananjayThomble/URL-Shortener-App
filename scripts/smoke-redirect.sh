@@ -283,38 +283,55 @@ echo "== deployment showstoppers =="
 #   (1) a real slug returns 302, not 404  -> "302 to the destination" above.
 #   (2) a country-scoped routing rule matches -> "India goes to the India store"
 #       above (CloudFront-Viewer-Country: IN on $RUN-geo).
-#   (3) click_events.country is populated -> the DB-gated city check below
-#       (local/compose only) PLUS the always-run analytics country poll here,
-#       which proves population through the public API in deployed mode too.
+#   (3) click_events.country is populated -> proven directly from click_events
+#       via the DB in DB-available mode (local/compose/CI, no worker required),
+#       and via the analytics countries[] poll in deployed mode (no DB, but a
+#       worker is running there to roll clicks up). See below.
 
-# Always-run, DB-free proof that click_events.country is populated: drive a real
-# redirect through the country-ruled $RUN-geo link with a non-bot browser UA and
-# a CloudFront-Viewer-Country header, then poll GET /analytics until the country
-# appears in the countries[] breakdown. Analytics reads the worker-populated
-# breakdown_daily rollup (apps/api/src/analytics/analytics.service.ts +
-# apps/worker/src/jobs/rollup.ts), which only folds non-bot clicks, hence the
-# non-bot UA and the ~90s poll budget (worker rollup interval default ~30s,
-# three cycles, matching integration-assertions.sh). The API maps country codes
-# to names via COUNTRY_NAMES (IN -> "India"), so match on either the code or the
-# mapped name as returned.
+# Drive a real redirect through the country-ruled $RUN-geo link with a non-bot
+# browser UA and a CloudFront-Viewer-Country header. This is what populates
+# click_events.country. It runs in BOTH modes: the DB-direct check (DB mode)
+# needs the click row, and the analytics poll (deployed mode) needs a non-bot
+# click that the worker can fold into the rollup. The browser UA (not curl's
+# default, which BOT_PATTERN classifies as a bot) keeps the click eligible for
+# rollup where a worker exists.
 # GEO_ID was captured explicitly when the $RUN-geo link was created (above), so
-# this targets the geo link by identity, not by array position. The empty-id
-# guard below keeps set -u from aborting and lets the assertion fail cleanly if
-# the geo link was never created.
+# both proofs target the geo link by identity, not by array position.
 loc "$RUN-geo" -H "User-Agent: $BROWSER_UA" -H 'CloudFront-Viewer-Country: IN' -H 'CloudFront-Viewer-City: Pune' >/dev/null
-COUNTRY_FOUND=0
-if [ -n "$GEO_ID" ]; then
-  for i in $(seq 1 90); do
-    A=$(curl -s "$API/analytics?linkId=$GEO_ID&range=24h" -H "Authorization: Bearer $ACCESS")
-    HIT=$(echo "$A" | node -pe 'try{const d=JSON.parse(require("fs").readFileSync(0,"utf8"));(d.countries||[]).some(c=>c.label==="IN"||c.label==="India")?"1":""}catch(e){""}')
-    [ "$HIT" = "1" ] && { COUNTRY_FOUND=1; break; }
-    sleep 1
-  done
-fi
-if [ "$COUNTRY_FOUND" -eq 1 ]; then
-  ok "click_events.country is populated (analytics shows IN/India)"
+
+if [ "$DB_AVAILABLE" -eq 1 ]; then
+  # DB-available (local/compose/CI): prove click_events.country DIRECTLY, the
+  # same way the city check below proves the city header is recorded. This reads
+  # the raw click_events row, so it needs NO worker (the `verify` job runs only
+  # api+redirect, no worker) and is a strictly stronger proof than the rollup
+  # path. Do NOT run the analytics poll here: without a worker the rollup never
+  # populates the countries[] breakdown, and the direct query already proves it.
+  CTRY=$(dbq "select count(*) from click_events where country = 'IN' and link_id in (select id from links where slug like '$RUN%')" | tr -d '[:space:]')
+  [ "${CTRY:-0}" -ge 1 ] && ok "click_events.country is populated (click_events.country='IN')" || bad "click_events.country not recorded" "count=$CTRY"
 else
-  bad "click_events.country not populated via analytics" "no IN/India in countries[] after 90s (linkId=$GEO_ID)"
+  # Deployed (no DB): the only way to observe population through the public
+  # surface is the analytics countries[] breakdown, which reads the
+  # worker-populated breakdown_daily rollup (apps/api/src/analytics/
+  # analytics.service.ts + apps/worker/src/jobs/rollup.ts). A worker IS running
+  # in a deployed environment, so poll GET /analytics until the country appears.
+  # The rollup folds only non-bot clicks, hence the non-bot UA on the driving
+  # redirect above and the ~90s poll budget (worker rollup interval default
+  # ~30s, three cycles). The API maps country codes to names via COUNTRY_NAMES
+  # (IN -> "India"), so match on either the code or the mapped name.
+  COUNTRY_FOUND=0
+  if [ -n "$GEO_ID" ]; then
+    for i in $(seq 1 90); do
+      A=$(curl -s "$API/analytics?linkId=$GEO_ID&range=24h" -H "Authorization: Bearer $ACCESS")
+      HIT=$(echo "$A" | node -pe 'try{const d=JSON.parse(require("fs").readFileSync(0,"utf8"));(d.countries||[]).some(c=>c.label==="IN"||c.label==="India")?"1":""}catch(e){""}')
+      [ "$HIT" = "1" ] && { COUNTRY_FOUND=1; break; }
+      sleep 1
+    done
+  fi
+  if [ "$COUNTRY_FOUND" -eq 1 ]; then
+    ok "click_events.country is populated (analytics shows IN/India)"
+  else
+    bad "click_events.country not populated via analytics" "no IN/India in countries[] after 90s (linkId=$GEO_ID)"
+  fi
 fi
 
 echo
