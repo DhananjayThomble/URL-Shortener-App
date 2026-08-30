@@ -39,10 +39,14 @@ fi
 
 # gzip -dc streams the SQL out; keep the .gz on disk untouched.
 if [ -n "${DATABASE_URL:-}" ]; then
+	# PSQL lets you point at a matching client (for example one from a
+	# postgres:18 container) when the host psql is a different major version
+	# than the server; it defaults to whatever psql is on PATH.
+	PSQL="${PSQL:-psql}"
 	echo "Restoring $backup_file via DATABASE_URL"
 	# ON_ERROR_STOP so a failed statement aborts with a non-zero exit rather
 	# than silently leaving a half-restored database.
-	gzip -dc "$backup_file" | psql -v ON_ERROR_STOP=1 "$DATABASE_URL"
+	gzip -dc "$backup_file" | $PSQL -v ON_ERROR_STOP=1 "$DATABASE_URL"
 else
 	if [ ! -f .env ]; then
 		echo "error: no DATABASE_URL set and no .env found. Run ./init.sh first" >&2

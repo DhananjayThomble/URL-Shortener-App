@@ -137,6 +137,14 @@ data, so schedule this. A cron example (daily at 03:30):
 30 3 * * * cd /opt/URL-Shortener-App/deploy/single-node && ./backup.sh >> backup.log 2>&1
 ```
 
+The default (compose) path runs `pg_dump` inside the Postgres container, so the
+client always matches the server. If instead you set `DATABASE_URL` to dump over
+a connection string, use a `pg_dump` whose major version is at least the
+server's (this project runs Postgres 18): `pg_dump` refuses to dump a server
+newer than itself. Point `backup.sh` at a matching client with `PG_DUMP` (for
+example `PG_DUMP="docker run --rm --network host postgres:18-alpine pg_dump"`)
+when your host client is older.
+
 ## 8. Restore
 
 `restore.sh` replays a dump produced by `backup.sh` with `psql`:
@@ -147,7 +155,9 @@ bash restore.sh backups/snapurl-YYYYmmdd-HHMMSS.sql.gz
 
 With no `DATABASE_URL` set it reads `.env` and replays inside the Postgres
 container. It replays on top of the existing database, so restore into a
-fresh or empty database unless you are certain you want to merge.
+fresh or empty database unless you are certain you want to merge. As with
+backup, the `DATABASE_URL` path uses the host `psql`; override it with `PSQL`
+if you need a version-matched client.
 
 This restore path is not just documented, it is exercised in CI: the
 `restore-test` job in [`.github/workflows/verify.yml`](./.github/workflows/verify.yml)

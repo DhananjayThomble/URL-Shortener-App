@@ -310,10 +310,29 @@ jobs:
       - name: Migrate
         run: pnpm db:migrate
 
-      # backup.sh/restore.sh call the host's pg_dump/psql when DATABASE_URL is
-      # set. The runner does not ship a Postgres client by default.
-      - name: Install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # backup.sh/restore.sh call pg_dump/psql when DATABASE_URL is set, and so
+      # do the probe steps below. The runner ships pg_dump/psql 16, but the
+      # service is Postgres 18 (uuidv7()), and pg_dump refuses to dump a server
+      # newer than the client. Use the client from the postgres:18-alpine image
+      # instead so the client major matches the server. --network host lets the
+      # container reach the service on localhost:5433, exactly as the scripts'
+      # DATABASE_URL expects. The image is already pulled for the service
+      # container, so this adds no extra download.
+      #
+      # PG_CLIENT is exported to GITHUB_ENV so every later step (backup,
+      # restore, and the psql probes) uses the version-matched client. The
+      # scripts honour PG_DUMP/PSQL overrides; the probes call PG_CLIENT
+      # directly.
+      - name: Use a Postgres 18 client for the round-trip
+        run: |
+          set -euo pipefail
+          # Route the DATABASE_URL host (localhost) to the runner's network via
+          # --network host, and mount /tmp so the backup file the scripts write
+          # is visible to both the container and later steps.
+          pg_client="docker run --rm --network host -v /tmp:/tmp postgres:18-alpine"
+          echo "PG_CLIENT=$pg_client" >> "$GITHUB_ENV"
+          echo "PG_DUMP=$pg_client pg_dump" >> "$GITHUB_ENV"
+          echo "PSQL=$pg_client psql" >> "$GITHUB_ENV"
 
       # Plant a deterministic marker in a dedicated probe table, and capture the
       # count of applied migrations from drizzle's bookkeeping table. Both must
@@ -322,11 +341,11 @@ jobs:
       - name: Plant known data
         run: |
           set -euo pipefail
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+          $PG_CLIENT psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE restore_probe(id int primary key, marker text);"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+          $PG_CLIENT psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
             "INSERT INTO restore_probe VALUES (1, 'sentinel-restore-286-ok');"
-          migrations="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+          migrations="$($PG_CLIENT psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             'SELECT count(*) FROM drizzle.__drizzle_migrations;')"
           echo "captured migration count: $migrations"
           if [ "$migrations" -lt 1 ]; then
@@ -357,10 +376,10 @@ jobs:
       - name: Destroy the data
         run: |
           set -euo pipefail
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+          $PG_CLIENT psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
             "DROP SCHEMA public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS drizzle CASCADE;"
           # The probe table must be gone now.
-          gone="$(psql "$DATABASE_URL" -At -c \
+          gone="$($PG_CLIENT psql "$DATABASE_URL" -At -c \
             "SELECT to_regclass('public.restore_probe') IS NULL;")"
           if [ "$gone" != "t" ]; then
             echo "::error::probe table still present after drop — the drop did not take effect"
@@ -376,14 +395,14 @@ jobs:
       - name: Assert recovery
         run: |
           set -euo pipefail
-          marker="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+          marker="$($PG_CLIENT psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             'SELECT marker FROM restore_probe WHERE id = 1;')"
           if [ "$marker" != "sentinel-restore-286-ok" ]; then
             echo "::error::restored marker mismatch: got '$marker'"
             exit 1
           fi
           echo "probe marker recovered: $marker"
-          restored_migrations="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+          restored_migrations="$($PG_CLIENT psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             'SELECT count(*) FROM drizzle.__drizzle_migrations;')"
           if [ "$restored_migrations" != "$EXPECTED_MIGRATIONS" ]; then
             echo "::error::migration count mismatch after restore: got '$restored_migrations', expected '$EXPECTED_MIGRATIONS'"

@@ -34,9 +34,15 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 outfile="$BACKUP_DIR/snapurl-$timestamp.sql.gz"
 
 if [ -n "${DATABASE_URL:-}" ]; then
-	# Direct mode: dump over the connection string with the host's pg_dump.
+	# Direct mode: dump over the connection string. pg_dump refuses to dump a
+	# server NEWER than the client, and this project runs Postgres 18 (needed
+	# for uuidv7()). The client must therefore be >= the server's major
+	# version. PG_DUMP lets you point at a matching client (for example one
+	# from a postgres:18 container) when the host pg_dump is older; it defaults
+	# to whatever pg_dump is on PATH.
+	PG_DUMP="${PG_DUMP:-pg_dump}"
 	echo "Backing up via DATABASE_URL to $outfile"
-	pg_dump --no-owner --no-privileges "$DATABASE_URL" | gzip >"$outfile"
+	$PG_DUMP --no-owner --no-privileges "$DATABASE_URL" | gzip >"$outfile"
 else
 	# Compose mode: dump from inside the postgres container using its own
 	# credentials from .env.
