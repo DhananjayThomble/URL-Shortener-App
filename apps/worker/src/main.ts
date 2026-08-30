@@ -229,12 +229,18 @@ export async function runMaintenance(database: Database) {
      the DEFAULT partition is what actually guarantees an insert cannot fail, so a
      pass that provisions nothing still loses no clicks — it only makes the
      queries less prunable until a later pass catches up. */
-  const partitions = await step("ensureClickPartitions", () => ensureClickPartitions(database), 0);
+  const partitions = await step("ensureClickPartitions", () => ensureClickPartitions(database), {
+    ready: 0,
+    declined: 0,
+  });
   const expired = await step("sweepExpired", () => sweepExpired(database), 0);
   const salts = await step("rotateSalts", () => rotateSalts(database), 0);
   const pruned = await step("pruneRetention", () => pruneRetention(database), {
     partitionsDropped: 0,
     rowsDeleted: 0,
+    partitionsPinned: 0,
+    partitionsContended: 0,
+    partitionsMissing: 0,
   });
   const outbox = await step("pruneOutbox", () => pruneOutbox(database), 0);
   const deliveries = await step("pruneDeliveries", () => pruneDeliveries(database), 0);
@@ -257,7 +263,7 @@ export async function runMaintenance(database: Database) {
 
   log.info(
     {
-      partitionsReady: partitions,
+      partitionsReady: partitions.ready,
       expired,
       saltsDropped: salts,
       /* Reported separately because they cost wildly different amounts. A
@@ -266,6 +272,14 @@ export async function runMaintenance(database: Database) {
          using mixed retention settings, which is supported but not free. */
       clickPartitionsDropped: pruned.partitionsDropped,
       clickRowsDeleted: pruned.rowsDeleted,
+      /* Only present when non-zero, so the ordinary pass stays readable and
+         anything here is worth a second look. `pinned` and `missing` are both
+         benign — a rollup yet to catch up, and a partition a concurrent pass got
+         to first — but they are counted so they cannot hide inside a pass that
+         merely looks idle. */
+      ...(pruned.partitionsPinned > 0 ? { clickPartitionsPinned: pruned.partitionsPinned } : {}),
+      ...(pruned.partitionsMissing > 0 ? { clickPartitionsMissing: pruned.partitionsMissing } : {}),
+      ...(partitions.declined > 0 ? { partitionsDeclined: partitions.declined } : {}),
       outboxPruned: outbox,
       deliveriesPruned: deliveries,
       /* Present only when something went wrong, so the happy path stays quiet
@@ -280,6 +294,40 @@ export async function runMaintenance(database: Database) {
      backlog, so it is logged at error even though nothing is on fire. */
   if (stuck > 0) {
     log.error({ stuck }, "projection rows have exhausted their retries — the edge may be serving stale link config");
+  }
+
+  /* The one retention count worth acting on.
+   *
+   * Everything else the pass reports is either progress or a benign no-op.
+   * Contention means partition maintenance could not take its locks before the
+   * timeout, so it did no work — and a pass that keeps reporting it is a pass
+   * making no progress while storage keeps growing. Until this was counted, that
+   * state was indistinguishable from having nothing to drop: both read
+   * `clickPartitionsDropped: 0`.
+   *
+   * Warn rather than error: one contended pass is normal under load and the next
+   * one will very likely succeed. It is the pattern over time that matters, which
+   * is what a metric filter on this line is for. */
+  if (pruned.partitionsContended > 0) {
+    log.warn(
+      { contended: pruned.partitionsContended, dropped: pruned.partitionsDropped },
+      "partition retention lost locks to write traffic — no progress on those days this pass",
+    );
+  }
+
+  /* The provisioning half of the same signal, and it warns for the same reason.
+   *
+   * A declined day has no partition, so its clicks land in the DEFAULT
+   * partition — which no query can prune and which the retention pass skips by
+   * design. One declined day is nothing; a provisioner that never wins its lock
+   * quietly accumulates rows somewhere they will sit for ever. That deserves the
+   * same visibility as a retention pass making no progress, rather than being a
+   * field on an info line that reads as success. */
+  if (partitions.declined > 0) {
+    log.warn(
+      { declined: partitions.declined, ready: partitions.ready },
+      "partition provisioning lost locks — those days' clicks will land in the default partition",
+    );
   }
 
   return { partitions, expired, salts, pruned, outbox, deliveries, stuck, failed };
