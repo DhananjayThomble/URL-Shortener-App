@@ -28,6 +28,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1121.0",
     "@snapurl/contract": "workspace:*",
     "@snapurl/domain": "workspace:*",
     "drizzle-orm": "^0.44.6",
