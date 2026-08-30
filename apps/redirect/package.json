@@ -17,7 +17,6 @@
     "@snapurl/domain": "workspace:*",
     "fastify": "^5.6.1",
     "jsonwebtoken": "^9.0.2",
-    "argon2": "^0.44.0",
     "pino": "^9.6.0"
   },
   "devDependencies": {
