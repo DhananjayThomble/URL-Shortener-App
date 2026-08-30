@@ -60,6 +60,15 @@ export const EnvSchema = z.object({
   THROTTLE_TTL_SECONDS: z.coerce.number().int().default(60),
   THROTTLE_LIMIT: z.coerce.number().int().default(120),
 
+  /* How many proxies in front of this service APPEND their edge IP to
+     X-Forwarded-For. The throttler derives the real client IP as the
+     (TRUSTED_PROXY_HOPS+1)th entry from the right of that chain, so a
+     client rotating the header cannot reset any limit.
+     0 = direct/local dev and compose (no trusted appending proxy).
+     Production sets it to the actual count, e.g. CloudFront=1, or
+     CloudFront + an appending API Gateway HTTP API v2 = 2. */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 });
 

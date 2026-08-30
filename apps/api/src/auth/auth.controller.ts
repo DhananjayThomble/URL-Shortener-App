@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, Post, Req } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import type { FastifyRequest } from "fastify";
 import {
   LoginInput,
@@ -24,7 +25,14 @@ export class AuthController {
     return this.auth.register(input, req.headers["user-agent"]);
   }
 
+  /* 5/min per client IP, far tighter than the global 120/min. login hashes
+     with argon2id (19 MiB) even on unknown emails — correct anti-enumeration,
+     and free CPU burn for an attacker. 5 attempts a minute is generous for a
+     person who fat-fingers a password and punishing for a script. Keyed on the
+     trustworthy IP (ProxyAwareThrottlerGuard), so a rotating X-Forwarded-For
+     cannot reset it. */
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post("login")
   @HttpCode(200)
   login(@Body(zodBody(LoginInput)) input: LoginInput, @Req() req: FastifyRequest) {
@@ -77,7 +85,12 @@ export class AuthController {
     return this.auth.enableTotp(actor.userId!, input.code);
   }
 
+  /* 5/min per client IP. 2fa/verify loops argon2id over EVERY unused recovery
+     code, so it is the most expensive call in this controller — the tight limit
+     matters most here. Keyed on the trustworthy IP so it cannot be reset with a
+     rotating X-Forwarded-For. */
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post("2fa/verify")
   @HttpCode(200)
   verifyTotp(@Body(zodBody(TotpVerifyInput)) input: TotpVerifyInput, @Req() req: FastifyRequest) {

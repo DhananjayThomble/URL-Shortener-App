@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { APP_FILTER, APP_GUARD } from "@nestjs/core";
-import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 
 import { ConfigModule } from "./config/config.module.js";
@@ -22,6 +22,7 @@ import { PublicModule } from "./public/public.module.js";
 import { HealthController } from "./common/health.controller.js";
 import { FormsModule } from "./forms/forms.module.js";
 import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
+import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.js";
 
 @Module({
   imports: [
@@ -76,7 +77,11 @@ import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
        controller — means a new controller is unprotected until someone
        remembers, and that is the kind of mistake nobody notices. */
     { provide: APP_GUARD, useClass: AuthGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    /* ProxyAwareThrottlerGuard replaces the stock ThrottlerGuard so limits key
+       on the trustworthy client IP (rightmost-minus-N X-Forwarded-For entry)
+       rather than the client-typed leftmost one. Order relative to AuthGuard
+       is unchanged. */
+    { provide: APP_GUARD, useClass: ProxyAwareThrottlerGuard },
     /* Last line of defence: a constraint violation nobody anticipated
        becomes a 409, not an "Internal server error". */
     { provide: APP_FILTER, useClass: PostgresErrorFilter },

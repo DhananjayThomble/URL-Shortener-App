@@ -14,6 +14,7 @@ import {
   parseOs,
   parseReferrerHost,
   visitorHash,
+  clientIpFromXff,
 } from "@snapurl/domain";
 import { PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
 import { PostgresClickSink, type ClickSink } from "./click-sink.js";
@@ -44,7 +45,19 @@ const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3000";
    max_connections — so the deployment sets this to 1. */
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustProxy: true });
+/* How many proxies in front of this service APPEND their edge IP to
+   X-Forwarded-For. The trustworthy client IP that feeds visitorHash is the
+   (TRUSTED_PROXY_HOPS+1)th entry from the RIGHT of that chain, so a client
+   cannot forge visitor identity by prepending entries. 0 = direct/local dev
+   and compose (no trusted appender, hit on localhost with no XFF); production
+   behind CloudFront sets it to 1 (or higher for additional appending hops). */
+const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
+
+/* trustProxy is OFF: Fastify's request.ip is then the socket peer, and we
+   derive the real client IP ourselves via clientIpFromXff. Fastify 5's numeric
+   hop-count is disabled as unsafe, and `true` would surface the client-typed
+   leftmost X-Forwarded-For entry — the exact forgery #279 fixes. */
+const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustProxy: false });
 /* The replica URL and SSL settings are plumbed through for consistency with the
    other apps, but the redirect deliberately uses the PRIMARY `db` handle (not
    readDb) everywhere: the click-limit gate reads a link's click count and then
@@ -85,12 +98,21 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   }
 
   const userAgent = (request.headers["user-agent"] as string) ?? "";
+  /* The trustworthy client IP, derived once here and threaded through every
+     visitorHash site. Never request.ip (the socket peer) directly, and never a
+     client-typed X-Forwarded-For entry: clientIpFromXff returns the
+     rightmost-minus-N entry so a prepended header cannot forge identity (#279). */
+  const clientIp = clientIpFromXff({
+    xff: request.headers["x-forwarded-for"] as string | string[] | undefined,
+    socketIp: request.raw.socket.remoteAddress ?? request.ip,
+    trustedHops: TRUSTED_PROXY_HOPS,
+  });
   const blocked = gateFor(link);
 
   if (blocked) {
     // Blocked clicks are still recorded — "how many people hit an expired
     // link" is exactly the number that tells someone to go renew it.
-    await record(link, request, userAgent, blocked, null, null);
+    await record(link, clientIp, request, userAgent, blocked, null, null);
 
     if (blocked === "expired" && link.expiresTo) return reply.redirect(link.expiresTo, 302);
     if (blocked === "scheduled" && link.scheduledTo) return reply.redirect(link.scheduledTo, 302);
@@ -128,7 +150,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   }
 
   const salt = await salts.today();
-  const hash = visitorHash({ dailySalt: salt, ip: request.ip, userAgent, linkId: link.id });
+  const hash = visitorHash({ dailySalt: salt, ip: clientIp, userAgent, linkId: link.id });
 
   const decision = evaluateRouting(link.rules, link.destination, {
     // CloudFront hands us the country for free and accurate at country level,
@@ -154,7 +176,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
      platform fallback to catch the miss, so this is a no-op for most clicks. */
   const target = buildDeepLink(destination, parseDevice(userAgent), link.deepLink);
 
-  await record(link, request, userAgent, null, decision.matchedRuleId, decision.variant, hash);
+  await record(link, clientIp, request, userAgent, null, decision.matchedRuleId, decision.variant, hash);
 
   for (const [header, value] of Object.entries(cacheHeadersFor(link.redirectType))) {
     void reply.header(header, value);
@@ -226,7 +248,8 @@ function isValidUnlockToken(token: string, linkId: string): boolean {
  */
 async function record(
   link: ResolvedLink,
-  request: { ip: string; headers: Record<string, unknown> },
+  clientIp: string,
+  request: { headers: Record<string, unknown> },
   userAgent: string,
   blockedReason: string | null,
   matchedRuleId: string | null,
@@ -236,7 +259,7 @@ async function record(
   try {
     const salt = await salts.today();
     const hash =
-      precomputedHash ?? visitorHash({ dailySalt: salt, ip: request.ip, userAgent, linkId: link.id });
+      precomputedHash ?? visitorHash({ dailySalt: salt, ip: clientIp, userAgent, linkId: link.id });
 
     await clicks.record({
       linkId: link.id,
