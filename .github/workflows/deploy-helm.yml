@@ -1,0 +1,544 @@
+name: Helm (kind) deploy
+
+# Profile 2 (the horizontally scaled Kubernetes deployment) has one artifact the
+# other CI jobs never touch: the Helm chart at deploy/helm/snapurl. `verify`
+# runs the compiled JS directly and `integration` runs docker compose, so
+# neither ever renders the chart, stands up a cluster, or proves the thing the
+# whole profile exists to prove — that with the Redis CacheStore the rate-limit
+# counter is SHARED across api replicas (#285). This job does exactly that:
+#   * builds the three runtime images from the repo Dockerfile,
+#   * stands up a kind cluster and kind-loads the images,
+#   * deploys a THROWAWAY in-cluster Postgres + Redis (the chart expects
+#     EXTERNAL stores, so CI provides them),
+#   * installs the chart with CACHE_DRIVER=redis, letting the pre-install
+#     migrate Job run before the pods roll,
+#   * runs the smoke suites against the in-cluster services (Done-when #1),
+#   * scales the API to >1 replica and asserts the (limit+1)th request across
+#     pods is 429, which only holds because the counter lives in Redis and is
+#     shared — on the per-pod memory driver the effective limit would be
+#     limit x pods and the assertion would fail (Done-when #2, proving #285).
+#
+# This job is heavy (three image builds + a cluster + a rollout), so it is a
+# separate workflow with its own concurrency group. It does NOT modify
+# verify.yml / publish-images.yml / smoke-deployed.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: helm-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The namespace and release name everything below shares. Kept in env so the
+  # kubectl/helm/port-forward steps cannot drift apart.
+  NS: snapurl
+  RELEASE: snapurl
+  # The local image tag the three images are built and kind-loaded under. The
+  # chart's per-service image.repository/image.tag overrides point at these, so
+  # the composed image ref is a bare `snapurl-<app>:ci` (no registry) that
+  # matches exactly what `kind load` puts in the node's image store.
+  IMAGE_TAG: ci
+  # The deployed API's GLOBAL throttle limit for this job. Set very high so the
+  # smoke suites (scripts/smoke.sh makes several hundred requests in a couple of
+  # minutes) never trip the global rate limiter — exactly what verify.yml does
+  # with THROTTLE_LIMIT: "100000" for the same reason. This does NOT weaken the
+  # multi-replica 429 proof below: that proof targets POST /api/v1/auth/login,
+  # which carries its OWN route-level @Throttle limit:5/60s in code
+  # (apps/api/src/auth/auth.controller.ts) that is INDEPENDENT of this global
+  # limit — so the login bucket still caps at 5 regardless of how high the
+  # global limit is. THROTTLE_LIMIT_PROOF below is that known route-level 5, the
+  # number the assertion step checks against.
+  THROTTLE_LIMIT_SMOKE: "100000"
+  # The deterministic per-client limit the multi-replica 429 assertion checks
+  # against. It equals the login route's hardcoded route-level @Throttle limit
+  # (5/60s) — NOT the global limit — so the assertion holds no matter what the
+  # global THROTTLE_LIMIT_SMOKE is set to.
+  THROTTLE_LIMIT_PROOF: "5"
+  # The redirect host new links are created on. This MUST equal the API's
+  # DEFAULT_DOMAIN and the Host the redirect resolver matches (see
+  # scripts/smoke-redirect.sh header). We port-forward redirect to
+  # localhost:3002, so localhost:3002 satisfies all three by construction —
+  # exactly the single-node/CI convention verify.yml uses.
+  LINK_HOST: localhost:3002
+
+jobs:
+  helm-kind:
+    name: kind deploy + multi-replica rate-limit proof
+    runs-on: ubuntu-latest
+    # Heavy: three image builds, a kind cluster, a full rollout and two smoke
+    # suites. 40 minutes is generous headroom over the observed ~15-20m.
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build the three runtime images from the ONE repo Dockerfile, exactly as
+      # publish-images.yml invokes it: --build-arg APP=<app> --target runtime.
+      # Tagged locally as snapurl-<app>:ci so kind can load them. gha buildx
+      # cache keeps the three builds (which share every layer up to the app
+      # build) as fast as possible. NOTE: the runtime target is the plain
+      # container image; the lambda-* targets are not built here.
+      - name: Build the api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          build-args: APP=api
+          tags: snapurl-api:${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=gha,scope=snapurl-api
+          cache-to: type=gha,scope=snapurl-api,mode=max
+
+      - name: Build the redirect image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          build-args: APP=redirect
+          tags: snapurl-redirect:${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=gha,scope=snapurl-redirect
+          cache-to: type=gha,scope=snapurl-redirect,mode=max
+
+      - name: Build the worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          build-args: APP=worker
+          tags: snapurl-worker:${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=gha,scope=snapurl-worker
+          cache-to: type=gha,scope=snapurl-worker,mode=max
+
+      # Bring up the cluster. helm/kind-action creates a cluster named
+      # "chart-testing" by default (kind v0.31.0). Pin the action major and set
+      # the cluster name explicitly so the `kind load` below cannot target the
+      # wrong cluster.
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: chart-testing
+
+      # Load the three locally-built images into the kind node's image store so
+      # pods can run them with imagePullPolicy: Never — nothing is ever pulled
+      # from GHCR. The tags here MUST match the chart's composed image refs
+      # (set via --set below to bare snapurl-<app>:ci).
+      - name: Load images into kind
+        run: |
+          kind load docker-image \
+            "snapurl-api:${IMAGE_TAG}" \
+            "snapurl-redirect:${IMAGE_TAG}" \
+            "snapurl-worker:${IMAGE_TAG}" \
+            --name chart-testing
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      # Throwaway in-cluster Postgres + Redis. The chart expects EXTERNAL
+      # stores, so CI stands up disposable ones. These credentials are
+      # CI-ONLY throwaway values (identical in spirit to verify.yml's postgres
+      # service block) — they never leave this ephemeral cluster and guard
+      # nothing real. postgres:18 is REQUIRED: the schema uses uuidv7(), native
+      # in 18 and absent in 17 (matches verify.yml's image choice). redis:7 is
+      # the CacheStore + click queue.
+      - name: Deploy throwaway Postgres and Redis
+        run: |
+          kubectl create namespace "$NS"
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ci-postgres
+            labels: { app: ci-postgres }
+          spec:
+            replicas: 1
+            selector: { matchLabels: { app: ci-postgres } }
+            template:
+              metadata: { labels: { app: ci-postgres } }
+              spec:
+                containers:
+                  - name: postgres
+                    image: postgres:18-alpine
+                    # Throwaway CI-only credentials — this database lives and
+                    # dies with the ephemeral kind cluster and holds no real data.
+                    env:
+                      - { name: POSTGRES_USER,     value: snapurl }
+                      - { name: POSTGRES_PASSWORD, value: snapurl }
+                      - { name: POSTGRES_DB,       value: snapurl }
+                      # A writable data dir under an emptyDir; the container runs
+                      # as its default user, no securityContext hardening needed
+                      # for a throwaway.
+                      - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+                    ports: [ { containerPort: 5432 } ]
+                    readinessProbe:
+                      exec: { command: ["pg_isready", "-U", "snapurl", "-d", "snapurl"] }
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+                    volumeMounts:
+                      - { name: data, mountPath: /var/lib/postgresql/data }
+                volumes:
+                  - { name: data, emptyDir: {} }
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ci-postgres
+          spec:
+            selector: { app: ci-postgres }
+            ports: [ { port: 5432, targetPort: 5432 } ]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ci-redis
+            labels: { app: ci-redis }
+          spec:
+            replicas: 1
+            selector: { matchLabels: { app: ci-redis } }
+            template:
+              metadata: { labels: { app: ci-redis } }
+              spec:
+                containers:
+                  - name: redis
+                    image: redis:7-alpine
+                    ports: [ { containerPort: 6379 } ]
+                    readinessProbe:
+                      exec: { command: ["redis-cli", "ping"] }
+                      initialDelaySeconds: 3
+                      periodSeconds: 5
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ci-redis
+          spec:
+            selector: { app: ci-redis }
+            ports: [ { port: 6379, targetPort: 6379 } ]
+          EOF
+          kubectl rollout status -n "$NS" deploy/ci-postgres --timeout=180s
+          kubectl rollout status -n "$NS" deploy/ci-redis    --timeout=120s
+
+      # Generate the two JWT signing secrets in-job and write them STRAIGHT into
+      # a Kubernetes Secret with the keys the chart expects when
+      # secrets.existingSecret is used. openssl output goes to kubectl over a
+      # pipe; it is never echoed, never written to $GITHUB_ENV, and never
+      # printed. This is the "throwaway values, clearly marked" pattern from
+      # verify.yml, adapted so no secret material touches the log.
+      #
+      # The chart's existingSecret contract (see templates/_helpers.tpl
+      # snapurl.secretName + values.yaml) requires these keys: jwt-access-secret,
+      # jwt-refresh-secret, database-url, redis-url. The two connection strings
+      # carry the throwaway CI Postgres/Redis credentials.
+      - name: Create the chart Secret (throwaway, never echoed)
+        run: |
+          # Two DIFFERENT secrets, each 64 hex chars (>=32 required by the API
+          # env schema). --from-literal reads the value as an argument, not via
+          # the log; set -x is NOT enabled anywhere in this job.
+          kubectl create secret generic snapurl-secrets \
+            -n "$NS" \
+            --from-literal=jwt-access-secret="$(openssl rand -hex 32)" \
+            --from-literal=jwt-refresh-secret="$(openssl rand -hex 32)" \
+            --from-literal=database-url="postgres://snapurl:snapurl@ci-postgres.${NS}.svc:5432/snapurl" \
+            --from-literal=redis-url="redis://ci-redis.${NS}.svc:6379"
+
+      # Install the chart. --wait blocks on api+redirect readiness AND on the
+      # pre-install migrate hook Job completing (Helm runs pre-install hooks and
+      # waits for them before the release resources). Image overrides make the
+      # composed ref a bare snapurl-<app>:ci (the helper drops the registry
+      # prefix when a per-service image.repository is set), and pullPolicy=Never
+      # forces kind to use the loaded image and never reach GHCR.
+      #
+      # postgres.url + redis.url point at the throwaway in-cluster stores;
+      # redis.url forces CACHE_DRIVER=redis for every service — the shared
+      # counter the rate-limit proof depends on. secrets.existingSecret reuses
+      # the Secret created above so no secret value appears on the helm command
+      # line. throttle.limit is set VERY HIGH (THROTTLE_LIMIT_SMOKE) so the
+      # smoke suites' several-hundred requests never trip the GLOBAL limiter —
+      # the multi-replica 429 proof still holds because it targets /auth/login,
+      # whose route-level @Throttle limit:5 is independent of this global value.
+      # DEFAULT_DOMAIN /
+      # REDIRECT_ORIGIN / WEB_ORIGIN line up with the port-forward + smoke
+      # scripts (LINK_HOST). ingress.enabled=false (we use port-forward).
+      # hpa.enabled=false: kind has no metrics-server, so an enabled HPA would
+      # sit with "unknown" metrics — noise, not signal. The HPA template is
+      # already validated by `helm template` in FEAT-001; this job's purpose is
+      # the deploy + the rate-limit proof, not autoscaling.
+      - name: Install the chart
+        run: |
+          helm upgrade --install "$RELEASE" deploy/helm/snapurl \
+            --namespace "$NS" \
+            --wait --timeout 10m \
+            --set image.pullPolicy=Never \
+            --set api.image.repository=snapurl-api      --set api.image.tag="$IMAGE_TAG" \
+            --set redirect.image.repository=snapurl-redirect --set redirect.image.tag="$IMAGE_TAG" \
+            --set worker.image.repository=snapurl-worker --set worker.image.tag="$IMAGE_TAG" \
+            --set-string postgres.url="postgres://snapurl:snapurl@ci-postgres.${NS}.svc:5432/snapurl" \
+            --set-string redis.url="redis://ci-redis.${NS}.svc:6379" \
+            --set secrets.existingSecret=snapurl-secrets \
+            --set throttle.limit="$THROTTLE_LIMIT_SMOKE" \
+            --set-string defaultDomain="$LINK_HOST" \
+            --set-string redirectOrigin="http://$LINK_HOST" \
+            --set-string webOrigin="http://localhost:3000" \
+            --set hpa.enabled=false \
+            --set ingress.enabled=false
+
+      # The migrate Job is the whole point of running migrations OUT of the app
+      # boot path. Prove it RAN by querying DURABLE evidence in the database —
+      # the drizzle bookkeeping table — NOT the hook Job object.
+      #
+      # WHY NOT `kubectl wait` on the Job: the migrate Job carries
+      # `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded`
+      # (templates/migrate-job.yaml), so Helm GARBAGE-COLLECTS the Job the
+      # instant it succeeds. By the time `helm install --wait` returns the Job
+      # is already gone, and `kubectl wait job/${RELEASE}-migrate` fails with
+      # `NotFound` even though migrations completed. The DB check below is
+      # independent of Helm's GC choice and of any timing.
+      #
+      # WHAT this proves: drizzle-orm's postgres-js migrator records every
+      # applied migration in `drizzle.__drizzle_migrations` (default schema
+      # `drizzle`, table `__drizzle_migrations`; see runMigrations in
+      # packages/database/src/migrate.ts, which passes no custom
+      # migrationsSchema/migrationsTable). A row count >= 1 means at least one
+      # migration was applied by the pre-install hook. If the migration had
+      # FAILED, `helm install --wait` would already have failed on the hook;
+      # and if somehow it did not run, this table would be empty (or absent)
+      # and the check exits non-zero — so a green step genuinely implies a
+      # migrated schema.
+      #
+      # HOW: exec psql INSIDE the throwaway ci-postgres pod (same in-cluster
+      # store the chart migrated against). Running inside the pod uses the
+      # container's local trust, so no password is passed or echoed on the
+      # command line — the same "no secret material in the log" discipline the
+      # Secret-creation step above follows.
+      - name: Assert migrations ran (durable DB check, not the ephemeral hook Job)
+        run: |
+          set -euo pipefail
+          PG_POD="$(kubectl get pod -n "$NS" -l app=ci-postgres \
+            -o jsonpath='{.items[0].metadata.name}')"
+          # `-tAc` = tuples-only, unaligned, single command → a bare integer.
+          count="$(kubectl exec -n "$NS" "$PG_POD" -- \
+            psql -U snapurl -d snapurl -tAc \
+            'SELECT count(*) FROM drizzle.__drizzle_migrations')"
+          echo "applied migrations recorded in drizzle.__drizzle_migrations: $count"
+          if [ "${count:-0}" -lt 1 ]; then
+            echo "::error::the pre-install migrate hook left no rows in drizzle.__drizzle_migrations — migrations did NOT run before the pods rolled."
+            exit 1
+          fi
+          echo "migrate hook verified: schema is migrated (>=1 applied migration)"
+
+      # api+redirect must be Available before smoke. --wait covered this, but an
+      # explicit rollout status gives a precise failure if a Deployment is stuck.
+      - name: Assert api and redirect are Available
+        run: |
+          kubectl rollout status -n "$NS" "deploy/${RELEASE}-api"      --timeout=120s
+          kubectl rollout status -n "$NS" "deploy/${RELEASE}-redirect" --timeout=120s
+          kubectl rollout status -n "$NS" "deploy/${RELEASE}-worker"   --timeout=120s
+
+      # Port-forward the two Services to the localhost ports the smoke scripts
+      # default to (api 3001, redirect 3002). Backgrounded; PIDs captured for
+      # cleanup. Then poll /api/v1/health and /health until they answer, exactly
+      # like verify.yml waits for the started processes.
+      - name: Port-forward api and redirect
+        run: |
+          kubectl port-forward -n "$NS" "svc/${RELEASE}-api" 3001:80 \
+            > /tmp/pf-api.log 2>&1 &
+          echo "PF_API_PID=$!" >> "$GITHUB_ENV"
+          kubectl port-forward -n "$NS" "svc/${RELEASE}-redirect" 3002:80 \
+            > /tmp/pf-redirect.log 2>&1 &
+          echo "PF_REDIRECT_PID=$!" >> "$GITHUB_ENV"
+          for name in "api:3001/api/v1/health" "redirect:3002/health"; do
+            label="${name%%:*}"; url="http://localhost:${name#*:}"
+            for i in $(seq 1 40); do
+              if curl -fsS "$url" >/dev/null 2>&1; then echo "$label is up"; break; fi
+              if [ "$i" = "40" ]; then
+                echo "::error::$label did not become reachable via port-forward within 40s"
+                echo "--- pf-api.log ---";      tail -50 /tmp/pf-api.log      || true
+                echo "--- pf-redirect.log ---"; tail -50 /tmp/pf-redirect.log || true
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      # Done-when #1: the integration harness passes against the chart. Same
+      # scripts verify.yml/integration run. LINK_DOMAIN == DEFAULT_DOMAIN ==
+      # the Host the redirect resolver matches (LINK_HOST), so link creation and
+      # the redirect resolver line up (see smoke-redirect.sh header).
+      - name: Smoke — dashboard API
+        run: bash scripts/smoke.sh
+        env:
+          API: http://localhost:3001/api/v1
+
+      - name: Smoke — redirect path
+        run: bash scripts/smoke-redirect.sh
+        env:
+          API: http://localhost:3001/api/v1
+          RD: http://localhost:3002
+          LINK_DOMAIN: ${{ env.LINK_HOST }}
+
+      # ---------------------------------------------------------------------
+      # Done-when #2 — the point of the whole issue.
+      # ---------------------------------------------------------------------
+      # Scale the API to 3 replicas and prove the rate-limit counter is SHARED
+      # across them via the Redis CacheStore (#285).
+      #
+      # WHY the API and not redirect: rate limiting is enforced by the API's
+      # @nestjs/throttler, whose storage is the CacheStore
+      # (apps/api/src/common/cache-throttler-storage.ts -> CacheStore.incr; the
+      # RedisCacheStore.incr is an atomic Lua INCR+EXPIRE). The redirect service
+      # uses the CacheStore only for hot-link caching, so scaling redirect would
+      # not exercise the throttler at all.
+      #
+      # WHY POST /api/v1/auth/login is the target, and why it is deterministic:
+      #   * It carries a route-level @Throttle limit:5/60s
+      #     (apps/api/src/auth/auth.controller.ts). This route-level bucket is
+      #     what the proof relies on: it is set in CODE and is INDEPENDENT of the
+      #     deployed global THROTTLE_LIMIT. The chart's global limit is set VERY
+      #     HIGH here (THROTTLE_LIMIT_SMOKE) so the earlier smoke suites don't
+      #     trip it, but the login route still caps at 5 — so this assertion
+      #     holds against THROTTLE_LIMIT_PROOF (=5) regardless of the global
+      #     value. The guard applied to every route (ProxyAwareThrottlerGuard, an
+      #     APP_GUARD in app.module.ts) enforces whichever bucket is tighter; for
+      #     /auth/login that is the route-level 5.
+      #   * The throttler guard runs BEFORE the handler, so a request over the
+      #     limit is 429 before any credential check — a well-formed login body
+      #     with a bogus account returns 401 while under the limit and 429 once
+      #     over it. It never mutates state and is side-effect-free.
+      #   * Every probe sends a FIXED X-Forwarded-For header so the throttler
+      #     tracker key is IDENTICAL across all 3 api pods BY CONSTRUCTION,
+      #     independent of cluster networking. ProxyAwareThrottlerGuard derives
+      #     the key via clientIpFromXff({ xff, socketIp, trustedHops:
+      #     TRUSTED_PROXY_HOPS }) and the chart default TRUSTED_PROXY_HOPS=1 is
+      #     LEFT INTACT in this install (we do NOT override trustedProxyHops).
+      #     clientIpFromXff with trustedHops=1 returns entries[len-1-1] — the
+      #     SECOND-from-right entry. With a 2-entry chain "203.0.113.7, 10.0.0.1"
+      #     that is entries[0] = 203.0.113.7 on EVERY pod, regardless of which
+      #     pod/socket kube-proxy routes the request to. So all requests land in
+      #     ONE Redis counter key by header construction — NOT by the fragile
+      #     assumption that all 3 pods observe the same SNAT'd socket peer IP
+      #     (they may not, which is precisely what would have made a socket-IP
+      #     key non-discriminating or flaky). See packages/domain/src/client-ip.ts
+      #     for the (trustedHops+1)th-from-right derivation, and
+      #     apps/api/src/common/proxy-aware-throttler.guard.ts for the guard.
+      #   * With CACHE_DRIVER=redis every api pod shares that one Redis counter,
+      #     so the (limit+1)th request across pods is 429. On the per-pod memory
+      #     driver (the bug #285 fixes) the effective limit would be 5 x 3 = 15
+      #     and this assertion would NOT see a 429 within the first ~15 requests
+      #     — so the test genuinely proves the shared Redis counter.
+      #
+      # DETERMINISM: send exactly limit + K requests (5 + 10 = 15), count 2xx/4xx
+      # buckets, and assert (a) at least one 429 appeared and (b) no more than
+      # `limit` non-429 responses got through before the limit was crossed. On
+      # the memory driver 3 pods would give up to 15 non-429s and zero 429s, so
+      # both halves fail — which is exactly what makes this a proof of #285.
+      - name: Scale the API to 3 replicas
+        run: |
+          kubectl scale deployment "${RELEASE}-api" -n "$NS" --replicas=3
+          kubectl rollout status -n "$NS" "deploy/${RELEASE}-api" --timeout=180s
+          # Confirm all 3 are Ready before hammering, so the round-robin really
+          # spans 3 pods (the whole point — a shared counter across all of them).
+          kubectl wait --for=condition=ready pod \
+            -n "$NS" -l app.kubernetes.io/component=api --timeout=120s
+          echo "api replicas ready:"
+          kubectl get pods -n "$NS" -l app.kubernetes.io/component=api --no-headers | wc -l
+
+      - name: Assert the shared Redis rate-limit counter (429 across pods)
+        run: |
+          set -uo pipefail
+          # The login route's hardcoded route-level limit (5), NOT the deployed
+          # global THROTTLE_LIMIT_SMOKE — the login bucket is what bounds this.
+          LIMIT="$THROTTLE_LIMIT_PROOF"
+          TOTAL=$((LIMIT + 10))       # send comfortably past the limit
+          ok2xx=0; refused401=0; throttled429=0; other=0
+          for i in $(seq 1 "$TOTAL"); do
+            # A well-formed login body for an account that does not exist. Under
+            # the limit this is 401; once the shared counter crosses the limit
+            # the guard returns 429 before the handler runs.
+            #
+            # The FIXED 2-entry X-Forwarded-For makes the throttler tracker key
+            # constant across all 3 pods by construction: with the chart default
+            # TRUSTED_PROXY_HOPS=1, clientIpFromXff returns the second-from-right
+            # entry (203.0.113.7) on every pod, so all requests share ONE Redis
+            # counter key regardless of which pod (and which SNAT'd socket IP)
+            # serves each request. This removes any dependence on kube-proxy
+            # presenting a single stable client IP to every backend pod.
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -X POST "http://localhost:3001/api/v1/auth/login" \
+              -H 'Content-Type: application/json' \
+              -H 'X-Forwarded-For: 203.0.113.7, 10.0.0.1' \
+              -d '{"email":"ratelimit-probe@example.com","password":"a-long-enough-password-123"}')
+            case "$code" in
+              2*)  ok2xx=$((ok2xx+1)) ;;
+              401) refused401=$((refused401+1)) ;;
+              429) throttled429=$((throttled429+1)) ;;
+              *)   other=$((other+1)); echo "unexpected status $code on request $i" ;;
+            esac
+          done
+          # "Allowed" = anything the throttler let reach the handler (2xx or the
+          # 401 the bogus login yields). Everything else at this endpoint under
+          # this load is the 429 we are proving.
+          allowed=$((ok2xx + refused401))
+          echo "sent=$TOTAL allowed(non-429)=$allowed throttled(429)=$throttled429 other=$other"
+          if [ "$throttled429" -lt 1 ]; then
+            echo "::error::no 429 seen across $TOTAL requests to 3 api pods — the rate-limit counter is NOT shared (memory driver / #285 regression). Redis CacheStore would have returned 429 after the ${LIMIT}th request."
+            exit 1
+          fi
+          if [ "$allowed" -gt "$LIMIT" ]; then
+            echo "::error::$allowed requests were allowed but the shared limit is $LIMIT — the counter is per-pod, not shared (effective limit became limit x pods)."
+            exit 1
+          fi
+          if [ "$other" -ne 0 ]; then
+            echo "::error::$other requests returned an unexpected status (not 2xx/401/429)."
+            exit 1
+          fi
+          echo "shared Redis rate-limit counter verified: $allowed <= $LIMIT allowed, $throttled429 throttled across 3 pods"
+
+      # Debuggability, mirroring verify.yml/integration: on ANY failure dump the
+      # cluster state, describes, logs for every workload, and helm status.
+      # Guarded with if: failure() so it only runs when something above failed.
+      # No secret values are printed — logs are app logs (which redact secrets)
+      # and object metadata, never `kubectl get secret -o yaml` or env dumps.
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "===== get all ====="
+          kubectl get pods,svc,deploy,jobs -n "$NS" -o wide || true
+          echo "===== describe pods ====="
+          kubectl describe pods -n "$NS" || true
+          echo "===== api logs ====="
+          kubectl logs -n "$NS" -l app.kubernetes.io/component=api --all-containers --tail=200 || true
+          echo "===== redirect logs ====="
+          kubectl logs -n "$NS" -l app.kubernetes.io/component=redirect --all-containers --tail=200 || true
+          echo "===== worker logs ====="
+          kubectl logs -n "$NS" -l app.kubernetes.io/component=worker --all-containers --tail=200 || true
+          echo "===== migrate hook Job logs ====="
+          kubectl logs -n "$NS" "job/${RELEASE}-migrate" --tail=200 || true
+          echo "===== ci-postgres / ci-redis logs ====="
+          kubectl logs -n "$NS" -l app=ci-postgres --tail=100 || true
+          kubectl logs -n "$NS" -l app=ci-redis --tail=100 || true
+          echo "===== port-forward logs ====="
+          tail -50 /tmp/pf-api.log      || true
+          tail -50 /tmp/pf-redirect.log || true
+          echo "===== helm status ====="
+          helm status "$RELEASE" -n "$NS" || true
+
+      # Stop the background port-forwards regardless of outcome. The kind cluster
+      # itself is torn down by helm/kind-action's post step, so no explicit
+      # cluster teardown is needed and the job stays idempotent.
+      - name: Stop port-forwards
+        if: always()
+        run: |
+          kill "${PF_API_PID:-0}" "${PF_REDIRECT_PID:-0}" 2>/dev/null || true

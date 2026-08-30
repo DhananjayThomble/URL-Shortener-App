@@ -1,0 +1,29 @@
+{{- if .Values.hpa.enabled }}
+{{- /*
+  The redirect service is the ONLY bursty deployment, so it is the only one
+  autoscaled. api and worker are not. When this HPA is enabled it OWNS the
+  redirect replica count, which is why deployment-redirect.yaml omits `replicas`
+  in that case — otherwise every `helm upgrade` would reset the count and fight
+  the autoscaler.
+*/}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "snapurl.fullname" . }}-redirect
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "redirect") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "snapurl.fullname" . }}-redirect
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+{{- end }}

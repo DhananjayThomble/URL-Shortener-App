@@ -180,6 +180,35 @@ To move to a new release:
 Take a backup first (see [Backup](#7-backup)). Pin `SNAPURL_TAG` to a specific
 release in production rather than tracking `latest`, so upgrades are deliberate.
 
+## Profile 2: horizontally scaled (Kubernetes/Helm)
+
+Everything above is Profile 1: one host, one Postgres, an in-process cache, and
+Caddy for TLS. It is the right default for most self-hosters.
+
+Profile 2 is the horizontally scaled deployment for when a single node is not
+enough. It runs the **same GHCR images** as independent Kubernetes Deployments
+with per-service replica counts, an autoscaler on the bursty redirect service, a
+shared Redis-backed cache that keeps rate limiting correct across API replicas,
+and migrations applied by a pre-upgrade Job rather than by the app pods at boot.
+
+The trade-off is what you have to bring:
+
+| | Profile 1 (single-node) | Profile 2 (Kubernetes/Helm) |
+| --- | --- | --- |
+| Runtime | `docker compose` on one host | A Kubernetes cluster (1.23+) |
+| Postgres | Bundled in the compose stack | External managed Postgres 18 (you provide) |
+| Cache | In-process (`CACHE_DRIVER=memory`) | External Redis (`CACHE_DRIVER=redis`, shared counter) |
+| TLS | Caddy on the host | Ingress + cert-manager (or your LB) |
+| Scaling | Single node | Independent replicas + HPA on redirect |
+| Migrations | `migrate` compose profile | Pre-upgrade Helm hook Job |
+
+Choose Profile 2 when you need to scale the API and the redirect hot path
+independently behind a real ingress with external state. Otherwise stay on
+Profile 1: it is simpler and cheaper.
+
+The full operator walk-through, values reference, and install/upgrade commands
+live in [`deploy/helm/README.md`](./deploy/helm/README.md).
+
 ## What is CI-verified vs. what needs a real domain
 
 Being honest about this matters, so here is the split:

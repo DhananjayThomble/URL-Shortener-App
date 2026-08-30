@@ -1,0 +1,309 @@
+# SnapURL Profile 2 — the horizontally scaled Kubernetes deployment.
+#
+# This file is the whole contract. Nothing here carries a working secret or a
+# localhost default: like the single-node compose, every value an operator must
+# set is either blank (and `required` at render time) or a documented default.
+#
+# The three things you MUST set before this deploys:
+#   * postgres.url               — an EXTERNAL managed Postgres primary
+#   * redis.url                  — an EXTERNAL Redis (what makes multi-replica
+#                                  rate limiting correct, see below)
+#   * secrets.jwtAccessSecret +  — the two JWT signing secrets (>=32 chars each)
+#     secrets.jwtRefreshSecret     OR reference secrets.existingSecret
+#
+# See deploy/helm/README.md for the full walk-through.
+
+# Override the generated resource-name prefix. Empty means it derives from the
+# release name (see templates/_helpers.tpl snapurl.fullname).
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+# The three images are published by publish-images.yml on v*.*.* tags as
+# ghcr.io/dhananjaythomble/snapurl-{api,redirect,worker}. The image for a
+# service is composed as: registry/repositoryPrefix<component>:tag
+# e.g. ghcr.io/dhananjaythomble/snapurl-api:latest
+# Per-service `image.repository`/`image.tag` overrides below win over these.
+image:
+  registry: ghcr.io
+  repositoryPrefix: dhananjaythomble/snapurl-
+  # Pin to a release (e.g. "v2.0.0") in production; "latest" follows newest.
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Extra image pull secrets (names of existing docker-registry Secrets), if the
+# registry is private. GHCR public images need none.
+imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# API service — the NestJS control plane (auth, links CRUD, analytics reads).
+# ---------------------------------------------------------------------------
+# The API is where rate limiting is ENFORCED: @nestjs/throttler is backed by the
+# CacheStore (CACHE_DRIVER/REDIS_URL below). With redis.url set, ALL api
+# replicas share ONE counter, so the effective limit is the configured limit,
+# not limit x replicas. That is why the api scales safely.
+api:
+  replicaCount: 2
+  # Optional per-service image overrides. Leave blank to use the global image.
+  image:
+    repository: "" # e.g. ghcr.io/dhananjaythomble/snapurl-api
+    tag: "" # e.g. v2.0.0
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # readiness/liveness probe tuning. Probe path is fixed at /api/v1/health:3001.
+  probes:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  service:
+    port: 3001
+
+# ---------------------------------------------------------------------------
+# Redirect service — the hot path (plain Fastify, three routes).
+# ---------------------------------------------------------------------------
+# The only bursty deployment, so it is the only one with an HPA (see hpa below).
+# Its CacheStore is used ONLY for hot-link caching (10s TTL), NOT for throttling.
+redirect:
+  replicaCount: 3
+  image:
+    repository: ""
+    tag: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Probe path is fixed at /health:3002.
+  probes:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  service:
+    port: 3002
+
+# ---------------------------------------------------------------------------
+# Worker — the in-process rollup/maintenance loop. No HTTP surface.
+# ---------------------------------------------------------------------------
+# Keep this at 1 (or a small fixed count). The rollup loop drains click_events
+# then marks them consumed on the PRIMARY handle; running many concurrent
+# workers would have them contend on the same rows for no throughput gain. It is
+# deliberately NOT autoscaled and has NO Service, NO probes and NO PDB.
+worker:
+  replicaCount: 1
+  image:
+    repository: ""
+    tag: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Ingress — routes the two public hostnames to the api and redirect Services.
+# ---------------------------------------------------------------------------
+# Disabled by default: with no ingress, reach the services with
+# `kubectl port-forward`. Enable it and set the two hosts for a real deploy.
+ingress:
+  enabled: false
+  # e.g. "nginx", "traefik", or the cloud LB class. Empty uses the cluster default.
+  className: ""
+  # Extra annotations (e.g. nginx body size, cert-manager is merged in from tls).
+  annotations: {}
+  # The dashboard/API hostname -> api Service.
+  apiHost: ""
+  # The short-link hostname -> redirect Service.
+  redirectHost: ""
+  tls:
+    enabled: false
+    # A single TLS Secret covering BOTH hosts. If you use cert-manager, set
+    # clusterIssuer instead and the controller creates this Secret for you.
+    secretName: ""
+    # cert-manager ClusterIssuer name. When set, the
+    # cert-manager.io/cluster-issuer annotation is added automatically.
+    clusterIssuer: ""
+
+# ---------------------------------------------------------------------------
+# Postgres — EXTERNAL. This chart does NOT ship a database.
+# ---------------------------------------------------------------------------
+# Point this at a managed primary (RDS/Cloud SQL/Neon/…). If you want an
+# in-cluster Postgres for testing, add the bitnami/postgresql subchart yourself
+# and set postgres.url to its Service DNS — but production should use a managed
+# primary with backups you did not have to build.
+postgres:
+  # postgres://USER:PASSWORD@HOST:5432/DBNAME  (carries credentials -> Secret)
+  url: ""
+  # Optional read-replica connection string. Absent means reads use the primary.
+  replicaUrl: ""
+  # TLS to the database. ssl=true enables it; sslNoVerify skips cert checks
+  # (VPC/self-signed only, insecure over untrusted networks); caCert is the PEM
+  # of a CA bundle to verify the server cert (goes to the Secret).
+  ssl: false
+  sslNoVerify: false
+  caCert: ""
+  poolMax: 10
+
+# ---------------------------------------------------------------------------
+# Redis — the CacheStore and click queue.
+# ---------------------------------------------------------------------------
+# THIS IS THE POINT OF PROFILE 2. When redis.url is set, CACHE_DRIVER is forced
+# to "redis" for every service, so the API throttler's counter lives in Redis
+# and is shared across ALL api replicas. That makes multi-replica rate limiting
+# correct (#285): the (limit+1)th request across pods is 429, not limit x pods.
+# Leave blank to fall back to the per-instance "memory" driver (only correct for
+# a single api replica).
+redis:
+  # redis://[:PASSWORD@]HOST:6379  (may carry credentials -> Secret)
+  url: ""
+
+# ---------------------------------------------------------------------------
+# Rate limiting — the API's global throttle (THROTTLE_TTL_SECONDS/THROTTLE_LIMIT).
+# ---------------------------------------------------------------------------
+throttle:
+  ttlSeconds: 60
+  limit: 120
+
+# ---------------------------------------------------------------------------
+# Non-secret app env.
+# ---------------------------------------------------------------------------
+# webOrigin: where the dashboard lives (CORS + email links).
+webOrigin: ""
+# defaultDomain: the default short domain new workspaces get.
+defaultDomain: ""
+# redirectOrigin: where redirects are served from (for building short URLs).
+redirectOrigin: ""
+# trustedProxyHops: how many proxies in front of the services APPEND their edge
+# IP to X-Forwarded-For. The throttler/visitor-hash derive the real client IP as
+# the (trustedProxyHops+1)th entry from the right, so a client cannot forge it.
+# Behind an ingress controller this is usually 1 (the controller). Add 1 per
+# extra appending hop (e.g. a cloud LB that appends XFF -> 2). Match it to your
+# actual ingress topology or rate limits key off the wrong IP.
+trustedProxyHops: 1
+
+mail:
+  # "outbox" writes each message to a file instead of sending; "ses" uses SES.
+  transport: outbox
+  # e.g. "SnapURL <no-reply@example.com>". Empty uses the app default.
+  from: ""
+
+# trace | debug | info | warn | error
+logLevel: info
+
+# ---------------------------------------------------------------------------
+# Secrets — the JWT signing secrets and credential-bearing connection strings.
+# ---------------------------------------------------------------------------
+# Provide the two JWT secrets inline (each >=32 chars; they MUST differ) OR set
+# existingSecret to the name of a Secret you manage (e.g. via an external
+# secrets operator). The chart-managed Secret ALSO holds database-url, redis-url
+# and database-ca-cert since those carry credentials.
+#
+# NEVER commit real secret values to a values file. For production prefer
+# existingSecret. The render FAILS if neither inline secrets nor existingSecret
+# are provided, so you cannot accidentally deploy with no secret. When inline
+# secrets ARE provided, the render also FAILS if either is shorter than 32
+# characters or if the two are identical — the ">=32 chars, must differ"
+# contract is enforced at `helm install` time, not late at app boot.
+secrets:
+  jwtAccessSecret: ""
+  jwtRefreshSecret: ""
+  # Name of an existing Secret. When set, the chart does NOT create its own
+  # Secret and expects THESE keys in yours:
+  #   jwt-access-secret, jwt-refresh-secret, database-url,
+  #   (optional) database-replica-url, redis-url, database-ca-cert
+  existingSecret: ""
+
+# ---------------------------------------------------------------------------
+# Horizontal Pod Autoscaler — redirect only.
+# ---------------------------------------------------------------------------
+# The redirect service is the only bursty deployment. api and worker are NOT
+# autoscaled. NOTE: when hpa.enabled is true the HPA OWNS redirect's replica
+# count, so redirect.replicaCount above is only the initial value — the HPA
+# takes over between minReplicas and maxReplicas.
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# ---------------------------------------------------------------------------
+# PodDisruptionBudgets — api and redirect only.
+# ---------------------------------------------------------------------------
+# No PDB for the worker: it runs a single replica, and a PDB with minAvailable
+# on a 1-replica Deployment blocks voluntary node drains (the node can never be
+# emptied). api and redirect run multiple replicas, so a minAvailable of 1
+# keeps at least one pod up during a drain while still allowing it to proceed.
+pdb:
+  enabled: true
+  api:
+    minAvailable: 1
+  redirect:
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Analytics reader — the AnalyticsReader seam (#284).
+# ---------------------------------------------------------------------------
+# Only the "postgres" reader exists in code today. The columnar branch is a
+# documented FUTURE seam: the env is plumbed when enabled, but no columnar
+# adapter is invented here. Leave columnar.enabled false.
+analytics:
+  reader: postgres
+  columnar:
+    enabled: false
+    driver: "" # e.g. "clickhouse" (future)
+    url: "" # columnar store connection string (future)
+
+# ---------------------------------------------------------------------------
+# Migrate Job — the pre-install/pre-upgrade migration hook.
+# ---------------------------------------------------------------------------
+# This is the whole point of running migrations OUT of the app boot path: the
+# apps do NOT migrate at boot, so this Job runs ONCE before the new pods roll
+# and prevents the concurrent-boot migration race. It reuses the worker image
+# (which ships drizzle/*.sql and re-exports runMigrations).
+migrateJob:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+
+# ---------------------------------------------------------------------------
+# ServiceAccount
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  # If empty and create=true, a name is derived from the fullname.
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Security context — matches the Dockerfile's `node` user (uid 1000).
+# ---------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Optional scheduling controls applied to all workloads.
+nodeSelector: {}
+tolerations: []
+affinity: {}

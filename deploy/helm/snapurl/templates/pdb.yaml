@@ -1,0 +1,36 @@
+{{- if .Values.pdb.enabled }}
+{{- /*
+  PDBs for api and redirect only. The worker is deliberately excluded: it runs
+  a single replica, and a PDB with minAvailable on a 1-replica Deployment blocks
+  voluntary node drains outright (the node can never be emptied without evicting
+  the only pod, which the budget forbids). api and redirect run multiple
+  replicas, so minAvailable=1 lets a drain proceed while keeping one pod up.
+*/}}
+{{- if .Values.pdb.api.minAvailable }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "snapurl.fullname" . }}-api
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.api.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "snapurl.componentSelectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+{{- end }}
+{{- if .Values.pdb.redirect.minAvailable }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "snapurl.fullname" . }}-redirect
+  labels:
+    {{- include "snapurl.componentLabels" (dict "root" . "component" "redirect") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.redirect.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "snapurl.componentSelectorLabels" (dict "root" . "component" "redirect") | nindent 6 }}
+{{- end }}
+{{- end }}
