@@ -16,7 +16,7 @@
     "build": "pnpm -r build",
     "build:packages": "pnpm --filter \"./packages/*\" build",
     "type-check": "pnpm build:packages && pnpm -r type-check",
-    "test": "pnpm build:packages && pnpm -r test",
+    "test": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test",
     "lint": "pnpm -r lint",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
