@@ -79,9 +79,11 @@ safe" and "Checked against Google Safe Browsing". The API logs a warning at boot
 and on first use. Either set the key or change the copy — right now the product
 makes a claim it is not backing up.
 
-**Email is stubbed.** Invitations write to `logs/outbox/` instead of sending.
-SES needs a verified domain and a sandbox-exit request. `MailService` is the
-seam; wiring SES is one adapter.
+**Email is stubbed.** With `MAIL_TRANSPORT=outbox` (the default) invitations are
+written to a file under `os.tmpdir()/snapurl-outbox` (overridable via
+`MAIL_OUTBOX_DIR`) instead of sending. SES needs a verified domain and a
+sandbox-exit request and remains unwired. `MailService.send` is the seam; wiring
+SES is one adapter.
 
 ## Environment
 
@@ -106,12 +108,15 @@ the rest — the full table is in [DECISIONS.md](./DECISIONS.md) Part 4.
 
 ## Deploying
 
-Nothing here is AWS-specific yet — no CDK stack is written. The apps read their
-config from the environment and the ports are conventional, so they will run on
-anything that runs Node.
+`infra/` is a CDK v2 stack — the AWS serverless profile. The apps themselves
+stay cloud-agnostic: they read all config from the environment and the ports are
+conventional, so the single-node and Kubernetes profiles run on anything that
+runs Node 22. See [DEPLOYMENT.md](./DEPLOYMENT.md) for how to ship, and
+[ARCHITECTURE.md](./ARCHITECTURE.md) for the ports and the three profiles.
 
-When you do deploy: the short version is that Lambda, DynamoDB, CloudFront and SQS all sit inside
-AWS's always-free tiers at this scale, and Postgres is the only line that
-actually costs money — about 92% of the bill. Run it on a free-tier Postgres
-elsewhere and the $100 credit outlives the project; run it on RDS and you have
-about six months.
+When you do deploy: the short version is that Lambda, DynamoDB, CloudFront and
+SQS all sit inside AWS's always-free tiers at this scale, and **Postgres is
+roughly 92% of the bill**. Run it on a free-tier Postgres elsewhere and the $100
+credit outlives the project; run it on RDS and, at ~$15.50/month (Postgres plus
+the default ~$3/mo NAT instance), the $100 lasts about **6.5 months** (100 /
+15.5 ≈ 6.5) — not the 12 months the credits are *valid* for.
