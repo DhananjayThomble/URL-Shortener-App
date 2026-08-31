@@ -50,13 +50,17 @@ describeDb("ReportsService.submitReport", () => {
 
   afterAll(async () => {
     if (workspaceId) await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
-    // The report for the non-existent slug has no workspace to cascade from.
+    // The reports for non-existent slugs have no workspace to cascade from.
     await db.delete(abuseReports).where(eq(abuseReports.slug, `${slug}-missing`));
+    await db.delete(abuseReports).where(eq(abuseReports.slug, `${slug}-missing-pii`));
     await handle?.close();
   });
 
   it("resolves the link and workspace for an existing slug", async () => {
-    const result = await service.submitReport(slug, { reason: "This is a phishing page." });
+    const result = await service.submitReport(slug, {
+      reason: "This is a phishing page.",
+      reporterContact: "reporter@example.com",
+    });
     expect(result).toEqual({ ok: true });
 
     const [row] = await db.select().from(abuseReports).where(eq(abuseReports.linkId, linkId)).limit(1);
@@ -65,6 +69,27 @@ describeDb("ReportsService.submitReport", () => {
     expect(row!.status).toBe("open");
     expect(row!.linkId).toBe(linkId);
     expect(row!.workspaceId).toBe(workspaceId);
+    // #308 counter-case: a resolved slug still persists a supplied contact
+    // unchanged — the null-for-unresolved rule must be scoped to unresolved
+    // slugs only. This assertion fails if the conditional wrongly nulled it here.
+    expect(row!.reporterContact).toBe("reporter@example.com");
+  });
+
+  it("does not store reporterContact for a slug that does not resolve (#308)", async () => {
+    const missing = `${slug}-missing-pii`;
+    const result = await service.submitReport(missing, {
+      reason: "Reporting a link that isn't here.",
+      reporterContact: "reporter@example.com",
+    });
+    expect(result).toEqual({ ok: true });
+
+    const [row] = await db.select().from(abuseReports).where(eq(abuseReports.slug, missing)).limit(1);
+    expect(row).toBeDefined();
+    expect(row!.workspaceId).toBeNull();
+    expect(row!.linkId).toBeNull();
+    // The contact is dropped: a null-workspace report has no operator who can
+    // ever see or act on it, so retaining the email would be orphaned PII.
+    expect(row!.reporterContact).toBeNull();
   });
 
   it("returns ok:true and stores null link/workspace for a non-existent slug (no enumeration)", async () => {

@@ -32,7 +32,16 @@ export class ReportsService {
       .where(sql`lower(${links.slug}) = ${slug.toLowerCase()}`)
       .limit(1);
 
-    const contact = input.reporterContact?.trim() ? input.reporterContact.trim() : null;
+    const trimmed = input.reporterContact?.trim() ? input.reporterContact.trim() : null;
+    // #308: never persist a reporterContact for a slug that did not resolve.
+    // An unresolved slug stores a null workspaceId, and list() filters strictly
+    // on eq(abuseReports.workspaceId, workspaceId), so a null-workspace report
+    // belongs to no operator and is surfaced to none. Keeping the reporter's
+    // email on such a row would be PII with no owner, no view, and no deletion
+    // path (the workspace cascade never reaches it), which is inconsistent with
+    // the project's privacy posture. The raw slug and null link/workspace are
+    // still stored so the endpoint stays a non-oracle; only the contact drops.
+    const contact = link ? trimmed : null;
 
     await this.db.insert(abuseReports).values({
       slug,
