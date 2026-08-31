@@ -1,0 +1,27 @@
+{
+  "name": "@snapurl/extension",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SnapURL Chrome extension (Manifest V3). Shorten the active tab, copy it, and view recent links against a self-hostable SnapURL API.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "echo \"no lint configured\" && exit 0"
+  },
+  "dependencies": {
+    "@snapurl/contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22",
+    "esbuild": "^0.24.2",
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.7"
+  }
+}
