@@ -33,6 +33,13 @@ export const UpdateWorkspaceInput = z
     slug: z.string().regex(/^[a-z0-9-]+$/),
     defaultDomain: z.string(),
     defaultRedirect: RedirectType,
+    /* A request, not a guarantee. Since #295 the partition-drop cutoff is
+       operator-controlled (CLICK_EVENTS_RETENTION_YEARS, install-wide) and
+       per-workspace retention is subtractive: a workspace may keep LESS than the
+       install window but never more — the worker clamps anything above it down
+       to the install cutoff. The 1..100 bound stays so the web 'Forever' (=100)
+       control and existing fixtures remain valid; a tenant asking for more than
+       the operator provisioned is simply clamped rather than rejected here. */
     retentionYears: z.number().int().min(1).max(100),
     cookielessAnalytics: z.boolean(),
     scanOnCreate: z.boolean(),

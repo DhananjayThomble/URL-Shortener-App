@@ -306,6 +306,38 @@ const MAX_PARTITION_DROPS = 20;
  *  ingest rate demands a tighter cap. */
 const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1100);
 
+/** The install-wide retention window, in years, that decides the partition-drop
+ *  cutoff. **An operator setting, not a tenant one.**
+ *
+ *  Retention here is a storage-and-compliance decision that belongs to whoever
+ *  runs the install, because `click_events` is partitioned by day and a single
+ *  day-partition is *shared by every workspace*. A partition can only be dropped
+ *  once its whole range is past the cutoff, so there can be exactly one cutoff
+ *  for the table — it cannot be per-tenant without per-tenant partitioning,
+ *  which is far more machinery than the problem needs.
+ *
+ *  Deriving that one cutoff from `max(retention_years)` across workspaces — as
+ *  this used to — made retention *effectively global and self-service*: the
+ *  settings endpoint lets any workspace ask for up to 100 years, and one tenant
+ *  choosing a long value moved the cutoff so far back that no partition was ever
+ *  dropped, pushed every other workspace into the row-level `DELETE` branch (the
+ *  exact volume this partitioning exists to stop carrying), and accumulated
+ *  partitions that were never reclaimed. One tenant silently turned the feature
+ *  off for the whole install (#295).
+ *
+ *  So the cutoff is operator-controlled, and per-workspace `retention_years` is
+ *  now **subtractive only**: a workspace may keep *less* than the install window
+ *  (its excess rows are removed by the row-level DELETE from the partitions that
+ *  survive), but never *more* — a value above the install window is a request
+ *  the operator has not provisioned for, and is clamped down to the install
+ *  cutoff by the drop pass.
+ *
+ *  Default 3, matching the historical default and the `workspaces.retention_years`
+ *  column default, so out-of-the-box behavior is unchanged. Operators raise it
+ *  with CLICK_EVENTS_RETENTION_YEARS when their storage budget and compliance
+ *  needs allow a longer window for the whole install. */
+const INSTALL_RETENTION_YEARS = Number(process.env.CLICK_EVENTS_RETENTION_YEARS ?? 3);
+
 /** How long a retention pass holds its lease.
  *
  *  Five minutes, matching the worker Lambda's own timeout. That is the honest
@@ -348,7 +380,8 @@ export interface PartitionProvisionResult {
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
-  /** Rows removed individually, for workspaces retaining less than the longest. */
+  /** Rows removed individually, for workspaces retaining less than the operator
+   *  install window (subtractive per-workspace retention). */
   rowsDeleted: number;
   /**
    * Days left attached because they still hold un-rolled-up clicks.
@@ -468,13 +501,26 @@ export async function ensureClickPartitions(
  * 86M rows a day the previous row-level `DELETE` produced WAL faster than a
  * replica could consume it.
  *
- * But retention is **per workspace**, and a partition is shared by all of them.
- * A day can only be dropped once it is past the *longest* retention any
- * workspace has configured. Workspaces that keep less than the maximum still
- * need their rows removed individually from the partitions that survive — so
- * the `DELETE` does not disappear, it just stops carrying the volume. When
- * every workspace uses the same retention (the common case, and the default),
- * `rowsDeleted` is zero and the whole job is a partition drop.
+ * But a partition is shared by every workspace, so the day it can be dropped is
+ * decided by **one install-wide cutoff the operator controls**
+ * (`INSTALL_RETENTION_YEARS` / `CLICK_EVENTS_RETENTION_YEARS`), *not* by the
+ * longest `retention_years` any tenant configured. The cutoff used to be
+ * `max(retention_years)` across workspaces, which let a single tenant asking for
+ * a long window move the cutoff so far back that nothing was ever dropped and
+ * every other workspace fell into the row-level `DELETE` — one tenant turning
+ * the feature off for the whole install (#295).
+ *
+ * Per-workspace `retention_years` is therefore **subtractive**: a workspace may
+ * keep *less* than the install cutoff, never more. A workspace configured below
+ * it still needs its rows removed individually from the partitions that survive
+ * — so the `DELETE` does not disappear, it just stops carrying the volume and
+ * only ever removes rows a tenant asked to keep for a *shorter* window than the
+ * install. A workspace configured *above* the install window is clamped down:
+ * its rows past the cutoff are removed by the partition drops like everyone
+ * else's, so the `DELETE` deliberately skips it rather than letting it retain
+ * beyond what the operator provisioned. When every workspace is at or above the
+ * install window (the common case, and the default), `rowsDeleted` is zero and
+ * the whole job is a partition drop.
  *
  * **A third pass: the volume cap.** After age-based expiry, this also enforces
  * `MAX_RETAINED_DAYS` — an age-*independent* ceiling on how many day-partitions
@@ -496,6 +542,12 @@ export async function pruneRetention(
      provisioning MAX_RETAINED_DAYS+1 partitions; production always uses the
      default. */
   maxRetainedDays = MAX_RETAINED_DAYS,
+  /* The install-wide retention window in years, defaulting to the env-overridable
+     module constant. Operator-controlled, not derived from tenant settings —
+     see INSTALL_RETENTION_YEARS. Exposed as a parameter so the operator model
+     can be exercised directly in tests without env mutation; production always
+     uses the default. */
+  retentionYears = INSTALL_RETENTION_YEARS,
 ): Promise<RetentionResult> {
   /* One expiry pass at a time.
    *
@@ -516,27 +568,33 @@ export async function pruneRetention(
    * error and nothing in the logs to distinguish it from having nothing to do.
    * A lease expires by the clock, so the same crash costs one late pass. */
   const lease = await withLease(db, "click_events_prune_retention", RETENTION_LEASE_SECONDS, async () => {
-    /* The longest retention in use decides which partitions are safe to drop.
-       No workspaces at all still needs a sane answer, hence the coalesce: a
-       fresh install has nothing to expire and should not drop today's data.
+    /* The one install-wide cutoff, from the operator value rather than from any
+       tenant's setting. Computed once here, inside the lease and before both
+       drop loops and the DELETE, so all three statements agree on it for the
+       whole pass — a retention change landing mid-pass can no longer be applied
+       inconsistently across them (#295, 'Also in scope').
+
+       Derived from `retentionYears` (a stable process.env constant / parameter),
+       NOT from `max(retention_years)` in the workspaces table: reading the DB
+       here is what let one tenant asking for a long window move the cutoff for
+       the whole install and disable partition drops. The default 3 matches the
+       historical fresh-install answer, so a database with no workspaces still
+       gets a sane cutoff and does not drop today's data.
 
        `now() at time zone 'UTC'` rather than `current_date`: every partition
        bound in the migration is explicitly UTC, and current_date resolves in the
        session TimeZone. Mixing the two is the exact bug the migration header
        warns about. */
-    const [{ cutoff, maxYears }] = (await db.execute(sql`
-      select
-        ((now() at time zone 'UTC')::date - (coalesce(max(retention_years), 3) * interval '1 year'))::date as cutoff,
-        coalesce(max(retention_years), 3)::int as "maxYears"
-      from workspaces
-    `)) as unknown as [{ cutoff: string; maxYears: number }];
+    const [{ cutoff }] = (await db.execute(sql`
+      select ((now() at time zone 'UTC')::date - (${retentionYears}::int * interval '1 year'))::date as cutoff
+    `)) as unknown as [{ cutoff: string }];
 
     /* Listed and dropped separately, one transaction per partition, so the
        ACCESS EXCLUSIVE lock DETACH takes on the parent is released between
        each one instead of being held across the whole batch. Capped as well:
-       steady state is one partition a day, but the moment the longest retention
-       drops — a workspace lowering its setting, or the longest-retention
-       workspace being deleted — hundreds of days become spent at once. */
+       steady state is one partition a day, but the moment the operator lowers
+       CLICK_EVENTS_RETENTION_YEARS, every day between the old and new cutoff
+       becomes spent at once. */
     const spent = (await db.execute(sql`
       select part from click_events_spent_partitions(${cutoff}::date) as part
     `)) as unknown as Array<{ part: string }>;
@@ -626,7 +684,21 @@ export async function pruneRetention(
       }
     }
 
-    /* Only workspaces retaining less than the maximum.
+    /* The subtractive per-workspace pass: only workspaces retaining LESS than
+     * the operator install window.
+     *
+     * The guard is `w.retention_years < ${retentionYears}::int` against the
+     * operator value — NOT `max(retention_years)` from the table as it once was.
+     * A workspace at or above the install window is handled entirely by the
+     * partition drops above (which use the same operator cutoff), so it is
+     * excluded here: one at the install window keeps exactly the install window,
+     * and one configured *above* it is clamped down to the install window rather
+     * than being allowed to retain longer than the operator provisioned. Only a
+     * workspace that asked for a *shorter* window has rows the drops leave behind
+     * — its own rows older than its own setting, on partitions that survive for
+     * the install window — and this removes them individually. When every
+     * workspace is at or above the install window (the common case, and the
+     * default), this deletes nothing and the whole job is a partition drop.
      *
      * Deliberately *not* bounded below by the cutoff. An earlier version had
      * `occurred_at >= cutoff` on the theory that it would let the planner prune
@@ -642,7 +714,7 @@ export async function pruneRetention(
         delete from click_events ce
         using workspaces w
         where ce.workspace_id = w.id
-          and w.retention_years < ${maxYears}::int
+          and w.retention_years < ${retentionYears}::int
           and ce.rolled_up_at is not null
           and ce.occurred_at < now() - (w.retention_years * interval '1 year')
         returning 1

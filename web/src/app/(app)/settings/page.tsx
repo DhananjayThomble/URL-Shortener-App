@@ -229,7 +229,10 @@ export default function SettingsPage() {
                 title="Allow public link previews"
                 description="Anyone can add + to a link to see where it goes first."
               />
-              <Field label="Click data retention" help="Rollups are kept regardless; this is how long the raw click rows live.">
+              <Field
+                label="Click data retention"
+                help="Rollups are kept regardless; this is how long the raw click rows live. Rows may survive up to a day beyond this setting, since they expire a whole day at a time."
+              >
                 <Segmented
                   value={retentionValue(draft?.retentionYears ?? 3)}
                   onChange={(v) => set("retentionYears", v === "forever" ? FOREVER_YEARS : Number(v))}
@@ -241,8 +244,10 @@ export default function SettingsPage() {
                 />
               </Field>
               <div className="px-[13px] py-[11px] bg-surface-3 rounded-[var(--radius-sm)] text-[12px] text-ink-2 leading-[1.55]">
-                We set no cookies and never sell click data. What consent notice your own site needs is a question for
-                your lawyer — we don&apos;t make that claim for you.
+                Your install sets a maximum retention; you can keep click data for less, but not longer, than that
+                maximum, so &ldquo;Forever&rdquo; means up to the operator&apos;s limit. We set no cookies and never sell
+                click data. What consent notice your own site needs is a question for your lawyer, and we don&apos;t
+                make that claim for you.
               </div>
             </CardBody>
           </Card>
