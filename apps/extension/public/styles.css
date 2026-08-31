@@ -1,0 +1,128 @@
+:root {
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --brand: #2563eb;
+  --brand-fg: #ffffff;
+  --border: #e2e8f0;
+  --error: #b91c1c;
+  --ok: #15803d;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.popup {
+  width: 320px;
+  padding: 14px 16px;
+}
+
+.popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.popup__title,
+.options__title {
+  font-size: 16px;
+  margin: 0;
+}
+
+.popup__subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 12px 0 6px;
+}
+
+.popup__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.popup__list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup__result-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.popup__error,
+.options__error {
+  color: var(--error);
+}
+
+.options__saved {
+  color: var(--ok);
+}
+
+.linkish {
+  background: none;
+  border: none;
+  color: var(--brand);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+button[type="submit"],
+button[data-action="shorten"],
+button[data-action="open-options"] {
+  background: var(--brand);
+  color: var(--brand-fg);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.options {
+  max-width: 520px;
+  margin: 40px auto;
+  padding: 0 16px;
+}
+
+.options__form {
+  display: grid;
+  gap: 6px;
+}
+
+.options__label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.options__form input {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.options__form button {
+  margin-top: 12px;
+  justify-self: start;
+}
+
+a {
+  color: var(--brand);
+}
