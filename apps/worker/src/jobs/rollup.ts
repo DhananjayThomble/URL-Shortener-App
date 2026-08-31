@@ -336,7 +336,30 @@ const MAX_RETAINED_DAYS = Number(process.env.CLICK_EVENTS_MAX_RETAINED_DAYS ?? 1
  *  column default, so out-of-the-box behavior is unchanged. Operators raise it
  *  with CLICK_EVENTS_RETENTION_YEARS when their storage budget and compliance
  *  needs allow a longer window for the whole install. */
-const INSTALL_RETENTION_YEARS = Number(process.env.CLICK_EVENTS_RETENTION_YEARS ?? 3);
+export const DEFAULT_INSTALL_RETENTION_YEARS = 3;
+
+/** Parse and validate the operator retention window from a raw env value.
+ *
+ *  Unlike a cap, this knob's failure mode is **data loss**, not an over-eager
+ *  cleanup: the value flows straight into the partition-drop cutoff arithmetic
+ *  (`now() - years * interval '1 year'`). A non-numeric env (`forever`, an empty
+ *  string) yields `NaN`, and `0` or a negative moves the cutoff to *today or the
+ *  future* — at which point every attached day-partition looks spent and the
+ *  drop pass would reclaim live data. Fractional values are equally undefined
+ *  for a whole-year window.
+ *
+ *  So anything that is not a whole integer of at least one year falls back to
+ *  the safe default rather than being trusted: a misconfigured install keeps
+ *  the historical 3-year window instead of silently deleting today's clicks.
+ *  Returned as a value (rather than mutating the constant in place) so the rule
+ *  is a pure function the tests can exercise without a database. */
+export function resolveRetentionYears(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_INSTALL_RETENTION_YEARS;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : DEFAULT_INSTALL_RETENTION_YEARS;
+}
+
+const INSTALL_RETENTION_YEARS = resolveRetentionYears(process.env.CLICK_EVENTS_RETENTION_YEARS);
 
 /** How long a retention pass holds its lease.
  *
@@ -348,9 +371,10 @@ const INSTALL_RETENTION_YEARS = Number(process.env.CLICK_EVENTS_RETENTION_YEARS 
  *  argue from the drop loops. Those are bounded — MAX_PARTITION_DROPS drops,
  *  each capped by a 2s lock_timeout, so roughly 40s worst case. The row-level
  *  DELETE the pass ends on is not: it carries no lock_timeout, and
- *  createDatabase sets no statement_timeout. It only does real work when
- *  workspaces use mixed retention settings, but that is exactly when a pass
- *  could exceed this TTL.
+ *  createDatabase sets no statement_timeout. It only does real work when a
+ *  workspace retains less than the install window, or when an above-window
+ *  workspace has rows stranded in the DEFAULT partition past the cutoff — but
+ *  either is exactly when a pass could exceed this TTL.
  *
  *  So on AWS the Lambda ceiling covers it. On the compose and Helm profiles
  *  there is no process ceiling, and a long enough pass can be overtaken. The
@@ -380,8 +404,11 @@ export interface PartitionProvisionResult {
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
-  /** Rows removed individually, for workspaces retaining less than the operator
-   *  install window (subtractive per-workspace retention). */
+  /** Rows removed individually, bounded by each workspace's effective retention
+   *  `least(retention_years, install)` — the subtractive per-workspace pass. It
+   *  removes a below-window workspace's rows the drops leave behind, and clamps
+   *  an above-window workspace's DEFAULT-stranded rows down to the install
+   *  window (the drops reclaim its dated partitions). */
   rowsDeleted: number;
   /**
    * Days left attached because they still hold un-rolled-up clicks.
@@ -515,12 +542,14 @@ export async function ensureClickPartitions(
  * it still needs its rows removed individually from the partitions that survive
  * — so the `DELETE` does not disappear, it just stops carrying the volume and
  * only ever removes rows a tenant asked to keep for a *shorter* window than the
- * install. A workspace configured *above* the install window is clamped down:
- * its rows past the cutoff are removed by the partition drops like everyone
- * else's, so the `DELETE` deliberately skips it rather than letting it retain
- * beyond what the operator provisioned. When every workspace is at or above the
- * install window (the common case, and the default), `rowsDeleted` is zero and
- * the whole job is a partition drop.
+ * install. A workspace configured *above* the install window is clamped down to
+ * the install window: on dated day-partitions its rows are reclaimed by the
+ * drops like everyone else's, and the few it may have stranded in the DEFAULT
+ * partition (which the drops skip) are swept by the `DELETE`, whose bound is the
+ * effective window `least(retention_years, install)`. Neither path lets it keep
+ * more than the operator provisioned. When every workspace is at or above the
+ * install window and nothing is stranded in DEFAULT (the common case, and the
+ * default), `rowsDeleted` is zero and the whole job is a partition drop.
  *
  * **A third pass: the volume cap.** After age-based expiry, this also enforces
  * `MAX_RETAINED_DAYS` — an age-*independent* ceiling on how many day-partitions
@@ -684,21 +713,43 @@ export async function pruneRetention(
       }
     }
 
-    /* The subtractive per-workspace pass: only workspaces retaining LESS than
-     * the operator install window.
+    /* The subtractive per-workspace pass, clamped to the operator install
+     * window.
      *
-     * The guard is `w.retention_years < ${retentionYears}::int` against the
-     * operator value — NOT `max(retention_years)` from the table as it once was.
-     * A workspace at or above the install window is handled entirely by the
-     * partition drops above (which use the same operator cutoff), so it is
-     * excluded here: one at the install window keeps exactly the install window,
-     * and one configured *above* it is clamped down to the install window rather
-     * than being allowed to retain longer than the operator provisioned. Only a
-     * workspace that asked for a *shorter* window has rows the drops leave behind
-     * — its own rows older than its own setting, on partitions that survive for
-     * the install window — and this removes them individually. When every
-     * workspace is at or above the install window (the common case, and the
-     * default), this deletes nothing and the whole job is a partition drop.
+     * The bound is each workspace's **effective** retention:
+     * `least(w.retention_years, ${retentionYears}::int)`. That is the whole of
+     * the subtractive model in one expression:
+     *
+     *   - A workspace *below* the install window expires on its own, shorter
+     *     window (`least` picks `retention_years`). The drops keep its
+     *     partitions for the full install window, so these are the rows they
+     *     leave behind, removed here individually.
+     *   - A workspace *at or above* the install window is clamped *down* to the
+     *     install window (`least` picks `retentionYears`), never retaining more
+     *     than the operator provisioned.
+     *
+     * This used to guard with `w.retention_years < ${retentionYears}::int` and
+     * bound by the tenant's own `retention_years`, which excluded every
+     * at-or-above-window workspace entirely. For rows on dated day-partitions
+     * that was fine — the drops reclaim them past the cutoff regardless. But
+     * rows an above-window workspace has stranded in the DEFAULT partition (when
+     * provisioning falls behind) matched *neither* path: the drops skip DEFAULT
+     * by design, and the old guard excluded the workspace from the DELETE. Those
+     * rows aged past the operator cutoff and nothing ever expired them — a leak
+     * that widened once the guard excluded the whole at-or-above-window set
+     * rather than just the single longest-retention tenant. Clamping the bound
+     * with `least(...)` closes it: an above-window workspace's DEFAULT-stranded
+     * rows past the operator cutoff are now swept here, honoring the "never keep
+     * more than the install window" promise for DEFAULT rows too.
+     *
+     * When every workspace is at or above the install window and no rows are
+     * stranded in DEFAULT (the common case, and the default), this deletes
+     * nothing and the whole job is a partition drop.
+     *
+     * The invariants the split has always held are preserved:
+     *   - `rolled_up_at is not null` — never discard a click that has not yet
+     *     been counted into the rollups.
+     *   - `now()` and the interval keep the UTC handling of the original.
      *
      * Deliberately *not* bounded below by the cutoff. An earlier version had
      * `occurred_at >= cutoff` on the theory that it would let the planner prune
@@ -706,17 +757,16 @@ export async function pruneRetention(
      * already at or above the cutoff, and a lower bound cannot prune a DEFAULT
      * partition at all. What it did do was exclude rows stranded in the default
      * once they aged past the cutoff, so nothing would ever expire them: the
-     * drop pass skips the default by design, and this was the only other
+     * drop pass skips the default by design, and this is the only other
      * mechanism. Rows reach the default whenever provisioning falls behind, so
-     * that was a slow permanent leak in a partition no query can prune. */
+     * that would be a slow permanent leak in a partition no query can prune. */
     const [{ n }] = (await db.execute(sql`
       with expired as (
         delete from click_events ce
         using workspaces w
         where ce.workspace_id = w.id
-          and w.retention_years < ${retentionYears}::int
           and ce.rolled_up_at is not null
-          and ce.occurred_at < now() - (w.retention_years * interval '1 year')
+          and ce.occurred_at < now() - (least(w.retention_years, ${retentionYears}::int) * interval '1 year')
         returning 1
       )
       select count(*)::int as n from expired
