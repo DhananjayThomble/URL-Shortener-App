@@ -15,6 +15,7 @@ import {
 } from "@snapurl/database";
 import {
   DEFAULT_INSTALL_RETENTION_YEARS,
+  backfillClickPartitions,
   ensureClickPartitions,
   pruneRetention,
   resolveRetentionYears,
@@ -1346,4 +1347,122 @@ describeDb("click_events partitioning", () => {
       await dropPartition(target);
     }
   }, 30_000);
+
+  /* ============================================================
+     #294: historical backfill decoupled from the schema transaction.
+
+     Migration 0007 provisioned every historical day inside its one
+     schema transaction, so its lock footprint scaled with database
+     age. backfillClickPartitions moves that loop OUT of a single
+     transaction: it drives the click_events_backfill_days SQL helper
+     (migration 0015), draining distinct historical days out of the
+     DEFAULT partition into dated partitions a bounded chunk at a
+     time, committing between chunks.
+
+     These use days far in the past (offsets in the thousands back)
+     so they never overlap the provisioned window, the retention
+     boundary, or the other suites' fixtures. Rows are seeded into
+     the DEFAULT partition by inserting for an unprovisioned day, and
+     every day is torn down in finally so a run leaves nothing
+     attached.
+     ============================================================ */
+
+  it("is a no-op when the DEFAULT partition holds no unprovisioned historical days", async () => {
+    /* The fresh-install decision made real: with nothing stranded in DEFAULT for
+       an unattached day, the backfill provisions nothing. A fresh install never
+       backfills history — the DEFAULT partition and the ensureClickPartitions
+       window handle old days lazily. Asserted on `provisioned` rather than on the
+       (globally shared) DEFAULT partition being empty, so a leftover row from
+       another suite cannot make this flaky. */
+    const result = await backfillClickPartitions(db);
+    expect(result.provisioned).toBe(0);
+    expect(result.chunks).toBeGreaterThanOrEqual(1);
+  });
+
+  it("drains historical rows out of DEFAULT into a dated partition per distinct day", async () => {
+    /* The core #294 property. Rows for several distinct historical days are
+       seeded into the DEFAULT partition (their days are not provisioned, so an
+       insert lands there), and backfillClickPartitions must attach a dated
+       partition for each and move the rows out of DEFAULT — the same drain
+       ensureClickPartitions performs, driven for arbitrarily-old days without a
+       single history-sized transaction. */
+    const stamp = Date.now();
+    const offsets = [-3010, -3009, -3005];
+    const partitions = offsets.map((o) => partitionName(o));
+    for (const name of partitions) await dropPartition(name);
+
+    try {
+      for (const offset of offsets) {
+        const day = utcDay(offset);
+        day.setUTCHours(11);
+        // Unprovisioned day, so this insert lands in DEFAULT — the premise.
+        await addClickAt(day, `bf-${stamp}-${offset}`);
+        expect(await partitionOf(`bf-${stamp}-${offset}`)).toBe("click_events_default");
+      }
+
+      const result = await backfillClickPartitions(db);
+
+      expect(result.provisioned).toBeGreaterThanOrEqual(offsets.length);
+      for (let i = 0; i < offsets.length; i++) {
+        // A dated partition now exists and is attached for each distinct day...
+        expect(await isAttached(partitions[i]!)).toBe(true);
+        // ...and the row was moved out of DEFAULT into it, not copied.
+        expect(await partitionOf(`bf-${stamp}-${offsets[i]}`)).toBe(partitions[i]);
+      }
+    } finally {
+      for (let i = 0; i < offsets.length; i++) {
+        await db.execute(sql`delete from click_events where visitor_hash = ${`bf-${stamp}-${offsets[i]}`}`);
+        await dropPartition(partitions[i]!);
+      }
+    }
+  });
+
+  it("commits between chunks: a chunkSize below the day count provisions at most chunkSize per call, and the loop finishes the rest idempotently", async () => {
+    /* The chunk-committing guarantee (#294). With a chunkSize smaller than the
+       number of distinct historical days stranded in DEFAULT, a single call to
+       the SQL helper provisions at most chunkSize of them, and the driver loops —
+       each iteration its own transaction — until none remain. Re-running after
+       completion provisions zero more, proving idempotence. */
+    const stamp = Date.now();
+    const offsets = [-3120, -3119, -3118, -3117, -3116];
+    const partitions = offsets.map((o) => partitionName(o));
+    for (const name of partitions) await dropPartition(name);
+
+    try {
+      for (const offset of offsets) {
+        const day = utcDay(offset);
+        day.setUTCHours(11);
+        await addClickAt(day, `chunk-${stamp}-${offset}`);
+      }
+
+      /* A single SQL-helper call with chunkSize = 2 provisions AT MOST 2 of the 5
+         days and reports the rest still remaining — proving one call does not
+         loop over the whole history. remaining is the count of my days still in
+         DEFAULT (other suites clean up their own, but assert with a lower bound to
+         be robust to any incidental leftovers). */
+      const [{ provisioned, remaining }] = (await db.execute(sql`
+        select provisioned, remaining from click_events_backfill_days(2::int)
+      `)) as unknown as [{ provisioned: number; remaining: number }];
+      expect(provisioned).toBeLessThanOrEqual(2);
+      expect(remaining).toBeGreaterThanOrEqual(offsets.length - 2);
+
+      // The driver finishes the rest, one chunk (one transaction) at a time, and
+      // takes more than one chunk because chunkSize < the day count.
+      const result = await backfillClickPartitions(db, 2);
+      expect(result.chunks).toBeGreaterThan(1);
+      for (const name of partitions) {
+        expect(await isAttached(name)).toBe(true);
+      }
+
+      // Idempotent: everything is attached, so a second full run provisions zero
+      // more days.
+      const again = await backfillClickPartitions(db, 2);
+      expect(again.provisioned).toBe(0);
+    } finally {
+      for (let i = 0; i < offsets.length; i++) {
+        await db.execute(sql`delete from click_events where visitor_hash = ${`chunk-${stamp}-${offsets[i]}`}`);
+        await dropPartition(partitions[i]!);
+      }
+    }
+  });
 });

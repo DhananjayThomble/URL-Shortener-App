@@ -274,6 +274,31 @@ const PARTITION_LOOKAHEAD_DAYS = 14;
  *  in a partition no query can prune. */
 const PARTITION_LOOKBACK_DAYS = 7;
 
+/** How many day-partitions one backfill chunk provisions before the caller
+ *  commits and starts a fresh transaction.
+ *
+ *  This is the knob that decouples the historical provisioning cost from how
+ *  old the adopting database is (issue #294). Migration 0007 provisioned every
+ *  historical day inside its one schema transaction, and each attached partition
+ *  costs roughly five lock slots (its own relation plus four cloned indexes).
+ *  The shared lock table is
+ *  `max_locks_per_transaction * (max_connections + max_prepared_transactions)`,
+ *  6400 on a default configuration, so a single transaction attaching ~3.5 years
+ *  of daily partitions approaches the ceiling and more exceeds it, aborting with
+ *  `out of shared memory`. `backfillClickPartitions` runs each chunk in its own
+ *  `db.execute` (its own transaction), so only one chunk's partitions are ever
+ *  held in a single transaction's lock footprint.
+ *
+ *  Default 200: at ~5 lock slots per attached day that is ~1000 lock slots per
+ *  chunk transaction, comfortably under the 6400 default ceiling with headroom
+ *  for the connection's other locks, while still being large enough that even a
+ *  decade of history is a few dozen chunks rather than thousands. Override with
+ *  CLICK_EVENTS_BACKFILL_CHUNK_DAYS when a database is configured with a lower
+ *  `max_locks_per_transaction` (drop it) or has plenty of headroom and wants
+ *  fewer round trips (raise it). It is a bound on one transaction, never a limit
+ *  on total progress — the caller loops until no candidate days remain. */
+const PARTITION_BACKFILL_CHUNK_DAYS = Number(process.env.CLICK_EVENTS_BACKFILL_CHUNK_DAYS ?? 200);
+
 /** Most partitions one expiry pass will drop.
  *
  *  Each drop takes an ACCESS EXCLUSIVE lock on the parent, which blocks every
@@ -401,6 +426,18 @@ export interface PartitionProvisionResult {
   declined: number;
 }
 
+export interface PartitionBackfillResult {
+  /** Distinct historical days provisioned out of the DEFAULT partition into a
+   *  dated partition across the whole run. Zero on a fresh install, which has no
+   *  historical rows stranded in DEFAULT. */
+  provisioned: number;
+  /** How many chunk transactions the run took. Each is its own `db.execute`, so
+   *  this is also the number of times the accumulated lock footprint was
+   *  released — the property that keeps the backfill's cost decoupled from how
+   *  old the database is (#294). */
+  chunks: number;
+}
+
 export interface RetentionResult {
   /** Whole days removed by dropping a partition. Constant-time, near-zero WAL. */
   partitionsDropped: number;
@@ -513,6 +550,89 @@ export async function ensureClickPartitions(
   }
 
   return { ready, declined };
+}
+
+/**
+ * Provision the historical day-partitions an adopting database needs, OUTSIDE a
+ * single schema transaction, committing between bounded chunks.
+ *
+ * **Why this exists (issue #294).** Migration 0007 turned `click_events` into a
+ * daily-partitioned table and, in the same one transaction drizzle wraps each
+ * migration file in, looped over the whole history of the legacy table
+ * provisioning one partition per day before copying the rows across. That single
+ * transaction holds ACCESS EXCLUSIVE on `click_events` for its whole duration
+ * (blocking every click insert) and SHARE ROW EXCLUSIVE on `links` and
+ * `workspaces` (blocking every link write), and its lock footprint scales with
+ * history: ~5 lock slots per attached day means ~3.5 years approaches the
+ * default 6400 shared-lock ceiling and more aborts the migration with
+ * `out of shared memory`. See PARTITION_BACKFILL_CHUNK_DAYS for the arithmetic.
+ *
+ * 0007 has already been applied everywhere and cannot be rewritten without
+ * breaking drizzle's checksum, and `click_events` has never carried data in any
+ * deployment — so 0007's history loop is a no-op today. The residual risk is a
+ * self-hoster who adopts this schema WITH pre-existing legacy rows. This routine
+ * is the forward path for exactly that operator: it drives the
+ * `click_events_backfill_days` SQL helper (migration 0015), which drains
+ * distinct historical days out of the DEFAULT partition into dated partitions
+ * `chunkSize` days at a time, and runs **each chunk in its own `db.execute`** so
+ * the lock footprint is released between chunks. That is the same
+ * per-transaction rationale ensureClickPartitions uses for its per-day loop
+ * (see the comment there): no single transaction ever accumulates a
+ * history-sized set of partition locks.
+ *
+ * **A one-time adoption/repair op, deliberately NOT wired into runMaintenance.**
+ * The hourly maintenance pass already keeps the recent window provisioned via
+ * ensureClickPartitions, and the DEFAULT partition guarantees no insert can fail
+ * for an unprovisioned day. Backfilling all of history is only ever needed once,
+ * when an operator adopts the schema with legacy data — running it every hour
+ * would repeatedly scan the DEFAULT partition for nothing. So it is exposed as a
+ * standalone callable an operator triggers once after migrating, not folded into
+ * the steady-state loop.
+ *
+ * **No-op on a fresh install.** A fresh install has no historical rows, so the
+ * DEFAULT partition is empty, the SQL helper finds no candidate days, and this
+ * returns `{ provisioned: 0, chunks: 1 }`. Fresh installs do not backfill
+ * history — old days are handled lazily by the DEFAULT partition plus the
+ * ensureClickPartitions window. Idempotent: an already-attached day is never a
+ * candidate, so re-running after a completed backfill provisions zero more.
+ */
+export async function backfillClickPartitions(
+  db: Database,
+  chunkSize = PARTITION_BACKFILL_CHUNK_DAYS,
+): Promise<PartitionBackfillResult> {
+  let provisioned = 0;
+  let chunks = 0;
+
+  /* One chunk per iteration, each its own `db.execute` and therefore its own
+     transaction, so the up-to-chunkSize partitions a chunk attaches have their
+     lock footprint released at the commit before the next chunk begins. This is
+     the whole point of #294: the cost never accumulates into one history-sized
+     transaction the way 0007's DO-block did.
+
+     The SQL helper itself bounds its work to chunkSize candidate days and
+     reports how many remain AFTER the chunk, so the loop terminates when the
+     DEFAULT partition holds no rows for any unattached day. A declined day (the
+     provisioner losing a lock race to write traffic) stays stranded in DEFAULT
+     and is reported as still remaining, so it is retried on the next chunk
+     rather than lost — which also means `remaining` can stay non-zero across a
+     chunk that provisioned nothing. Guarded against that by breaking when a
+     chunk makes no progress, so a day that cannot currently be attached does not
+     spin the loop forever; a later manual run picks it up once the contention
+     clears. */
+  for (;;) {
+    const [{ provisioned: got, remaining }] = (await db.execute(sql`
+      select provisioned, remaining from click_events_backfill_days(${chunkSize}::int)
+    `)) as unknown as [{ provisioned: number; remaining: number }];
+
+    chunks++;
+    provisioned += got;
+
+    // Done when nothing is left, or when a chunk made no forward progress (every
+    // remaining day is currently contended) — the rest is a later run's job.
+    if (remaining <= 0 || got === 0) break;
+  }
+
+  return { provisioned, chunks };
 }
 
 /**
