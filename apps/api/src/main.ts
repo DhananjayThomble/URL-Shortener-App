@@ -6,6 +6,7 @@ import cors from "@fastify/cors";
 import { resolveSecrets } from "@snapurl/database";
 import { AppModule } from "./app.module.js";
 import { ENV, type Env } from "./config/env.js";
+import { resolveCorsOrigins } from "./config/cors-origins.js";
 
 /* Resolve the database and JWT secrets from Secrets Manager (see
    packages/database/src/secrets.ts) and assign them onto process.env BEFORE the
@@ -44,7 +45,11 @@ async function bootstrap() {
      Authorization header rather than a cookie — so credentials are not needed
      and the allowlist can stay narrow. */
   await app.register(cors, {
-    origin: env.NODE_ENV === "development" ? true : [env.WEB_ORIGIN],
+    origin: resolveCorsOrigins({
+      nodeEnv: env.NODE_ENV,
+      webOrigin: env.WEB_ORIGIN,
+      extensionOrigins: env.EXTENSION_ORIGINS,
+    }),
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: false,
