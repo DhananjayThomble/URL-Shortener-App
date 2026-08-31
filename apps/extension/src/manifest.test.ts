@@ -40,6 +40,12 @@ describe("public/manifest.json", () => {
     expect((manifest.version as string).length).toBeGreaterThan(0);
   });
 
+  it("ships a first-release version", () => {
+    // A brand-new store listing starts at 1.0.0; a higher initial version is
+    // confusing for a first submission.
+    expect(manifest.version).toBe("1.0.0");
+  });
+
   it("registers a module service worker for the background", () => {
     const background = manifest.background as Record<string, unknown> | undefined;
     expect(background).toBeDefined();

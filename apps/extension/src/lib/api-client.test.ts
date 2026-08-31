@@ -111,6 +111,30 @@ describe("api-client / createLink", () => {
     ).rejects.toBeInstanceOf(AuthError);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("throws a typed ApiError (not a raw ZodError) when no domain is available, before fetching", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse(sampleLink, { status: 201 }));
+    const err = await createLink(
+      { apiBaseUrl: "https://snapurl.example", apiKey: "snap_live_secret" },
+      { destination: "https://example.com/" },
+      { fetchImpl },
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(RateLimitError);
+    expect((err as ApiError).message).toContain("domain");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("treats a blank default domain the same as a missing one", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse(sampleLink, { status: 201 }));
+    const err = await createLink(
+      { apiBaseUrl: "https://snapurl.example", apiKey: "snap_live_secret", defaultDomain: "   " },
+      { destination: "https://example.com/" },
+      { fetchImpl },
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });
 
 describe("api-client / listLinks", () => {

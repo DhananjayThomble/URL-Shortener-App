@@ -14,6 +14,7 @@ import type { CreateLinkParams } from "./lib/api-client.js";
 import { hasCredentials, loadSettings as storageLoadSettings } from "./lib/storage.js";
 import type { Settings } from "./lib/storage.js";
 import { shortenableUrl } from "./lib/active-url.js";
+import { buildShortUrl } from "./lib/short-url.js";
 import type { Link, LinkList } from "@snapurl/contract";
 
 /** Everything the controller touches, injected so it is testable without a browser. */
@@ -91,6 +92,11 @@ function errorKind(error: unknown): "auth" | "rate-limit" | "generic" {
 }
 
 function errorMessage(error: unknown): string {
+  if (error instanceof RateLimitError && typeof error.retryAfterSeconds === "number") {
+    const seconds = Math.max(1, Math.ceil(error.retryAfterSeconds));
+    const unit = seconds === 1 ? "second" : "seconds";
+    return `${error.message} Try again in ${seconds} ${unit}.`;
+  }
   if (error instanceof Error && error.message) return error.message;
   return "Something went wrong. Try again.";
 }
@@ -236,10 +242,15 @@ export async function createPopup(doc: Document, deps: PopupDeps): Promise<void>
   }
 }
 
-/* ---- Browser wiring (not exercised by tests; guarded on the chrome global) ---- */
+/* ---- Browser wiring (guarded on the chrome global) ---- */
 
-function browserShortUrlOf(link: Link): string {
-  return `https://${link.domain}/${link.slug}`;
+/**
+ * Build the public short URL for a link, deriving the scheme from the domain and
+ * the configured API base URL rather than assuming https, so self-hosted http
+ * domains (e.g. the default localhost:3002) resolve. Exported for testing.
+ */
+export function browserShortUrlOf(settings: Settings, link: Link): string {
+  return buildShortUrl(link, { apiBaseUrl: settings.apiBaseUrl });
 }
 
 async function activeTabUrl(): Promise<string | undefined> {
@@ -247,12 +258,12 @@ async function activeTabUrl(): Promise<string | undefined> {
   return tab?.url;
 }
 
-function browserDeps(): PopupDeps {
+function browserDeps(settings: Settings): PopupDeps {
   return {
-    loadSettings: storageLoadSettings,
+    loadSettings: async () => settings,
     getActiveTabUrl: activeTabUrl,
-    createLink: (settings, params) => apiCreateLink(settings, params),
-    listLinks: (settings, query) => apiListLinks(settings, query),
+    createLink: (currentSettings, params) => apiCreateLink(currentSettings, params),
+    listLinks: (currentSettings, query) => apiListLinks(currentSettings, query),
     copyToClipboard: (text) => navigator.clipboard.writeText(text),
     openUrl: (url) => {
       void chrome.tabs.create({ url });
@@ -260,7 +271,7 @@ function browserDeps(): PopupDeps {
     openOptions: () => {
       if (chrome.runtime.openOptionsPage) void chrome.runtime.openOptionsPage();
     },
-    shortUrlOf: browserShortUrlOf,
+    shortUrlOf: (link) => browserShortUrlOf(settings, link),
   };
 }
 
@@ -268,6 +279,6 @@ if (typeof chrome !== "undefined" && chrome.tabs && typeof document !== "undefin
   document.addEventListener("DOMContentLoaded", () => {
     const root = document.querySelector('[data-app="popup"]') ?? document.body;
     root.innerHTML = POPUP_MARKUP;
-    void createPopup(document, browserDeps());
+    void storageLoadSettings().then((settings) => createPopup(document, browserDeps(settings)));
   });
 }

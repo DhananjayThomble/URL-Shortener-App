@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SnapURL",
   "description": "Shorten the active tab, copy it, and view recent links against your own SnapURL API.",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Shorten this page with SnapURL",

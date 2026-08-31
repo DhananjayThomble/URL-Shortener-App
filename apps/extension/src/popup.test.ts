@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Link } from "@snapurl/contract";
 
 import { AuthError, RateLimitError } from "./lib/api-client.js";
-import { createPopup, POPUP_MARKUP } from "./popup.js";
+import { browserShortUrlOf, createPopup, POPUP_MARKUP } from "./popup.js";
 import type { PopupDeps } from "./popup.js";
 import type { Settings } from "./lib/storage.js";
 
@@ -198,5 +198,36 @@ describe("popup controller", () => {
     const err = document.querySelector<HTMLElement>('[data-testid="error"]');
     expect(err?.hidden).toBe(false);
     expect(err?.dataset.kind).toBe("rate-limit");
+  });
+
+  it("surfaces the retry-after delay in the rate-limit message", async () => {
+    const deps = makeDeps({
+      createLink: vi.fn(async () => {
+        throw new RateLimitError("You're going too fast.", 30);
+      }),
+    });
+    await createPopup(document, deps);
+    await flush();
+
+    document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.click();
+    await flush();
+
+    const err = document.querySelector<HTMLElement>('[data-testid="error"]');
+    expect(err?.dataset.kind).toBe("rate-limit");
+    expect(err?.textContent).toContain("30 seconds");
+  });
+});
+
+describe("browserShortUrlOf", () => {
+  it("uses https for a hosted domain", () => {
+    const settings: Settings = { apiBaseUrl: "https://snapurl.example", apiKey: "k", defaultDomain: "snp.li" };
+    const link = { domain: "snp.li", slug: "abc" } as Link;
+    expect(browserShortUrlOf(settings, link)).toBe("https://snp.li/abc");
+  });
+
+  it("uses http for a self-hosted localhost domain matching the API base URL", () => {
+    const settings: Settings = { apiBaseUrl: "http://localhost:3002", apiKey: "k", defaultDomain: "localhost:3002" };
+    const link = { domain: "localhost:3002", slug: "abc" } as Link;
+    expect(browserShortUrlOf(settings, link)).toBe("http://localhost:3002/abc");
   });
 });

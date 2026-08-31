@@ -50,6 +50,14 @@ export class RateLimitError extends ApiError {
   }
 }
 
+/** No short domain to create the link under — a precondition failure, caught before fetching. */
+export class MissingDomainError extends ApiError {
+  constructor(message = "Set a default short domain in the extension options first.") {
+    super(message);
+    this.name = "MissingDomainError";
+  }
+}
+
 /** fetch threw — offline, DNS failure, CORS, or a bad base URL. */
 export class NetworkError extends ApiError {
   constructor(message = "Couldn't reach the SnapURL API. Check your connection and the API base URL.") {
@@ -134,9 +142,17 @@ export async function createLink(
   }
   const fetchImpl = options.fetchImpl ?? fetch;
 
+  // Resolve the domain up front so a missing/blank one surfaces as a typed
+  // MissingDomainError rather than a raw ZodError from CreateLinkInput.parse
+  // (CreateLinkInput.domain is z.string().min(1)).
+  const domain = (params.domain ?? settings.defaultDomain ?? "").trim();
+  if (!domain) {
+    throw new MissingDomainError();
+  }
+
   const body = CreateLinkInput.parse({
     destination: params.destination,
-    domain: params.domain ?? settings.defaultDomain ?? "",
+    domain,
     ...(params.slug ? { slug: params.slug } : {}),
   });
 
