@@ -215,13 +215,28 @@ An internal transport would be ceremony.
    costs money. A regex list catches the obvious crawlers, and `is_bot` is a column, so
    reclassifying later is an UPDATE rather than a re-ingest.
 
-7. **GeoIP uses CloudFront's `CloudFront-Viewer-Country` header.** Free and accurate at country
-   level, which is all the contract reports. No MaxMind database to ship or license.
+7. **GeoIP uses CloudFront's `CloudFront-Viewer-Country` header (ISO 3166-1 alpha-2).** This is
+   now consistent with both the code and the CDK stack. The AWS profile's origin request policy in
+   `infra/lib/snapurl-stack.ts` forwards `CloudFront-Viewer-Country` (and `CloudFront-Viewer-City`)
+   to the redirect origin, so `apps/redirect/src/main.ts` reads
+   `request.headers['cloudfront-viewer-country']` and populates `click_events.country`. It was
+   *not* forwarded before #274 — the header existed at the edge but the origin request policy
+   dropped it, so country was always null; it is forwarded now. Country is free and accurate at
+   country level, which is all the contract reports, with no MaxMind database to ship or license.
+   The city-level detail on the same header family, and the two limits that come with it, are in
+   Part 4b ("City-level geo").
 
-8. **Click limits may overshoot slightly.** The counter is a DynamoDB conditional write; under
-   concurrent clicks a hard cap can be exceeded by a handful. The alternative is a synchronous
-   read-modify-write on the hot path, which costs more latency than the accuracy is worth for a
-   feature whose main use is "roughly 500 beta invites."
+8. **Click limits may overshoot slightly.** The click-limit gate reads a denormalised counter in
+   the Postgres `link_counters` table (`packages/database/src/schema/links.ts`), recomputed by the
+   rollup worker (`apps/worker/src/jobs/rollup.ts`) and read as `coalesce(link_counters.clicks, 0)`
+   by the gate in `apps/api/src/links/links.service.ts` and `apps/redirect/src/resolver.ts`. It is
+   *not* a live count and *not* a DynamoDB conditional write — the counter moved off the `links`
+   table into `link_counters` in #270. Under concurrent clicks a hard cap can be overshot by a
+   handful because the gate reads the last rollup's value, which is the same bounded overshoot the
+   DynamoDB projection path carries at projection time (see the Profile 3 section later in this
+   file — the two resolvers cannot disagree beyond the rollup lag they share). The alternative, a
+   synchronous read-modify-write on the hot path, costs more latency than the accuracy is worth for
+   a feature whose main use is "roughly 500 beta invites."
 
 9. **Uniques reset at 00:00 UTC and a visitor on a new network counts twice.** This is inherent to
    the cookieless daily-salt design the product promises, not a bug. It should be said plainly in
@@ -261,8 +276,18 @@ An internal transport would be ceremony.
     webhooks) needs egress, so it only functions when `natStrategy != 'none'`.
 
 12. **No rate limit on the redirect path.** Rate limiting the dashboard API protects the database;
-    rate limiting redirects would mean a state lookup on the hot path, and CloudFront already
-    absorbs volume. Abuse protection there belongs at WAF, which costs money.
+    rate limiting redirects would mean a state lookup on the hot path. The edge absorbs only a
+    narrow band of volume, not a blanket cache of every redirect: the CloudFront KeyValueStore fast
+    path answers edge-eligible simple links, and the `RedirectCdn` default behaviour uses a short
+    1–5s edge TTL cache policy (`defaultTtl` 1s, `maxTtl` 5s in `infra/lib/snapurl-stack.ts`,
+    replacing the earlier `CACHING_DISABLED`) that coalesces burst and QR-scan storms. Everything
+    else reaches the origin, and the browser is sent `no-store` (from `cacheHeadersFor()` in
+    `packages/domain/src/destination.ts`), so no visitor caches a stale 302. Abuse protection on
+    the redirect path therefore belongs at WAF, which costs money — and, because caching is
+    effectively disabled for correctness, a WAF *raises* the per-1M marginal cost rather than
+    lowering it (it inspects every redirect, including the ones the edge would otherwise serve
+    cheaply). The corrected figure is in [DEPLOYMENT.md](./DEPLOYMENT.md)'s cost section: roughly
+    $1.57 + $0.60 ≈ **$2.17 per 1M**, not a fall to ~$1.10.
 
 ---
 

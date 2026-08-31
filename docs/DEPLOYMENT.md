@@ -4,8 +4,14 @@ The frontend and the backend deploy separately and have almost nothing in
 common operationally. That is deliberate — see [ARCHITECTURE](./ARCHITECTURE.md)
 for why the redirect path and the dashboard are treated as different systems.
 
-This document covers the **frontend on Vercel**. The backend on AWS is tracked
-separately and is not yet implemented.
+This document covers the **frontend on Vercel** and the **backend** — both the
+container images that run anywhere Node 22 runs and the AWS serverless profile
+in `infra/`. The AWS profile is the experimental one: its adapters and CDK shape
+are built and CI/synth-proven, but no real `cdk deploy` has run against a real
+account yet, so by the epic's rule (a profile without a green smoke run in CI is
+documented as experimental) it is treated as such. See
+[ARCHITECTURE](./ARCHITECTURE.md) for the ports-and-adapters core and the three
+deployment profiles.
 
 ---
 
@@ -243,8 +249,13 @@ Both are resolved by CloudFormation **at deploy time** and land in the Lambda's
 environment. Neither is baked into a container image — the images are built
 from the repository alone and contain no configuration, so the same image is
 deployable to any stage. [DECISIONS.md](./DECISIONS.md) has the reasoning and
-what it costs; the short version is that reading either at cold start needs an
-interface VPC endpoint at ~$7/month, because there is no NAT.
+what it costs. Deploy-time resolution stays the default; the earlier "reading
+either at cold start needs a ~$7/month interface VPC endpoint because there is
+no NAT" constraint no longer strictly holds, because the default `natStrategy`
+now gives the app Lambdas egress (see [ARCHITECTURE.md](./ARCHITECTURE.md) and
+the natStrategy section below) — a runtime SSM/Secrets Manager lookup is now
+reachable over the NAT without a dedicated endpoint. That unblocks issue #292
+but is deliberately not implemented here.
 
 The stack has no defaults for the parameters. A missing one fails the deploy
 naming the parameter, which is a better time to find out than the first
@@ -265,11 +276,14 @@ refresh token and never expire. That is $0.80/month in Secrets Manager, about
 
 | | |
 | --- | --- |
-| VPC | 2 AZs, public + isolated subnets, **zero NAT gateways** |
-| RDS | PostgreSQL 18, `db.t4g.micro`, single-AZ, 20 GB gp3, isolated subnets |
+| VPC | 2 AZs, public + isolated subnets. Egress is parameterised by `natStrategy` (default `'instance'`: a t4g.nano NAT instance, ~$3/mo, with the app Lambdas in `PRIVATE_WITH_EGRESS`). `'gateway'` is a managed NAT (~$32/mo); `'none'` keeps the original zero-egress topology. See the natStrategy section below. |
+| RDS | PostgreSQL 18, `db.t4g.micro`, single-AZ, 20 GB gp3, always `PRIVATE_ISOLATED` (it never egresses) |
+| DynamoDB | `LinkProjectionTable` (PAY_PER_REQUEST, PITR, `linkId` GSI) read by the redirect's `DynamoLinkResolver`; a separate `CacheTable` (TTL on `expiresAt`) backing the shared `CacheStore` — `CACHE_DRIVER=dynamodb` + `CACHE_DYNAMO_TABLE` are set on `redirectFn` |
+| SQS | `ClickQueue` for the redirect's `SqsClickSink`, plus a `ClickDlq` dead-letter queue |
+| CloudFront | a `KeyValueStore` for the edge fast path (simple links answered at the edge), and a short 1–5s edge TTL cache policy on the redirect behaviour |
 | API | Lambda (container image) behind an HTTP API |
-| Redirect | Lambda (container image) behind CloudFront |
-| Worker | Lambda, invoked once a minute by EventBridge |
+| Redirect | Lambda (container image) behind CloudFront. Under the AWS profile (`LINK_PROJECTION=dynamo` + `CLICK_SINK=sqs`) it drops its `vpcSettings` and leaves the VPC entirely |
+| Worker | Lambda invoked once a minute by EventBridge for rollups; also drains the `projection_outbox` into the DynamoDB `LinkProjectionTable` and the CloudFront `KeyValueStore`, and consumes `ClickQueue` via an `SqsEventSource` (event source mapping, `reportBatchItemFailures: true`) to write `click_events` |
 
 ### The cost model, which dictates every choice above
 
@@ -277,41 +291,87 @@ The account is on the free tier introduced in **July 2025**: $100 in credits,
 valid 12 months, and **no 750-hour RDS allowance** — that was part of the old
 12-month tier and does not apply to accounts created since.
 
-At this workload Lambda, CloudFront and SSM sit inside always-free tiers that
-never expire. **Postgres is roughly 92% of the bill**, about $15/month, so
-$100 covers roughly six months.
+At this workload Lambda, CloudFront, DynamoDB, SQS and SSM sit inside
+always-free tiers that never expire. **Postgres is roughly 92% of the bill**,
+and with the default `natStrategy = 'instance'` (a ~$3/month NAT instance) the
+total is about **$15.50/month**. The credits are valid for 12 months, but that
+is the *validity window*, not how long they last: at ~$15.50/month the $100
+balance is exhausted in about **6.5 months** (100 / 15.5 ≈ 6.5), well before the
+12-month window closes.
 
 Two decisions follow from that, and both are worth understanding before
 changing anything:
 
-**No NAT gateway.** A NAT costs ~$32/month before a byte moves — more than
-everything else in this stack combined, including the database. The standard
-"put RDS in a private subnet" tutorial creates one without mentioning it. The
-subnets here are `PRIVATE_ISOLATED`, not `PRIVATE_WITH_EGRESS`, because the
-latter implies a NAT.
+**Egress is configurable via `natStrategy`, defaulting to a NAT instance.** A
+managed NAT *gateway* costs ~$32/month before a byte moves — more than
+everything else in this stack combined, including the database — so it is not
+the default. The default is a single t4g.nano NAT *instance* (~$3/month), which
+gives the app Lambdas egress for a fraction of the gateway's cost; `'gateway'`
+is the one-flag upgrade to per-AZ redundancy, and `'none'` preserves the
+original zero-egress topology at $0. RDS always stays `PRIVATE_ISOLATED` (it
+never egresses); the app Lambdas move to `PRIVATE_WITH_EGRESS` when NAT is on.
+See the natStrategy section below.
 
 **Lambda, not Fargate.** Three Fargate tasks behind an ALB would be roughly
 $58/month against Lambda's ~$0 — the credits would be gone in under two months.
 
-### Two consequences of having no NAT
+### natStrategy: what egress costs and what it enables
 
-Lambdas in isolated subnets can reach the database and nothing else. That is
-fine, because the application needs nothing else — there is no AWS SDK anywhere
-in `apps/` or `packages/`, and the redirect service writes clicks straight to
-Postgres via `PostgresClickSink`.
+`natStrategy` is a stack prop wired from `app.node.tryGetContext('natStrategy')`
+in `infra/bin/snapurl.ts`, defaulting to `'instance'`.
 
-It does mean two things:
+| `natStrategy` | Cost | What it is | Egress features |
+| --- | --- | --- | --- |
+| `'instance'` (default) | ~$3/mo | t4g.nano NAT instance, single AZ | Function |
+| `'gateway'` | ~$32/mo | Managed NAT gateway, highly available | Function |
+| `'none'` | $0 | The original zero-egress isolated-only topology | Non-functional |
 
-1. **Config and secrets are resolved at deploy time, not at cold start.**
-   Reading either from inside the VPC would need an interface endpoint
-   (~$7/month, about 45% of the database cost) to hide a value from the only
-   person who can read a Lambda's configuration anyway. That trade changes the
-   moment anyone else has console access to the account; the fix is one
-   endpoint and a runtime lookup. See Configuration above.
+The backend genuinely needs the internet for Safe Browsing, customer webhooks,
+Google OAuth (JWKS) and mail. Under `'instance'` and `'gateway'` those work;
+under `'none'` they are non-functional by design (the free option for an
+operator who does not need them). NAT was chosen over a free egress-only IPv6
+IGW because arbitrary customer webhook receivers cannot be relied on to publish
+`AAAA` records — see [DECISIONS.md](./DECISIONS.md).
 
-2. **Google Safe Browsing cannot be called.** It is off by default already
-   (see [DECISIONS.md](./DECISIONS.md) A10). Turning it on in this topology
-   requires egress, which means a NAT or a proxy.
+There are two consequences worth calling out:
+
+1. **Config and secrets are resolved at deploy time, not at cold start.** That
+   is still the default; the default NAT instance now makes a *runtime*
+   SSM/Secrets Manager lookup reachable without a dedicated interface endpoint,
+   which unblocks (but does not implement) issue #292. See Configuration above.
+
+2. **Google Safe Browsing, webhooks, OAuth and mail delivery are functional
+   only when `natStrategy != 'none'`.** Safe Browsing is also off by default
+   without a key (see [DECISIONS.md](./DECISIONS.md) A10).
+
+### The redirect uses AWS SDK adapters and can leave the VPC
+
+The claim that "there is no AWS SDK anywhere in `apps/` or `packages/`" is no
+longer true. `@aws-sdk` packages are dependencies of `apps/redirect`,
+`apps/worker`, `packages/cache` and `packages/database`. The Postgres paths
+(`PostgresLinkResolver` / `PostgresClickSink`) remain the **default** for every
+non-AWS profile, but under the AWS profile (`LINK_PROJECTION=dynamo` +
+`CLICK_SINK=sqs`) the redirect resolves links from DynamoDB via
+`DynamoLinkResolver`, sends clicks to SQS via `SqsClickSink`, salts its visitor
+hashes from the shared DynamoDB `CacheStore`, and leaves the VPC entirely
+(`redirectFn` drops its `vpcSettings`; `apiFn` and `workerFn` keep theirs).
+[ARCHITECTURE.md](./ARCHITECTURE.md) lays out every port and its adapters.
+
+### Abuse protection and the WAF cost, recomputed
+
+Rate limiting the redirect path belongs at a WAF (see
+[DECISIONS.md](./DECISIONS.md) assumption 12), and its cost is worth stating
+correctly because an earlier draft got the direction wrong. That draft claimed
+the marginal cost per 1M redirects would **fall** from $1.57 to ~$1.10 after
+adding a WAF. It does the opposite. Caching is effectively disabled for
+correctness — the edge TTL is only 1–5s and the browser is sent `no-store` — so
+**every** redirect that reaches the distribution is inspected by the WAF. AWS
+WAF bills roughly **$0.60 per 1,000,000 requests inspected** (on top of a
+separate ~$5/mo per web ACL fixed charge and per-rule charges, which are not
+part of the per-1M marginal figure). So the marginal cost per 1M redirects
+**rises** from ~$1.57 to about $1.57 + $0.60 ≈ **$2.17 per 1M**. It does not
+fall to ~$1.10: a WAF inspects every request, including the ones the edge would
+otherwise serve cheaply, and there is no cache absorbing them.
 
 ### Why the images are containers, not zip bundles
 
@@ -339,8 +399,9 @@ fails.
 
 `pnpm db:migrate` cannot do it. RDS is in isolated subnets with
 `publiclyAccessible: false`, so there is no route from a laptop to the
-database at all — by design, because the alternative is a NAT gateway or a
-publicly reachable database.
+database at all — by design, because the alternative is a publicly reachable
+database. (The NAT under `natStrategy != 'none'` gives the Lambdas *outbound*
+egress; it does not make RDS reachable from a laptop.)
 
 The Lambdas are inside the VPC, so the worker carries the job. Invoke it once
 after the first deploy, and again after any deploy that adds a migration:
@@ -383,19 +444,20 @@ dealt with, and are worth knowing about because both were silent:
   instance exhausts the server quickly. Both now honour the variable, keeping
   their previous values as the default for the long-running process.
 
-The shape it should take, and the cost constraints that dictate it, are
-recorded in [DECISIONS.md](./DECISIONS.md). The single most important one:
+The reasoning and the cost constraints that dictate the shape are recorded in
+[DECISIONS.md](./DECISIONS.md). The single most important one:
 
 > Lambda, DynamoDB, CloudFront, SQS and SSM Parameter Store all sit inside
 > AWS's always-free tiers at this workload. **Postgres is roughly 92% of the
-> bill.** A NAT Gateway costs about $32/month before a byte moves — more than
-> everything else combined — and the standard "put RDS in a private subnet"
-> tutorial creates one.
+> bill.** A managed NAT gateway costs about $32/month before a byte moves — more
+> than everything else combined — which is why `natStrategy` defaults to a ~$3/mo
+> NAT instance instead.
 
-Until that work lands, the apps run anywhere Node 22 runs. They read all
-configuration from the environment, expose health endpoints
-(`/api/v1/health` and `/health`), and shut down their database pools cleanly on
-`SIGTERM`.
+The stack is written and synthesises cleanly; what has not happened is a real
+`cdk deploy` against a real account (see "What is verified" above). The apps
+also run anywhere Node 22 runs: they read all configuration from the
+environment, expose health endpoints (`/api/v1/health` and `/health`), and shut
+down their database pools cleanly on `SIGTERM`.
 
 ---
 
