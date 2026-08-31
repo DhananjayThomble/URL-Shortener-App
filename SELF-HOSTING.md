@@ -103,6 +103,65 @@ This applies the migrations under `packages/database` against the Postgres
 volume, then exits. Run it once before first use, and again after every upgrade
 (see [Upgrade](#8-upgrade)).
 
+### Adopting `click_events` with pre-existing history
+
+A fresh install has nothing to worry about here: migrations apply against empty
+tables and finish in a moment. This section is only for an operator who already
+has years of raw click data in a `click_events` table and is now upgrading to
+the partitioned layout. If that is not you, skip to [Verify TLS](#6-verify-tls).
+
+The migration that converts `click_events` into a day-partitioned table
+(`0007_partition_click_events`) runs as a **single transaction**. For its whole
+duration it holds:
+
+- `ACCESS EXCLUSIVE` on `click_events` (it renames the table aside, provisions
+  partitions, copies the data, and drops the old table), so **every click write
+  blocks** until it commits.
+- `SHARE ROW EXCLUSIVE` on `links` and `workspaces` (it re-adds the two foreign
+  keys), so **creating or editing a link stalls** for the duration too.
+
+Neither the connection pool nor the migrator sets a `statement_timeout`, so the
+transaction runs to completion however long the copy takes. **Run the migrate
+step in a maintenance window**, sized to how much raw click history you are
+carrying, and expect both click ingestion and link create/edit to be paused
+while it runs.
+
+**Sizing `max_locks_per_transaction`.** Because the migration attaches one day
+partition per day of history inside that one transaction, and each attached
+partition costs roughly **5 lock slots** (the relation plus its cloned indexes),
+the shared lock table can be exhausted by a long history. That table holds
+`max_locks_per_transaction * (max_connections + max_prepared_transactions)`
+slots, which is `6400` on a default configuration
+(`max_locks_per_transaction=64`, `max_connections=100`,
+`max_prepared_transactions=0`). At about 5 slots per day, **roughly 3.5 years of
+history approaches that ceiling** and more will exceed it, aborting the migration
+with `out of shared memory`. If your history is near or past that, raise
+`max_locks_per_transaction` in `postgresql.conf` before running the migrate step
+(it requires a restart), then lower it again afterwards if you like.
+
+**Provision the historical partitions after the structural migration, not
+inside it.** Rather than sizing the lock table for your entire history, you can
+let `0007` create only the recent window and provision the older days
+afterwards, in bounded committed chunks, so the provisioning phase never needs a
+raised `max_locks_per_transaction`. The worker ships a one-time backfill routine,
+`backfillClickPartitions`, for exactly this. It drives the
+`click_events_backfill_days` helper (added in `0015_click_events_backfill_days`)
+in a loop where **each chunk is its own committed transaction**, so locks release
+between chunks and the footprint stays bounded no matter how old the database is.
+The chunk size is set by **`CLICK_EVENTS_BACKFILL_CHUNK_DAYS`** (default `200`),
+chosen so a chunk of 200 day-partitions costs about `1000` lock slots, well under
+the default `6400` ceiling. Because it is a one-time adoption or repair step and
+not part of steady-state maintenance, it is not wired into the worker's hourly
+loop; trigger it once, after the migrate step, and re-run it if it is
+interrupted (it is idempotent and will only provision the days that are still
+missing). Raise `CLICK_EVENTS_BACKFILL_CHUNK_DAYS` only if you have also raised
+`max_locks_per_transaction`; the default is deliberately conservative.
+
+Any day that is not yet provisioned is not lost in the meantime: writes for it
+land in the `DEFAULT` partition and the backfill (or the worker's normal
+partition-provisioning window) drains them into a dated partition on a later
+pass.
+
 ## 6. Verify TLS
 
 Once DNS for both domains resolves to this host, Caddy obtains certificates

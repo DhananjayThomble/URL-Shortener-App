@@ -860,6 +860,87 @@ CloudFront Functions and KeyValueStores cannot run in CI or the sandbox.
 proves too conservative and a time-bounded link could be safely edge-served with a
 carefully evaluated TTL.
 
+### Migration 0007's lock footprint: a forward migration and a runbook, not one or the other
+
+**Raised by #294 (a follow-up from the review of #293):** the migration that turns
+`click_events` into a day-partitioned table (`0007_partition_click_events`) is not a
+routine migration, it is a scheduled event. It has never actually bitten anyone, because
+`click_events` has never been deployed with data and so the migration runs against an
+empty table today. But `runMigrations` exists precisely so migrations can be applied to a
+live deployed database, so the moment someone self-hosts with existing click history it
+matters.
+
+**Three properties make it a scheduled event.**
+
+- **It is one transaction.** Drizzle's migrator wraps all pending migrations in a single
+  `session.transaction`, so the `ALTER TABLE click_events RENAME TO click_events_legacy`
+  takes `ACCESS EXCLUSIVE` at the start and holds it through the partition-creation loop,
+  the full-table copy, and the final `DROP`. Every click insert blocks for the whole
+  duration, and neither the pool nor the migration sets a `statement_timeout` to bound it.
+- **Its blast radius is wider than `click_events`.** The two `ADD CONSTRAINT ... FOREIGN
+  KEY` statements take `SHARE ROW EXCLUSIVE` on `links` and `workspaces`, held to commit,
+  so for the duration nobody can create or edit a link either.
+- **Its lock footprint scales with history.** Each attached day-partition contributes its
+  own relation plus its cloned indexes, roughly five lock slots per day of history. The
+  shared lock table holds `max_locks_per_transaction * (max_connections +
+  max_prepared_transactions)` slots, 6400 on a default configuration, so around 3.5 years
+  of history approaches the ceiling and more exceeds it, aborting with `out of shared
+  memory`.
+
+**Why not just fix 0007.** The obvious move is to rewrite 0007's history loop to commit
+in chunks. It is not available. 0007 has already been applied on every deployed database
+(it is recorded in `meta/_journal.json` alongside 0008 through 0014), and drizzle
+checksums each migration file, so editing an applied migration's SQL breaks the checksum
+on every one of those databases. That the production tables were empty when 0007 ran does
+not help: the file is still recorded as applied, and the fix has to be additive and
+forward, never a retroactive edit.
+
+**What we shipped is an A+B hybrid, and that framing is deliberate.** #294 offered two
+options: (A) provision the historical days outside the schema transaction in a chunked,
+per-chunk-committing pass so cost is decoupled from database age, or (B) accept the cost
+and document a runbook. We did both, because drizzle's one-transaction-per-file constraint
+means (A) alone cannot cover 0007's own `RENAME` / foreign-key / copy statements, which
+still run inside that single transaction no matter what we add afterwards.
+
+- **(A), implemented.** A forward migration, `0015_click_events_backfill_days`, adds an
+  idempotent plpgsql helper `click_events_backfill_days(chunk_size int DEFAULT 200)` that
+  drains distinct historical days out of the `DEFAULT` partition into dated partitions, up
+  to `chunk_size` days per call, reusing the existing `click_events_ensure_partition`. The
+  worker drives it through `backfillClickPartitions`, which loops with **each chunk in its
+  own committed transaction** so locks release between chunks and the footprint stays
+  bounded regardless of how old the database is. The chunk size is
+  `CLICK_EVENTS_BACKFILL_CHUNK_DAYS` (default `200`), chosen against the same lock math:
+  ~5 slots per day-partition, so 200 days is ~1000 slots per chunk, comfortably under the
+  default 6400 ceiling. It is deliberately **not** wired into the worker's steady-state
+  maintenance loop, because it is a one-time adoption or repair step, not a recurring one.
+- **(B), documented.** The residual that (A) cannot remove is 0007's own single
+  transaction: the `RENAME`, the two foreign keys on `links` and `workspaces`, and the
+  copy all still run under one `ACCESS EXCLUSIVE` / `SHARE ROW EXCLUSIVE` hold. For that,
+  `SELF-HOSTING.md` carries an operator runbook: run the migrate step in a maintenance
+  window, expect click writes and link create/edit to stall for its duration, and size
+  `max_locks_per_transaction` for a large history using the lock math above.
+
+Calling this out explicitly matters so it is not mistaken for a silent downgrade to
+docs-only. The provisioning cost, the part that grew without bound with database age, is
+genuinely decoupled and committed in chunks. Only the fixed structural cost of 0007's own
+statements remains a single transaction, and the runbook is there to cover exactly that
+irreducible part.
+
+**A fresh install does not backfill history, and that is settled here.** The obvious
+question the backfill raises is whether a fresh install should backfill too. It should
+not, and does not. The `DEFAULT` partition guarantees that a write for an unprovisioned
+day never fails, it simply lands in `DEFAULT`, and the worker's normal
+`ensureClickPartitions` window drains recent days into dated partitions on its regular
+pass. So old days are provisioned lazily, on demand, and a fresh install has no legacy
+rows to migrate in the first place. Only a self-hoster adopting the partitioned schema
+*with* pre-existing legacy click rows needs `backfillClickPartitions`, and for them it
+runs decoupled and chunk-committing rather than inside the schema transaction.
+
+**Revisit if** the per-chunk default ever proves wrong for a real adopter's hardware
+(raise `CLICK_EVENTS_BACKFILL_CHUNK_DAYS`, but only alongside a raised
+`max_locks_per_transaction`), or if a future drizzle release offered a way to bound the
+lock hold of a structural migration itself, which would let the runbook shrink.
+
 ---
 
 ## Part 5 — Open questions for you
