@@ -52,6 +52,11 @@ export const EnvSchema = z.object({
 
   /** Where the dashboard lives. Used for CORS and for links in emails. */
   WEB_ORIGIN: z.string().default("http://localhost:3000"),
+  /** OPTIONAL extra CORS origins, comma/space separated (e.g.
+      chrome-extension://<id> for the browser extension). Empty by default, so
+      production CORS stays exactly [WEB_ORIGIN] and current behaviour is
+      byte-identical. Only widens the allowlist when an operator sets it. */
+  EXTENSION_ORIGINS: z.string().optional(),
   /** The default short domain new workspaces get. */
   DEFAULT_DOMAIN: z.string().default("localhost:3002"),
   /** Where redirects are served from, for building short URLs in responses. */

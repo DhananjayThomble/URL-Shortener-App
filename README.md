@@ -15,7 +15,7 @@ shared packages that keep them agreeing with each other.
 
 ## Layout
 
-Seven workspace projects, listed in [`pnpm-workspace.yaml`](./pnpm-workspace.yaml).
+Eight workspace projects, listed in [`pnpm-workspace.yaml`](./pnpm-workspace.yaml).
 
 | Path | What it is |
 | --- | --- |
@@ -26,6 +26,7 @@ Seven workspace projects, listed in [`pnpm-workspace.yaml`](./pnpm-workspace.yam
 | `packages/domain` | Pure logic: routing-chain evaluation, slug generation, visitor hashing. No I/O, no framework. |
 | `packages/database` | Drizzle schema (21 tables), migrations and seed. |
 | `web` | Next.js 15 App Router, React 19, Tailwind v4, TanStack Query. |
+| `apps/extension` | Manifest V3 Chrome extension. Shortens the active tab against your own API. See [`apps/extension/README.md`](./apps/extension/README.md). |
 
 The two rules that hold it together: the contract package is the only place a
 payload shape is defined, and `packages/domain` is imported by both the API that

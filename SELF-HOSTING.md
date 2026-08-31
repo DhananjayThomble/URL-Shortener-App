@@ -273,3 +273,14 @@ Deployment env on Helm).
   matches the default retention) and only bites when partition count runs ahead
   of the storage budget; tighten it if your storage is tighter than the default
   window assumes.
+## Browser extension
+
+The [SnapURL browser extension](./apps/extension/README.md) is a Manifest V3
+Chrome extension that shortens the active tab against your self-hosted API. It
+runs entirely in the browser and calls your API with `fetch`, so the API's CORS
+must allow the extension's origin. Set `EXTENSION_ORIGINS` (a comma-separated
+list, empty by default) to the extension's `chrome-extension://<id>` origin,
+which you can read off the `chrome://extensions` card after loading it unpacked.
+Leaving `EXTENSION_ORIGINS` empty keeps CORS locked to the dashboard origin
+exactly as before. See [`apps/extension/README.md`](./apps/extension/README.md)
+for building, loading and configuring the extension.
