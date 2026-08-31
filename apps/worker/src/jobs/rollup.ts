@@ -627,8 +627,17 @@ export async function backfillClickPartitions(
     chunks++;
     provisioned += got;
 
-    // Done when nothing is left, or when a chunk made no forward progress (every
-    // remaining day is currently contended) — the rest is a later run's job.
+    /* Done when nothing is left, or when a chunk made no forward progress (every
+       remaining day is currently contended) — the rest is a later run's job.
+
+       KNOWN COVERAGE GAP: the `got === 0 && remaining > 0` arm (a chunk that
+       provisioned nothing while days remain) is not exercised by the DB-backed
+       tests. Reaching it deterministically needs a concurrent writer holding the
+       partition lock so `click_events_ensure_partition` loses its 2s race for
+       EVERY candidate in the chunk, which cannot be staged reliably here without
+       making the suite timing-dependent. The behaviour is the same guard
+       ensureClickPartitions relies on for the same contention case, and the
+       `remaining <= 0` termination and the chunk-committing loop ARE covered. */
     if (remaining <= 0 || got === 0) break;
   }
 

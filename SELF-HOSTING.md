@@ -152,10 +152,31 @@ The chunk size is set by **`CLICK_EVENTS_BACKFILL_CHUNK_DAYS`** (default `200`),
 chosen so a chunk of 200 day-partitions costs about `1000` lock slots, well under
 the default `6400` ceiling. Because it is a one-time adoption or repair step and
 not part of steady-state maintenance, it is not wired into the worker's hourly
-loop; trigger it once, after the migrate step, and re-run it if it is
-interrupted (it is idempotent and will only provision the days that are still
-missing). Raise `CLICK_EVENTS_BACKFILL_CHUNK_DAYS` only if you have also raised
+loop; trigger it once, after the migrate step. It is idempotent and re-entrant:
+an already-attached day is never re-provisioned, so if the run is interrupted,
+just run it again and it resumes with the days still missing.
+
+Trigger it the same way you ran the migrate step, from the worker image, which
+ships the routine. Run it once after `docker compose --profile migrate up
+migrate` has finished:
+
+```bash
+docker compose --profile migrate run --rm --entrypoint node migrate \
+  -e "require('./dist/lambda.js').handler({task:'backfill'}).then(r=>{console.log(r);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+```
+
+It prints `{ task: 'backfill', provisioned: N, chunks: M }` and exits. (The
+`migrate` service runs the worker image, which ships this routine at
+`/app/dist/lambda.js`; `run --rm` starts a throwaway container so it does not
+disturb the long-running `worker` service.) To bound
+each chunk more tightly on a lock-constrained database, pass a `chunkSize`:
+`handler({task:'backfill',chunkSize:50})`. Raise
+`CLICK_EVENTS_BACKFILL_CHUNK_DAYS` (or `chunkSize`) only if you have also raised
 `max_locks_per_transaction`; the default is deliberately conservative.
+
+On the AWS profile, where RDS is reachable only through the worker Lambda, the
+same task is invoked with `aws lambda invoke ... --payload '{"task":"backfill"}'`;
+see [the deployment guide](docs/DEPLOYMENT.md#backfilling-historical-partitions-after-adopting-click_events).
 
 Any day that is not yet provisioned is not lost in the meantime: writes for it
 land in the `DEFAULT` partition and the backfill (or the worker's normal

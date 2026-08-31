@@ -1133,11 +1133,14 @@ export class SnapUrlStack extends Stack {
     });
     /* Needed to apply migrations. A fresh deploy creates the database but no
        tables, and RDS is unreachable from outside the VPC, so the only way to
-       migrate is to invoke this function with {"task":"migrate"}. Printing the
-       name here saves looking it up in the console. */
+       migrate is to invoke this function with {"task":"migrate"}. The same
+       function also runs the one-time historical partition backfill for an
+       operator adopting click_events with pre-existing data ({"task":"backfill"},
+       see docs/DEPLOYMENT.md). Printing the name here saves looking it up in the
+       console. */
     new CfnOutput(this, "WorkerFunctionName", {
       value: workerFn.functionName,
-      description: 'Invoke with {"task":"migrate"} to apply database migrations.',
+      description: 'Invoke with {"task":"migrate"} to apply migrations, or {"task":"backfill"} to provision historical partitions.',
     });
 
     new CfnOutput(this, "ConfigPrefix", {

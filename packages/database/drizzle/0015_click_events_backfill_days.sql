@@ -100,6 +100,16 @@ BEGIN
 	   repeatedly-interrupted backfill still makes monotonic forward progress from
 	   the far end of history.
 
+	   By design, a day whose dated partition is ALREADY attached is out of scope
+	   here even if a stray row for it still sits in DEFAULT: the NOT EXISTS
+	   excludes it. That state should not arise under normal partition routing:
+	   click_events_ensure_partition drains the day's DEFAULT rows under
+	   ACCESS EXCLUSIVE before attaching, and once attached new inserts route to
+	   the dated partition, not DEFAULT, so this function's job is provisioning
+	   MISSING days, not re-draining ones already provisioned. A stray row under
+	   an already-attached day would need manual reconciliation, which is a
+	   different (and not-normally-reachable) problem than the one #294 is about.
+
 	   `at time zone 'UTC'` rather than ::date in the session TimeZone: every
 	   bound in 0007 is built AT TIME ZONE 'UTC', and mixing the two files a click
 	   under the wrong day. FROM ONLY click_events_default so this reads just the

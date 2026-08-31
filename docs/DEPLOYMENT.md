@@ -420,6 +420,31 @@ to discover that migrations are not serialised. They are also not on the
 EventBridge schedule: a migration should run when someone decides to run it,
 not while nobody is watching.
 
+#### Backfilling historical partitions after adopting `click_events`
+
+This only applies if you upgraded a deployment that already carried years of raw
+click history into the partitioned layout (see the SELF-HOSTING note on
+[adopting `click_events` with pre-existing history](../SELF-HOSTING.md#adopting-click_events-with-pre-existing-history)).
+A fresh deploy has no history to backfill and can skip this.
+
+Migration `0007` provisions only a recent window of day-partitions when the lock
+table is left at its default; older days land in the `DEFAULT` partition. The
+worker's `backfill` task drains them into dated partitions in bounded committed
+chunks, so the provisioning cost never has to run inside the schema-migration
+transaction. Because RDS is reachable only from inside the VPC, it runs through
+the same Lambda as `migrate`. Invoke it once, after the migrate step:
+
+```bash
+aws lambda invoke   --function-name "$(aws cloudformation describe-stacks --stack-name SnapUrl       --query "Stacks[0].Outputs[?OutputKey=='WorkerFunctionName'].OutputValue" --output text)"   --payload '{"task":"backfill"}' --cli-binary-format raw-in-base64-out   /dev/stdout
+```
+
+Expect `{"task":"backfill","provisioned":N,"chunks":M}`. It is idempotent (an
+already-attached day is never re-provisioned), so if the invocation is
+interrupted (the Lambda's timeout is minutes, a very large history may need more
+than one call) just invoke it again and it resumes with the days still missing.
+The per-chunk size follows `CLICK_EVENTS_BACKFILL_CHUNK_DAYS` (default `200`), or
+pass `{"task":"backfill","chunkSize":N}` to override it for a single run.
+
 ### What is verified, and what is not
 
 **Verified:** the stack type-checks, synthesises with zero validation
