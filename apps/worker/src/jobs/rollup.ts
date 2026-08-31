@@ -728,23 +728,36 @@ export async function pruneRetention(
      *     install window (`least` picks `retentionYears`), never retaining more
      *     than the operator provisioned.
      *
-     * This used to guard with `w.retention_years < ${retentionYears}::int` and
-     * bound by the tenant's own `retention_years`, which excluded every
-     * at-or-above-window workspace entirely. For rows on dated day-partitions
-     * that was fine — the drops reclaim them past the cutoff regardless. But
-     * rows an above-window workspace has stranded in the DEFAULT partition (when
-     * provisioning falls behind) matched *neither* path: the drops skip DEFAULT
-     * by design, and the old guard excluded the workspace from the DELETE. Those
-     * rows aged past the operator cutoff and nothing ever expired them — a leak
-     * that widened once the guard excluded the whole at-or-above-window set
-     * rather than just the single longest-retention tenant. Clamping the bound
-     * with `least(...)` closes it: an above-window workspace's DEFAULT-stranded
-     * rows past the operator cutoff are now swept here, honoring the "never keep
-     * more than the install window" promise for DEFAULT rows too.
+     * The guard decides *when* the DELETE is allowed to reach past a workspace's
+     * own window. It fires for a row when either clause holds:
+     *
+     *   - `w.retention_years < ${retentionYears}::int` — the workspace keeps
+     *     less than the install window, so its own shorter window is what
+     *     expires it, on every partition (dated or DEFAULT). Unchanged from the
+     *     original subtractive branch.
+     *   - `ce.tableoid = 'click_events_default'::regclass` — the row is stranded
+     *     in the DEFAULT partition, which the drops skip by design, so the DELETE
+     *     is the *only* mechanism that can ever reach it. This clause lets the
+     *     DELETE clamp an at-or-above-window workspace's DEFAULT-stranded rows
+     *     down to the operator cutoff.
+     *
+     * Why the guard is scoped to DEFAULT rather than dropped entirely. Without
+     * it, the `least(...)` bound (a timestamp, `now() - N years`) also matches
+     * the sub-day slice of the *dated* day-partition straddling the drop cutoff
+     * (a date, day-aligned): that partition survives the drop pass until its
+     * whole `[day, day+1)` range is strictly before the cutoff, so for a
+     * workspace at the install window the slice `[day 00:00, now()-N years)`
+     * would be swept here row-by-row every pass. That reintroduces the per-pass
+     * row-level DELETE volume #293/#295 exist to keep off this path, in the
+     * all-default common case. The DEFAULT-only clause leaves those dated
+     * straddling rows to the drop that reclaims the whole partition the next day,
+     * while still closing the DEFAULT leak.
      *
      * When every workspace is at or above the install window and no rows are
      * stranded in DEFAULT (the common case, and the default), this deletes
-     * nothing and the whole job is a partition drop.
+     * nothing and the whole job is a partition drop. The dated partition
+     * straddling the cutoff keeps its rows up to a day beyond the setting, until
+     * the drop reclaims it whole — the behavior the settings copy documents.
      *
      * The invariants the split has always held are preserved:
      *   - `rolled_up_at is not null` — never discard a click that has not yet
@@ -766,6 +779,10 @@ export async function pruneRetention(
         using workspaces w
         where ce.workspace_id = w.id
           and ce.rolled_up_at is not null
+          and (
+            w.retention_years < ${retentionYears}::int
+            or ce.tableoid = 'click_events_default'::regclass
+          )
           and ce.occurred_at < now() - (least(w.retention_years, ${retentionYears}::int) * interval '1 year')
         returning 1
       )

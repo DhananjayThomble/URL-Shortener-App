@@ -590,6 +590,95 @@ describeDb("click_events partitioning", () => {
     }
   });
 
+  it("does not row-DELETE the dated partition straddling the cutoff for an at-install-window workspace", async () => {
+    /* The all-default common-case invariant (#295 review v2, issue 1).
+     *
+     * The drop cutoff is a DATE (day-aligned): the day-partition covering
+     * `D = today - install years` survives the drop pass until its whole
+     * `[D, D+1)` range is strictly before the cutoff, i.e. until the next day.
+     * The DELETE's bound is a TIMESTAMP (`now() - install years`), which lands
+     * partway through D. If the DELETE reached dated partitions, it would sweep
+     * the slice `[D 00:00, now()-install years)` of that surviving straddling
+     * partition row-by-row every pass — for EVERY workspace at the install
+     * window, i.e. the all-default single-tenant install. That is the exact
+     * per-pass row-level WAL volume #293/#295 exist to keep off this path, and
+     * it contradicts the "rowsDeleted is zero, the whole job is a partition
+     * drop" promise plus the "rows may survive up to a day" settings copy.
+     *
+     * The DELETE only reaches beyond a workspace's own window for DEFAULT-
+     * partition rows, so a rolled-up click on the DATED straddling partition,
+     * older than the exact `now()-install years` instant but on a partition not
+     * yet spent, must be left for the drop (reclaimed whole the next day), NOT
+     * row-DELETEd here. This seeds a workspace at retention_years = the install
+     * window (3), provisions the dated partition for D, puts a rolled-up click
+     * on it at an early hour (so it is older than now()-3years), runs
+     * pruneRetention with the operator window of 3, and asserts rowsDeleted is 0
+     * and the row still exists. */
+    const stamp = Date.now();
+    const operatorYears = 3;
+
+    const [ws] = await db
+      .insert(workspaces)
+      .values({ name: "straddle", slug: `straddle-${stamp}`, retentionYears: operatorYears })
+      .returning({ id: workspaces.id });
+
+    /* The straddling day D = today - install years, day-aligned exactly the way
+       the cutoff and the partition bounds are, so the partition covering D
+       survives the drop (its range is not yet strictly before the cutoff) while
+       `now()-3years` lands partway through it. Derived from SQL rather than a day
+       count so leap years cannot slip it onto the wrong side of the boundary. */
+    const [{ straddleDay }] = (await db.execute(sql`
+      select ((now() at time zone 'UTC')::date - (${operatorYears}::int * interval '1 year'))::date::text as "straddleDay"
+    `)) as unknown as [{ straddleDay: string }];
+    const straddlePartition = `click_events_${straddleDay.replace(/-/g, "")}`;
+
+    try {
+      const [dom] = await db
+        .insert(domains)
+        .values({ workspaceId: ws!.id, domain: `straddle-${stamp}.test` })
+        .returning({ id: domains.id });
+      const [link] = await db
+        .insert(links)
+        .values({ workspaceId: ws!.id, domainId: dom!.id, slug: `st${stamp}`, destination: "https://example.com" })
+        .returning({ id: links.id });
+
+      // Provision the dated partition for D so the row is NOT in DEFAULT — the
+      // premise of the test is a dated straddling partition.
+      await db.execute(sql`select click_events_ensure_partition(${straddleDay}::date)`);
+      expect(await isAttached(straddlePartition)).toBe(true);
+
+      /* On D at 00:00:01 UTC — an early time-of-day, comfortably before now()'s
+         time-of-day, so `occurred_at < now() - 3 years` holds (the row is older
+         than the exact cutoff instant) yet the partition covering D is not spent
+         and survives the drop. */
+      const onStraddle = new Date(`${straddleDay}T00:00:01.000Z`);
+      const visitor = `straddle-${stamp}`;
+      await db.insert(clickEvents).values({
+        linkId: link!.id,
+        workspaceId: ws!.id,
+        occurredAt: onStraddle,
+        visitorHash: visitor,
+        rolledUpAt: new Date(),
+      });
+
+      // Really on the dated partition, not DEFAULT — the premise.
+      expect(await partitionOf(visitor)).toBe(straddlePartition);
+
+      const result = await pruneRetention(db, 20, undefined, operatorYears);
+
+      // Left for the drop, not row-DELETEd: rowsDeleted is zero in the all-
+      // default common case, and the row survives until its partition is dropped
+      // whole the next day.
+      expect(result.rowsDeleted).toBe(0);
+      expect(await partitionOf(visitor)).toBe(straddlePartition);
+    } finally {
+      await db.delete(workspaces).where(eq(workspaces.id, ws!.id));
+      // Dated partition name (click_events_YYYYMMDD), so the guarded helper does
+      // the detach-and-drop teardown.
+      await dropPartition(straddlePartition);
+    }
+  });
+
   it("keeps dropping partitions even when one tenant asks for the maximum retention", async () => {
     /* **The core #295 regression.**
      *
