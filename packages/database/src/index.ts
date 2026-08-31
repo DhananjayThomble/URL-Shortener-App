@@ -1,5 +1,6 @@
 export * from "./client.js";
 export * from "./secrets.js";
+export * from "./postgres-errors.js";
 export * from "./schema/index.js";
 export * from "./events.js";
 export * from "./click-events.js";

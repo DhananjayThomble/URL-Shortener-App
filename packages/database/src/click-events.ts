@@ -1,5 +1,6 @@
 import { clickEvents } from "./schema/index.js";
 import type { Database } from "./client.js";
+import { isTransientPartitionRoutingError } from "./postgres-errors.js";
 
 /* ============================================================
    The click event, and the one INSERT that lands it.
@@ -56,11 +57,82 @@ export function deserializeClickEvent(body: string): ClickEvent {
   return { ...wire, occurredAt: new Date(wire.occurredAt) };
 }
 
-/** The single INSERT path into click_events, shared by PostgresClickSink and
- *  the worker's SQS consumer so a click recorded either way is the same row.
- *  A no-op on an empty batch. */
-export async function insertClickEvents(db: Database, events: ClickEvent[]): Promise<void> {
+export interface InsertClickEventsOptions {
+  /** Called when the first attempt lost its race with a concurrent `ATTACH` and
+   *  a retry was issued, whether or not the retry then succeeded.
+   *
+   *  This exists so the retry is not invisible. The case for the retry is a rate
+   *  — a fraction of inserts failing under load — and without a signal there is
+   *  no way to tell whether that rate moved, or whether the retry is firing far
+   *  more often than expected because provisioning has stopped running. Both
+   *  callers log it at warn, the same way partition contention is reported. */
+  onRetry?: (err: unknown) => void;
+}
+
+/**
+ * The single INSERT path into click_events, shared by PostgresClickSink and the
+ * worker's SQS consumer so a click recorded either way is the same row. A no-op
+ * on an empty batch.
+ *
+ * **Retried once on a partition-routing failure.** `click_events` is partitioned
+ * by day with a DEFAULT partition, and the worker attaches new day-partitions
+ * while the redirect path is inserting. A row routed to the default can fail its
+ * partition constraint when an `ATTACH` for that row's day commits in between —
+ * #329 measured roughly 0.6% of inserts during a loaded provisioning pass, and
+ * the failures cluster exactly when provisioning has fallen behind, which is when
+ * the default is receiving traffic in the first place.
+ *
+ * That matters more than it sounds. Since click writes became awaited, this is a
+ * failed write rather than a delayed one. On the Postgres sink the caller catches
+ * and logs, and the click is simply gone. (On the AWS profile the worker reports
+ * the record in `batchItemFailures` and SQS redrives it, so there the same
+ * failure costs a redrive rather than the click — still worth removing, but not
+ * data loss.) It is also the exact case the DEFAULT partition exists to prevent:
+ * the whole argument for keeping a default is that an insert must never fail for
+ * want of a partition, and here one fails *because* a partition arrived.
+ *
+ * One retry, not more. The failing statement had already pinned its partition
+ * descriptor before the invalidation reached it, so it could not re-route; a
+ * fresh statement builds a fresh descriptor and lands the row in the partition
+ * that now exists. A row that fails twice is failing for some other reason and
+ * should surface rather than be retried into silence.
+ *
+ * **Two preconditions, both currently true, both easy to break:**
+ *
+ * 1. `db` must be a pool handle, not a transaction. Inside an explicit
+ *    transaction the 23514 aborts it and the retry fails with `25P02`, which is
+ *    not a code this retries — so the fix would quietly become a no-op. The
+ *    signature asking for `Database` rather than the `Executor` union is what
+ *    enforces this; widening it would need the retry rethought.
+ * 2. Resending the whole batch is safe because Drizzle emits one multi-row
+ *    `INSERT ... VALUES (...), (...)`, and in autocommit that statement is
+ *    all-or-nothing: a rejected attempt commits no rows. There is no second line
+ *    of defence if that ever changes — `id` is a server-side per-row `uuidv7()`,
+ *    so a duplicated click would carry a fresh key, be indistinguishable from a
+ *    real one, and be folded into the rollups.
+ *
+ * The alternative to all of this was making `ATTACH` take ACCESS EXCLUSIVE on the
+ * parent, which would close the window by serialising inserts against the attach
+ * — at the cost of blocking every insert for the duration of every attach. That
+ * trade was considered and rejected when the lock modes were chosen (see
+ * `drizzle/0014_retention_outcomes.sql`).
+ */
+export async function insertClickEvents(
+  db: Database,
+  events: ClickEvent[],
+  options?: InsertClickEventsOptions,
+): Promise<void> {
   if (events.length === 0) return;
+  try {
+    await insertOnce(db, events);
+  } catch (err) {
+    if (!isTransientPartitionRoutingError(err)) throw err;
+    options?.onRetry?.(err);
+    await insertOnce(db, events);
+  }
+}
+
+async function insertOnce(db: Database, events: ClickEvent[]): Promise<void> {
   await db.insert(clickEvents).values(
     events.map((event) => ({
       linkId: event.linkId,

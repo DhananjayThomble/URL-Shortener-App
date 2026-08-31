@@ -1,5 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { clickEvents, createDatabase, domains, eq, links, sql, workspaces, type Database } from "@snapurl/database";
+import {
+  clickEvents,
+  createDatabase,
+  domains,
+  eq,
+  insertClickEvents,
+  isTransientPartitionRoutingError,
+  links,
+  postgresErrorCode,
+  sql,
+  workspaces,
+  type ClickEvent,
+  type Database,
+} from "@snapurl/database";
 import { ensureClickPartitions, pruneRetention } from "./rollup.js";
 
 /* ============================================================
@@ -29,6 +42,17 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const describeDb = DATABASE_URL ? describe : describe.skip;
 
 const PARENT = "public.click_events";
+
+/** Poll until a condition holds, rather than sleeping and hoping. Used for lock
+ *  state, where a fixed head start has to cover a lazy TCP connect plus auth and
+ *  losing that race makes a test assert the wrong thing. */
+async function waitUntil(what: string, holds: () => Promise<boolean>, tries = 200): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    if (await holds()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
 
 describeDb("click_events partitioning", () => {
   let handle: ReturnType<typeof createDatabase>;
@@ -78,7 +102,7 @@ describeDb("click_events partitioning", () => {
 
   /** The far-future and retention-boundary days these tests provision. */
   async function dropProbePartitions() {
-    for (const offset of [400, 401]) await dropPartition(partitionName(offset));
+    for (const offset of [400, 401, 500]) await dropPartition(partitionName(offset));
 
     const rows = (await db.execute(sql`
       select to_char(d, 'YYYYMMDD') as stamp
@@ -795,4 +819,211 @@ describeDb("click_events partitioning", () => {
 
     expect(await isAttached(straddlingPartition)).toBe(true);
   });
+
+  /* ============================================================
+     #329: a click whose partition route is invalidated mid-insert.
+
+     These two are the premise the unit tests in
+     packages/database/src/click-events.test.ts stand on. Those use
+     a fake `db` and error fixtures — which is the right shape for
+     asserting branches, but it means the detector and its fixtures
+     were written from the same assumption and cannot contradict
+     each other. If Postgres words the failure differently, or does
+     not raise it at all, every one of those tests still passes and
+     the retry never fires in production.
+
+     So: one test that provokes each 23514 a real server can raise
+     here and checks the detector tells them apart, and one that
+     runs the actual race and checks the retry lands the row.
+     ============================================================ */
+
+  it("tells a partition-routing failure apart from the other things that raise 23514", async () => {
+    /* Four producers of 23514 reach this schema, and only the first two are worth
+       retrying. Provoked rather than asserted from fixtures, so the routine names
+       and message text in `isTransientPartitionRoutingError` are checked against
+       the server instead of against my recollection of it. */
+    await ensureClickPartitions(db);
+    const stamp = Date.now();
+    const noon = utcDay(0);
+    noon.setUTCHours(12);
+    const probeTable = `probe_check_${stamp}`;
+    const attachTable = `probe_attach_${stamp}`;
+    // Far enough out that no provisioning pass will ever attach it.
+    const orphanDay = utcDay(4000);
+    orphanDay.setUTCHours(12);
+
+    try {
+      /* 1. The #329 failure itself. Writing straight into the DEFAULT partition a
+            row whose day IS attached reproduces the same error, routine and
+            message as losing the race, without having to orchestrate one. */
+      const routed = await db
+        .execute(
+          sql`insert into click_events_default (link_id, workspace_id, occurred_at, visitor_hash)
+              values (${linkId}, ${workspaceId}, ${noon.toISOString()}, ${`shape-${stamp}`})`,
+        )
+        .then(() => null)
+        .catch((err: unknown) => err);
+
+      expect(routed).not.toBeNull();
+      expect(postgresErrorCode(routed)).toBe("23514");
+      expect(isTransientPartitionRoutingError(routed)).toBe(true);
+
+      /* 2. No partition at all. Unreachable on click_events, which always has a
+            default, so it is provoked on a throwaway table that has none. */
+      await db.execute(sql.raw(`create table "${attachTable}_np" (id int, d date not null) partition by range (d)`));
+      const unrouted = await db
+        .execute(sql.raw(`insert into "${attachTable}_np" values (1, '2020-01-01')`))
+        .then(() => null)
+        .catch((err: unknown) => err);
+
+      expect(postgresErrorCode(unrouted)).toBe("23514");
+      expect(isTransientPartitionRoutingError(unrouted)).toBe(true);
+
+      /* 3. An ordinary CHECK constraint. Retrying this would cost a round trip to
+            fail identically and make a real data problem look intermittent. */
+      await db.execute(sql.raw(`create table "${probeTable}" (n int check (n > 0))`));
+      const checked = await db
+        .execute(sql.raw(`insert into "${probeTable}" values (-1)`))
+        .then(() => null)
+        .catch((err: unknown) => err);
+
+      expect(postgresErrorCode(checked)).toBe("23514");
+      expect(isTransientPartitionRoutingError(checked)).toBe(false);
+
+      /* 4. An ATTACH refused because the default already holds a row for the
+            incoming range. Permanent — the fix is to drain the default, which is
+            what click_events_ensure_partition does — and its message mentions a
+            partition constraint too, so a looser message test would sweep it in
+            and retry DDL that can only fail again. */
+      await db.execute(
+        sql`insert into click_events_default (link_id, workspace_id, occurred_at, visitor_hash)
+            values (${linkId}, ${workspaceId}, ${orphanDay.toISOString()}, ${`orphan-${stamp}`})`,
+      );
+      await db.execute(
+        sql.raw(`create table "${attachTable}" (like "click_events" including defaults including constraints)`),
+      );
+      const refused = await db
+        .execute(
+          sql.raw(`alter table "click_events" attach partition "${attachTable}"
+                   for values from ('${orphanDay.toISOString().slice(0, 10)}')
+                   to ('${new Date(orphanDay.getTime() + 86_400_000).toISOString().slice(0, 10)}')`),
+        )
+        .then(() => null)
+        .catch((err: unknown) => err);
+
+      expect(postgresErrorCode(refused)).toBe("23514");
+      expect(isTransientPartitionRoutingError(refused)).toBe(false);
+    } finally {
+      await db.execute(sql.raw(`drop table if exists "${probeTable}"`));
+      await db.execute(sql.raw(`drop table if exists "${attachTable}"`));
+      await db.execute(sql.raw(`drop table if exists "${attachTable}_np"`));
+      await db.execute(sql`delete from click_events where visitor_hash = ${`orphan-${stamp}`}`);
+    }
+  }, 30_000);
+
+  it("retries a click into the partition that arrived mid-insert instead of losing it", async () => {
+    /* **The #329 regression, run for real.**
+     *
+     * The window is not "an insert happened to run during an ATTACH" — inserts
+     * routed to the DEFAULT partition are already serialised against the attach,
+     * because ATTACH takes ACCESS EXCLUSIVE on the table it drains. The window is
+     * an insert released from that lock at the worst possible moment: it routed to
+     * the default before the attach, so it cannot re-route, and by the time its
+     * partition constraint is evaluated the row belongs somewhere else.
+     *
+     * Staged exactly that way, so it is deterministic rather than a load test:
+     * hold the default's lock, let an insert for an unprovisioned day pile up
+     * behind it, attach that day, commit. Before the retry existed this insert
+     * failed and the click was gone. */
+    const stamp = Date.now();
+    const target = partitionName(500);
+    const day = utcDay(500);
+    const noon = utcDay(500);
+    noon.setUTCHours(12);
+    const visitor = `race-${stamp}`;
+
+    await dropPartition(target);
+    expect(await partitionExists(target)).toBe(false);
+
+    const blocker = createDatabase({ url: DATABASE_URL!, max: 1 });
+    const writer = createDatabase({ url: DATABASE_URL!, max: 1 });
+    let releaseAttach: () => void = () => {};
+    const attachGate = new Promise<void>((resolve) => {
+      releaseAttach = resolve;
+    });
+    const retried: unknown[] = [];
+
+    const lockOn = async (mode: string, granted: boolean) => {
+      const [row] = (await db.execute(sql`
+        select exists(
+          select 1 from pg_locks
+          where relation = 'public.click_events_default'::regclass
+            and mode = ${mode} and granted = ${granted}
+        ) as present
+      `)) as unknown as [{ present: boolean }];
+      return row.present;
+    };
+
+    try {
+      const held = blocker.db.transaction(async (tx) => {
+        // What ATTACH itself would take, held open so the ordering is ours.
+        await tx.execute(sql`lock table click_events_default in access exclusive mode`);
+        await attachGate;
+        await tx.execute(
+          sql`select click_events_ensure_partition(${day.toISOString().slice(0, 10)}::date)`,
+        );
+      });
+
+      await waitUntil("the default's ACCESS EXCLUSIVE lock to be granted", () =>
+        lockOn("AccessExclusiveLock", true),
+      );
+
+      const event: ClickEvent = {
+        linkId,
+        workspaceId,
+        occurredAt: noon,
+        visitorHash: visitor,
+        country: null,
+        city: null,
+        device: null,
+        browser: null,
+        os: null,
+        referrerHost: null,
+        isQr: false,
+        isBot: false,
+        blockedReason: null,
+        matchedRuleId: null,
+        variant: null,
+      };
+      const insert = insertClickEvents(writer.db, [event], {
+        onRetry: (err) => retried.push(err),
+      });
+
+      // The insert has routed to the default and is queued behind the lock. It
+      // cannot re-route from here, which is the whole point.
+      await waitUntil("the click insert to queue behind it", () =>
+        lockOn("RowExclusiveLock", false),
+      );
+
+      releaseAttach();
+      await held;
+      await insert;
+
+      // Retried exactly once, and reported — a silent retry would leave no way to
+      // tell whether provisioning has fallen behind.
+      expect(retried).toHaveLength(1);
+      expect(isTransientPartitionRoutingError(retried[0])).toBe(true);
+
+      // And the click is in the partition that arrived, not lost and not stranded
+      // in the default.
+      expect(await isAttached(target)).toBe(true);
+      expect(await partitionOf(visitor)).toBe(target);
+    } finally {
+      releaseAttach();
+      await blocker.close();
+      await writer.close();
+      await db.execute(sql`delete from click_events where visitor_hash = ${visitor}`);
+      await dropPartition(target);
+    }
+  }, 30_000);
 });

@@ -224,7 +224,13 @@ async function init(): Promise<void> {
       CLICK_QUEUE_URL,
     );
   } else {
-    clicks = new PostgresClickSink(database!.db);
+    /* Warn rather than error: a retry means the click was *saved*, so nothing is
+       broken. It is the rate that carries information — steady retries mean
+       partition provisioning has fallen behind and the DEFAULT partition is
+       taking live traffic, which is what a metric filter on this line is for. */
+    clicks = new PostgresClickSink(database!.db, (err) =>
+      app.log.warn({ err }, "click insert lost its partition route to a concurrent attach — retried"),
+    );
   }
 
   /* The salt source: the daily_salts table when a Postgres handle exists,
