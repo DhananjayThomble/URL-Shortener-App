@@ -243,6 +243,36 @@ This profile is deliberately simple, with no Redis and no DynamoDB:
   app, appending `X-Forwarded-For`, so the real client IP is exactly one hop
   from the right of the chain.
 
+## Retention
+
+How long raw click rows are kept is an operator decision, set on the worker.
+The rollups the dashboards read are kept regardless; only the raw per-click
+detail expires. These knobs are read by the worker at boot, so set them in the
+worker's environment (the `worker` service on the compose profile, the worker
+Deployment env on Helm).
+
+- **`CLICK_EVENTS_RETENTION_YEARS`** (default `3`). The install-wide retention
+  window, in years. `click_events` is partitioned by day and a single day's
+  partition is shared by *every* workspace, so there is one cutoff for the whole
+  table and it is yours to set, not the tenants'. The default `3` matches the
+  historical default and the per-workspace column default, so out of the box
+  nothing changes. Raise it when your storage budget and compliance needs allow
+  a longer window for the whole install.
+
+  Per-workspace retention (the "Click data retention" setting in the app) is
+  **subtractive**: a workspace may keep click data for *less* than this window,
+  never more. A workspace asking for more than the install window is clamped
+  down to it. Because a day's partition is only dropped once its whole range is
+  past the cutoff, raw rows can survive up to a day beyond the configured
+  window.
+
+- **`CLICK_EVENTS_MAX_RETAINED_DAYS`** (default `1100`, roughly three years of
+  daily partitions). An age-independent backstop on how many day-partitions stay
+  attached, so total storage cannot silently grow past a hard ceiling regardless
+  of the retention window. It is a no-op under normal operation (the default
+  matches the default retention) and only bites when partition count runs ahead
+  of the storage budget; tighten it if your storage is tighter than the default
+  window assumes.
 ## Browser extension
 
 The [SnapURL browser extension](./apps/extension/README.md) is a Manifest V3

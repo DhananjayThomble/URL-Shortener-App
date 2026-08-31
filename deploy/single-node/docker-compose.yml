@@ -145,6 +145,11 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Retention (see SELF-HOSTING.md "Retention"). Install-wide, operator-set;
+      # per-workspace retention is subtractive against it. Defaults preserve the
+      # historical 3-year window, so these only need setting to change it.
+      CLICK_EVENTS_RETENTION_YEARS: ${CLICK_EVENTS_RETENTION_YEARS:-3}
+      CLICK_EVENTS_MAX_RETAINED_DAYS: ${CLICK_EVENTS_MAX_RETAINED_DAYS:-1100}
     # No healthcheck and no ports: the worker serves no HTTP. It runs the
     # in-process rollup loop on timers; its liveness shows in the rollup tables.
 

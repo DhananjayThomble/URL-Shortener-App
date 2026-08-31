@@ -13,7 +13,12 @@ import {
   type ClickEvent,
   type Database,
 } from "@snapurl/database";
-import { ensureClickPartitions, pruneRetention } from "./rollup.js";
+import {
+  DEFAULT_INSTALL_RETENTION_YEARS,
+  ensureClickPartitions,
+  pruneRetention,
+  resolveRetentionYears,
+} from "./rollup.js";
 
 /* ============================================================
    click_events partitioning, against a real Postgres.
@@ -42,6 +47,40 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const describeDb = DATABASE_URL ? describe : describe.skip;
 
 const PARENT = "public.click_events";
+
+/* ============================================================
+   Operator retention-years parsing, as a pure function.
+
+   Unlike the DB-backed suite below, this needs no Postgres — it
+   is the guard that keeps a misconfigured CLICK_EVENTS_RETENTION_YEARS
+   from turning into a partition-drop cutoff at or ahead of today,
+   which would reclaim LIVE data (issue #295 review). Factoring the
+   parse/clamp into `resolveRetentionYears` lets it be asserted
+   without provisioning anything, so it runs everywhere, not just
+   in CI against a database.
+   ============================================================ */
+describe("resolveRetentionYears", () => {
+  it("uses the default when the env var is unset", () => {
+    expect(resolveRetentionYears(undefined)).toBe(DEFAULT_INSTALL_RETENTION_YEARS);
+  });
+
+  it("accepts a valid whole-year window", () => {
+    expect(resolveRetentionYears("1")).toBe(1);
+    expect(resolveRetentionYears("3")).toBe(3);
+    expect(resolveRetentionYears("100")).toBe(100);
+  });
+
+  it("falls back to the default rather than trusting a data-loss value", () => {
+    /* The failure mode this guard exists for: 0 or a negative moves the cutoff
+       to today or the future, and the drop pass would then reclaim live data.
+       A non-numeric string yields NaN. A fractional value is undefined for a
+       whole-year window. All of these must fall back to the safe default, never
+       flow into the cutoff arithmetic. */
+    for (const bad of ["0", "-1", "-5", "forever", "", "  ", "3.5", "NaN", "abc"]) {
+      expect(resolveRetentionYears(bad)).toBe(DEFAULT_INSTALL_RETENTION_YEARS);
+    }
+  });
+});
 
 /** Poll until a condition holds, rather than sleeping and hoping. Used for lock
  *  state, where a fixed head start has to cover a lazy TCP connect plus auth and
@@ -100,6 +139,14 @@ describeDb("click_events partitioning", () => {
     );
   }
 
+  /* The operator install-retention window these tests exercise pruneRetention
+     with. Retention is now operator-controlled (issue #295): the partition-drop
+     cutoff comes from this one value, not from max(retention_years) across
+     workspaces, so the boundary days the tests provision are derived from it
+     rather than from a DB read. Matches the pruneRetention/INSTALL_RETENTION_YEARS
+     default of 3, which is also the workspaces.retention_years column default. */
+  const INSTALL_RETENTION_YEARS = 3;
+
   /** The far-future and retention-boundary days these tests provision. */
   async function dropProbePartitions() {
     for (const offset of [400, 401, 500]) await dropPartition(partitionName(offset));
@@ -107,8 +154,7 @@ describeDb("click_events partitioning", () => {
     const rows = (await db.execute(sql`
       select to_char(d, 'YYYYMMDD') as stamp
       from (
-        select (current_date - (coalesce(max(retention_years), 3) * interval '1 year'))::date as c
-        from workspaces
+        select (current_date - (${INSTALL_RETENTION_YEARS}::int * interval '1 year'))::date as c
       ) k, lateral (values (k.c), (k.c - 2)) as v(d)
     `)) as unknown as Array<{ stamp: string }>;
     for (const row of rows) await dropPartition(`click_events_${row.stamp}`);
@@ -278,12 +324,11 @@ describeDb("click_events partitioning", () => {
   });
 
   it("expires a spent day by dropping its partition, not by deleting rows", async () => {
-    /* The cutoff is derived the same way pruneRetention derives it, rather than
-       hardcoded, so this holds whatever retention the workspaces in this
-       database happen to be using. */
+    /* The cutoff is derived from the operator install-retention window the code
+       now uses (#295), rather than from max(retention_years) across workspaces,
+       so it matches what pruneRetention computes for the same value. */
     const [{ cutoff }] = (await db.execute(sql`
-      select (current_date - (coalesce(max(retention_years), 3) * interval '1 year'))::date::text as cutoff
-      from workspaces
+      select (current_date - (${INSTALL_RETENTION_YEARS}::int * interval '1 year'))::date::text as cutoff
     `)) as unknown as [{ cutoff: string }];
 
     // Two days clear of the cutoff, so the partition's whole range is expired.
@@ -323,10 +368,9 @@ describeDb("click_events partitioning", () => {
        those clicks from click_events *and* from the rollups at once, and nothing
        would report it — the dashboards would simply under-count forever. */
     const [{ spent }] = (await db.execute(sql`
-      select ((
-        select ((now() at time zone 'UTC')::date - (coalesce(max(retention_years), 3) * interval '1 year'))::date
-        from workspaces
-      ) - 3)::text as spent
+      select (
+        ((now() at time zone 'UTC')::date - (${INSTALL_RETENTION_YEARS}::int * interval '1 year'))::date - 3
+      )::text as spent
     `)) as unknown as [{ spent: string }];
     const spentPartition = `click_events_${spent.replace(/-/g, "")}`;
 
@@ -355,12 +399,22 @@ describeDb("click_events partitioning", () => {
     expect(await partitionExists(spentPartition)).toBe(false);
   });
 
-  it("still deletes rows for a workspace retaining less than the longest retention", async () => {
-    /* The mixed-retention branch, and the whole reason `rowsDeleted` exists.
-       A partition is shared by every workspace, so it can only be dropped once
-       it is past the *longest* retention anyone configured. Workspaces keeping
-       less than that still need their rows removed individually from the
-       partitions that survive. */
+  it("still deletes rows for a workspace retaining less than the operator install window", async () => {
+    /* The subtractive per-workspace branch (#295), and the whole reason
+       `rowsDeleted` still exists. The partition-drop cutoff is now one
+       operator-controlled install window (here the pruneRetention default of 3
+       years), shared by every workspace. A workspace configured for LESS than
+       that keeps a shorter window than the install, so the partitions that
+       survive for the install window still hold rows it asked to expire — those
+       are removed individually by the DELETE.
+
+       The short workspace retains 1 year; the click is inside the 3-year install
+       window (so no partition covering it can be dropped) but past the short
+       workspace's own 1 year, so its effective window `least(1, 3)` is 1 year and
+       its row must be DELETEd. A second workspace retaining more than the install
+       window is seeded too, to prove it no longer moves the cutoff: it does NOT
+       keep the partition alive, and the drop cutoff stays at the operator's 3
+       years. */
     const stamp = Date.now();
     const [long] = await db
       .insert(workspaces)
@@ -381,29 +435,296 @@ describeDb("click_events partitioning", () => {
         .values({ workspaceId: short!.id, domainId: dom!.id, slug: `s${stamp}`, destination: "https://example.com" })
         .returning({ id: links.id });
 
-      // Two years back: past the short workspace's 1-year retention, but well
-      // inside the 20-year maximum, so no partition covering it can be dropped.
-      const twoYearsAgo = utcDay(-730);
-      twoYearsAgo.setUTCHours(11);
-      await db.execute(sql`select click_events_ensure_partition(${twoYearsAgo.toISOString().slice(0, 10)}::date)`);
+      // 18 months back: past the short workspace's 1-year retention, but inside
+      // the 3-year operator install window, so no partition covering it can be
+      // dropped and it must be removed by the row-level DELETE instead.
+      const eighteenMonthsAgo = utcDay(-547);
+      eighteenMonthsAgo.setUTCHours(11);
+      await db.execute(
+        sql`select click_events_ensure_partition(${eighteenMonthsAgo.toISOString().slice(0, 10)}::date)`,
+      );
       await db.insert(clickEvents).values({
         linkId: shortLink!.id,
         workspaceId: short!.id,
-        occurredAt: twoYearsAgo,
+        occurredAt: eighteenMonthsAgo,
         visitorHash: `mixed-${stamp}`,
         rolledUpAt: new Date(),
       });
 
-      const result = await pruneRetention(db);
+      // Explicit operator install window of 3 years, matching the default.
+      const result = await pruneRetention(db, 20, undefined, 3);
 
       // Removed by the DELETE, not by a drop — the partition is still live for
-      // the long-retention workspace.
+      // the workspaces at or above the install window.
       expect(result.rowsDeleted).toBeGreaterThanOrEqual(1);
       expect(await partitionOf(`mixed-${stamp}`)).toBeNull();
     } finally {
       await db.delete(workspaces).where(eq(workspaces.id, short!.id));
       await db.delete(workspaces).where(eq(workspaces.id, long!.id));
-      await dropPartition(partitionName(-730));
+      await dropPartition(partitionName(-547));
+    }
+  });
+
+  it("clamps an above-window workspace's DEFAULT-stranded rows down to the install cutoff", async () => {
+    /* The subtractive clamp for DEFAULT-partition rows (#295 review, issue 1).
+     *
+     * Per-workspace retention is subtractive: a workspace may keep LESS than the
+     * install window, never more. On dated day-partitions that holds for free —
+     * the drops reclaim everyone's rows past the operator cutoff. But a row an
+     * above-window workspace has stranded in the DEFAULT partition (which the
+     * drops skip by design) is reachable only by the row-level DELETE. The old
+     * guard `w.retention_years < install` excluded every at-or-above-window
+     * workspace from the DELETE, so those DEFAULT-stranded rows were swept by
+     * nothing and outlived the operator cutoff — the leak the reviewer flagged.
+     *
+     * The DELETE now bounds by the effective window `least(retention_years,
+     * install)`, so an above-window workspace's DEFAULT rows past the operator
+     * cutoff are removed here. This seeds a workspace at retention_years = 100
+     * with a rolled-up click ~4 years back that lives in the DEFAULT partition
+     * (its day is never provisioned), an operator install window of 3 years, and
+     * asserts the row is expired — clamped down to the install cutoff despite the
+     * tenant asking for 100 years. */
+    const stamp = Date.now();
+    const [forever] = await db
+      .insert(workspaces)
+      .values({ name: "default-clamp", slug: `dclamp-${stamp}`, retentionYears: 100 })
+      .returning({ id: workspaces.id });
+
+    try {
+      const [dom] = await db
+        .insert(domains)
+        .values({ workspaceId: forever!.id, domain: `dclamp-${stamp}.test` })
+        .returning({ id: domains.id });
+      const [foreverLink] = await db
+        .insert(links)
+        .values({
+          workspaceId: forever!.id,
+          domainId: dom!.id,
+          slug: `dc${stamp}`,
+          destination: "https://example.com",
+        })
+        .returning({ id: links.id });
+
+      /* ~4 years back: past the 3-year operator install window, so clamped down
+         and expirable, but well inside the tenant's 100 years. Its day is never
+         provisioned, so it lands in the DEFAULT partition — the case the drops
+         cannot reach. Rolled up, so the DELETE's `rolled_up_at is not null`
+         invariant lets it be removed. */
+      const fourYearsAgo = utcDay(-1461);
+      fourYearsAgo.setUTCHours(11);
+      const visitor = `dclamp-${stamp}`;
+      await db.insert(clickEvents).values({
+        linkId: foreverLink!.id,
+        workspaceId: forever!.id,
+        occurredAt: fourYearsAgo,
+        visitorHash: visitor,
+        rolledUpAt: new Date(),
+      });
+
+      // It really is stranded in the DEFAULT partition, not on a dated one — the
+      // premise of the test.
+      expect(await partitionOf(visitor)).toBe("click_events_default");
+
+      // Operator install window of 3 years; the 100-year tenant is clamped to it.
+      const result = await pruneRetention(db, 20, undefined, 3);
+
+      // Swept by the DELETE (nothing else can reach a DEFAULT row), honoring the
+      // "never keep more than the install window" promise.
+      expect(result.rowsDeleted).toBeGreaterThanOrEqual(1);
+      expect(await partitionOf(visitor)).toBeNull();
+    } finally {
+      // Cascade removes the seeded click; the row lived in the DEFAULT partition,
+      // which is never dropped, so no partition teardown is needed.
+      await db.delete(workspaces).where(eq(workspaces.id, forever!.id));
+    }
+  });
+
+  it("does not expire an above-window workspace's rows that are still inside the install cutoff", async () => {
+    /* The other half of the clamp: subtractive means clamped DOWN to the install
+       window, not expired early. A DEFAULT-stranded row from an above-window
+       workspace that is younger than the operator cutoff must survive — the
+       effective window `least(100, 3)` is 3 years, and this row is inside it. */
+    const stamp = Date.now();
+    const [forever] = await db
+      .insert(workspaces)
+      .values({ name: "default-keep", slug: `dkeep-${stamp}`, retentionYears: 100 })
+      .returning({ id: workspaces.id });
+
+    try {
+      const [dom] = await db
+        .insert(domains)
+        .values({ workspaceId: forever!.id, domain: `dkeep-${stamp}.test` })
+        .returning({ id: domains.id });
+      const [foreverLink] = await db
+        .insert(links)
+        .values({
+          workspaceId: forever!.id,
+          domainId: dom!.id,
+          slug: `dk${stamp}`,
+          destination: "https://example.com",
+        })
+        .returning({ id: links.id });
+
+      /* ~1 year back: inside the 3-year operator window, so it must NOT be
+         expired even though it is stranded in the DEFAULT partition. */
+      const oneYearAgo = utcDay(-365);
+      oneYearAgo.setUTCHours(11);
+      const visitor = `dkeep-${stamp}`;
+      await db.insert(clickEvents).values({
+        linkId: foreverLink!.id,
+        workspaceId: forever!.id,
+        occurredAt: oneYearAgo,
+        visitorHash: visitor,
+        rolledUpAt: new Date(),
+      });
+
+      expect(await partitionOf(visitor)).toBe("click_events_default");
+
+      await pruneRetention(db, 20, undefined, 3);
+
+      // Inside the install window, so kept — the clamp never expires EARLY.
+      expect(await partitionOf(visitor)).toBe("click_events_default");
+    } finally {
+      await db.execute(sql`delete from click_events where visitor_hash = ${`dkeep-${stamp}`}`);
+      await db.delete(workspaces).where(eq(workspaces.id, forever!.id));
+    }
+  });
+
+  it("does not row-DELETE the dated partition straddling the cutoff for an at-install-window workspace", async () => {
+    /* The all-default common-case invariant (#295 review v2, issue 1).
+     *
+     * The drop cutoff is a DATE (day-aligned): the day-partition covering
+     * `D = today - install years` survives the drop pass until its whole
+     * `[D, D+1)` range is strictly before the cutoff, i.e. until the next day.
+     * The DELETE's bound is a TIMESTAMP (`now() - install years`), which lands
+     * partway through D. If the DELETE reached dated partitions, it would sweep
+     * the slice `[D 00:00, now()-install years)` of that surviving straddling
+     * partition row-by-row every pass — for EVERY workspace at the install
+     * window, i.e. the all-default single-tenant install. That is the exact
+     * per-pass row-level WAL volume #293/#295 exist to keep off this path, and
+     * it contradicts the "rowsDeleted is zero, the whole job is a partition
+     * drop" promise plus the "rows may survive up to a day" settings copy.
+     *
+     * The DELETE only reaches beyond a workspace's own window for DEFAULT-
+     * partition rows, so a rolled-up click on the DATED straddling partition,
+     * older than the exact `now()-install years` instant but on a partition not
+     * yet spent, must be left for the drop (reclaimed whole the next day), NOT
+     * row-DELETEd here. This seeds a workspace at retention_years = the install
+     * window (3), provisions the dated partition for D, puts a rolled-up click
+     * on it at an early hour (so it is older than now()-3years), runs
+     * pruneRetention with the operator window of 3, and asserts rowsDeleted is 0
+     * and the row still exists. */
+    const stamp = Date.now();
+    const operatorYears = 3;
+
+    const [ws] = await db
+      .insert(workspaces)
+      .values({ name: "straddle", slug: `straddle-${stamp}`, retentionYears: operatorYears })
+      .returning({ id: workspaces.id });
+
+    /* The straddling day D = today - install years, day-aligned exactly the way
+       the cutoff and the partition bounds are, so the partition covering D
+       survives the drop (its range is not yet strictly before the cutoff) while
+       `now()-3years` lands partway through it. Derived from SQL rather than a day
+       count so leap years cannot slip it onto the wrong side of the boundary. */
+    const [{ straddleDay }] = (await db.execute(sql`
+      select ((now() at time zone 'UTC')::date - (${operatorYears}::int * interval '1 year'))::date::text as "straddleDay"
+    `)) as unknown as [{ straddleDay: string }];
+    const straddlePartition = `click_events_${straddleDay.replace(/-/g, "")}`;
+
+    try {
+      const [dom] = await db
+        .insert(domains)
+        .values({ workspaceId: ws!.id, domain: `straddle-${stamp}.test` })
+        .returning({ id: domains.id });
+      const [link] = await db
+        .insert(links)
+        .values({ workspaceId: ws!.id, domainId: dom!.id, slug: `st${stamp}`, destination: "https://example.com" })
+        .returning({ id: links.id });
+
+      // Provision the dated partition for D so the row is NOT in DEFAULT — the
+      // premise of the test is a dated straddling partition.
+      await db.execute(sql`select click_events_ensure_partition(${straddleDay}::date)`);
+      expect(await isAttached(straddlePartition)).toBe(true);
+
+      /* On D at 00:00:01 UTC — an early time-of-day, comfortably before now()'s
+         time-of-day, so `occurred_at < now() - 3 years` holds (the row is older
+         than the exact cutoff instant) yet the partition covering D is not spent
+         and survives the drop. */
+      const onStraddle = new Date(`${straddleDay}T00:00:01.000Z`);
+      const visitor = `straddle-${stamp}`;
+      await db.insert(clickEvents).values({
+        linkId: link!.id,
+        workspaceId: ws!.id,
+        occurredAt: onStraddle,
+        visitorHash: visitor,
+        rolledUpAt: new Date(),
+      });
+
+      // Really on the dated partition, not DEFAULT — the premise.
+      expect(await partitionOf(visitor)).toBe(straddlePartition);
+
+      const result = await pruneRetention(db, 20, undefined, operatorYears);
+
+      // Left for the drop, not row-DELETEd: rowsDeleted is zero in the all-
+      // default common case, and the row survives until its partition is dropped
+      // whole the next day.
+      expect(result.rowsDeleted).toBe(0);
+      expect(await partitionOf(visitor)).toBe(straddlePartition);
+    } finally {
+      await db.delete(workspaces).where(eq(workspaces.id, ws!.id));
+      // Dated partition name (click_events_YYYYMMDD), so the guarded helper does
+      // the detach-and-drop teardown.
+      await dropPartition(straddlePartition);
+    }
+  });
+
+  it("keeps dropping partitions even when one tenant asks for the maximum retention", async () => {
+    /* **The core #295 regression.**
+     *
+     * The drop cutoff used to be max(retention_years) across workspaces, and the
+     * settings endpoint lets any workspace ask for up to 100 years ('Forever' in
+     * the web UI). So a single tenant choosing the maximum moved the cutoff so
+     * far back that NO partition was ever dropped for the whole install, and
+     * every other workspace fell into the row-level DELETE — one tenant silently
+     * turning the feature off for everyone.
+     *
+     * The cutoff is now operator-controlled and per-workspace retention is
+     * subtractive. This seeds a workspace at retention_years = 100 (the contract
+     * max / the web 'Forever' value) and asserts a day spent past the OPERATOR
+     * cutoff is still dropped: the maxed-out tenant does not move the install
+     * cutoff and does not keep the shared partition alive. */
+    const stamp = Date.now();
+    const operatorYears = 3;
+
+    const [forever] = await db
+      .insert(workspaces)
+      .values({ name: "forever retention", slug: `forever-${stamp}`, retentionYears: 100 })
+      .returning({ id: workspaces.id });
+
+    // Two days past the operator cutoff, so the partition's whole range is spent
+    // under the operator window even though a 100-year workspace exists.
+    const [{ spent }] = (await db.execute(sql`
+      select (((now() at time zone 'UTC')::date - (${operatorYears}::int * interval '1 year'))::date - 2)::text as spent
+    `)) as unknown as [{ spent: string }];
+    const spentPartition = `click_events_${spent.replace(/-/g, "")}`;
+
+    try {
+      await db.execute(sql`select click_events_ensure_partition(${spent}::date)`);
+      expect(await isAttached(spentPartition)).toBe(true);
+
+      // Explicit operator retention of 3 years — the 100-year tenant must not
+      // override it.
+      const result = await pruneRetention(db, 20, undefined, operatorYears);
+
+      // Dropped, not kept: the maxed-out tenant did not move the cutoff.
+      expect(result.partitionsDropped).toBeGreaterThanOrEqual(1);
+      expect(await partitionExists(spentPartition)).toBe(false);
+    } finally {
+      await db.delete(workspaces).where(eq(workspaces.id, forever!.id));
+      // `spentPartition` is a click_events_YYYYMMDD name, so the guarded helper
+      // handles the detach-and-drop teardown.
+      await dropPartition(spentPartition);
     }
   });
 
@@ -809,8 +1130,7 @@ describeDb("click_events partitioning", () => {
        day + 1 has reached the cutoff. Dropping the partition that straddles the
        cutoff would delete data the workspace's retention still covers. */
     const [{ straddling }] = (await db.execute(sql`
-      select (current_date - (coalesce(max(retention_years), 3) * interval '1 year'))::date::text as straddling
-      from workspaces
+      select (current_date - (${INSTALL_RETENTION_YEARS}::int * interval '1 year'))::date::text as straddling
     `)) as unknown as [{ straddling: string }];
     const straddlingPartition = `click_events_${straddling.replace(/-/g, "")}`;
 
