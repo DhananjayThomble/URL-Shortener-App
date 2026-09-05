@@ -290,9 +290,17 @@ describeDb("click_events partitioning", () => {
     const visitor = `unprovisioned-${Date.now()}`;
     const farFuture = utcDay(400);
 
-    expect(await partitionExists(partitionName(400))).toBe(false);
-    await expect(addClickAt(farFuture, visitor)).resolves.not.toThrow();
-    expect(await partitionOf(visitor)).toBe("click_events_default");
+    try {
+      expect(await partitionExists(partitionName(400))).toBe(false);
+      await expect(addClickAt(farFuture, visitor)).resolves.not.toThrow();
+      expect(await partitionOf(visitor)).toBe("click_events_default");
+    } finally {
+      // Left unprovisioned on purpose (that is the point of this test), so the
+      // row must be swept here rather than via dropPartition — it otherwise
+      // strands a candidate day in DEFAULT for every later test in this file,
+      // including the #294 backfill suite's no-op assertion.
+      await db.execute(sql`delete from click_events where visitor_hash = ${visitor}`);
+    }
   });
 
   it("moves rows out of the DEFAULT partition when their day is provisioned", async () => {
