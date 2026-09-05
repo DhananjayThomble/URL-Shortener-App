@@ -22,6 +22,12 @@ import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
    creating a second pino with its own level and destination. */
 export const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
+/* Defaults to ROLLUP_SECONDS so nothing needs to change to keep today's
+   cadence — the dynamo-smoke CI job's ROLLUP_INTERVAL_SECONDS=0.25 already
+   governs this too, unless PROJECTION_INTERVAL_SECONDS overrides it
+   separately. See runProjection's header for why this runs on its own timer
+   rather than as a step inside runFrequent's. */
+const PROJECTION_SECONDS = Number(process.env.PROJECTION_INTERVAL_SECONDS ?? ROLLUP_SECONDS);
 const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3600);
 
 /* Four for the long-running process; the scheduled Lambda sets this to 1,
@@ -176,26 +182,54 @@ function projectionFor(database: Database): ProjectionTarget {
   return projectionTarget;
 }
 
-/** Runs often: this is the loop that makes the dashboards current. */
+/** Drains the projection outbox — the ONLY thing standing between a link
+ *  write and that link being resolvable from the DynamoDB projection (see
+ *  @snapurl/database's link-projection module and DynamoLinkResolver).
+ *
+ *  Kept on its OWN timer (main()'s loop below), independent of runFrequent's
+ *  rollupClicks + deliverWebhooks. It used to run as the middle step of
+ *  runFrequent, so its effective cadence was hostage to however long the
+ *  other two took on a given pass: rollupClicks runs a multi-statement
+ *  transaction over click_events whose cost grows with click volume, and
+ *  everyN's anti-overlap guard (see below) means a slow pass doesn't just
+ *  delay that tick's drain — it pushes the NEXT tick's start out too, so the
+ *  gap between a link's outbox insert and its projection could stretch well
+ *  past the nominal interval under load. That is exactly the gap the
+ *  LINK_PROJECTION=dynamo CI job's create-then-immediately-redirect smoke
+ *  assertions race against (see verify.yml's dynamo-smoke job): a link
+ *  created late in the smoke script's setup burst, then resolved moments
+ *  later, could still 404 because its outbox row was still waiting on a slow
+ *  rollup pass to finish. Running this alone keeps its cadence close to the
+ *  configured interval regardless of what rollupClicks or deliverWebhooks are
+ *  doing. */
+export async function runProjection(database: Database) {
+  const outbox = await drainOutbox(database, projectionFor(database));
+  if (outbox.processed || outbox.failed) {
+    log.info({ projected: outbox.processed, projectionFailures: outbox.failed }, "projection drain");
+  }
+  return outbox;
+}
+
+/** Runs often: this is the loop that makes the dashboards current. Outbox
+ *  draining lives in the separate runProjection() (see its header) so its
+ *  cadence is never hostage to how long rollupClicks or deliverWebhooks take
+ *  here. */
 export async function runFrequent(database: Database) {
   const rolled = await rollupClicks(database);
-  const outbox = await drainOutbox(database, projectionFor(database));
   const webhooks = await deliverWebhooks(database);
 
-  if (rolled.events || outbox.processed || outbox.failed || webhooks.sent || webhooks.failed) {
+  if (rolled.events || webhooks.sent || webhooks.failed) {
     log.info(
       {
         clicks: rolled.events,
         days: rolled.days,
-        projected: outbox.processed,
-        projectionFailures: outbox.failed,
         webhooksSent: webhooks.sent,
         webhookFailures: webhooks.failed,
       },
       "frequent pass",
     );
   }
-  return { rolled, outbox, webhooks };
+  return { rolled, webhooks };
 }
 
 /** Runs hourly: housekeeping, and the jobs that keep the privacy promise. */
@@ -357,15 +391,20 @@ async function main() {
   const { db } = await initDb();
 
   if (process.argv.includes("--once")) {
+    const projection = await runProjection(db);
     const frequent = await runFrequent(db);
     const maintenance = await runMaintenance(db);
-    log.info({ frequent, maintenance }, "single pass complete");
+    log.info({ projection, frequent, maintenance }, "single pass complete");
     await close();
     return;
   }
 
-  log.info({ rollupSeconds: ROLLUP_SECONDS, maintenanceSeconds: MAINTENANCE_SECONDS }, "worker started");
+  log.info(
+    { projectionSeconds: PROJECTION_SECONDS, rollupSeconds: ROLLUP_SECONDS, maintenanceSeconds: MAINTENANCE_SECONDS },
+    "worker started",
+  );
   const timers = [
+    everyN(PROJECTION_SECONDS, () => runProjection(db)),
     everyN(ROLLUP_SECONDS, () => runFrequent(db)),
     everyN(MAINTENANCE_SECONDS, () => runMaintenance(db)),
   ];
@@ -381,7 +420,8 @@ async function main() {
 
 /* Only start the loop when this file is the process entrypoint.
  *
- * dist/lambda.js imports runFrequent and runMaintenance from here, and an
+ * dist/lambda.js imports runProjection, runFrequent and runMaintenance from
+ * here, and an
  * unguarded main() would start a 30-second interval inside a Lambda that is
  * about to be frozen — burning the invocation's time budget on work nobody
  * asked for, then being suspended mid-flight. */

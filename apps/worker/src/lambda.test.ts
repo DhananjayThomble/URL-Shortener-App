@@ -21,10 +21,12 @@ vi.mock("@snapurl/database", async (importOriginal) => {
 const fakeDb = { __fake: true };
 const runFrequent = vi.fn(async () => ({ rolled: { events: 0 } }));
 const runMaintenance = vi.fn(async () => ({ ok: true }));
+const runProjection = vi.fn(async () => ({ processed: 0, failed: 0 }));
 vi.mock("./main.js", () => ({
   initDb: vi.fn(async () => ({ db: fakeDb, close: async () => {} })),
   runFrequent: (...args: unknown[]) => runFrequent(...args),
   runMaintenance: (...args: unknown[]) => runMaintenance(...args),
+  runProjection: (...args: unknown[]) => runProjection(...args),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -137,6 +139,8 @@ describe("worker task dispatch", () => {
     runMaintenance.mockResolvedValue({ ok: true } as never);
     runFrequent.mockReset();
     runFrequent.mockResolvedValue({ rolled: { events: 0 } } as never);
+    runProjection.mockReset();
+    runProjection.mockResolvedValue({ processed: 0, failed: 0 } as never);
   });
 
   it("dispatches the backfill task to backfillClickPartitions and returns its result", async () => {
@@ -168,8 +172,14 @@ describe("worker task dispatch", () => {
 
   it("does not treat a frequent invocation as a backfill", async () => {
     runFrequent.mockResolvedValue({ rolled: { events: 0 } } as never);
+    runProjection.mockResolvedValue({ processed: 3, failed: 0 } as never);
     const result = await handler({ task: "frequent" });
-    expect(result).toEqual({ task: "frequent", frequent: { rolled: { events: 0 } } });
+    // runProjection's result is folded in as `outbox`, exactly the field name
+    // runFrequent used to return when it drained the outbox itself.
+    expect(result).toEqual({
+      task: "frequent",
+      frequent: { rolled: { events: 0 }, outbox: { processed: 3, failed: 0 } },
+    });
     expect(backfillClickPartitions).not.toHaveBeenCalled();
   });
 });
