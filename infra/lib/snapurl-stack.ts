@@ -186,6 +186,10 @@ export class SnapUrlStack extends Stack {
       ec2.InstanceSize.NANO,
     );
     let vpcProps: ec2.VpcProps;
+    /* Held outside the switch so the inbound rule the NAT instance needs can be
+       added after the VPC exists (its CIDR isn't known until then). Undefined
+       on every strategy but 'instance'. */
+    let natInstanceProvider: ec2.NatInstanceProviderV2 | undefined;
     switch (natStrategy) {
       case "none":
         vpcProps = {
@@ -199,24 +203,30 @@ export class SnapUrlStack extends Stack {
         };
         break;
       case "instance":
+        /* OUTBOUND_ONLY, not the INBOUND_AND_OUTBOUND default: the default
+           synthesizes a security group allowing all inbound from 0.0.0.0/0 on
+           this public-IP instance (cdk synth W2508), which is unnecessary
+           attack surface.
+
+           OUTBOUND_ONLY on its own is NOT sufficient, though: it drops *every*
+           ingress rule, and a NAT instance is not the originator of the flows
+           it forwards. A Lambda in a private subnet is; its packets arrive at
+           this instance's ENI as a fresh INBOUND connection, which stateful
+           return-traffic tracking does not cover because no prior outbound flow
+           exists to match. With no ingress rule the instance silently drops all
+           forwarded traffic and every egress call times out. CDK documents this:
+           set anything other than INBOUND_AND_OUTBOUND and you must configure
+           the group yourself. The allowFrom(vpcCidr) below is that rule — it
+           admits only the VPC's own subnets, so unsolicited inbound from the
+           internet stays blocked, which was the point of OUTBOUND_ONLY. */
+        natInstanceProvider = ec2.NatProvider.instanceV2({
+          instanceType: egressAz,
+          defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
+        });
         vpcProps = {
           maxAzs: 2,
           natGateways: 1, // One instance, not one per AZ — the hobby-stack SPOF tradeoff.
-          natGatewayProvider: ec2.NatProvider.instanceV2({
-            instanceType: egressAz,
-            /* OUTBOUND_ONLY, not the INBOUND_AND_OUTBOUND default: a NAT
-               accepts traffic *from the private subnets* and forwards it out;
-               it must not accept unsolicited inbound from the internet. The
-               default synthesizes a security group that allows all inbound
-               from 0.0.0.0/0 on this public-IP instance (cdk synth W2508),
-               which is unnecessary attack surface. OUTBOUND_ONLY keeps
-               allowAllOutbound (so egress still forwards) and drops the
-               0.0.0.0/0 ingress rule; return traffic for outbound flows is
-               permitted by the SG's stateful behaviour, and the private-subnet
-               default route still points at this instance's ENI, so egress is
-               unaffected. */
-            defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
-          }),
+          natGatewayProvider: natInstanceProvider,
           subnetConfiguration: [
             { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
             { name: "egress", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
@@ -245,6 +255,19 @@ export class SnapUrlStack extends Stack {
     }
 
     const vpc = new ec2.Vpc(this, "Vpc", vpcProps);
+
+    /* The ingress rule OUTBOUND_ONLY leaves out (see the 'instance' case
+       above). Scoped to the VPC CIDR, not 0.0.0.0/0: the private subnets can
+       reach the NAT instance to be forwarded, the internet cannot reach it
+       unsolicited. Without this, every outbound call from the app Lambdas —
+       Secrets Manager at cold start, RDS, Safe Browsing, webhooks, mail —
+       times out. */
+    natInstanceProvider?.connections.allowFrom(
+      ec2.Peer.ipv4(vpc.vpcCidrBlock),
+      ec2.Port.allTraffic(),
+      // No apostrophes: EC2 restricts rule descriptions to a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*
+      "Forwarded egress from private subnets in this VPC",
+    );
 
     /* The DB never needs egress, so it stays in the isolated group in every
        mode. The app Lambdas take the egress-aware group: PRIVATE_WITH_EGRESS
@@ -508,6 +531,23 @@ export class SnapUrlStack extends Stack {
       // on a db.t4g.micro is small enough to exhaust under modest concurrency.
       DATABASE_POOL_MAX: "1",
       DATABASE_SSL: "true",
+      /* RDS presents a certificate signed by the Amazon RDS root CA, which is
+         not in Node's trust store (Node ships Mozilla's bundle), so the
+         'verify-full' default in buildSslOption fails the handshake with
+         SELF_SIGNED_CERT_IN_CHAIN. The connection stays encrypted; what is
+         given up is verifying the server's identity.
+
+         Acceptable here only because of the topology this stack builds: the
+         instance is publiclyAccessible: false, sits in PRIVATE_ISOLATED
+         subnets, and its security group takes 5432 from the Lambda security
+         group alone — so the path never leaves the VPC and there is no
+         position from which to mount the MITM verification would catch.
+
+         The proper fix is to bake the RDS CA bundle into the images and point
+         NODE_EXTRA_CA_CERTS at it, which restores 'verify-full'. Tracked
+         separately; do that before this database is ever reachable from
+         outside the VPC. */
+      DATABASE_SSL_NO_VERIFY: "true",
       // Context wins over Parameter Store, so a one-off deploy against a
       // preview origin does not mean editing the stored value and remembering
       // to put it back.
