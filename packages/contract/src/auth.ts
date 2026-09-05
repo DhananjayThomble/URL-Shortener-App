@@ -92,9 +92,18 @@ export type TotpDisableInput = z.infer<typeof TotpDisableInput>;
  * challenge: a second factor the user turned on is not skipped because the
  * first factor came from somewhere else.
  */
+/* #263 — the ID token alone is a bearer credential for as long as it is
+   valid (about an hour for Google), so anyone who obtains one — a compromised
+   client, a logged URL, a leaky proxy — can replay it here and get a session.
+   `nonce` is generated fresh per sign-in attempt and embedded in the
+   provider's authorize request; OAuthService requires the returned token's
+   `nonce` claim to match it, which a replayed token minted for a different
+   attempt cannot. Required, not optional: there is no released version of
+   this endpoint that ever accepted an unbound token from a real caller. */
 export const OAuthSignInInput = z.object({
   provider: z.enum(["google", "apple"]),
   idToken: z.string().min(1),
+  nonce: z.string().min(16).max(256),
 });
 export type OAuthSignInInput = z.infer<typeof OAuthSignInInput>;
 

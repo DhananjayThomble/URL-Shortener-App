@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readKid, toProfile } from "./oauth.service.js";
+import { constantTimeEqual, readKid, toProfile } from "./oauth.service.js";
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 
@@ -67,5 +67,29 @@ describe("toProfile", () => {
     expect(toProfile({ ...base, name: "   " })!.name).toBeNull();
     expect(toProfile(base)!.name).toBeNull();
     expect(toProfile({ ...base, name: " Ada " })!.name).toBe("Ada");
+  });
+});
+
+describe("constantTimeEqual", () => {
+  // #263: this is what verify() uses to bind an ID token to the nonce its own
+  // sign-in attempt generated, so a stolen-but-otherwise-valid token cannot be
+  // replayed under a different attempt's nonce.
+  it("is true for identical strings", () => {
+    expect(constantTimeEqual("abc123", "abc123")).toBe(true);
+  });
+
+  it("is false for a mismatch of the same length", () => {
+    expect(constantTimeEqual("abc123", "abc124")).toBe(false);
+  });
+
+  it("is false for different lengths rather than throwing", () => {
+    // node:crypto's timingSafeEqual throws on a length mismatch; a replay
+    // attempt sending a shorter or longer nonce must not crash the request.
+    expect(constantTimeEqual("short", "a-lot-longer-than-that")).toBe(false);
+    expect(constantTimeEqual("", "nonempty")).toBe(false);
+  });
+
+  it("is false when both are empty-vs-nonempty in either direction", () => {
+    expect(constantTimeEqual("nonempty", "")).toBe(false);
   });
 });

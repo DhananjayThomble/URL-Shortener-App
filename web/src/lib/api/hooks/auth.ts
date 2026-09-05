@@ -9,6 +9,7 @@ import {
   TotpRecoveryCodes,
   TotpSetup,
   type LoginInput,
+  type OAuthSignInInput,
   type RegisterInput,
   type TotpDisableInput,
   type TotpEnableInput,
@@ -38,6 +39,28 @@ export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: LoginInput) => request("/auth/login", LoginResult, { method: "POST", body, anonymous: true }),
+    onSuccess: (result) => {
+      if ("challenge" in result) return;
+      tokens.set(result.accessToken, result.refreshToken);
+      qc.setQueryData(qk.me, result.user);
+    },
+  });
+}
+
+/**
+ * Google/Apple sign-in (#263). Same response union and the same "challenge"
+ * narrowing as useLogin — a provider sign-in does not bypass a second factor
+ * the account owner turned on.
+ *
+ * `nonce` must be the exact value passed to the provider's SDK for this
+ * attempt (see GoogleButton) — it is how the API tells a fresh token from a
+ * replayed one.
+ */
+export function useOAuthSignIn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: OAuthSignInInput) =>
+      request("/auth/oauth", LoginResult, { method: "POST", body, anonymous: true }),
     onSuccess: (result) => {
       if ("challenge" in result) return;
       tokens.set(result.accessToken, result.refreshToken);

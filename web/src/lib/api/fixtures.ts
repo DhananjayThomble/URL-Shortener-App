@@ -611,7 +611,7 @@ export async function fixtureRequest<T>(
   let data: unknown;
 
   /* ---- auth ---- */
-  if (m(/^\/auth\/(login|register)$/)) data = SESSION;
+  if (m(/^\/auth\/(login|register|oauth)$/)) data = SESSION;
   else if (m(/^\/auth\/me$/)) data = SESSION.user;
   else if (m(/^\/auth\/logout$/)) data = undefined;
   else if (m(/^\/auth\/2fa\/setup$/)) {
