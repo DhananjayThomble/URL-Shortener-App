@@ -69,6 +69,15 @@ new SnapUrlStack(app, "SnapUrl", {
   budgetEmail: app.node.tryGetContext("budgetEmail"),
   domainName,
   certificate,
+  /* Optional, same shape as budgetEmail: unset means the Google sign-in
+     button on the frontend renders (it only checks its own
+     NEXT_PUBLIC_GOOGLE_CLIENT_ID) but every attempt fails server-side, since
+     OAuthService.enabled('google') has nothing to check the ID token's
+     audience against. Set with
+     `-c googleOAuthClientId=<id>.apps.googleusercontent.com`, matching the
+     Google Cloud Console client's id exactly, and matching
+     NEXT_PUBLIC_GOOGLE_CLIENT_ID on the frontend. */
+  googleOAuthClientId: app.node.tryGetContext("googleOAuthClientId"),
   description: "SnapURL: API, redirect service, worker, and the Postgres they share.",
   tags: {
     Project: "SnapURL",
