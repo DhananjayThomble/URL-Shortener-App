@@ -1,17 +1,50 @@
 #!/usr/bin/env node
-import { App } from "aws-cdk-lib";
+import { App, Stack } from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { SnapUrlStack } from "../lib/snapurl-stack.js";
 
 /* Region and account come from the CLI environment, not from this file, so
    the same stack can be synthesised by anyone without editing it. */
 const app = new App();
 
+const account = process.env.CDK_DEFAULT_ACCOUNT;
+// ap-south-1 (Mumbai) matches the project's timezone and its users.
+const region = process.env.CDK_DEFAULT_REGION ?? "ap-south-1";
+
+/* Custom domain on the CloudFront distribution (the redirect/short-link
+   edge). Optional — unset means the raw *.cloudfront.net hostname, exactly
+   the prior behaviour. Set with `-c domainName=snapurl.in`.
+
+   CloudFront's certificate MUST live in us-east-1 regardless of which region
+   the rest of the stack deploys to (a CloudFront/ACM requirement, not a
+   choice made here) — so when a domain is given, a second small Stack pinned
+   to us-east-1 holds just the Certificate, and `crossRegionReferences: true`
+   on both stacks lets the main stack (region above) consume that us-east-1
+   resource. DNS validation is used rather than Route53 validation: this
+   project's DNS does not have to be on Route53 (Cloudflare, for one, works
+   fine) — `cdk deploy` will pause on the certificate resource printing the
+   CNAME record to add wherever the domain's DNS actually lives, and resume
+   once ACM sees it resolve. */
+const domainName = app.node.tryGetContext("domainName") as string | undefined;
+
+let certificate: acm.ICertificate | undefined;
+if (domainName) {
+  const certStack = new Stack(app, "SnapUrlCert", {
+    env: { account, region: "us-east-1" },
+    crossRegionReferences: true,
+    description: "us-east-1 ACM certificate for the SnapUrl CloudFront distribution (CloudFront's own requirement).",
+  });
+  certificate = new acm.Certificate(certStack, "Certificate", {
+    domainName,
+    validation: acm.CertificateValidation.fromDns(),
+  });
+}
+
 new SnapUrlStack(app, "SnapUrl", {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    // ap-south-1 (Mumbai) matches the project's timezone and its users.
-    region: process.env.CDK_DEFAULT_REGION ?? "ap-south-1",
-  },
+  env: { account, region },
+  // Required alongside the cert stack's own flag whenever this stack
+  // references a construct (the certificate) created in a different region.
+  crossRegionReferences: Boolean(domainName),
   /* Which set of Parameter Store values this deploy reads. One prefix per
      stage, so a staging deploy cannot pick up production's origins. */
   configPrefix: app.node.tryGetContext("configPrefix") ?? "/snapurl/prod",
@@ -34,6 +67,8 @@ new SnapUrlStack(app, "SnapUrl", {
      deploys; set it with `-c budgetEmail=you@example.com` to turn the $25/$50/
      $75 spend alarms on. */
   budgetEmail: app.node.tryGetContext("budgetEmail"),
+  domainName,
+  certificate,
   description: "SnapURL: API, redirect service, worker, and the Postgres they share.",
   tags: {
     Project: "SnapURL",

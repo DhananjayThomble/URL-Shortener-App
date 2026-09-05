@@ -6,6 +6,7 @@ import {
   Token,
   type StackProps,
 } from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -107,6 +108,21 @@ export interface SnapUrlStackProps extends StackProps {
    * `-c budgetEmail=you@example.com`. See the Budgets block below.
    */
   budgetEmail?: string;
+  /**
+   * Custom domain for the CloudFront distribution (the redirect/short-link
+   * edge), e.g. `snapurl.in`. Optional — unset means the raw
+   * `*.cloudfront.net` hostname, exactly the prior behaviour. Set with
+   * `-c domainName=snapurl.in` in `bin/snapurl.ts`, which is also what builds
+   * {@link certificate} (a cross-region us-east-1 ACM cert — CloudFront's own
+   * requirement, not a choice made here). Passing one without the other is a
+   * synth-time error: a distribution with a domain name and no certificate
+   * fails CloudFormation validation, and a certificate with nothing pointed at
+   * it is dead weight.
+   */
+  domainName?: string;
+  /** See {@link domainName}. Must be issued in us-east-1 regardless of the
+   *  stack's own region — a CloudFront/ACM requirement. */
+  certificate?: acm.ICertificate;
 }
 
 export class SnapUrlStack extends Stack {
@@ -129,6 +145,17 @@ export class SnapUrlStack extends Stack {
       throw new Error(
         `Invalid natStrategy '${natStrategy as string}'. ` +
           `Expected one of: 'gateway', 'instance', 'none' (default 'instance').`,
+      );
+    }
+
+    /* domainName and certificate are meant to travel together (bin/snapurl.ts
+       builds both from one `-c domainName=` flag) — catch it here, loudly, if
+       they ever drift apart, rather than letting CloudFormation reject a
+       distribution with a domain name and no certificate deep into a deploy. */
+    if (Boolean(props.domainName) !== Boolean(props.certificate)) {
+      throw new Error(
+        "domainName and certificate must be set together (or neither). " +
+          "Pass -c domainName=<your domain> and let bin/snapurl.ts build the certificate.",
       );
     }
 
@@ -659,6 +686,21 @@ export class SnapUrlStack extends Stack {
       ...vpcSettings,
     });
 
+    /* Only the API sends mail (member invites, via MailService) — the
+       redirect and worker never do, so neither gets this grant. Scoped to
+       "identity/*" in this account/region rather than a bare "*": SES has no
+       CDK-created identity here to point at directly (the operator verifies
+       one by hand in the console — see apps/api/src/mail/mail.service.ts),
+       but the caller-side action can still be scoped to identities that
+       could ever exist in this account, which is the least-privilege shape
+       available without knowing the identity ahead of time. Harmless if
+       MAIL_TRANSPORT stays "outbox" — an unused grant, not an unused feature. */
+    apiFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ses:SendEmail", "ses:SendRawEmail"],
+        resources: [`arn:aws:ses:${this.region}:${this.account}:identity/*`],
+      }),
+    );
 
     const httpApi = new apigw.HttpApi(this, "HttpApi", {
       // The app sets its own CORS headers; doing it here too would send two.
@@ -883,6 +925,13 @@ export class SnapUrlStack extends Stack {
       // immaterial at the payload size of a 302. (300 — the whole world,
       // incl. Australia/NZ — buys nothing this audience uses.)
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+      // Both optional and set together (validated above): with neither, the
+      // distribution answers only on its own *.cloudfront.net hostname, exactly
+      // the original behaviour. domainNames takes an array because CloudFront
+      // supports multiple alternate names on one distribution, but this stack
+      // only ever builds one certificate for one name.
+      domainNames: props.domainName ? [props.domainName] : undefined,
+      certificate: props.certificate,
       comment: "SnapURL redirect edge",
     });
 
@@ -1115,8 +1164,13 @@ export class SnapUrlStack extends Stack {
       description: "Set this as NEXT_PUBLIC_API_URL on Vercel, with /api/v1 appended.",
     });
     new CfnOutput(this, "RedirectDomain", {
-      value: `https://${distribution.distributionDomainName}`,
-      description: "CNAME your short domain here.",
+      /* Once domainName is set this already IS the real short domain — there
+         is nothing left to CNAME. Without it, the description's advice still
+         applies: point a domain at the raw *.cloudfront.net hostname below. */
+      value: props.domainName ? `https://${props.domainName}` : `https://${distribution.distributionDomainName}`,
+      description: props.domainName
+        ? "The short domain, already live on this distribution."
+        : "CNAME your short domain here, or redeploy with -c domainName=<your domain> to attach one directly.",
     });
     /* The raw redirect Function URL. It is IAM-signed behind OAC, so a direct
        (unsigned) request must return 403 while the same path through
