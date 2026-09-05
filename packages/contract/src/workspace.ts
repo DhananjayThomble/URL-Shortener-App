@@ -94,6 +94,9 @@ export const InviteMemberInput = z.object({
 });
 export type InviteMemberInput = z.infer<typeof InviteMemberInput>;
 
+export const ChangeRoleInput = z.object({ role: MemberRole });
+export type ChangeRoleInput = z.infer<typeof ChangeRoleInput>;
+
 export const AuditEntry = z.object({
   id: z.string(),
   at: z.string(),

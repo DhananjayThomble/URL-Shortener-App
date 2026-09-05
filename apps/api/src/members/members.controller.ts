@@ -1,11 +1,8 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post } from "@nestjs/common";
-import { z } from "zod";
-import { InviteMemberInput, MemberRole } from "@snapurl/contract";
+import { ChangeRoleInput, InviteMemberInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, type RequestActor } from "../auth/auth.guard.js";
 import { MembersService } from "./members.service.js";
-
-const ChangeRoleInput = z.object({ role: MemberRole });
 
 @Controller()
 export class MembersController {
@@ -28,7 +25,7 @@ export class MembersController {
   async changeRole(
     @Actor() actor: RequestActor,
     @Param("id") id: string,
-    @Body(zodBody(ChangeRoleInput)) input: z.infer<typeof ChangeRoleInput>,
+    @Body(zodBody(ChangeRoleInput)) input: ChangeRoleInput,
   ) {
     await this.members.changeRole(actor.workspaceId, id, input.role, actor.label);
   }
