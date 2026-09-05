@@ -244,12 +244,17 @@ echo "== oauth sign-in =="
 # CI configures no client id, so both providers are switched off. A provider
 # that is off must refuse rather than half-run — this is the state most
 # deployments are in, and it is the one worth pinning.
+#
+# A nonce (#263) is required on every request regardless of provider state —
+# it is the contract's own validation, checked before OAuthService ever sees
+# the request — so these each carry one just to reach the case they pin.
+NONCE="smoke-test-nonce-0000000000000000"
 BODY=$(curl -s -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
-  -d '{"provider":"google","idToken":"eyJhbGciOiJSUzI1NiIsImtpZCI6IngifQ.e30.sig"}')
+  -d "{\"provider\":\"google\",\"idToken\":\"eyJhbGciOiJSUzI1NiIsImtpZCI6IngifQ.e30.sig\",\"nonce\":\"$NONCE\"}")
 check "an unconfigured provider is refused" 'not configured' "$BODY"
 
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
-  -d '{"provider":"google","idToken":"not-a-jwt"}')
+  -d "{\"provider\":\"google\",\"idToken\":\"not-a-jwt\",\"nonce\":\"$NONCE\"}")
 status "a malformed token is refused" "401" "$CODE" ""
 
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/oauth" -H 'Content-Type: application/json' \
