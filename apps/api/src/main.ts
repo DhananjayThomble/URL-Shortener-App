@@ -1,6 +1,17 @@
 import "reflect-metadata";
+/* Import order matters here, unusually: extendZodWithOpenApi() (inside
+   ./openapi/registry.js, pulled in by document.js below) has to patch zod's
+   prototypes before ANY zod schema anywhere in the app is constructed — the
+   patch does not apply retroactively to schemas already built with the
+   unpatched .object()/.extend()/.optional() etc, only to ones built after.
+   AppModule transitively constructs every schema in packages/contract the
+   moment it loads, so this import has to come first. This project compiles
+   to CommonJS, where imports run in source order rather than being hoisted,
+   which is what makes that ordering meaningful at all. */
+import { buildOpenApiDocument } from "./openapi/document.js";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import { SwaggerModule, type OpenAPIObject } from "@nestjs/swagger";
 import { Logger } from "nestjs-pino";
 import cors from "@fastify/cors";
 import { resolveSecrets } from "@snapurl/database";
@@ -58,10 +69,22 @@ async function bootstrap() {
 
   app.enableShutdownHooks();
 
+  /* Generated from packages/contract (#339), not from decorators — see
+     openapi/registry.ts for why. Mounted next to the prefix it documents
+     (env.API_PREFIX/docs) rather than a fixed path, so it still lines up if
+     that prefix is ever changed. */
+  const openApiDocument = buildOpenApiDocument(env.API_PREFIX);
+  // zod-to-openapi's OpenAPIObject (openapi3-ts) and @nestjs/swagger's own
+  // OpenAPIObject type are two independent declarations of the same OpenAPI
+  // 3.0 JSON shape — structurally compatible at runtime, nominally distinct
+  // to the type checker. SwaggerModule.setup() only ever serializes this.
+  SwaggerModule.setup(`${env.API_PREFIX}/docs`, app, openApiDocument as unknown as OpenAPIObject);
+
   await app.listen({ port: env.PORT, host: "0.0.0.0" });
 
   const logger = app.get(Logger);
   logger.log(`SnapURL API listening on http://localhost:${env.PORT}/${env.API_PREFIX}`);
+  logger.log(`API docs at http://localhost:${env.PORT}/${env.API_PREFIX}/docs`);
   if (!env.GOOGLE_SAFE_BROWSING_API_KEY) {
     logger.warn(
       "Safe Browsing is off (no GOOGLE_SAFE_BROWSING_API_KEY). Links will be marked clean without being scanned.",
