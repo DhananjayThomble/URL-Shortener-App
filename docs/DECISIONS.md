@@ -446,6 +446,32 @@ existing claims stay literally true (a form sets no cookies and stores no IP), a
 new obligations that come with holding volunteered data are the ones this module has to
 meet: the public page names the workspace collecting it, and responses are deletable.
 
+### Forms: the slug namespace is global, and squattable — left that way
+
+**Asked by #264, a security review of #239 that filed this as a design consequence to
+decide on, not as a defect to fix.**
+
+`forms_slug_key` is a unique index on `lower(slug)` alone, the same shape as the
+shared-short-domain decision above and for the same reason: `publicForm(slug)` and
+`submit(slug, …)` resolve a form from the slug alone, with no workspace in the URL, so
+exactly one form may ever hold `contact`. That has two consequences. The first
+workspace to claim an obvious slug — `contact`, `feedback`, `signup` — holds it against
+every other workspace forever, for free. And because `create()` reports the conflict by
+name (`"/f/<slug> is already taken"`), any authenticated user can test candidate slugs
+one request at a time and learn whether a form exists anywhere in the system, across
+workspace boundaries — existence only, no title or owner, but still a cross-tenant leak
+from an authenticated endpoint.
+
+**Left as-is, deliberately.** Namespacing the path by workspace (`/f/<workspace>/<slug>`
+with the unique index scoped to `(workspaceId, lower(slug))`) removes both consequences
+outright, but uglifies the public URL and needs a migration for any form already
+created — and the squatting risk has no exploiter yet, with forms used by at most one
+workspace today. Cheaper alternatives (reserving common words, expiring long-`draft`
+slugs, rate-limiting `create`) blunt the edges without closing either hole, so they
+would add surface area for a partial fix rather than a real one. Revisit the moment
+forms are used by more than one paying workspace — at that point the enumeration leak
+stops being theoretical and the URL-uglification cost stops being the deciding factor.
+
 ### Billing: the controls are removed rather than faked
 
 **Asked by #242, whose own answer — "removing is the honest interim state" — is the one

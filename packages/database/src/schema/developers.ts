@@ -225,6 +225,8 @@ export const forms = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
+  // Global, not scoped to workspaceId — deliberately, and squattable as a result.
+  // See "Forms: the slug namespace is global, and squattable" in DECISIONS.md (#264).
   (t) => [uniqueIndex("forms_slug_key").on(sql`lower(${t.slug})`)],
 );
 
