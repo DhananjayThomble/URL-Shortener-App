@@ -1,5 +1,6 @@
 import { deserializeClickEvent, insertClickEvents, resolveDatabaseUrl, runMigrations, type Database } from "@snapurl/database";
 import { initDb, log, runFrequent, runMaintenance } from "./main.js";
+import { backfillClickPartitions } from "./jobs/rollup.js";
 
 /* The worker as a Lambda, dispatched by a `task` discriminator.
  *
@@ -14,6 +15,10 @@ import { initDb, log, runFrequent, runMaintenance } from "./main.js";
  *
  * The `task` values:
  *   - `"migrate"`            -> apply database migrations (see below).
+ *   - `"backfill"`           -> provision historical day-partitions out of the
+ *                               DEFAULT partition, in bounded committed chunks
+ *                               (see below). A one-time adoption/repair op an
+ *                               operator triggers manually, on no schedule.
  *   - `"maintenance"`        -> runMaintenance only.
  *   - `"frequent"`           -> runFrequent only.
  *   - `"rollup"`             -> runFrequent only (back-compat alias for the
@@ -37,6 +42,18 @@ import { initDb, log, runFrequent, runMaintenance } from "./main.js";
  * migration is a schema change nobody was watching — which is why migrate is
  * on no schedule at all and only ever runs on a manual invocation.
  *
+ * The `backfill` task exists for the same reason and on the same path (#294).
+ * An operator adopting the partitioned `click_events` schema WITH pre-existing
+ * legacy rows needs to provision one dated partition per historical day, and
+ * `backfillClickPartitions` does that in bounded committed chunks so the lock
+ * footprint never scales with how old the database is. On the AWS profile RDS
+ * is reachable only through this Lambda (the same reason `migrate` is a Lambda
+ * task), so the backfill must have a task discriminator here or the
+ * SELF-HOSTING runbook's "trigger it once, after the migrate step" instruction
+ * has nothing to invoke. It is a one-time adoption/repair op, deliberately not
+ * on any schedule and not folded into runMaintenance's hourly loop (running it
+ * every hour would rescan the DEFAULT partition for nothing).
+ *
  * The SECOND invocation path (#288 3b): an SQS event source mapping. On the
  * AWS profile the redirect sends each click to an SQS queue (SqsClickSink), and
  * the Lambda service polls that queue OUTSIDE the VPC and invokes this function
@@ -48,7 +65,11 @@ import { initDb, log, runFrequent, runMaintenance } from "./main.js";
  * not the whole batch. The rollups then fold these rows as usual.
  */
 export interface WorkerEvent {
-  task?: "frequent" | "maintenance" | "rollup" | "migrate";
+  task?: "frequent" | "maintenance" | "rollup" | "migrate" | "backfill";
+  /** Optional per-chunk day bound for the `backfill` task, forwarded to
+   *  backfillClickPartitions as its chunkSize. Omitted uses the routine's own
+   *  default (CLICK_EVENTS_BACKFILL_CHUNK_DAYS). Ignored by every other task. */
+  chunkSize?: number;
 }
 
 /** One record as an SQS event source mapping delivers it. Only the two fields
@@ -125,12 +146,25 @@ export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
      invocations, so the connection survives between runs rather than being
      rebuilt every minute, and it is deliberately never closed at the end of a
      call. initDb() also resolves the secret at cold start before the first
-     connection is made. Shared by both the frequent and maintenance branches. */
+     connection is made. Shared by the frequent, maintenance and backfill
+     branches. */
   const { db } = await initDb();
 
   if (workerEvent.task === "maintenance") {
     const maintenance = await runMaintenance(db);
     return { task: "maintenance", maintenance };
+  }
+
+  if (workerEvent.task === "backfill") {
+    /* The one-time historical provisioning pass (#294). Uses the same warm db
+       handle as the scheduled jobs; unlike migrate it needs a connection rather
+       than just a URL, because backfillClickPartitions drives the SQL helper one
+       committed chunk at a time. An optional chunkSize on the event overrides
+       the CLICK_EVENTS_BACKFILL_CHUNK_DAYS default for this run. Returns the
+       run's shape ({ provisioned, chunks }) so the operator can see progress and
+       re-invoke if it was interrupted (it is idempotent). */
+    const result = await backfillClickPartitions(db, workerEvent.chunkSize);
+    return { task: "backfill", ...result };
   }
 
   /* Everything else — the 1-minute frequent schedule, the "rollup" back-compat

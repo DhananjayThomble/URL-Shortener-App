@@ -103,6 +103,86 @@ This applies the migrations under `packages/database` against the Postgres
 volume, then exits. Run it once before first use, and again after every upgrade
 (see [Upgrade](#8-upgrade)).
 
+### Adopting `click_events` with pre-existing history
+
+A fresh install has nothing to worry about here: migrations apply against empty
+tables and finish in a moment. This section is only for an operator who already
+has years of raw click data in a `click_events` table and is now upgrading to
+the partitioned layout. If that is not you, skip to [Verify TLS](#6-verify-tls).
+
+The migration that converts `click_events` into a day-partitioned table
+(`0007_partition_click_events`) runs as a **single transaction**. For its whole
+duration it holds:
+
+- `ACCESS EXCLUSIVE` on `click_events` (it renames the table aside, provisions
+  partitions, copies the data, and drops the old table), so **every click write
+  blocks** until it commits.
+- `SHARE ROW EXCLUSIVE` on `links` and `workspaces` (it re-adds the two foreign
+  keys), so **creating or editing a link stalls** for the duration too.
+
+Neither the connection pool nor the migrator sets a `statement_timeout`, so the
+transaction runs to completion however long the copy takes. **Run the migrate
+step in a maintenance window**, sized to how much raw click history you are
+carrying, and expect both click ingestion and link create/edit to be paused
+while it runs.
+
+**Sizing `max_locks_per_transaction`.** Because the migration attaches one day
+partition per day of history inside that one transaction, and each attached
+partition costs roughly **5 lock slots** (the relation plus its cloned indexes),
+the shared lock table can be exhausted by a long history. That table holds
+`max_locks_per_transaction * (max_connections + max_prepared_transactions)`
+slots, which is `6400` on a default configuration
+(`max_locks_per_transaction=64`, `max_connections=100`,
+`max_prepared_transactions=0`). At about 5 slots per day, **roughly 3.5 years of
+history approaches that ceiling** and more will exceed it, aborting the migration
+with `out of shared memory`. If your history is near or past that, raise
+`max_locks_per_transaction` in `postgresql.conf` before running the migrate step
+(it requires a restart), then lower it again afterwards if you like.
+
+**Provision the historical partitions after the structural migration, not
+inside it.** Rather than sizing the lock table for your entire history, you can
+let `0007` create only the recent window and provision the older days
+afterwards, in bounded committed chunks, so the provisioning phase never needs a
+raised `max_locks_per_transaction`. The worker ships a one-time backfill routine,
+`backfillClickPartitions`, for exactly this. It drives the
+`click_events_backfill_days` helper (added in `0015_click_events_backfill_days`)
+in a loop where **each chunk is its own committed transaction**, so locks release
+between chunks and the footprint stays bounded no matter how old the database is.
+The chunk size is set by **`CLICK_EVENTS_BACKFILL_CHUNK_DAYS`** (default `200`),
+chosen so a chunk of 200 day-partitions costs about `1000` lock slots, well under
+the default `6400` ceiling. Because it is a one-time adoption or repair step and
+not part of steady-state maintenance, it is not wired into the worker's hourly
+loop; trigger it once, after the migrate step. It is idempotent and re-entrant:
+an already-attached day is never re-provisioned, so if the run is interrupted,
+just run it again and it resumes with the days still missing.
+
+Trigger it the same way you ran the migrate step, from the worker image, which
+ships the routine. Run it once after `docker compose --profile migrate up
+migrate` has finished:
+
+```bash
+docker compose --profile migrate run --rm --entrypoint node migrate \
+  -e "require('./dist/lambda.js').handler({task:'backfill'}).then(r=>{console.log(r);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+```
+
+It prints `{ task: 'backfill', provisioned: N, chunks: M }` and exits. (The
+`migrate` service runs the worker image, which ships this routine at
+`/app/dist/lambda.js`; `run --rm` starts a throwaway container so it does not
+disturb the long-running `worker` service.) To bound
+each chunk more tightly on a lock-constrained database, pass a `chunkSize`:
+`handler({task:'backfill',chunkSize:50})`. Raise
+`CLICK_EVENTS_BACKFILL_CHUNK_DAYS` (or `chunkSize`) only if you have also raised
+`max_locks_per_transaction`; the default is deliberately conservative.
+
+On the AWS profile, where RDS is reachable only through the worker Lambda, the
+same task is invoked with `aws lambda invoke ... --payload '{"task":"backfill"}'`;
+see [the deployment guide](docs/DEPLOYMENT.md#backfilling-historical-partitions-after-adopting-click_events).
+
+Any day that is not yet provisioned is not lost in the meantime: writes for it
+land in the `DEFAULT` partition and the backfill (or the worker's normal
+partition-provisioning window) drains them into a dated partition on a later
+pass.
+
 ## 6. Verify TLS
 
 Once DNS for both domains resolves to this host, Caddy obtains certificates
