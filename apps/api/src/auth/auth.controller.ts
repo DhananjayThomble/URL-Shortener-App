@@ -45,7 +45,7 @@ export class AuthController {
   @Public()
   @Post("oauth")
   oauth(@Body(zodBody(OAuthSignInInput)) input: OAuthSignInInput, @Req() req: FastifyRequest) {
-    return this.auth.oauthSignIn(input.provider, input.idToken, req.headers["user-agent"]);
+    return this.auth.oauthSignIn(input.provider, input.idToken, input.nonce, req.headers["user-agent"]);
   }
 
   @Public()

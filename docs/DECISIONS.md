@@ -941,6 +941,53 @@ runs decoupled and chunk-committing rather than inside the schema transaction.
 `max_locks_per_transaction`), or if a future drizzle release offered a way to bound the
 lock hold of a structural migration itself, which would let the runbook shrink.
 
+### OAuth: the nonce and the button shipped together, and Google went first
+
+**Found by a security review (#263): `OAuthService` verified the algorithm, audience,
+issuer and JWKS signature on an ID token, but never checked a `nonce`.** Audience
+pinning stops a token minted for a different application; it does nothing to stop a
+token minted for *this* application from being replayed a second time. For as long as
+Google's tokens stay valid — about an hour — anyone who obtained one (a compromised
+client, a logged URL, a leaky proxy) could `POST` it to `/auth/oauth` and get a session.
+
+**Why this sat filed rather than fixed until now.** The realistic exposure was low: no
+sign-in button existed anywhere in the web app, so the only callers were deliberate
+ones. But a *half* fix — accepting a nonce when present, warning when absent — would
+have meant shipping a version that still accepted an unbound token from whichever
+caller forgot to send one, which is worse than not fixing it at all: it looks fixed
+without being fixed. So the nonce and the client that generates it had to ship in the
+same change, and did not until there was a reason to build the client.
+
+**The nonce lives in the browser's memory, not a cookie.** `GoogleButton` generates 32
+random bytes once per mount, hands them to Google's Identity Services SDK as the
+`nonce` config (which the SDK embeds in its authorize request, and Google mints into
+the returned token's `nonce` claim), and sends the same value to `POST /auth/oauth`
+alongside the ID token. `OAuthService.verify` now requires the token's `nonce` claim to
+match, in constant time, or refuses the sign-in. An httpOnly cookie set by a
+server-minted-nonce endpoint would be marginally more robust against a proxy that logs
+full request bodies — but it is also a new endpoint, a new cookie, and everything that
+comes with one, to close a gap narrower than the one this closes: a bare stolen ID
+token (a log, a URL, a shared device) can no longer be replayed, because the attacker
+does not also have the in-memory nonce the legitimate attempt generated. Required from
+the day the button ships, not optional: there was never a released version of this
+endpoint that accepted an unbound token from a real caller, so there is no
+compatibility to preserve.
+
+**Google first, Apple plumbed but not shipped.** `OAuthService` already carried Apple's
+issuer, JWKS endpoint and algorithms — cheap to keep, since the verifier is generic —
+but nothing here builds an Apple button. Apple's native flow expects the SHA-256 *of*
+the nonce rather than the nonce itself, a wrinkle this change does not resolve because
+there is no Apple client yet to resolve it for. `OAuthService.enabled("apple")` stays
+`false` until `APPLE_OAUTH_CLIENT_ID` is set, which it never is out of the box — same
+"a provider with no client id is switched off, not misconfigured" rule Google used to
+follow before today.
+
+**Revisit if** an Apple button gets built. `verify()`'s nonce check is already
+provider-agnostic (it compares the claim to what the caller supplies); what is missing
+is a per-provider hashing step before that comparison for Apple's native SDK, and it
+should be added in the same change as the Apple button, for the same reason Google's
+nonce shipped with Google's button.
+
 ---
 
 ## Part 5 — Open questions for you

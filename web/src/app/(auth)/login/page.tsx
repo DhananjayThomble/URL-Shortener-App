@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { AuthShell } from "@/components/auth/auth-shell";
+import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
 import { useLogin } from "@/lib/api/hooks";
 
@@ -31,6 +32,16 @@ export default function LoginPage() {
 
   return (
     <AuthShell title="Welcome back" sub="Sign in to your SnapURL workspace.">
+      {hasGoogleAuth ? (
+        <>
+          <GoogleButton text="signin_with" />
+          <div className="flex items-center gap-3 my-4">
+            <span className="h-px flex-1 bg-line" />
+            <span className="text-[11.5px] text-ink-3">or</span>
+            <span className="h-px flex-1 bg-line" />
+          </div>
+        </>
+      ) : null}
       <form onSubmit={onSubmit} className="flex flex-col gap-3.5">
         <Field label="Email" error={formState.errors.email?.message}>
           <Input {...register("email")} type="email" autoComplete="email" placeholder="you@company.com" />

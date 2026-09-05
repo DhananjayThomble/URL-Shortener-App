@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
-import { createPublicKey, type KeyObject } from "node:crypto";
+import { createPublicKey, timingSafeEqual, type KeyObject } from "node:crypto";
 import { JwtService } from "@nestjs/jwt";
 import { ENV, type Env } from "../config/env.js";
 
@@ -121,8 +121,15 @@ export class OAuthService {
    *
    * Throws for anything short of a complete match. There is deliberately no
    * "mostly valid" path.
+   *
+   * `expectedNonce` binds the token to the one sign-in attempt that requested
+   * it (#263). Audience pinning already stops a token minted for a different
+   * application; it does not stop a token minted for this application from
+   * being replayed a second time. Required, not optional — accepting a token
+   * without a nonce would silently reintroduce the replay window for any
+   * caller that omits one, and there is no caller that ever needed to.
    */
-  async verify(provider: OAuthProvider, idToken: string): Promise<OAuthProfile> {
+  async verify(provider: OAuthProvider, idToken: string, expectedNonce: string): Promise<OAuthProfile> {
     const { issuers, algorithms, audience } = this.config(provider);
     if (!audience) throw new UnauthorizedException(`${provider} sign-in is not configured.`);
 
@@ -147,10 +154,31 @@ export class OAuthService {
       throw new UnauthorizedException("That sign-in token is not valid.");
     }
 
+    const nonce = claims.nonce;
+    if (typeof nonce !== "string" || !constantTimeEqual(nonce, expectedNonce)) {
+      throw new UnauthorizedException("That sign-in attempt could not be verified. Try signing in again.");
+    }
+
     const profile = toProfile(claims);
     if (!profile) throw new UnauthorizedException("The sign-in provider did not return an email address.");
     return profile;
   }
+}
+
+/**
+ * String comparison in constant time relative to the compared length, so a
+ * mismatch cannot be timed to learn how many leading characters matched.
+ * Guards the length check itself with a same-length compare rather than
+ * short-circuiting, for the same reason.
+ */
+export function constantTimeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
 }
 
 /** The `kid` from a JWT header, without trusting anything else in the token. */

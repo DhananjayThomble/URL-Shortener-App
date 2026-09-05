@@ -167,8 +167,13 @@ export class AuthService {
    * verify, and skipping ours would mean a compromised Google account walks
    * straight past a control the person deliberately added.
    */
-  async oauthSignIn(provider: OAuthProvider, idToken: string, userAgent?: string): Promise<LoginResult> {
-    const profile = await this.oauth.verify(provider, idToken);
+  async oauthSignIn(
+    provider: OAuthProvider,
+    idToken: string,
+    nonce: string,
+    userAgent?: string,
+  ): Promise<LoginResult> {
+    const profile = await this.oauth.verify(provider, idToken, nonce);
 
     const [linked] = await this.db
       .select({ userId: oauthIdentities.userId })
