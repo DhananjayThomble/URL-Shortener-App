@@ -371,6 +371,33 @@ lives (Cloudflare, Route53, anywhere), and CloudFormation resumes once ACM
 sees it resolve. `RedirectDomain`'s output becomes the real domain once this
 is set, rather than "CNAME your short domain here."
 
+### Google OAuth
+
+Optional — unset means `OAuthService.enabled('google')` is `false` and
+`POST /auth/oauth` rejects every Google sign-in attempt. The frontend button
+does not know this: it only checks its own `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and
+renders regardless, so an operator who sets the frontend var but not this flag
+gets a rendered "Continue with Google" button that fails on every click.
+
+```bash
+npx cdk deploy -c googleOAuthClientId=<id>.apps.googleusercontent.com
+```
+
+The value must be byte-identical to `NEXT_PUBLIC_GOOGLE_CLIENT_ID` on the
+frontend — Google signs the ID token's `aud` claim to whichever client id the
+frontend's SDK call initialized with, and `oauth.service.ts` checks that claim
+against this one. It also needs the deploy's Google Cloud OAuth client to list
+the frontend's origin (e.g. `https://app.snapurl.in`) under **Authorized
+JavaScript origins** — this flow uses Google Identity Services' JS callback,
+not a redirect, so no **Authorized redirect URI** is needed.
+
+Not SSM config like `mail-from` despite being just as stable across deploys:
+`config.get()` in `infra/lib/config.ts` has no default and fails the deploy on
+a missing parameter, which is correct for required stage config but would make
+this feature mandatory rather than optional. See the natStrategy section above
+— the JWKS fetch this depends on needs egress, so it stays non-functional
+under `natStrategy = 'none'` regardless of this flag.
+
 ### The redirect uses AWS SDK adapters and can leave the VPC
 
 The claim that "there is no AWS SDK anywhere in `apps/` or `packages/`" is no

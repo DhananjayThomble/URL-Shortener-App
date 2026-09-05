@@ -123,6 +123,23 @@ export interface SnapUrlStackProps extends StackProps {
   /** See {@link domainName}. Must be issued in us-east-1 regardless of the
    *  stack's own region — a CloudFront/ACM requirement. */
   certificate?: acm.ICertificate;
+  /**
+   * Google's OAuth client id, for verifying the `aud` claim on ID tokens at
+   * `POST /auth/oauth` (see `apps/api/src/auth/oauth.service.ts`). Optional,
+   * like {@link budgetEmail}: `OAuthService.enabled('google')` treats an unset
+   * value as the provider being switched off, not misconfigured, so omitting
+   * this is a valid choice and the stack still deploys. Set it with
+   * `-c googleOAuthClientId=<id>.apps.googleusercontent.com`.
+   *
+   * Not SSM config despite being stable across deploys: `config.get()` has no
+   * default and fails the deploy on a missing parameter, which is right for
+   * required stage config but wrong for a feature that is meant to be
+   * optional. The same id must also be set as `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+   * on the frontend (Vercel) — the two are compared implicitly, because Google
+   * signs the ID token's `aud` claim to whichever client id the frontend
+   * initialized the SDK with.
+   */
+  googleOAuthClientId?: string;
 }
 
 export class SnapUrlStack extends Stack {
@@ -682,6 +699,11 @@ export class SnapUrlStack extends Stack {
            under the prefix — so without this the adapter waits out its
            readiness timeout on every cold start before serving anything. */
         AWS_LWA_READINESS_CHECK_PATH: `/${API_PREFIX}/health`,
+        /* Spread in only when set: the env var must be genuinely absent (not
+           an empty string) for OAuthService.enabled('google') to read this as
+           "off" rather than "misconfigured". Only the API verifies OAuth ID
+           tokens, so redirectFn and workerFn never get this key. */
+        ...(props.googleOAuthClientId ? { GOOGLE_OAUTH_CLIENT_ID: props.googleOAuthClientId } : {}),
       },
       ...vpcSettings,
     });
