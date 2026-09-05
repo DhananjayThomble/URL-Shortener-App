@@ -1,5 +1,5 @@
 import { deserializeClickEvent, insertClickEvents, resolveDatabaseUrl, runMigrations, type Database } from "@snapurl/database";
-import { initDb, log, runFrequent, runMaintenance } from "./main.js";
+import { initDb, log, runFrequent, runMaintenance, runProjection } from "./main.js";
 import { backfillClickPartitions } from "./jobs/rollup.js";
 
 /* The worker as a Lambda, dispatched by a `task` discriminator.
@@ -20,12 +20,12 @@ import { backfillClickPartitions } from "./jobs/rollup.js";
  *                               (see below). A one-time adoption/repair op an
  *                               operator triggers manually, on no schedule.
  *   - `"maintenance"`        -> runMaintenance only.
- *   - `"frequent"`           -> runFrequent only.
- *   - `"rollup"`             -> runFrequent only (back-compat alias for the
- *                               old payload; the previous handler treated a
- *                               no-payload/rollup invocation as the recurring
- *                               job).
- *   - default / no payload   -> runFrequent only.
+ *   - `"frequent"`           -> runProjection + runFrequent.
+ *   - `"rollup"`             -> runProjection + runFrequent (back-compat alias
+ *                               for the old payload; the previous handler
+ *                               treated a no-payload/rollup invocation as the
+ *                               recurring job).
+ *   - default / no payload   -> runProjection + runFrequent.
  *
  * The DEFAULT partition still guarantees inserts never fail between the hourly
  * ensureClickPartitions runs, so moving maintenance off the 1-minute cadence
@@ -168,7 +168,13 @@ export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
   }
 
   /* Everything else — the 1-minute frequent schedule, the "rollup" back-compat
-     alias, and a bare no-payload invocation — runs the frequent job only. */
+     alias, and a bare no-payload invocation — runs the frequent job. Outbox
+     draining (runProjection) is a separate function from runFrequent (see
+     main.ts) so the long-running worker loop can put it on its own faster
+     timer; a scheduled Lambda invocation has no such loop; it just runs both
+     back to back and folds the result into the same `frequent` shape this
+     handler has always returned. */
+  const outbox = await runProjection(db);
   const frequent = await runFrequent(db);
-  return { task: "frequent", frequent };
+  return { task: "frequent", frequent: { ...frequent, outbox } };
 };
