@@ -280,7 +280,7 @@ refresh token and never expire. That is $0.80/month in Secrets Manager, about
 | RDS | PostgreSQL 18, `db.t4g.micro`, single-AZ, 20 GB gp3, always `PRIVATE_ISOLATED` (it never egresses) |
 | DynamoDB | `LinkProjectionTable` (PAY_PER_REQUEST, PITR, `linkId` GSI) read by the redirect's `DynamoLinkResolver`; a separate `CacheTable` (TTL on `expiresAt`) backing the shared `CacheStore` — `CACHE_DRIVER=dynamodb` + `CACHE_DYNAMO_TABLE` are set on `redirectFn` |
 | SQS | `ClickQueue` for the redirect's `SqsClickSink`, plus a `ClickDlq` dead-letter queue |
-| CloudFront | a `KeyValueStore` for the edge fast path (simple links answered at the edge), and a short 1–5s edge TTL cache policy on the redirect behaviour |
+| CloudFront | a `KeyValueStore` for the edge fast path (simple links answered at the edge), and a short 1–5s edge TTL cache policy on the redirect behaviour. Optionally a custom domain + cross-region (us-east-1) ACM certificate — see below |
 | API | Lambda (container image) behind an HTTP API |
 | Redirect | Lambda (container image) behind CloudFront. Under the AWS profile (`LINK_PROJECTION=dynamo` + `CLICK_SINK=sqs`) it drops its `vpcSettings` and leaves the VPC entirely |
 | Worker | Lambda invoked once a minute by EventBridge for rollups; also drains the `projection_outbox` into the DynamoDB `LinkProjectionTable` and the CloudFront `KeyValueStore`, and consumes `ClickQueue` via an `SqsEventSource` (event source mapping, `reportBatchItemFailures: true`) to write `click_events` |
@@ -342,7 +342,34 @@ There are two consequences worth calling out:
 
 2. **Google Safe Browsing, webhooks, OAuth and mail delivery are functional
    only when `natStrategy != 'none'`.** Safe Browsing is also off by default
-   without a key (see [DECISIONS.md](./DECISIONS.md) A10).
+   without a key (see [DECISIONS.md](./DECISIONS.md) A10). Mail has a real SES
+   adapter now (`apps/api/src/mail/mail.service.ts`), reachable once egress
+   exists — but reaching SES is not the same as it *delivering*: the sending
+   identity still has to be verified in the SES console (DKIM CNAME records)
+   and the account has to exit the SES sandbox (which otherwise only delivers
+   to individually-verified recipients), both manual AWS-console steps no
+   code can do. `outbox` (writes a file, sends nothing) stays the default
+   until those are done; set `mail-transport` to `ses` via
+   `put-parameters.sh`'s optional fourth argument once they are.
+
+### Custom domain
+
+Optional — unset means the redirect answers only on its raw
+`*.cloudfront.net` hostname, exactly the original behaviour.
+
+```bash
+npx cdk deploy -c domainName=snapurl.in
+```
+
+This builds a second, small `Stack` pinned to **us-east-1** holding just an
+ACM certificate — a CloudFront requirement regardless of which region the
+rest of the stack deploys to — and attaches it plus the domain name to the
+`Distribution`. The certificate uses DNS validation with no Route53
+dependency: `cdk deploy` will pause on the certificate resource and print the
+CNAME record ACM needs, which gets added wherever the domain's DNS actually
+lives (Cloudflare, Route53, anywhere), and CloudFormation resumes once ACM
+sees it resolve. `RedirectDomain`'s output becomes the real domain once this
+is set, rather than "CNAME your short domain here."
 
 ### The redirect uses AWS SDK adapters and can leave the VPC
 
@@ -454,7 +481,12 @@ both smoke suites (72 assertions) under `docker compose --profile full`.
 
 **Not verified:** an actual deployment. Deploying costs real money in a real
 account, so nobody has run `cdk deploy` against this stack yet. Treat the first
-deploy as a test.
+deploy as a test. That includes the optional custom-domain path (`-c
+domainName=`) and its cross-region ACM certificate — synth-clean, never
+synthesised with `domainName` actually set against a real account — and the
+SES mail adapter, whose SDK call shape is unit-tested against a mocked
+`SESClient` (`apps/api/src/mail/mail.service.test.ts`) but has never sent a
+real message.
 
 Two of the three things that were most likely to break on it have since been
 dealt with, and are worth knowing about because both were silent:

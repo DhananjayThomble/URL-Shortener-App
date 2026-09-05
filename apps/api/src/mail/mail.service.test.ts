@@ -2,9 +2,23 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../config/env.js";
 import { MailService } from "./mail.service.js";
+import { SESClient } from "@aws-sdk/client-ses";
+
+/* SESClient is mocked at the module level, not constructor-injected: unlike
+   SqsClickSink (apps/redirect), MailService is a NestJS @Injectable resolved
+   through DI, so giving it an SESClient constructor param would mean
+   registering a provider for it in mail.module.ts just to satisfy a test.
+   vi.mock keeps that DI surface untouched — MailService still takes only
+   ENV — while still exercising the real SendEmailCommand shape rather than
+   asserting nothing happened. */
+const sendMock = vi.fn();
+vi.mock("@aws-sdk/client-ses", () => ({
+  SESClient: vi.fn().mockImplementation(() => ({ send: sendMock })),
+  SendEmailCommand: vi.fn().mockImplementation((input: unknown) => ({ input })),
+}));
 
 /* The outbox transport used to write to process.cwd()/logs/outbox, which is a
    read-only path on Lambda (only /tmp is writable), so every invite and reset
@@ -77,14 +91,60 @@ describe("MailService — outbox transport", () => {
 });
 
 describe("MailService — ses transport", () => {
-  it("does not throw and writes no file when MAIL_TRANSPORT is ses", async () => {
+  beforeEach(() => {
+    sendMock.mockReset();
+    vi.mocked(SESClient).mockClear();
+  });
+
+  it("sends via SES with the configured MAIL_FROM as the source", async () => {
+    sendMock.mockResolvedValueOnce({ MessageId: "test-message-id" });
+    const svc = new MailService(
+      envStub({ MAIL_TRANSPORT: "ses", MAIL_FROM: "SnapURL <no-reply@snapurl.in>" }),
+    );
+
+    await svc.send({ to: "member@example.com", subject: "You're invited", body: "Join the workspace." });
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const command = sendMock.mock.calls[0]![0] as { input: Record<string, unknown> };
+    expect(command.input).toMatchObject({
+      Source: "SnapURL <no-reply@snapurl.in>",
+      Destination: { ToAddresses: ["member@example.com"] },
+      Message: {
+        Subject: { Data: "You're invited", Charset: "UTF-8" },
+        Body: { Text: { Data: "Join the workspace.", Charset: "UTF-8" } },
+      },
+    });
+  });
+
+  it("writes no outbox file for the ses transport", async () => {
+    sendMock.mockResolvedValueOnce({});
     const dir = await mkdtemp(join(tmpdir(), "mail-test-ses-"));
     cleanup.push(dir);
     const svc = new MailService(envStub({ MAIL_TRANSPORT: "ses", MAIL_OUTBOX_DIR: dir }));
 
-    await expect(svc.send({ to: "ses@example.com", subject: "SES", body: "dropped" })).resolves.toBeUndefined();
+    await svc.send({ to: "ses@example.com", subject: "SES", body: "sent for real" });
 
     const files = await readdir(dir);
     expect(files).toHaveLength(0);
+  });
+
+  it("propagates a rejected send rather than swallowing it", async () => {
+    sendMock.mockRejectedValueOnce(new Error("MessageRejected: Email address not verified"));
+    const svc = new MailService(envStub({ MAIL_TRANSPORT: "ses" }));
+
+    await expect(svc.send({ to: "unverified@example.com", subject: "x", body: "y" })).rejects.toThrow(
+      "MessageRejected",
+    );
+  });
+
+  it("reuses one SESClient across repeated sends rather than reconnecting per call", async () => {
+    sendMock.mockResolvedValue({});
+    const svc = new MailService(envStub({ MAIL_TRANSPORT: "ses" }));
+
+    await svc.send({ to: "a@example.com", subject: "1", body: "1" });
+    await svc.send({ to: "b@example.com", subject: "2", body: "2" });
+
+    expect(vi.mocked(SESClient)).toHaveBeenCalledTimes(1);
+    expect(sendMock).toHaveBeenCalledTimes(2);
   });
 });
