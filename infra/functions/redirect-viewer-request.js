@@ -120,11 +120,20 @@ async function handler(event) {
 }
 
 /*
- * CloudFront Functions (JS_2_0) expect the module to export exactly the entry
- * point `handler`. `decide` and `edgeKey` are deliberately NOT exported here —
- * they are exercised through the byte-for-byte twin in
- * redirect-viewer-request.logic.mjs (the DRIFT-GUARDED REGION above is what the
- * test asserts is identical), so the deployed file stays a minimal, valid
- * CloudFront Function while the logic remains fully unit-tested.
+ * NO `export` STATEMENT. CloudFront Functions reject one outright:
+ *
+ *     SyntaxError: Illegal export statement
+ *
+ * and an invalid function makes the distribution answer every request with a
+ * 503 — it does NOT fall through to the origin, so this single line took the
+ * whole redirect path down. `import cf from "cloudfront"` above is a special
+ * case the runtime allows; that exception does not extend to exports. The
+ * runtime finds the entry point by looking for a global function named
+ * `handler`, which is exactly what is declared above.
+ *
+ * `decide` and `edgeKey` are deliberately not exported either — they are
+ * exercised through the byte-for-byte twin in redirect-viewer-request.logic.mjs
+ * (the DRIFT-GUARDED REGION above is what the test asserts is identical), so the
+ * deployed file stays a minimal, valid CloudFront Function while the logic
+ * remains fully unit-tested.
  */
-export { handler };
