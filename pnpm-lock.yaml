@@ -188,6 +188,9 @@ importers:
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1121.0
         version: 3.1121.0(@aws-sdk/client-dynamodb@3.1121.0)
+      '@aws-sdk/signature-v4a':
+        specifier: ^3.1111.0
+        version: 3.1111.0
       '@snapurl/contract':
         specifier: workspace:*
         version: link:../../packages/contract
@@ -551,6 +554,10 @@ packages:
 
   '@aws-sdk/signature-v4-multi-region@3.996.46':
     resolution: {integrity: sha512-L+2xZTye/2T96f3lwCws0Zw6GG2JHZW9e8FpVgGBeeExSKyeoZ6CWRpBml/7DNiK/O26jrgPM9F+Ay8VkgzUWQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/signature-v4a@3.1111.0':
+    resolution: {integrity: sha512-MA3xi/VD4dpaX2VBgUCZry4YU5FbzcGfXMtj3bXCOCBARySsVNN9hExRbpFTgW5CI8DojT8AZVYvJrDxlv2oXQ==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/token-providers@3.1116.0':
@@ -2012,6 +2019,10 @@ packages:
 
   '@smithy/signature-v4@5.7.3':
     resolution: {integrity: sha512-7ImGm+FkHRLcBaRttIAMZ6bzJZWb2cJGoYjq46F2UjycujWzrL9GEN9h4w7eQyXJYnltrUhxbbieBAIRrdqpow==}
+    engines: {node: '>=18.0.0'}
+
+  '@smithy/signature-v4a@3.6.2':
+    resolution: {integrity: sha512-M5CXsK13/spy3QNudWMdcccGZFU4AKV4/7ixZ4heoowpSgJwOWcfvrHPFTekxaOmrpFA4is/of6B1OPdPz/9Yg==}
     engines: {node: '>=18.0.0'}
 
   '@smithy/types@4.17.2':
@@ -4361,6 +4372,11 @@ snapshots:
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
+  '@aws-sdk/signature-v4a@3.1111.0':
+    dependencies:
+      '@smithy/signature-v4a': 3.6.2
+      tslib: 2.8.1
+
   '@aws-sdk/token-providers@3.1116.0':
     dependencies:
       '@aws-sdk/core': 3.977.9
@@ -5345,6 +5361,13 @@ snapshots:
   '@smithy/signature-v4@5.7.3':
     dependencies:
       '@smithy/core': 3.33.3
+      '@smithy/types': 4.17.2
+      tslib: 2.8.1
+
+  '@smithy/signature-v4a@3.6.2':
+    dependencies:
+      '@smithy/core': 3.33.3
+      '@smithy/signature-v4': 5.7.3
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
