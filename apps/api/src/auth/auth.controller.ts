@@ -7,6 +7,8 @@ import {
   OAuthSignInInput,
   PasswordResetConfirmInput,
   PasswordResetRequestInput,
+  EmailVerifyInput,
+  EmailVerifyResendInput,
   RefreshInput,
   RegisterInput,
   TotpDisableInput,
@@ -89,6 +91,25 @@ export class AuthController {
   @HttpCode(200)
   async confirmPasswordReset(@Body(zodBody(PasswordResetConfirmInput)) input: PasswordResetConfirmInput) {
     await this.auth.confirmPasswordReset(input.token, input.password);
+  }
+
+  /* P0 — email verification. verify is public (the link is clicked from an
+     email, often before signing in). resend is public + throttled and, like
+     password-reset request, gives the same response for any email so it can't
+     be used to probe which addresses exist or are already verified. */
+  @Public()
+  @Post("email/verify")
+  @HttpCode(200)
+  async verifyEmail(@Body(zodBody(EmailVerifyInput)) input: EmailVerifyInput) {
+    await this.auth.verifyEmail(input.token);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post("email/resend")
+  @HttpCode(202)
+  async resendEmailVerification(@Body(zodBody(EmailVerifyResendInput)) input: EmailVerifyResendInput) {
+    await this.auth.resendEmailVerification(input.email);
   }
 
   @Get("me")

@@ -136,3 +136,18 @@ export const PasswordResetConfirmInput = z.object({
     .max(200, "That's longer than we can hash"),
 });
 export type PasswordResetConfirmInput = z.infer<typeof PasswordResetConfirmInput>;
+
+/* P0 — email verification. A password-registered user starts unverified
+   (users.email_verified_at is null); an OAuth user is already verified by the
+   provider. `verify` consumes a single-use hashed token; `resend` re-issues
+   one and, like password-reset request, returns the same response regardless
+   of whether the address exists or is already verified — no enumeration. */
+export const EmailVerifyInput = z.object({
+  token: z.string().min(1),
+});
+export type EmailVerifyInput = z.infer<typeof EmailVerifyInput>;
+
+export const EmailVerifyResendInput = z.object({
+  email: z.string().email(),
+});
+export type EmailVerifyResendInput = z.infer<typeof EmailVerifyResendInput>;

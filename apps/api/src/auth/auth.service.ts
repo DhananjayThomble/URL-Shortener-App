@@ -87,7 +87,47 @@ export class AuthService {
       return { user: user!, workspace, role: "owner" as const };
     });
 
+    /* Send the verification email, but never let a mail hiccup fail signup —
+       the account exists and the user can re-request from the app. */
+    try {
+      const token = await this.tokens.issueEmailVerificationToken(user.id);
+      await this.mail.sendEmailVerification({ to: user.email, token });
+    } catch {
+      // best-effort; resend endpoint covers the failure path.
+    }
+
     return this.issueSession(user, workspace.id, role, userAgent);
+  }
+
+  /* P0 — email verification.
+
+     verifyEmail consumes a single-use token and stamps email_verified_at.
+     Idempotent-ish: a second use of the same token fails (single-use), which
+     is the honest behaviour — the address is already verified by then.
+
+     resendEmailVerification mirrors password-reset's anti-enumeration: the
+     same response whether or not the email exists or is already verified, and
+     work happens only for an existing, still-unverified account. */
+  async verifyEmail(token: string): Promise<void> {
+    const userId = await this.tokens.consumeEmailVerificationToken(token);
+    await this.db
+      .update(users)
+      .set({ emailVerifiedAt: new Date(), updatedAt: new Date() })
+      .where(eq(users.id, userId));
+  }
+
+  async resendEmailVerification(email: string): Promise<void> {
+    const normalized = email.toLowerCase().trim();
+    const [user] = await this.db
+      .select({ id: users.id, email: users.email, emailVerifiedAt: users.emailVerifiedAt })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalized}`)
+      .limit(1);
+
+    if (!user || user.emailVerifiedAt) return;
+
+    const token = await this.tokens.issueEmailVerificationToken(user.id);
+    await this.mail.sendEmailVerification({ to: user.email, token });
   }
 
   /**

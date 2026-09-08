@@ -120,6 +120,13 @@
       "when": 1788889530751,
       "tag": "0016_nice_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788890802539,
+      "tag": "0017_sleepy_miss_america",
+      "breakpoints": true
     }
   ]
 }
