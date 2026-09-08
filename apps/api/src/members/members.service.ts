@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomBytes, createHash } from "node:crypto";
 import { and, auditLog, desc, eq, links, memberships, sql, users, type Database } from "@snapurl/database";
 import type { AuditEntry, InviteMemberInput, Member } from "@snapurl/contract";
 import { DB, READ_DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";
+import { RANK } from "../auth/auth.guard.js";
 import { MailService } from "../mail/mail.service.js";
 
 @Injectable()
@@ -109,13 +110,33 @@ export class MembersService {
     };
   }
 
-  async changeRole(workspaceId: string, membershipId: string, role: Member["role"], actorLabel: string) {
+  async changeRole(
+    workspaceId: string,
+    membershipId: string,
+    role: Member["role"],
+    actorLabel: string,
+    actorRole: string,
+  ) {
     const [target] = await this.db
       .select()
       .from(memberships)
       .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)))
       .limit(1);
     if (!target) throw new NotFoundException("That person isn't on this team.");
+
+    /* Privilege-escalation guards (issue #345). The route is gated @Roles("admin"),
+       but "admin" is not "owner": rank must be enforced here or any admin could
+       PATCH their own membership to owner and then demote the real owner.
+       - You cannot grant a role higher than your own.
+       - You cannot change the role of someone who currently outranks you.
+       Fails closed via the shared RANK map (an unknown role ranks below all). */
+    const callerRank = RANK[actorRole] ?? -1;
+    if ((RANK[role] ?? 99) > callerRank) {
+      throw new ForbiddenException("You cannot grant a role higher than your own.");
+    }
+    if ((RANK[target.role] ?? 99) > callerRank) {
+      throw new ForbiddenException("You cannot change the role of someone who outranks you.");
+    }
 
     /* A workspace with no owner cannot be administered by anyone, and there is
        no support desk to undo it. */
