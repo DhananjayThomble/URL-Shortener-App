@@ -86,4 +86,16 @@ export class MailService {
         `If you didn't request this, you can safely ignore this email — your password won't change.`,
     });
   }
+
+  /* P0 — email verification. Confirms the address at sign-up (and on resend). */
+  async sendEmailVerification(opts: { to: string; token: string }): Promise<void> {
+    const url = `${this.env.WEB_ORIGIN}/verify-email?token=${opts.token}`;
+    await this.send({
+      to: opts.to,
+      subject: "Verify your SnapURL email",
+      body:
+        `Welcome to SnapURL! Confirm this is your email address:\n\n${url}\n\n` +
+        `The link expires in 24 hours. If you didn't create a SnapURL account, ignore this email.`,
+    });
+  }
 }

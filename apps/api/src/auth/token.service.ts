@@ -1,7 +1,7 @@
 import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, isNull, passwordResetTokens, refreshTokens, type Database } from "@snapurl/database";
+import { and, eq, gt, isNull, emailVerificationTokens, passwordResetTokens, refreshTokens, type Database } from "@snapurl/database";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 
@@ -227,6 +227,48 @@ export class TokenService {
     const row = claimed[0];
     if (!row) {
       throw new UnauthorizedException("That reset link is invalid or has expired. Request a new one.");
+    }
+    return row.userId;
+  }
+
+  /* P0 — email verification. Same hashed single-use discipline as reset;
+     24-hour TTL. A resend supersedes the prior unused token. */
+  async issueEmailVerificationToken(userId: string): Promise<string> {
+    const token = randomBytes(48).toString("base64url");
+    const expiresAt = new Date(Date.now() + 24 * 3_600_000);
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(emailVerificationTokens)
+        .set({ usedAt: new Date() })
+        .where(and(eq(emailVerificationTokens.userId, userId), isNull(emailVerificationTokens.usedAt)));
+      await tx.insert(emailVerificationTokens).values({
+        userId,
+        tokenHash: this.hash(token),
+        expiresAt,
+      });
+    });
+
+    return token;
+  }
+
+  /** Atomically consume an email-verification token; returns its userId. */
+  async consumeEmailVerificationToken(token: string): Promise<string> {
+    const claimed = await this.db
+      .update(emailVerificationTokens)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(emailVerificationTokens.tokenHash, this.hash(token)),
+          isNull(emailVerificationTokens.usedAt),
+          gt(emailVerificationTokens.expiresAt, new Date()),
+        ),
+      )
+      .returning({ userId: emailVerificationTokens.userId });
+
+    const row = claimed[0];
+    if (!row) {
+      throw new UnauthorizedException("That verification link is invalid or has expired. Request a new one.");
     }
     return row.userId;
   }

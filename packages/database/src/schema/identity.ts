@@ -92,6 +92,27 @@ export const passwordResetTokens = pgTable(
   ],
 );
 
+/* P0 — email verification. Same hashed single-use pattern as password reset.
+   24-hour TTL (a verification email is less time-sensitive than a reset and
+   people act on it later). A fresh resend supersedes the prior unused token. */
+export const emailVerificationTokens = pgTable(
+  "email_verification_tokens",
+  {
+    id: id(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("email_verification_tokens_hash_key").on(t.tokenHash),
+    index("email_verification_tokens_user_idx").on(t.userId),
+  ],
+);
+
 export const workspaces = pgTable(
   "workspaces",
   {
