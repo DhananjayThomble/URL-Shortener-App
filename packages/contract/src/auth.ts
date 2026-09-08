@@ -115,3 +115,24 @@ export const LogoutInput = z.object({
   allDevices: z.boolean().default(false),
 });
 export type LogoutInput = z.infer<typeof LogoutInput>;
+
+/* P0 — account recovery. A user who forgets their password had no way back in:
+   there was no reset flow at all. Two endpoints. The REQUEST step must return
+   the SAME response whether or not the email has an account — otherwise it
+   becomes an account-enumeration oracle, the same reason login uses a dummy
+   hash. The CONFIRM step consumes a single-use, hashed, time-limited token and
+   revokes every existing session for the user (a reset is also a "sign out
+   everywhere"). */
+export const PasswordResetRequestInput = z.object({
+  email: z.string().email(),
+});
+export type PasswordResetRequestInput = z.infer<typeof PasswordResetRequestInput>;
+
+export const PasswordResetConfirmInput = z.object({
+  token: z.string().min(1),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters — length beats complexity")
+    .max(200, "That's longer than we can hash"),
+});
+export type PasswordResetConfirmInput = z.infer<typeof PasswordResetConfirmInput>;

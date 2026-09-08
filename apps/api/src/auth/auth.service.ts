@@ -30,6 +30,7 @@ import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "./token.service.js";
 import { TotpService } from "./totp.service.js";
 import { OAuthService, type OAuthProvider } from "./oauth.service.js";
+import { MailService } from "../mail/mail.service.js";
 
 /** "Dhananjay Thomble" → "DT". The UI renders these in avatars. */
 export function initialsOf(name: string): string {
@@ -54,6 +55,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly totp: TotpService,
     private readonly oauth: OAuthService,
+    private readonly mail: MailService,
   ) {}
 
   async register(input: RegisterInput, userAgent?: string): Promise<AuthSession> {
@@ -390,6 +392,41 @@ export class AuthService {
       return;
     }
     await this.tokens.revokeByToken(refreshToken);
+  }
+
+  /* P0 — password reset, request step.
+
+     Returns void regardless of outcome: the caller gets the same 202 whether
+     or not the email has an account, so this endpoint cannot be used to learn
+     which addresses are registered. We only do work — mint a token, send mail —
+     when the user exists AND has a password (an OAuth-only user has no password
+     to reset; sending them a reset link would be a dead end). */
+  async requestPasswordReset(email: string): Promise<void> {
+    const normalized = email.toLowerCase().trim();
+    const [user] = await this.db
+      .select({ id: users.id, passwordHash: users.passwordHash, email: users.email })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalized}`)
+      .limit(1);
+
+    if (!user || !user.passwordHash) return;
+
+    const token = await this.tokens.issuePasswordResetToken(user.id);
+    await this.mail.sendPasswordReset({ to: user.email, token });
+  }
+
+  /* P0 — password reset, confirm step.
+
+     Consuming the token is atomic and single-use (TokenService guards on
+     usedAt IS NULL + not expired). A successful reset also revokes every
+     refresh-token family for the user: a password change is implicitly a
+     "sign out everywhere", so a session opened with the old credentials — or
+     by whoever prompted the reset — does not survive it. */
+  async confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+    const userId = await this.tokens.consumePasswordResetToken(token);
+    const passwordHash = await argon2.hash(newPassword, ARGON_OPTIONS);
+    await this.db.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, userId));
+    await this.tokens.revokeAllForUser(userId);
   }
 
   async me(userId: string): Promise<AuthUser> {

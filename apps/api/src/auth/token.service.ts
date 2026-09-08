@@ -1,7 +1,7 @@
 import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, isNull, refreshTokens, type Database } from "@snapurl/database";
+import { and, eq, gt, isNull, passwordResetTokens, refreshTokens, type Database } from "@snapurl/database";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 
@@ -177,5 +177,57 @@ export class TokenService {
       { sub: linkId, purpose: "unlock" },
       { secret: this.env.JWT_ACCESS_SECRET, expiresIn: "5m" },
     );
+  }
+
+  /* P0 — password reset. Opaque random token, stored only as its sha256 hash
+     (same discipline as refresh tokens). One hour: long enough to read the
+     email and act, short enough that a link lingering in an inbox is not a
+     standing key. A new request supersedes any prior unused token for the user,
+     so the most recent email is the only one that works. */
+  async issuePasswordResetToken(userId: string): Promise<string> {
+    const token = randomBytes(48).toString("base64url");
+    const expiresAt = new Date(Date.now() + 3_600_000);
+
+    await this.db.transaction(async (tx) => {
+      // Invalidate any earlier unused token for this user.
+      await tx
+        .update(passwordResetTokens)
+        .set({ usedAt: new Date() })
+        .where(and(eq(passwordResetTokens.userId, userId), isNull(passwordResetTokens.usedAt)));
+      await tx.insert(passwordResetTokens).values({
+        userId,
+        tokenHash: this.hash(token),
+        expiresAt,
+      });
+    });
+
+    return token;
+  }
+
+  /**
+   * Atomically consume a reset token, returning the userId it belongs to.
+   * Rejects a missing, expired, or already-used token. Single-use: the same
+   * token cannot be redeemed twice even under a race, because the UPDATE is
+   * guarded on usedAt IS NULL and we act only if a row was actually claimed.
+   */
+  async consumePasswordResetToken(token: string): Promise<string> {
+    const tokenHash = this.hash(token);
+    const claimed = await this.db
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(passwordResetTokens.tokenHash, tokenHash),
+          isNull(passwordResetTokens.usedAt),
+          gt(passwordResetTokens.expiresAt, new Date()),
+        ),
+      )
+      .returning({ userId: passwordResetTokens.userId });
+
+    const row = claimed[0];
+    if (!row) {
+      throw new UnauthorizedException("That reset link is invalid or has expired. Request a new one.");
+    }
+    return row.userId;
   }
 }
