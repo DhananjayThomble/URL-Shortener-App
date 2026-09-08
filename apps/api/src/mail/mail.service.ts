@@ -71,4 +71,19 @@ export class MailService {
       body: `${opts.invitedBy} added you to their SnapURL workspace.\n\nAccept the invitation:\n${url}\n\nThe link expires in 7 days.`,
     });
   }
+
+  /* P0 — password reset. Same transport seam as invites. The link carries an
+     opaque single-use token; the token's hash is what's stored server-side. */
+  async sendPasswordReset(opts: { to: string; token: string }): Promise<void> {
+    const url = `${this.env.WEB_ORIGIN}/reset-password?token=${opts.token}`;
+    await this.send({
+      to: opts.to,
+      subject: "Reset your SnapURL password",
+      body:
+        `Someone asked to reset the password for this SnapURL account.\n\n` +
+        `Reset it here:\n${url}\n\n` +
+        `The link expires in 1 hour and can be used once. ` +
+        `If you didn't request this, you can safely ignore this email — your password won't change.`,
+    });
+  }
 }

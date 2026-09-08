@@ -5,6 +5,8 @@ import {
   LoginInput,
   LogoutInput,
   OAuthSignInInput,
+  PasswordResetConfirmInput,
+  PasswordResetRequestInput,
   RefreshInput,
   RegisterInput,
   TotpDisableInput,
@@ -64,6 +66,29 @@ export class AuthController {
   @HttpCode(204)
   async logout(@Body(zodBody(LogoutInput)) input: LogoutInput) {
     await this.auth.logout(input.refreshToken, input.allDevices);
+  }
+
+  /* P0 — password reset. Both public: someone locked out has no session.
+
+     request: always 202, same response for known and unknown emails, so it is
+     not an enumeration oracle. Tightly throttled — it sends mail and does an
+     argon2-free DB lookup, but a loose limit would let it be used to spam an
+     inbox or probe for accounts.
+     confirm: 200 on success. Throttled because it runs argon2id on every call. */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post("password-reset/request")
+  @HttpCode(202)
+  async requestPasswordReset(@Body(zodBody(PasswordResetRequestInput)) input: PasswordResetRequestInput) {
+    await this.auth.requestPasswordReset(input.email);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post("password-reset/confirm")
+  @HttpCode(200)
+  async confirmPasswordReset(@Body(zodBody(PasswordResetConfirmInput)) input: PasswordResetConfirmInput) {
+    await this.auth.confirmPasswordReset(input.token, input.password);
   }
 
   @Get("me")

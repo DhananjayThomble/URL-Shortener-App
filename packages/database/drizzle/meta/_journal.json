@@ -113,6 +113,13 @@
       "when": 1788116400000,
       "tag": "0015_click_events_backfill_days",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788889530751,
+      "tag": "0016_nice_namora",
+      "breakpoints": true
     }
   ]
 }
