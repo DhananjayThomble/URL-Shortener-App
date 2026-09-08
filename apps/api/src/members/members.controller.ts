@@ -27,7 +27,7 @@ export class MembersController {
     @Param("id") id: string,
     @Body(zodBody(ChangeRoleInput)) input: ChangeRoleInput,
   ) {
-    await this.members.changeRole(actor.workspaceId, id, input.role, actor.label);
+    await this.members.changeRole(actor.workspaceId, id, input.role, actor.label, actor.role);
   }
 
   @Delete("members/:id")

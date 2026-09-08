@@ -50,7 +50,7 @@ export const Actor = createParamDecorator((_data: unknown, ctx: ExecutionContext
 });
 
 /** owner ⊃ admin ⊃ editor ⊃ viewer. Higher rank satisfies a lower requirement. */
-const RANK: Record<string, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+export const RANK: Record<string, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
 
 /**
  * Does the caller's role clear the bar for this route?
