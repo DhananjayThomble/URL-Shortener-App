@@ -29,7 +29,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     resolver: zodResolver(CreateLinkInput),
     defaultValues: {
       destination: "",
-      domain: "snap.to",
+      // Left blank here and filled from the workspace's own domains once they
+      // load (see the effect below). Hardcoding a production domain like
+      // "snap.to" made the first create in any other workspace fail with
+      // "snap.to isn't a domain you can use" until the user changed it.
+      domain: "",
       slug: "",
       tags: [],
       redirectType: "302",
@@ -41,11 +45,20 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     },
   });
 
-  const { register, handleSubmit, control, watch, reset, formState } = form;
+  const { register, handleSubmit, control, watch, reset, setValue, formState } = form;
   const destination = watch("destination");
   const domain = watch("domain");
   const slug = watch("slug");
   const utm = watch("utm");
+
+  // Default the back-half domain to the workspace's own first domain once the
+  // list loads, unless the user has already picked one. Avoids hardcoding a
+  // domain the workspace may not own.
+  useEffect(() => {
+    if (!domain && domains?.length) {
+      setValue("domain", domains[0].domain);
+    }
+  }, [domains, domain, setValue]);
 
   // Escape closes; body scroll locks while the drawer owns the screen.
   useEffect(() => {

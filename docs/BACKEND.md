@@ -96,15 +96,16 @@ service verifies unlock tokens that the API signed.
 
 ## Frontend follow-ups
 
-The backend is written so the current frontend works unmodified. These unlock
-the rest — the full table is in [DECISIONS.md](./DECISIONS.md) Part 4.
+The backend is written so the current frontend works unmodified. The items that
+once "unlocked the rest" have all shipped — kept here as a record of what the
+frontend now does (the full table is in [DECISIONS.md](./DECISIONS.md) Part 4):
 
-| Change | Why | Blocking |
-| --- | --- | --- |
-| Call `POST /auth/logout` in `useLogout` | Refresh tokens currently survive sign-out | **Yes — security** |
-| Add `useUpdateLink` → `PATCH /links/:id` | Editing a destination is the core product promise | Yes |
-| Handle `{ challenge: "totp" }` on login | 2FA users cannot sign in otherwise | Only with 2FA on |
-| Unlock form on `/p/[slug]` | Password links are otherwise unreachable | Only for locked links |
+| Change | Status |
+| --- | --- |
+| Call `POST /auth/logout` in `useLogout` | ✅ Done — sign-out revokes the refresh token (`web/src/lib/api/hooks/auth.ts`) |
+| Add `useUpdateLink` → `PATCH /links/:id` | ✅ Done — editing a destination is wired into the link detail page |
+| Handle `{ challenge: "totp" }` on login | ✅ Done — the 2FA challenge flow is implemented |
+| Unlock form on `/p/[slug]` | ✅ Done — password links prompt and unlock via `?k=<token>` |
 
 ## Deploying
 

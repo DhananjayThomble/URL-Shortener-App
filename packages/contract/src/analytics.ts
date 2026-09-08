@@ -51,10 +51,16 @@ export type Analytics = z.infer<typeof Analytics>;
 export const AnalyticsRange = z.enum(["24h", "7d", "30d", "90d", "12m"]);
 export type AnalyticsRange = z.infer<typeof AnalyticsRange>;
 
-export const AnalyticsQuery = z.object({
-  range: AnalyticsRange.default("30d"),
-  linkId: z.string().optional(),
-});
+// `.strict()` so an unsupported or misspelled query param (e.g. `from`/`to`,
+// or `rnge`) is rejected with a 400 naming the offending key, rather than
+// silently stripped — which previously returned the default 30d window with a
+// 200 and made a client typo look like real, empty data.
+export const AnalyticsQuery = z
+  .object({
+    range: AnalyticsRange.default("30d"),
+    linkId: z.string().optional(),
+  })
+  .strict();
 export type AnalyticsQuery = z.infer<typeof AnalyticsQuery>;
 
 export const ConversionEvent = z.object({
