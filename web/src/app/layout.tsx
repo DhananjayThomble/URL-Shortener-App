@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 var s=JSON.parse(localStorage.getItem('snapurl.appearance')||'{}');
 var r=document.documentElement;
 if(s.mode){r.setAttribute('data-theme',s.mode)}
-var A={Cobalt:['#1F5FD4','#6FA8FF'],Magenta:['#D6156A','#FF5C9D'],Pine:['#0B7A6E','#3FD6BE'],Ember:['#C2410C','#FF9557'],Iris:['#5B4BC4','#9C8CFF'],Mono:['#1A1F27','#E9EEF4']};
+var A={Cobalt:['#1D59C7','#6FA8FF'],Magenta:['#D6156A','#FF5C9D'],Pine:['#0B7A6E','#3FD6BE'],Ember:['#C2410C','#FF9557'],Iris:['#5B4BC4','#9C8CFF'],Mono:['#1A1F27','#E9EEF4']};
 var a=A[s.accent||'Cobalt']||A.Cobalt;
 var dark=s.mode?s.mode==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
 var c=dark?a[1]:a[0];var n=parseInt(c.slice(1),16);

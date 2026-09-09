@@ -14,7 +14,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 export type Accent = { name: string; light: string; dark: string };
 
 export const ACCENTS: Accent[] = [
-  { name: "Cobalt", light: "#1F5FD4", dark: "#6FA8FF" },
+  { name: "Cobalt", light: "#1D59C7", dark: "#6FA8FF" },
   { name: "Magenta", light: "#D6156A", dark: "#FF5C9D" },
   { name: "Pine", light: "#0B7A6E", dark: "#3FD6BE" },
   { name: "Ember", light: "#C2410C", dark: "#FF9557" },
