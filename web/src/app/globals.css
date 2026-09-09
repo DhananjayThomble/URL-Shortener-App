@@ -56,18 +56,20 @@
   --line-2: #c6cfda;
   --ink: #0c1219;
   --ink-2: #4a5766;
-  --ink-3: #7b8899;
-  --accent: #1f5fd4;
+  /* WCAG 2.2 AA (SC 1.4.3): #7b8899 gave only 3.07-3.61:1 on our surfaces.
+     #5c6875 clears 4.5:1 on white through surface-3. See #383. */
+  --ink-3: #5c6875;
+  --accent: #1d59c7;
   --accent-2: #1a4fb0;
   --accent-ink: #ffffff;
-  --accent-wash: rgb(31 95 212 / 0.1);
+  --accent-wash: rgb(29 89 199 / 0.1);
   --chart-2: #5a6b80;
   --teal: #0b6e80;
   --amber: #98650a;
-  --green: #15803d;
+  --green: #137a39;
   --red: #b21f26;
   --violet: #5b4bc4;
-  --wash-green: rgb(21 128 61 / 0.11);
+  --wash-green: rgb(19 122 57 / 0.11);
   --wash-amber: rgb(152 101 10 / 0.13);
   --wash-red: rgb(178 31 38 / 0.1);
   --wash-teal: rgb(11 110 128 / 0.1);
@@ -90,7 +92,7 @@
     --line-2: #33404f;
     --ink: #e9eef4;
     --ink-2: #a3b1c0;
-    --ink-3: #6c7a8c;
+    --ink-3: #8b98aa;
     --accent: #6fa8ff;
     --accent-2: #8fbdff;
     --accent-ink: #06152b;
@@ -121,7 +123,7 @@
   --line-2: #33404f;
   --ink: #e9eef4;
   --ink-2: #a3b1c0;
-  --ink-3: #6c7a8c;
+  --ink-3: #8b98aa;
   --accent: #6fa8ff;
   --accent-2: #8fbdff;
   --accent-ink: #06152b;
