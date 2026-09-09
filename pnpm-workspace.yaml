@@ -1,5 +1,6 @@
 packages:
   - "web"
+  - "e2e"
   - "apps/*"
   - "packages/*"
   # CDK stack. Not a runtime dependency of anything in apps/ or packages/.
