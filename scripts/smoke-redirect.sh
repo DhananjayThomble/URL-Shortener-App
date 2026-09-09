@@ -129,6 +129,34 @@ if [ -n "${DATABASE_URL:-}" ]; then
   fi
 fi
 
+# Block until the fixture links this run created are actually visible to the
+# redirect service, instead of racing the worker's projection_outbox drain
+# (issue #347). Under LINK_PROJECTION=dynamo a link written via the API only
+# reaches the redirect after the worker drains projection_outbox on its timer;
+# asserting redirects immediately after the fixture burst is a real race.
+#
+# This ONLY applies to a projected backend. With LINK_PROJECTION unset/none the
+# redirect resolves straight from Postgres, links are visible immediately, and
+# nothing drains the outbox — so polling it to zero would hang forever. In that
+# mode, and when the DB is unreachable (deployed CDN), this is a no-op.
+#   $1 = comma-separated quoted uuid list, e.g. "'a','b'"
+wait_for_projection() {
+  case "${LINK_PROJECTION:-none}" in
+    dynamo|kvs) : ;;                       # projected backends drain the outbox
+    *) return 0 ;;                          # none/postgres-direct: nothing to wait for
+  esac
+  [ "$DB_AVAILABLE" -eq 1 ] || { skip "projection barrier (no DB)"; return 0; }
+  local ids="$1" waited=0
+  while [ "$waited" -lt 60 ]; do
+    local pending
+    pending=$(dbq "select count(*) from projection_outbox where processed_at is null and link_id in ($ids)")
+    [ "${pending:-1}" = "0" ] && { ok "fixtures projected (0 pending)"; return 0; }
+    sleep 0.5
+    waited=$((waited+1))
+  done
+  bad "fixtures projected" "still $pending pending outbox row(s) after 30s"
+}
+
 # loc <path> [extra curl args...] -> prints "STATUS|LOCATION"
 loc() {
   local path="$1"; shift
@@ -209,6 +237,12 @@ if [ "${#CREATED_IDS[@]}" -eq "$EXPECTED_LINKS" ]; then
 else
   bad "created $EXPECTED_LINKS links" "expected $EXPECTED_LINKS, got ${#CREATED_IDS[@]} (check LINK_DOMAIN matches DEFAULT_DOMAIN)"
 fi
+
+# Wait until every fixture link is drained from the projection outbox before
+# asserting any redirect, so the routing-chain (and every other) assertion does
+# not race the worker's drain under LINK_PROJECTION=dynamo (issue #347).
+FIXTURE_IDS=$(printf "'%s'," "${CREATED_IDS[@]}"); FIXTURE_IDS=${FIXTURE_IDS%,}
+wait_for_projection "$FIXTURE_IDS"
 
 echo
 echo "== basic redirect =="
