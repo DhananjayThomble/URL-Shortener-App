@@ -1,0 +1,17 @@
+{
+  "name": "snapurl-e2e",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Playwright end-to-end tests. Drive the dashboard in fixtures mode (NEXT_PUBLIC_USE_FIXTURES=true) — no API or database needed.",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "install:chromium": "playwright install --with-deps chromium",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22",
+    "typescript": "^5.7.3"
+  }
+}

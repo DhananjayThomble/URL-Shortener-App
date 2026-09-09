@@ -753,6 +753,72 @@ jobs:
           echo "migration bookkeeping recovered: $restored_migrations rows"
           echo "backup/restore round-trip verified"
 
+  # Browser end-to-end tests (issue #353). Drives the dashboard in fixtures mode
+  # (NEXT_PUBLIC_USE_FIXTURES=true) — no API or database — so it is cheap enough
+  # to run per-PR. Chromium only; the browser binary is cached by Playwright
+  # version so most runs skip the download. Gated on `code` like the other jobs
+  # so a docs-only PR skips it (CI gate then treats the skip as acceptable).
+  e2e:
+    name: Browser E2E (fixtures)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Build the workspace packages web depends on (@snapurl/contract, domain).
+      - name: Build packages
+        run: pnpm build:packages
+
+      # Cache the Playwright browser download, keyed on the installed version so a
+      # version bump busts the cache and everything else reuses it.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter snapurl-e2e exec playwright install --with-deps chromium
+
+      # On a cache hit the browser binary is present but its OS deps may not be.
+      - name: Install Chromium system deps
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter snapurl-e2e exec playwright install-deps chromium
+
+      - name: Run E2E
+        run: pnpm --filter snapurl-e2e test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Single required status for this workflow (issue #349). A required check that
   # gets SKIPPED by path filtering never reports a conclusion, which leaves a PR
   # pending forever — so the branch protection requires THIS job, not the heavy
@@ -762,7 +828,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
