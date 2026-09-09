@@ -27,6 +27,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Heavy (three image builds + a kind cluster + a rollout). Off the ordinary-PR
+  # path (issue #350): nightly on main + push to main + manual, and on a PR only
+  # when labelled `deep-check` (gated on the job's `if` below).
+  schedule:
+    - cron: "42 4 * * *"
 
 # A new push to the same branch makes the previous run irrelevant.
 concurrency:
@@ -72,6 +77,11 @@ env:
 jobs:
   helm-kind:
     name: kind deploy + multi-replica rate-limit proof
+    # Off the ordinary-PR path (issue #350): runs on schedule/push/dispatch, and
+    # on a PR only when it carries the `deep-check` label. Not a required check.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'deep-check')
     runs-on: ubuntu-latest
     # Heavy: three image builds, a kind cluster, a full rollout and two smoke
     # suites. 40 minutes is generous headroom over the observed ~15-20m.
