@@ -39,3 +39,7 @@ logs/
 # Internal agent task-state (planning artifacts, not product code)
 .tasks/
 .agents/
+
+# Coverage output (issue #355) — generated, never committed
+coverage/
+**/coverage/

@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { coverage } from "../vitest.coverage.base";
 
 export default defineConfig({
   test: {
@@ -7,5 +8,6 @@ export default defineConfig({
     // CDK stack itself is validated by `cdk synth`, not vitest). Keep the glob
     // scoped to functions/ so it never tries to import a construct file.
     include: ["functions/**/*.test.ts"],
+    coverage,
   },
 });

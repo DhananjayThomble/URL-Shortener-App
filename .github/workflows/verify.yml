@@ -37,6 +37,7 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      non_e2e: ${{ steps.filter.outputs.non_e2e }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -45,8 +46,15 @@ jobs:
           # `code` is true when the PR changes any file that is NOT markdown.
           # A docs-only PR (every changed file is *.md) leaves it false and the
           # heavy jobs skip; ci-gate still reports (it tolerates skipped).
+          # `non_e2e` is true when the PR changes at least one file outside e2e/
+          # and outside markdown — the coverage-delta guard (issue #355) is
+          # meaningless for an e2e-only PR (Playwright has no vitest coverage).
           filters: |
             code:
+              - '!**/*.md'
+            non_e2e:
+              - '**'
+              - '!e2e/**'
               - '!**/*.md'
       # A push to main has no PR diff for paths-filter to read; force code=true
       # there so the default branch always runs the full suite.
@@ -819,6 +827,85 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # Publish the coverage baseline (issue #355). Non-PR only (nightly cron / push
+  # to main): run the suite with coverage, merge the per-package summaries into
+  # one, and upload it as an artifact the PR coverage-delta job downloads. Stored
+  # as an artifact, not a committed file, so the test-only lane never has to
+  # update a committed baseline (which it is forbidden to touch).
+  coverage-baseline:
+    name: coverage-baseline
+    needs: changes
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Run coverage
+        run: pnpm test:coverage
+      - name: Merge coverage
+        run: pnpm coverage:merge
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-baseline
+          path: coverage/coverage-summary.json
+          retention-days: 14
+          if-no-files-found: error
+
+  # Coverage-delta guard (issue #355). On a PR that touches something other than
+  # e2e/ and docs, fail if a TEST-ONLY PR raises covered lines in no file (a
+  # tautological test). Downloads the latest nightly baseline from main; if none
+  # exists yet the delta script passes (no false red before the first baseline).
+  coverage-delta:
+    name: coverage-delta
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.non_e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Ensure origin/main is available
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - name: Run coverage
+        run: pnpm test:coverage
+      - name: Merge coverage
+        run: pnpm coverage:merge
+      - name: Download latest nightly baseline from main
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: verify.yml
+          branch: main
+          name: coverage-baseline
+          path: baseline
+          if_no_artifact_found: warn
+      - name: Coverage delta check
+        run: node scripts/coverage-delta.mjs --pr coverage/coverage-summary.json --baseline baseline/coverage-summary.json --base origin/main
+
   # Single required status for this workflow (issue #349). A required check that
   # gets SKIPPED by path filtering never reports a conclusion, which leaves a PR
   # pending forever — so the branch protection requires THIS job, not the heavy
@@ -828,7 +915,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, coverage-delta]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

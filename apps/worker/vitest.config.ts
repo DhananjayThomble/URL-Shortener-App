@@ -1,9 +1,11 @@
 import { defineConfig } from "vitest/config";
+import { coverage } from "../../vitest.coverage.base";
 
 export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    coverage,
     /* One database, so one file at a time.
      *
      * These suites run against a real Postgres rather than a fake, and they are
