@@ -1,0 +1,140 @@
+{
+  "/analytics": [
+    "GET"
+  ],
+  "/api-keys": [
+    "GET",
+    "POST"
+  ],
+  "/api-keys/{id}": [
+    "DELETE"
+  ],
+  "/audit": [
+    "GET"
+  ],
+  "/auth/2fa/disable": [
+    "POST"
+  ],
+  "/auth/2fa/enable": [
+    "POST"
+  ],
+  "/auth/2fa/setup": [
+    "POST"
+  ],
+  "/auth/2fa/verify": [
+    "POST"
+  ],
+  "/auth/login": [
+    "POST"
+  ],
+  "/auth/logout": [
+    "POST"
+  ],
+  "/auth/me": [
+    "GET"
+  ],
+  "/auth/oauth": [
+    "POST"
+  ],
+  "/auth/refresh": [
+    "POST"
+  ],
+  "/auth/register": [
+    "POST"
+  ],
+  "/bio-pages": [
+    "GET",
+    "PUT"
+  ],
+  "/bio-pages/{id}": [
+    "DELETE"
+  ],
+  "/conversions": [
+    "GET",
+    "POST"
+  ],
+  "/domains": [
+    "GET",
+    "POST"
+  ],
+  "/domains/{id}": [
+    "DELETE"
+  ],
+  "/domains/{id}/verify": [
+    "POST"
+  ],
+  "/forms": [
+    "GET",
+    "POST"
+  ],
+  "/forms/{id}": [
+    "DELETE",
+    "GET",
+    "PATCH"
+  ],
+  "/forms/{id}/responses": [
+    "GET"
+  ],
+  "/forms/{id}/responses.csv": [
+    "GET"
+  ],
+  "/health": [
+    "GET"
+  ],
+  "/links": [
+    "GET",
+    "POST"
+  ],
+  "/links/{id}": [
+    "DELETE",
+    "GET",
+    "PATCH"
+  ],
+  "/links/{id}/clone": [
+    "POST"
+  ],
+  "/links/bulk": [
+    "POST"
+  ],
+  "/links/export": [
+    "GET"
+  ],
+  "/members": [
+    "GET",
+    "POST"
+  ],
+  "/members/{id}": [
+    "DELETE",
+    "PATCH"
+  ],
+  "/public/forms/{slug}": [
+    "GET",
+    "POST"
+  ],
+  "/public/links/{slug}/preview": [
+    "GET"
+  ],
+  "/public/links/{slug}/report": [
+    "POST"
+  ],
+  "/public/links/{slug}/unlock": [
+    "POST"
+  ],
+  "/reports": [
+    "GET"
+  ],
+  "/reports/{id}": [
+    "PATCH"
+  ],
+  "/webhooks": [
+    "GET",
+    "POST"
+  ],
+  "/webhooks/{id}": [
+    "DELETE"
+  ],
+  "/workspaces/current": [
+    "GET",
+    "PATCH"
+  ]
+}
