@@ -93,7 +93,7 @@ export default function DomainsPage() {
               <Button variant="primary" onClick={add} disabled={addDomain.isPending || !name.trim()}>
                 {addDomain.isPending ? "Adding…" : "Add domain"}
               </Button>
-              <Button onClick={() => { setAdding(false); setProblem(null); }}>Cancel</Button>
+              <Button aria-label="Cancel adding a domain" onClick={() => { setAdding(false); setProblem(null); }}>Cancel</Button>
             </div>
           </CardBody>
         </Card>

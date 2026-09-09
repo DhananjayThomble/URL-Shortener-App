@@ -202,6 +202,7 @@ export default function DevelopersPage() {
                   <button
                     key={scope}
                     type="button"
+                    aria-pressed={keyScopes.includes(scope)}
                     onClick={() => setKeyScopes((cur) => toggle(cur, scope))}
                     className={`px-[9px] py-[4px] rounded-[var(--radius-sm)] border text-[12px] font-mono ${
                       keyScopes.includes(scope) ? "border-accent text-accent bg-accent-wash" : "border-line text-ink-3"
@@ -216,7 +217,7 @@ export default function DevelopersPage() {
               <Button variant="primary" onClick={mintKey} disabled={createKey.isPending}>
                 {createKey.isPending ? "Creating…" : "Create key"}
               </Button>
-              <Button onClick={() => { setNamingKey(false); setProblem(null); }}>Cancel</Button>
+              <Button aria-label="Cancel creating an API key" onClick={() => { setNamingKey(false); setProblem(null); }}>Cancel</Button>
             </div>
           </CardBody>
         </Card>
@@ -241,6 +242,7 @@ export default function DevelopersPage() {
                   <button
                     key={event}
                     type="button"
+                    aria-pressed={hookEvents.includes(event)}
                     onClick={() => setHookEvents((cur) => toggle(cur, event))}
                     className={`px-[9px] py-[4px] rounded-[var(--radius-sm)] border text-[12px] font-mono ${
                       hookEvents.includes(event) ? "border-accent text-accent bg-accent-wash" : "border-line text-ink-3"
@@ -255,7 +257,7 @@ export default function DevelopersPage() {
               <Button variant="primary" onClick={addWebhook} disabled={createWebhook.isPending || !endpoint.trim()}>
                 {createWebhook.isPending ? "Adding…" : "Add endpoint"}
               </Button>
-              <Button onClick={() => { setAddingHook(false); setProblem(null); }}>Cancel</Button>
+              <Button aria-label="Cancel adding a webhook endpoint" onClick={() => { setAddingHook(false); setProblem(null); }}>Cancel</Button>
             </div>
           </CardBody>
         </Card>

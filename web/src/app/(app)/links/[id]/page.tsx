@@ -121,7 +121,7 @@ export default function LinkDetailPage() {
                 </Button>
               </>
             ) : (
-              <Button onClick={() => setConfirmingDelete(true)}>Delete</Button>
+              <Button aria-label="Delete this link" onClick={() => setConfirmingDelete(true)}>Delete</Button>
             )}
             <Button>Share report</Button>
             <Button variant="primary">Copy link</Button>
@@ -159,7 +159,7 @@ export default function LinkDetailPage() {
               <Button variant="primary" onClick={save} disabled={updateLink.isPending || draft === l.destination}>
                 {updateLink.isPending ? "Saving…" : "Save destination"}
               </Button>
-              <Button onClick={() => { setDraft(null); setProblem(null); }}>Cancel</Button>
+              <Button aria-label="Cancel editing the destination" onClick={() => { setDraft(null); setProblem(null); }}>Cancel</Button>
             </div>
           </CardBody>
         </Card>
