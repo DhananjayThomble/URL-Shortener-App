@@ -20,6 +20,7 @@ import type {
   SubmitReportResult,
   TotpRecoveryCodes,
   TotpSetup,
+  TotpChallenge,
   UnlockLinkResult,
   UpdateLinkInput,
   UpdateWorkspaceInput,
@@ -662,7 +663,17 @@ export async function fixtureRequest<T>(
   let data: unknown;
 
   /* ---- auth ---- */
-  if (m(/^\/auth\/(login|register|oauth)$/)) data = SESSION;
+  if (m(/^\/auth\/login$/) && method === "POST") {
+    // A designated fixture account has 2FA on, so login returns a CHALLENGE
+    // rather than a session — this is what lets the TOTP login flow (issue #377)
+    // be exercised in fixtures mode. Everyone else signs in directly, as before.
+    const email = (opts.body as { email?: string })?.email ?? "";
+    if (email.toLowerCase() === "2fa@snapurl.local") {
+      data = { challenge: "totp", challengeToken: "fixture.totp.challenge" } satisfies TotpChallenge;
+    } else {
+      data = SESSION;
+    }
+  } else if (m(/^\/auth\/(register|oauth)$/)) data = SESSION;
   else if (m(/^\/auth\/me$/)) data = SESSION.user;
   else if (m(/^\/auth\/logout$/)) data = undefined;
   else if (m(/^\/auth\/2fa\/setup$/)) {
@@ -675,8 +686,13 @@ export async function fixtureRequest<T>(
     data = {
       recoveryCodes: Array.from({ length: 10 }, (_, i) => `${1000 + i * 137}-${7300 - i * 91}`),
     } satisfies TotpRecoveryCodes;
-  } else if (m(/^\/auth\/2fa\/verify$/)) data = SESSION;
-  else if (m(/^\/auth\/2fa\/disable$/)) data = undefined;
+  } else if (m(/^\/auth\/2fa\/verify$/)) {
+    // The fixture "correct" code is 123456; anything else is rejected, so the
+    // wrong-code path is exercisable too. The real server checks the TOTP.
+    const code = (opts.body as { code?: string })?.code ?? "";
+    if (code !== "123456") throw new Error("That code isn't right. Try again.");
+    data = SESSION;
+  } else if (m(/^\/auth\/2fa\/disable$/)) data = undefined;
   /* ---- workspace ---- */
   else if (m(/^\/workspaces\/current$/) && method === "PATCH") {
     Object.assign(WORKSPACE, opts.body as UpdateWorkspaceInput);
