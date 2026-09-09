@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { abuseReports, createDatabase, domains, eq, links, workspaces, type Database } from "@snapurl/database";
+import { abuseReports, createDatabase, domains, eq, links, projectionOutbox, workspaces, type Database } from "@snapurl/database";
 import { ReportsService } from "./reports.service.js";
 
 /* ============================================================
@@ -216,6 +216,11 @@ describeDb("ReportsService.list / review", () => {
   });
 
   afterAll(async () => {
+    // projection_outbox.link_id has no FK cascade, so the row that flagging
+    // linkA enqueues (issue #346) would outlive the workspace and pollute the
+    // worker's global drainOutbox concurrency test. Delete it before the
+    // workspaces go.
+    if (linkA) await db.delete(projectionOutbox).where(eq(projectionOutbox.linkId, linkA));
     if (wsA) await db.delete(workspaces).where(eq(workspaces.id, wsA));
     if (wsB) await db.delete(workspaces).where(eq(workspaces.id, wsB));
     await db.delete(abuseReports).where(eq(abuseReports.id, reportNullWorkspace));
@@ -248,6 +253,15 @@ describeDb("ReportsService.list / review", () => {
       .limit(1);
     expect(row!.status).toBe("flagged");
     expect(row!.checkedAt).not.toBeNull();
+
+    // Issue #346: the flag must also enqueue a projection_outbox row in the same
+    // transaction, or under LINK_PROJECTION=dynamo the redirect keeps serving
+    // the stale (clean) projected copy. Without the enqueue, this is empty.
+    const outbox = await db
+      .select({ id: projectionOutbox.linkId, op: projectionOutbox.operation })
+      .from(projectionOutbox)
+      .where(eq(projectionOutbox.linkId, linkA));
+    expect(outbox.some((r) => r.op === "upsert")).toBe(true);
   });
 
   it("updates status without touching safeBrowsingStatus for a status-only review", async () => {
