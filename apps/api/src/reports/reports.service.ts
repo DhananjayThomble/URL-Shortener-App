@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { abuseReports, and, desc, eq, links, sql, type Database } from "@snapurl/database";
+import { abuseReports, and, desc, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
 import type { AbuseReport, SubmitReportInput, SubmitReportResult, UpdateAbuseReportInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
@@ -128,6 +128,20 @@ export class ReportsService {
           .where(and(eq(links.id, report.linkId!), eq(links.workspaceId, workspaceId)))
           .returning({ id: links.id });
         didFlag = updated.length > 0;
+
+        // Issue #346: propagate the flag to the read projection in the SAME
+        // transaction, exactly as links.service does for every other link
+        // mutation. Without this, under LINK_PROJECTION=dynamo the redirect
+        // service reads a stale projected copy whose safeBrowsingStatus is still
+        // "clean", so a link an operator just flagged keeps redirecting until
+        // some unrelated write happens to re-project it.
+        if (didFlag) {
+          await tx.insert(projectionOutbox).values({
+            linkId: report.linkId!,
+            operation: "upsert",
+            payload: { linkId: report.linkId!, operation: "upsert" },
+          });
+        }
       }
 
       // Flagging a link is itself the action, so default to 'actioned' when the
