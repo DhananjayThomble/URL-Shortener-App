@@ -189,3 +189,37 @@ describe("drift guard: the tested twin equals the deployed function", () => {
     expect(region(twin)).toBe(region(runtime));
   });
 });
+
+/*
+ * Issue #357: the drift guard above only covers the shared LOGIC REGION. The
+ * module scaffolding around it (imports, the handler declaration, any export) is
+ * outside that region and was therefore unchecked — yet an illegal `export` or a
+ * second `import` makes CloudFront reject the whole function at deploy
+ * ("SyntaxError: Illegal export statement"), and an invalid function answers
+ * EVERY request with a 503 rather than falling through to the origin. One line
+ * can take the entire redirect path down, and the 14 logic tests would still be
+ * green. These assertions pin the scaffolding of the DEPLOYED file so that can't
+ * recur silently.
+ */
+describe("deployed CloudFront Function has valid module scaffolding (#357)", () => {
+  const runtime = readFileSync(new URL("redirect-viewer-request.js", `file://${here}`), "utf8");
+
+  it("contains NO export statement (CloudFront Functions reject one outright)", () => {
+    // Any top-of-line export form: `export {`, `export default`, `export function`,
+    // `export const`, `module.exports`, `exports.foo =`.
+    expect(runtime).not.toMatch(/^\s*export\b/m);
+    expect(runtime).not.toMatch(/^\s*module\.exports\b/m);
+    expect(runtime).not.toMatch(/^\s*exports\./m);
+  });
+
+  it("imports only the allowed global `cloudfront` module, and nothing else", () => {
+    const imports = runtime.match(/^\s*import\b.*$/gm) ?? [];
+    // Exactly one import, and it is the runtime-allowed `import cf from "cloudfront"`.
+    expect(imports).toHaveLength(1);
+    expect(imports[0]).toMatch(/import\s+cf\s+from\s+["']cloudfront["'];?/);
+  });
+
+  it("declares a global `handler` function (the runtime entry point)", () => {
+    expect(runtime).toMatch(/^\s*(async\s+)?function\s+handler\s*\(/m);
+  });
+});
