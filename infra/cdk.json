@@ -6,6 +6,8 @@
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "_comment_checkSecretUsage": "Off deliberately: the DB password is passed to the Lambdas as an environment variable. See the reasoning in lib/snapurl-stack.ts.",
     "@aws-cdk/core:checkSecretUsage": false,
-    "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true
+    "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true,
+    "_comment_natStrategy": "Pinned default (issue #348). A deploy that omits -c natStrategy must NOT fall back to a topology that kills Lambda egress. 'instance' is the ~$3/mo t4g.nano NAT with full IPv4 egress. deploy.sh still requires NAT_STRATEGY explicitly; this is the belt-and-suspenders floor for a raw `cdk deploy`. Non-secret.",
+    "natStrategy": "instance"
   }
 }
