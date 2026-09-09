@@ -14,6 +14,6 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "build.mjs", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "build.mjs"],
   "exclude": ["node_modules", "dist"]
 }

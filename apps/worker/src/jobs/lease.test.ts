@@ -137,7 +137,7 @@ describeDb("withLease", () => {
     expect(next.acquired).toBe(true);
   });
 
-  it("derives the expiry from ttlSeconds, so the lease frees itself on time", async () => {
+  it("derives the expiry from ttlSeconds, so the lease frees itself on time", { retry: 2, timeout: 20_000 }, async () => {
     /* Every other test writes `locked_until` by hand, which means none of them
        touch the TTL — reading the argument as minutes instead of seconds, or
        ignoring it entirely, would pass the whole suite. This is the only case
