@@ -17,8 +17,41 @@ permissions:
   contents: read
 
 jobs:
+  # Classify the diff so the heavy jobs below can be skipped on changes that
+  # cannot affect them (e.g. a docs-only PR), without leaving a required check
+  # stuck pending. `code` is true for anything that is NOT purely docs/markdown —
+  # deliberately broad so no existing job loses coverage on a PR that touches its
+  # area (issue #349).
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # `code` is true when the PR changes any file that is NOT markdown.
+          # A docs-only PR (every changed file is *.md) leaves it false and the
+          # heavy jobs skip; ci-gate still reports (it tolerates skipped).
+          filters: |
+            code:
+              - '!**/*.md'
+      # A push to main has no PR diff for paths-filter to read; force code=true
+      # there so the default branch always runs the full suite.
+      - name: Force full run on push to main
+        if: github.event_name != 'pull_request'
+        run: echo "code=true" >> "$GITHUB_OUTPUT"
+
   verify:
     name: Type-check, build, test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -149,6 +182,8 @@ jobs:
   # rather than being found after deploy.
   integration:
     name: Compose integration harness
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -278,6 +313,8 @@ jobs:
   # RESOLUTION moves to DynamoDB, which is what Done-when #1 names.
   dynamo-smoke:
     name: LINK_PROJECTION=dynamo smoke (dynamodb-local)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -548,6 +585,8 @@ jobs:
   # documented-and-hoped-for.
   restore-test:
     name: Backup and restore round-trip
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -701,3 +740,39 @@ jobs:
           fi
           echo "migration bookkeeping recovered: $restored_migrations rows"
           echo "backup/restore round-trip verified"
+
+  # Single required status for this workflow (issue #349). A required check that
+  # gets SKIPPED by path filtering never reports a conclusion, which leaves a PR
+  # pending forever — so the branch protection requires THIS job, not the heavy
+  # jobs directly. It runs on every PR (needs everything, if: always()), passes
+  # when each dependency is success OR skipped, and fails if any is failure or
+  # cancelled. So: a docs-only PR (heavy jobs skipped) is green here; a real
+  # test failure is red here; nothing is left pending.
+  ci-gate:
+    name: CI gate
+    needs: [changes, verify, integration, dynamo-smoke, restore-test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to have succeeded or been skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          # Fail if any needed job's result is 'failure' or 'cancelled'.
+          # 'success' and 'skipped' are both acceptable.
+          bad="$(echo "$RESULTS" | node -e '
+            let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+              const n=JSON.parse(s);
+              const bad=Object.entries(n)
+                .filter(([,v])=>v.result==="failure"||v.result==="cancelled")
+                .map(([k,v])=>k+"="+v.result);
+              process.stdout.write(bad.join(","));
+            });')"
+          if [ -n "$bad" ]; then
+            echo "::error::ci-gate failing because: $bad"
+            exit 1
+          fi
+          echo "ci-gate: all jobs succeeded or were skipped"
