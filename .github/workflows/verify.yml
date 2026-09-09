@@ -7,6 +7,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Nightly full run on main so the heavy jobs that are off the per-PR path
+  # (restore-test here, and the Helm/kind deploy workflow) still run daily
+  # against the default branch. 04:17 UTC — off the top of the hour to avoid
+  # the scheduler's peak. (Issue #350.)
+  schedule:
+    - cron: "17 4 * * *"
 
 # A new push to the same branch makes the previous run irrelevant.
 concurrency:
@@ -586,7 +592,13 @@ jobs:
   restore-test:
     name: Backup and restore round-trip
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Heavy (backup/restore round-trip). Off the ordinary-PR path (issue #350):
+    # runs nightly on main (schedule), on a push to main, and on a PR only when
+    # it carries the `deep-check` label. ci-gate tolerates it being skipped.
+    if: >-
+      needs.changes.outputs.code == 'true' &&
+      (github.event_name != 'pull_request' ||
+       contains(github.event.pull_request.labels.*.name, 'deep-check'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
