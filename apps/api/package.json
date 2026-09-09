@@ -10,6 +10,7 @@
     "start": "node --env-file-if-exists=.env dist/main.js",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "emit:openapi": "pnpm build && node scripts/emit-openapi.mjs",
     "dev:nest": "nest start --watch"
   },
   "dependencies": {

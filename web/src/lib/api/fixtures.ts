@@ -598,6 +598,57 @@ function match(path: string) {
   return (pattern: RegExp) => pattern.exec(clean);
 }
 
+/*
+ * The set of (method, path-pattern) pairs this fake backend recognizes. It is the
+ * SAME list the dispatch chain in fixtureRequest() branches on, declared here as
+ * data so the fixture-parity test (issue #354) can check both directions:
+ *   - every real API route has a branch here (missing branch => test fails)
+ *   - every branch here still maps to a live API route (stale branch => test fails)
+ * A `methods` array lists exactly which HTTP methods that branch serves (mirroring
+ * the dispatch chain's `&& method === ...` guards; a branch with no guard serves
+ * GET). Keep this in lockstep with the chain below; the parity test's direction-1
+ * probe independently re-derives coverage from the real dispatcher, so a route
+ * this list forgets is still caught.
+ */
+export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern: RegExp }> = [
+  { methods: ["POST"], pattern: /^\/auth\/(login|register|oauth)$/ },
+  { methods: ["GET"], pattern: /^\/auth\/me$/ },
+  { methods: ["POST"], pattern: /^\/auth\/logout$/ },
+  { methods: ["POST"], pattern: /^\/auth\/2fa\/setup$/ },
+  { methods: ["POST"], pattern: /^\/auth\/2fa\/enable$/ },
+  { methods: ["POST"], pattern: /^\/auth\/2fa\/verify$/ },
+  { methods: ["POST"], pattern: /^\/auth\/2fa\/disable$/ },
+  { methods: ["GET", "PATCH"], pattern: /^\/workspaces\/current$/ },
+  { methods: ["GET", "POST"], pattern: /^\/links$/ },
+  { methods: ["POST"], pattern: /^\/links\/bulk$/ },
+  { methods: ["POST"], pattern: /^\/links\/([^/]+)\/clone$/ },
+  { methods: ["GET", "PATCH", "DELETE"], pattern: /^\/links\/([^/]+)$/ },
+  { methods: ["GET"], pattern: /^\/analytics$/ },
+  { methods: ["GET", "POST"], pattern: /^\/conversions$/ },
+  { methods: ["GET", "POST"], pattern: /^\/domains$/ },
+  { methods: ["POST"], pattern: /^\/domains\/([^/]+)\/verify$/ },
+  { methods: ["DELETE"], pattern: /^\/domains\/([^/]+)$/ },
+  { methods: ["GET", "POST"], pattern: /^\/members$/ },
+  { methods: ["PATCH", "DELETE"], pattern: /^\/members\/([^/]+)$/ },
+  { methods: ["GET"], pattern: /^\/audit$/ },
+  { methods: ["GET", "POST"], pattern: /^\/api-keys$/ },
+  { methods: ["DELETE"], pattern: /^\/api-keys\/([^/]+)$/ },
+  { methods: ["GET", "POST"], pattern: /^\/webhooks$/ },
+  { methods: ["DELETE"], pattern: /^\/webhooks\/([^/]+)$/ },
+  { methods: ["GET", "PUT"], pattern: /^\/bio-pages$/ },
+  { methods: ["DELETE"], pattern: /^\/bio-pages\/([^/]+)$/ },
+  { methods: ["GET"], pattern: /^\/forms\/([^/]+)\/responses$/ },
+  { methods: ["GET", "PATCH", "DELETE"], pattern: /^\/forms\/([^/]+)$/ },
+  { methods: ["GET", "POST"], pattern: /^\/forms$/ },
+  { methods: ["PATCH"], pattern: /^\/reports\/([^/]+)$/ },
+  { methods: ["GET"], pattern: /^\/reports$/ },
+  { methods: ["GET", "POST"], pattern: /^\/public\/forms\/([^/]+)$/ },
+  { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/unlock$/ },
+  { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/report$/ },
+  { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/preview$/ },
+];
+
+
 export async function fixtureRequest<T>(
   path: string,
   schema: z.ZodType<T>,
