@@ -65,6 +65,7 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
             </NextLink>
             <button
               onClick={onCopy}
+              aria-label={`Copy short link ${link.domain}/${link.slug}`}
               className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
             >
               {copied ? "✓ copied" : "⧉ copy"}
@@ -74,6 +75,7 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
             <button
               onClick={() => cloneLink.mutate({ id: link.id })}
               disabled={cloneLink.isPending}
+              aria-label={`Duplicate link ${link.domain}/${link.slug}`}
               title="Create a copy of this link with a new back-half"
               className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
             >

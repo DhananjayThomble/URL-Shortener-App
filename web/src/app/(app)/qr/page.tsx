@@ -117,6 +117,7 @@ export default function QrStudioPage() {
                     <button
                       key={c}
                       aria-pressed={fg === c}
+                      aria-label={`Foreground colour ${c}`}
                       onClick={() => setFg(c)}
                       style={{ background: c }}
                       className={cn(

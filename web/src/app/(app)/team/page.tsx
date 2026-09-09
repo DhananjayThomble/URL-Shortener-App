@@ -123,7 +123,7 @@ export default function TeamPage() {
               <Button variant="primary" onClick={sendInvite} disabled={invite.isPending || !email.trim()}>
                 {invite.isPending ? "Sending…" : "Send invitation"}
               </Button>
-              <Button onClick={() => { setInviting(false); setProblem(null); }}>Cancel</Button>
+              <Button aria-label="Cancel inviting a member" onClick={() => { setInviting(false); setProblem(null); }}>Cancel</Button>
             </div>
           </CardBody>
         </Card>

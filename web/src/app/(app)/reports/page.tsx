@@ -82,6 +82,7 @@ export default function ReportsPage() {
                           size="sm"
                           variant="ghost"
                           disabled={review.isPending}
+                          aria-label={`Mark report on /${r.slug} reviewed`}
                           onClick={() => review.mutate({ id: r.id, status: "reviewed" })}
                         >
                           Reviewed
@@ -90,6 +91,7 @@ export default function ReportsPage() {
                           size="sm"
                           variant="ghost"
                           disabled={review.isPending}
+                          aria-label={`Dismiss report on /${r.slug}`}
                           onClick={() => review.mutate({ id: r.id, status: "dismissed" })}
                         >
                           Dismiss
@@ -97,6 +99,7 @@ export default function ReportsPage() {
                         <Button
                           size="sm"
                           disabled={review.isPending || r.linkId === null}
+                          aria-label={`Flag the link for report on /${r.slug}`}
                           title={r.linkId === null ? "This report's slug did not resolve to a link" : undefined}
                           onClick={() => review.mutate({ id: r.id, flagLink: true })}
                         >

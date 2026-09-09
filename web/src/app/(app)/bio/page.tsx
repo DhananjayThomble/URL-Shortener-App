@@ -151,7 +151,7 @@ export default function BioPagesPage() {
               <Button variant="primary" onClick={create} disabled={upsert.isPending}>
                 {upsert.isPending ? "Creating…" : "Create as draft"}
               </Button>
-              <Button onClick={() => { setCreating(false); setProblem(null); }}>Cancel</Button>
+              <Button aria-label="Cancel creating a bio page" onClick={() => { setCreating(false); setProblem(null); }}>Cancel</Button>
             </div>
           </CardBody>
         </Card>
