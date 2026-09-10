@@ -997,6 +997,36 @@ export class SnapUrlStack extends Stack {
       comment: "SnapURL redirect edge",
     });
 
+    /* CloudFront needs BOTH lambda:InvokeFunctionUrl AND lambda:InvokeFunction
+       to reach an AWS_IAM Function URL through an Origin Access Control.
+       FunctionUrlOrigin.withOriginAccessControl() above grants only the first,
+       and that is not enough: with InvokeFunctionUrl alone every OAC-signed
+       request is refused at the auth boundary before the handler runs, so the
+       edge returns a blanket 403 for EVERY slug —
+         {"Message":"Forbidden. For troubleshooting Function URL authorization
+          issues, see: ...lambda/latest/dg/urls-auth.html"}
+       — while a direct `lambda invoke` still returns a correct 302 and the
+       function logs nothing at all, because it is never invoked. That is what
+       took production redirects down completely on 2026-09-10: every short
+       link 403'd for hours with the OAC, the resource policy SourceArn, the
+       signing config and the origin wiring all individually correct.
+       AWS documents both grants (see "Restricting access to a Lambda function
+       URL origin"): https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html
+       Do NOT drop this on the grounds that the OAC helper "already grants
+       invoke" — it grants the URL action, not the function action. SourceArn
+       scopes it to this distribution alone, so no other distribution (or
+       account) can invoke the redirect function. */
+    redirectFn.addPermission("AllowCloudFrontServicePrincipalInvokeFunction", {
+      principal: new iam.ServicePrincipal("cloudfront.amazonaws.com"),
+      action: "lambda:InvokeFunction",
+      sourceArn: Stack.of(this).formatArn({
+        service: "cloudfront",
+        region: "",
+        resource: "distribution",
+        resourceName: distribution.distributionId,
+      }),
+    });
+
     /* ---------------------------------------------------------
        Worker
        --------------------------------------------------------- */
