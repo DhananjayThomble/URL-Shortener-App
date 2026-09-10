@@ -1,0 +1,6 @@
+# Build output (also matched by the root .gitignore's dist/ rule; kept here for clarity).
+dist/
+
+# Chrome Web Store packaging artifacts (produced by `pnpm package`).
+snapurl-extension-*.zip
+snapurl-extension.zip

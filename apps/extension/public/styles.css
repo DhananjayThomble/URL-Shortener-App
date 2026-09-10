@@ -1,13 +1,69 @@
+/* SnapURL extension styles — Track C owns this file entirely (SPEC §5.3).
+ *
+ * Tokens are lifted verbatim from web/src/app/globals.css so the extension
+ * matches the web app and inherits its WCAG-2.2-AA contrast fixes (Cobalt accent
+ * #1d59c7 light / #6fa8ff dark; --ink-3 #5c6875 clears 4.5:1 — see issue #383).
+ * Light and dark are provided via prefers-color-scheme (SPEC F15). Track B's
+ * markup renders into the frozen class-name registry (§5.4); the CSS rules for
+ * every one of those classes live here.
+ */
+
 :root {
-  --bg: #ffffff;
-  --fg: #0f172a;
-  --muted: #64748b;
-  --brand: #2563eb;
-  --brand-fg: #ffffff;
-  --border: #e2e8f0;
-  --error: #b91c1c;
-  --ok: #15803d;
+  /* Surfaces & lines */
+  --ground: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #f7f9fb;
+  --surface-3: #e9edf2;
+  --surface-4: #dfe5ec;
+  --line: #dce2ea;
+  --line-2: #c6cfda;
+  /* Ink (text) — #5c6875 for --ink-3 clears 4.5:1 through surface-3 (#383) */
+  --ink: #0c1219;
+  --ink-2: #4a5766;
+  --ink-3: #5c6875;
+  /* Accent (Cobalt) */
+  --accent: #1d59c7;
+  --accent-2: #1a4fb0;
+  --accent-ink: #ffffff;
+  --accent-wash: rgb(29 89 199 / 0.1);
+  /* Status */
+  --green: #137a39;
+  --red: #b21f26;
+  --amber: #98650a;
+  --wash-green: rgb(19 122 57 / 0.11);
+  --wash-red: rgb(178 31 38 / 0.1);
+  /* Shape */
+  --radius: 9px;
+  --radius-sm: 6px;
+  --shadow-2: 0 1px 2px rgb(12 18 25 / 0.05), 0 10px 26px -14px rgb(12 18 25 / 0.3);
+
+  color-scheme: light dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #070a0e;
+    --surface: #10161e;
+    --surface-2: #151c25;
+    --surface-3: #1b232e;
+    --surface-4: #242e3b;
+    --line: #212b37;
+    --line-2: #33404f;
+    --ink: #e9eef4;
+    --ink-2: #a3b1c0;
+    --ink-3: #8b98aa;
+    --accent: #6fa8ff;
+    --accent-2: #8fbdff;
+    --accent-ink: #06152b;
+    --accent-wash: rgb(111 168 255 / 0.14);
+    --green: #57d68b;
+    --red: #ff7b7b;
+    --amber: #e0a93b;
+    --wash-green: rgb(87 214 139 / 0.13);
+    --wash-red: rgb(255 123 123 / 0.12);
+    --shadow-2: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 30px -16px rgb(0 0 0 / 0.9);
+  }
 }
 
 * {
@@ -16,12 +72,81 @@
 
 body {
   margin: 0;
-  color: var(--fg);
-  background: var(--bg);
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.45;
 }
 
+a,
+.linkish {
+  color: var(--accent);
+}
+
+.linkish {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+
+/* ---- Buttons ---- */
+.btn {
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+  border: 1px solid transparent;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
+.btn--ghost {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--line-2);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+/* Legacy v1 button selectors kept so nothing regresses before B's popup lands. */
+button[type="submit"],
+button[data-action="shorten"],
+button[data-action="open-options"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* ---- Popup (Track B renders into these; CSS is Track C's) ---- */
 .popup {
-  width: 320px;
+  width: 360px;
   padding: 14px 16px;
 }
 
@@ -32,97 +157,313 @@ body {
   margin-bottom: 8px;
 }
 
-.popup__title,
-.options__title {
+.popup__title {
   font-size: 16px;
   margin: 0;
 }
 
-.popup__subtitle {
-  font-size: 13px;
-  color: var(--muted);
-  margin: 12px 0 6px;
+.popup__form {
+  display: grid;
+  gap: 8px;
 }
 
-.popup__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.field {
   display: grid;
   gap: 4px;
 }
 
-.popup__list li {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.field__label {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: 6px;
 }
 
-.popup__result-actions {
+.field__input {
+  padding: 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.field__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.field__error {
+  color: var(--red);
+  font-size: 13px;
+}
+
+.field__hint {
+  color: var(--ink-3);
+  font-size: 12px;
+  margin: 2px 0 0;
+}
+
+.field__key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field__key-row .field__input {
+  flex: 1 1 auto;
+}
+
+.domain-select {
+  padding: 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.alias-input {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.utm-disclosure {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+}
+
+.utm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.result {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.result__url {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  word-break: break-all;
+  color: var(--accent);
+}
+
+.result__actions {
   display: flex;
   gap: 8px;
   margin-top: 8px;
 }
 
-.popup__error,
-.options__error {
-  color: var(--error);
+.qr {
+  margin-top: 10px;
 }
 
-.options__saved {
-  color: var(--ok);
+.qr__preview {
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px;
 }
 
-.linkish {
-  background: none;
-  border: none;
-  color: var(--brand);
-  cursor: pointer;
+.qr__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.recent {
+  margin-top: 12px;
+}
+
+.recent__search {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.recent__list {
+  list-style: none;
+  margin: 8px 0 0;
   padding: 0;
-  font: inherit;
+  display: grid;
+  gap: 4px;
 }
 
-button[type="submit"],
-button[data-action="shorten"],
-button[data-action="open-options"] {
-  background: var(--brand);
-  color: var(--brand-fg);
-  border: none;
-  border-radius: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  font: inherit;
+.recent__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
 }
 
+.recent__clicks {
+  color: var(--ink-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.recent__sparkline {
+  height: 14px;
+  opacity: 0.9;
+}
+
+.error {
+  color: var(--red);
+  background: var(--wash-red);
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.banner--offline {
+  background: var(--wash-amber, rgb(152 101 10 / 0.13));
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* ---- Options / onboarding (Track C's surface) ---- */
 .options {
-  max-width: 520px;
-  margin: 40px auto;
-  padding: 0 16px;
+  max-width: 560px;
+  margin: 32px auto;
+  padding: 0 20px 48px;
+}
+
+.options__title {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+.options__intro {
+  color: var(--ink-2);
+  margin: 0 0 20px;
+}
+
+.options__section {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-2);
+}
+
+.options__section-title {
+  font-size: 14px;
+  margin: 0 0 8px;
+  color: var(--ink);
 }
 
 .options__form {
-  display: grid;
-  gap: 6px;
+  display: block;
 }
 
-.options__label {
-  font-size: 13px;
-  color: var(--muted);
+.options__test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.options__origin,
+.options__env {
+  flex: 1 1 auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  overflow-wrap: anywhere;
+}
+
+.options__actions {
+  display: flex;
+  gap: 10px;
   margin-top: 8px;
 }
 
-.options__form input {
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font: inherit;
+.options__saved {
+  color: var(--green);
+  font-weight: 600;
 }
 
-.options__form button {
-  margin-top: 12px;
-  justify-self: start;
+.options__error {
+  color: var(--red);
 }
 
-a {
-  color: var(--brand);
+.onboarding {
+  margin-bottom: 20px;
+}
+
+.onboarding__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.onboarding__step {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+}
+
+.onboarding__step--active {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.onboarding__verdict {
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+}
+
+.onboarding__verdict[data-kind="ok"] {
+  color: var(--green);
+  background: var(--wash-green);
+}
+
+.onboarding__verdict[data-kind="auth"],
+.onboarding__verdict[data-kind="generic"],
+.onboarding__verdict[data-kind="rate-limit"] {
+  color: var(--red);
+  background: var(--wash-red);
+}
+
+.onboarding__verdict[data-kind="network"] {
+  color: var(--amber);
+  background: var(--wash-red);
+}
+
+/* Respect users who prefer no motion (SPEC §4.4). */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }

@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "package": "node scripts/package.mjs",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "echo \"no lint configured\" && exit 0"
