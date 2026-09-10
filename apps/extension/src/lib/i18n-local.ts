@@ -1,16 +1,14 @@
-/* i18n for the Track-C surfaces (options + onboarding).
+/* Options/onboarding English fallback catalog (Track C strings).
  *
- * SPEC §5.1 makes `src/lib/i18n.ts` + `_locales/en/messages.json` the shared
- * foundation OWNED BY TRACK B. To keep this worktree building standalone and to
- * never touch Track B's files, Track C ships its own self-contained message
- * catalog and `t()` here. At Round-3 integration these keys fold into the shared
- * `_locales/en/messages.json` (append-only, alphabetized) and the two helpers
- * collapse into one — until then this stays independent so the tracks merge
- * without a create/create conflict on the shared files.
+ * Round-3 i18n reconciliation (SPEC §5.1): the shared i18n mechanism is
+ * `src/lib/i18n.ts` (owned by Track B) reading `_locales/en/messages.json` via
+ * chrome.i18n. Track C's strings have been folded into that shared catalog.
  *
- * `t()` prefers `chrome.i18n.getMessage` (so a real locale bundle wins once it
- * exists) and falls back to the in-module English catalog, which is also what
- * the DOM tests assert against (no chrome global under happy-dom).
+ * This module no longer defines its own `t()`. It keeps ONLY the plain
+ * key→string map so `options.ts` can register it via `setFallbackMessages()`
+ * for non-browser (vitest/happy-dom) contexts, where `chrome.i18n` is absent.
+ * The keys here mirror the options/onboarding entries in
+ * `_locales/en/messages.json` exactly — keep them in sync when either changes.
  */
 
 /** English strings for every user-facing options/onboarding label. */
@@ -74,18 +72,3 @@ export const OPTIONS_MESSAGES = {
 } as const;
 
 export type OptionsMessageKey = keyof typeof OPTIONS_MESSAGES;
-
-/**
- * Resolve a message. Prefers chrome.i18n.getMessage(key) when a locale bundle
- * is present (returns a non-empty string), otherwise the in-module English
- * catalog. Unknown keys return the key itself so a missing string is visible in
- * a test rather than silently blank.
- */
-export function t(key: OptionsMessageKey): string {
-  const i18n = globalThis.chrome?.i18n;
-  if (i18n && typeof i18n.getMessage === "function") {
-    const fromBundle = i18n.getMessage(key);
-    if (fromBundle) return fromBundle;
-  }
-  return OPTIONS_MESSAGES[key] ?? key;
-}

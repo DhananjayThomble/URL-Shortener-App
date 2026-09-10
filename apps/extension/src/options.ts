@@ -31,7 +31,14 @@ import {
   type FlagStore,
   type OnboardingState,
 } from "./lib/onboarding.js";
-import { t } from "./lib/i18n-local.js";
+import { t, setFallbackMessages } from "./lib/i18n.js";
+import { OPTIONS_MESSAGES } from "./lib/i18n-local.js";
+
+// Round-3 i18n reconciliation: one shared mechanism (lib/i18n.ts). In the
+// extension runtime t() reads chrome.i18n (_locales/en/messages.json); under
+// vitest/happy-dom there is no chrome, so register Track C's English catalog as
+// the fallback BEFORE OPTIONS_MARKUP is built below (it calls t() at eval time).
+setFallbackMessages(OPTIONS_MESSAGES);
 
 /** The verdict kinds a Test connection resolves to. Drives the message + styling. */
 export type ConnectionVerdict = "ok" | "auth" | "rate-limit" | "network" | "generic";
