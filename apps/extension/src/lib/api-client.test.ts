@@ -5,7 +5,9 @@ import {
   AuthError,
   NetworkError,
   RateLimitError,
+  ScopeError,
   createLink,
+  listDomains,
   listLinks,
 } from "./api-client.js";
 import type { FetchImpl } from "./api-client.js";
@@ -61,6 +63,38 @@ describe("api-client / createLink", () => {
     const body = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
     expect(body.domain).toBe("other.io");
     expect(body.slug).toBe("custom");
+  });
+
+  it("includes utm tags in the body when provided, and omits utm when empty", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse(sampleLink, { status: 201 }));
+    await createLink(
+      settings,
+      { destination: "https://example.com/", utm: { source: "news", medium: "email" } },
+      { fetchImpl },
+    );
+    const withUtm = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
+    expect(withUtm.utm).toEqual({ source: "news", medium: "email" });
+
+    await createLink(settings, { destination: "https://example.com/" }, { fetchImpl });
+    const withoutUtm = JSON.parse(String(fetchImpl.mock.calls[1]![1]?.body));
+    expect(withoutUtm.utm).toBeUndefined();
+  });
+
+  it("maps a 403 that names a scope to a ScopeError carrying the scope", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () =>
+      jsonResponse({ message: 'This API key is missing the "links:write" scope.' }, { status: 403 }),
+    );
+    const err = await createLink(settings, { destination: "https://example.com/" }, { fetchImpl }).catch((e) => e);
+    expect(err).toBeInstanceOf(ScopeError);
+    expect(err).toBeInstanceOf(AuthError);
+    expect((err as ScopeError).scope).toBe("links:write");
+  });
+
+  it("maps a 403 with no named scope to a plain AuthError", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse({ message: "forbidden" }, { status: 403 }));
+    const err = await createLink(settings, { destination: "https://example.com/" }, { fetchImpl }).catch((e) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect(err).not.toBeInstanceOf(ScopeError);
   });
 
   it("maps 401 to an AuthError", async () => {
@@ -162,5 +196,45 @@ describe("api-client / listLinks", () => {
   it("maps 401 to an AuthError", async () => {
     const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse({ message: "no" }, { status: 401 }));
     await expect(listLinks(settings, {}, { fetchImpl })).rejects.toBeInstanceOf(AuthError);
+  });
+});
+
+describe("api-client / listDomains", () => {
+  const sampleDomain = {
+    id: "dom_1",
+    domain: "snp.li",
+    status: "live",
+    ssl: "active",
+    links: 4,
+    rootRedirect: null,
+    notFoundRedirect: null,
+  };
+
+  it("GETs /api/v1/domains with the bearer token and parses Domain[]", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse([sampleDomain]));
+    const domains = await listDomains(settings, { fetchImpl });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe("https://snapurl.example/api/v1/domains");
+    expect(init?.method).toBe("GET");
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer snap_live_secret");
+    expect(domains).toHaveLength(1);
+    expect(domains[0]?.domain).toBe("snp.li");
+  });
+
+  it("surfaces a missing domains:read scope as a ScopeError", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () =>
+      jsonResponse({ message: 'This API key is missing the "domains:read" scope.' }, { status: 403 }),
+    );
+    const err = await listDomains(settings, { fetchImpl }).catch((e) => e);
+    expect(err).toBeInstanceOf(ScopeError);
+    expect((err as ScopeError).scope).toBe("domains:read");
+  });
+
+  it("rejects when credentials are missing before making a request", async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async () => jsonResponse([]));
+    await expect(
+      listDomains({ apiBaseUrl: "https://snapurl.example", apiKey: "" }, { fetchImpl }),
+    ).rejects.toBeInstanceOf(AuthError);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

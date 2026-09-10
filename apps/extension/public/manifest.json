@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "SnapURL",
   "description": "Shorten the active tab, copy it, and view recent links against your own SnapURL API.",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "default_locale": "en",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Shorten this page with SnapURL",
@@ -21,8 +22,17 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab", "storage", "contextMenus", "commands"],
   "host_permissions": [],
+  "commands": {
+    "shorten-active-tab": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Shorten the current tab with SnapURL"
+    }
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self'"
   },

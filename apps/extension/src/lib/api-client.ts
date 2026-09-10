@@ -9,9 +9,11 @@
 
 import {
   CreateLinkInput,
+  Domain,
   Link,
   LinkList,
   ListLinksQuery,
+  type Domain as DomainType,
   type Link as LinkType,
   type LinkList as LinkListType,
   type ListLinksQuery as ListLinksQueryType,
@@ -38,6 +40,30 @@ export class AuthError extends ApiError {
     super(message, status);
     this.name = "AuthError";
   }
+}
+
+/**
+ * 403 — the key authenticated but is missing a required scope. Extends AuthError
+ * so existing `catch (e instanceof AuthError)` handling still fires, while
+ * callers that care can name the missing scope. The API's 403 body reads
+ * `This API key is missing the "<scope>" scope.` — we surface that verbatim and
+ * pull the scope name out of it when present.
+ */
+export class ScopeError extends AuthError {
+  /** The scope named in the 403 body, e.g. `domains:read`, when parseable. */
+  readonly scope: string | undefined;
+  constructor(message = "Your API key is missing a required scope.", scope?: string) {
+    super(message, 403);
+    this.name = "ScopeError";
+    this.scope = scope;
+  }
+}
+
+/** Pull the scope name out of the API's `…missing the "<scope>" scope.` message. */
+function scopeFromMessage(message: string | undefined): string | undefined {
+  if (!message) return undefined;
+  const match = message.match(/"([^"]+)"\s+scope/);
+  return match?.[1];
 }
 
 /** 429 — too many requests; carries the server's retry hint when present. */
@@ -74,15 +100,26 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-/** What the popup passes in; domain/slug are optional and defaulted from settings. */
+/** What the popup passes in; domain/slug/utm are optional and defaulted from settings/form. */
 export interface CreateLinkParams {
   destination: string;
   domain?: string;
   slug?: string;
+  /** UTM tags built from the popup's campaign disclosure; omitted when empty. */
+  utm?: {
+    source?: string;
+    medium?: string;
+    campaign?: string;
+    content?: string;
+  };
+}
+
+function apiUrl(settings: Settings, resource: string): string {
+  return `${settings.apiBaseUrl}/${API_PREFIX}/${resource}`;
 }
 
 function endpoint(settings: Settings): string {
-  return `${settings.apiBaseUrl}/${API_PREFIX}/links`;
+  return apiUrl(settings, "links");
 }
 
 function authHeaders(settings: Settings): Record<string, string> {
@@ -113,7 +150,13 @@ async function extractMessage(response: Response): Promise<string | undefined> {
 /** Turn a non-2xx response into the right typed error. */
 async function toError(response: Response): Promise<ApiError> {
   const message = await extractMessage(response);
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 403) {
+    const scope = scopeFromMessage(message);
+    // A 403 that names a scope is a missing-scope failure; otherwise a plain
+    // authorization rejection. Either way it stays an AuthError subclass.
+    return scope ? new ScopeError(message, scope) : new AuthError(message, 403);
+  }
+  if (response.status === 401) {
     return new AuthError(message, response.status);
   }
   if (response.status === 429) {
@@ -154,6 +197,7 @@ export async function createLink(
     destination: params.destination,
     domain,
     ...(params.slug ? { slug: params.slug } : {}),
+    ...(params.utm && Object.keys(params.utm).length > 0 ? { utm: params.utm } : {}),
   });
 
   const init: RequestInit = {
@@ -195,4 +239,28 @@ export async function listLinks(
   if (!response.ok) throw await toError(response);
 
   return LinkList.parse(await response.json());
+}
+
+/**
+ * GET the workspace's domains for the read-only domain picker (F4). Requires the
+ * `domains:read` scope; a key without it yields a ScopeError the caller can
+ * degrade on (fall back to the free-text default domain). Returns the parsed,
+ * contract-validated Domain[].
+ */
+export async function listDomains(
+  settings: Settings,
+  options: RequestOptions = {},
+): Promise<DomainType[]> {
+  if (!hasCredentials(settings)) {
+    throw new AuthError("Add your SnapURL API key in the extension options first.");
+  }
+  const fetchImpl = options.fetchImpl ?? fetch;
+
+  const init: RequestInit = { method: "GET", headers: authHeaders(settings) };
+  if (options.signal) init.signal = options.signal;
+
+  const response = await doFetch(apiUrl(settings, "domains"), init, fetchImpl);
+  if (!response.ok) throw await toError(response);
+
+  return Domain.array().parse(await response.json());
 }

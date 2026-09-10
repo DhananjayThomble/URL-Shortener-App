@@ -1,0 +1,34 @@
+{
+  "bg_context_menu": {
+    "message": "Shorten with SnapURL",
+    "description": "Context-menu entry label for shortening a page or a right-clicked link."
+  },
+  "bg_copied": {
+    "message": "Short link copied: $1",
+    "description": "Notification after a context-menu shorten succeeds; $1 is the short URL."
+  },
+  "bg_failed": {
+    "message": "Couldn't shorten that link. Try again.",
+    "description": "Generic failure notification for a background shorten."
+  },
+  "bg_needs_config": {
+    "message": "Add your SnapURL API key in the extension options first.",
+    "description": "Notification when a background shorten is attempted with no credentials."
+  },
+  "bg_needs_domain": {
+    "message": "Set a default short domain in the extension options first.",
+    "description": "Notification when a background shorten is attempted with no default domain."
+  },
+  "bg_not_shortenable": {
+    "message": "That page can't be shortened.",
+    "description": "Notification when a context-menu target is not an http(s) URL."
+  },
+  "bg_title_error": {
+    "message": "SnapURL",
+    "description": "Notification title for an error toast."
+  },
+  "bg_title_success": {
+    "message": "SnapURL",
+    "description": "Notification title for a success toast."
+  }
+}
