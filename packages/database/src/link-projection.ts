@@ -326,14 +326,26 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
  *            raw column) is what makes the no-incoming-query edge response
  *            byte-identical to the Lambda's, including normalisations like
  *            `https://EXAMPLE.com` -> `https://example.com/`.
- *  - `base`  `href` with the query and fragment removed. Derived by slicing off
- *            `search` + `hash` rather than by re-joining origin+pathname, so it
- *            is correct for non-special schemes too (whose `origin` is "null").
+ *  - `base`  `href` up to (not including) the first `?` or `#`.
  *  - `params` the destination's OWN query as pairs, already run through
  *            URLSearchParams — so re-serialising them reproduces what the
  *            Lambda's `url.searchParams` mutation would emit.
- *  - `hash`  the fragment including "#", or "" — preserved verbatim, exactly as
- *            `URL` already percent-encoded it, and always emitted last.
+ *  - `hash`  everything from the first `#` onwards, or "" when there is none.
+ *            Preserved verbatim, exactly as `URL` already percent-encoded it, and
+ *            always emitted last.
+ *
+ *  The split is POSITIONAL, on `href`, and deliberately not `href.length -
+ *  search.length - hash.length`: for an EMPTY-BUT-PRESENT delimiter those two
+ *  properties are "" while `href` still carries the character, so the arithmetic
+ *  form left the delimiter inside `base` and produced genuinely wrong URLs —
+ *  `https://a.com/x?` merged to `https://a.com/x??a=1`, and `https://a.com/x#`
+ *  to `https://a.com/x#?a=1`, i.e. the query AFTER the fragment. Both are pinned
+ *  as regression cases in redirect-viewer-request.test.ts.
+ *
+ *  Scanning for `#` FIRST and only then for `?` within the part before it is what
+ *  keeps a fragment containing a question mark (`/x#f?g`) intact. Neither
+ *  character can appear un-encoded earlier in a normalised href (a literal `?` in
+ *  a path or userinfo is %3F), so indexOf is unambiguous here.
  *
  *  Returns null for a destination `URL` cannot parse. Stored destinations are
  *  validated on write, so that is a last resort — and it is a SAFE one: without
@@ -348,9 +360,11 @@ export function decomposeDestination(
     return null;
   }
   const href = url.toString();
-  const hash = url.hash;
-  /* href === base + search + hash, so peel the two known tails off the end. */
-  const base = href.slice(0, href.length - url.search.length - hash.length);
+  const hashAt = href.indexOf("#");
+  const beforeHash = hashAt === -1 ? href : href.slice(0, hashAt);
+  const hash = hashAt === -1 ? "" : href.slice(hashAt);
+  const queryAt = beforeHash.indexOf("?");
+  const base = queryAt === -1 ? beforeHash : beforeHash.slice(0, queryAt);
   const params: Array<[string, string]> = [];
   for (const [key, value] of url.searchParams) params.push([key, value]);
   return { href, base, params, hash };

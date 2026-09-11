@@ -343,6 +343,56 @@ describe("formEncode matches URLSearchParams serialisation", () => {
     expect(() => formEncode(loneSurrogate)).toThrow(URIError);
     expect(new URLSearchParams([["x", loneSurrogate]]).toString()).toBe("x=%EF%BF%BD");
   });
+
+  /* EXHAUSTIVE, not sampled: every code point in the BMP outside the surrogate
+     range, compared against real URLSearchParams. Sampling 1000 random strings
+     cannot prove a single-character encoding table; enumerating it can. */
+  it("agrees with URLSearchParams for every non-surrogate BMP code point", () => {
+    const mismatches: string[] = [];
+    for (let cp = 0; cp <= 0xffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue; // lone surrogates: see above
+      const ch = String.fromCharCode(cp);
+      if (formEncode(ch) !== refValue(ch)) mismatches.push("U+" + cp.toString(16));
+    }
+    expect(mismatches).toEqual([]);
+  });
+});
+
+describe("the integer-like key guard declines exactly what it must", () => {
+  /* Verified against real object enumeration: a key is REORDERED (enumerated
+     before earlier-inserted string keys) only when it is a canonical array index
+     in 0..2^32-2. The guard's regex also declines 2^32-1 and above, which are NOT
+     reordered — over-declining is harmless (it just uses the Lambda), whereas
+     under-declining would emit a wrongly-ordered query. */
+  it.each([
+    ["0", true],
+    ["1", true],
+    ["10", true],
+    ["4294967294", true],
+    ["01", false],
+    ["1e2", false],
+    [" 1", false],
+    ["-1", false],
+    ["1.0", false],
+    ["a1", false],
+    ["1a", false],
+  ])("key %j is reordered by object enumeration: %s — and is declined iff needed", (key, reordered) => {
+    const obj: Record<string, number> = {};
+    obj.zz = 1;
+    obj[key] = 1;
+    const actuallyReordered = Object.keys(obj)[0] === key;
+    expect(actuallyReordered).toBe(reordered);
+
+    const declined =
+      edgeLocation(
+        JSON.parse(
+          kvsValue({ ...plainProjected, destination: "https://acme.com/x", forwardQuery: true }),
+        ),
+        { [key]: { value: "v" } },
+      ) === null;
+    // Safety: anything reordered MUST be declined. The converse is optional.
+    if (actuallyReordered) expect(declined).toBe(true);
+  });
 });
 
 describe("edgeLocation reproduces buildDestination byte-for-byte", () => {
@@ -390,6 +440,26 @@ describe("edgeLocation reproduces buildDestination byte-for-byte", () => {
     ["normalises the destination host", "https://ACME.com", "a=1"],
     ["preserves a port and userinfo-free authority", "https://acme.com:8443/x", "a=1"],
     ["skips the unlock token k", "https://acme.com/x", "k=secret&a=1"],
+    /* REGRESSION (found by the independent review, not by the property test — its
+       generator could not produce an empty-but-present delimiter). When `?` or `#`
+       is present but empty, url.search / url.hash are "" while href still carries
+       the character, so deriving base by subtracting their LENGTHS left the
+       delimiter in base and produced a genuinely wrong URL: "…/x??a=1", and worse
+       "…/x#?a=1" with the query AFTER the fragment. decomposeDestination now
+       splits href positionally. */
+    ["empty-but-present query delimiter", "https://acme.com/x?", "a=1"],
+    ["empty-but-present fragment delimiter", "https://acme.com/x#", "a=1"],
+    ["both delimiters present and empty", "https://acme.com/x?#", "a=1"],
+    ["fragment containing a question mark", "https://acme.com/x#f?g", "a=1"],
+    ["fragment with a question mark AND an existing query", "https://acme.com/x?p=1#f?g", "a=1"],
+    ["percent-encoded question mark in the path", "https://acme.com/a%3Fb", "a=1"],
+    ["userinfo in the authority", "https://u:p@acme.com/x", "a=1"],
+    ["IPv6 host", "https://[2001:db8::1]/x", "a=1"],
+    ["non-special scheme", "mailto:a@b.com", "a=1"],
+    ["non-special scheme with a query", "custom:opaque?z=1", "a=1"],
+    ["default port is stripped", "https://acme.com:443/x", "a=1"],
+    ["dot segments in the path", "https://acme.com/a/../b", "a=1"],
+    ["query but no path", "https://acme.com?z=1", "a=1"],
   ];
 
   it.each(cases)("%s", (_name, destination, incomingQuery) => {
