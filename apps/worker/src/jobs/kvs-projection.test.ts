@@ -103,8 +103,13 @@ describe("KvsWriter.putIfEligible", () => {
     ["archived", { archived: true }],
     ["unsafe", { safeBrowsingStatus: "malware" }],
     /* Transform behaviours the edge cannot reproduce (each independently makes a
-       link ineligible so it stays on the authoritative Lambda). */
-    ["forwardQuery", { forwardQuery: true }],
+       link ineligible so it stays on the authoritative Lambda).
+
+       forwardQuery is NOT in this list any more (#395): the edge reproduces the
+       forwarded-query merge from the base/params/hash that kvsValue stores, so a
+       forwardQuery link IS edge-eligible. It had to be — forwardQuery defaults to
+       true, so excluding it left the KeyValueStore permanently empty. See the
+       dedicated forwardQuery case below. */
     ["utm", { utm: { source: "print", medium: "qr", campaign: null, content: null } }],
     ["deepLink", { deepLink: true }],
     ["hideReferrer", { hideReferrer: true }],
@@ -137,6 +142,61 @@ describe("KvsWriter.putIfEligible", () => {
       expect(deletes[0].IfMatch).toBe(ETAG);
     });
   }
+
+  /* #395: a forwardQuery link is now PUT, and its value carries the decomposed
+     destination the CloudFront Function needs to merge without a URL parser. */
+  it("PutKeys a forwardQuery link with the decomposed destination", async () => {
+    const puts: any[] = [];
+    const { client } = makeClient({
+      DescribeKeyValueStoreCommand: () => ({ ETag: ETAG }),
+      PutKeyCommand: (input) => {
+        puts.push(input);
+        return {};
+      },
+    });
+    const writer = new KvsWriter(client, KVS_ARN);
+
+    await writer.putIfEligible(
+      eligibleLink({ forwardQuery: true, destination: "https://acme.com/x?a=1#f" }),
+      HOST,
+      SLUG,
+    );
+
+    expect(puts).toHaveLength(1);
+    const value = JSON.parse(puts[0].Value);
+    expect(value.forwardQuery).toBe(true);
+    expect(value.base).toBe("https://acme.com/x");
+    expect(value.params).toEqual([["a", "1"]]);
+    expect(value.hash).toBe("#f");
+    expect(value.destination).toBe("https://acme.com/x?a=1#f");
+  });
+
+  /* An oversized value must be DELETED, never truncated: a truncated value would
+     make the edge answer with a mangled destination, which is strictly worse than
+     not answering at all. */
+  it("DeleteKeys instead of writing a value over the 1 KB limit", async () => {
+    const deletes: any[] = [];
+    const { client, send } = makeClient({
+      DescribeKeyValueStoreCommand: () => ({ ETag: ETAG }),
+      DeleteKeyCommand: (input) => {
+        deletes.push(input);
+        return {};
+      },
+    });
+    const writer = new KvsWriter(client, KVS_ARN);
+
+    // A destination whose decomposed form comfortably exceeds 1 KB.
+    const huge = "https://acme.com/x?q=" + "a".repeat(1200);
+    await writer.putIfEligible(
+      eligibleLink({ forwardQuery: true, destination: huge }),
+      HOST,
+      SLUG,
+    );
+
+    expect(send.mock.calls.map((c) => commandName(c[0]))).not.toContain("PutKeyCommand");
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].Key).toBe(kvsKey(HOST, SLUG));
+  });
 });
 
 describe("KvsWriter.deleteKey", () => {

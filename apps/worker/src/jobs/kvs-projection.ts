@@ -50,6 +50,11 @@ const MAX_ATTEMPTS = 3;
  *  ETag (optimistic-concurrency conflict). */
 const CONFLICT_ERROR = "ConflictException";
 
+/** CloudFront's per-value ceiling for a KeyValueStore entry, in bytes. A value at
+ *  or under this is written; anything over it is deleted instead (see
+ *  putIfEligible) so the edge never serves a truncated destination. */
+const MAX_VALUE_BYTES = 1024;
+
 function isConflict(err: unknown): boolean {
   return err instanceof Error && err.name === CONFLICT_ERROR;
 }
@@ -69,6 +74,21 @@ export class KvsWriter {
     const key = kvsKey(host, slug);
     if (isEdgeEligible(link)) {
       const value = kvsValue(link);
+      /* Oversized value -> DELETE, not a truncated write.
+       *
+       * CloudFront caps a KeyValueStore value at 1 KB. Since #395 a forwardQuery
+       * link's value also carries the destination decomposed into base/params/hash
+       * so the edge can merge without a URL parser, which roughly doubles it — an
+       * ordinary link is still far inside the cap, but a destination with a very
+       * long query can now approach it. Truncating would be the worst outcome
+       * available: the edge would answer with a MANGLED destination instead of
+       * simply not answering. Removing the key leaves the link on the Lambda,
+       * which is always correct, and the delete (rather than a skip) also evicts a
+       * previously-written entry for a link whose destination has since grown. */
+      if (Buffer.byteLength(value, "utf8") > MAX_VALUE_BYTES) {
+        await this.deleteByKey(key);
+        return;
+      }
       await this.withEtag((etag) =>
         this.client.send(
           new PutKeyCommand({ KvsARN: this.kvsArn, Key: key, Value: value, IfMatch: etag }),

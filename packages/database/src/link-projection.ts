@@ -267,9 +267,26 @@ export function kvsKey(host: string, slug: string): string {
  *    reproduce: the redirect Lambda runs buildDestination (which merges the
  *    forwarded query when `forwardQuery` and injects stored `utm`), buildDeepLink
  *    (when `deepLink`), and sets `Referrer-Policy: no-referrer` (when
- *    `hideReferrer`). The edge returns only the raw stored destination, so any of
- *    `forwardQuery`, a non-null `utm`, `deepLink`, or `hideReferrer` would make
+ *    `hideReferrer`). A non-null `utm`, `deepLink`, or `hideReferrer` would make
  *    the edge response materially wrong. Keep those links on the Lambda.
+ *
+ *    `forwardQuery` is the ONE transform the edge now does reproduce (#395), and
+ *    it had to be admitted or the fast path served nothing at all: forwardQuery
+ *    defaults to true (links.ts / contract link.ts), so gating on it excluded
+ *    100% of default-created links and the KeyValueStore sat permanently empty
+ *    while every redirect paid the full Lambda + VPC + DB cost.
+ *
+ *    The edge reproduces it byte-for-byte WITHOUT a URL parser, which it does
+ *    not have (the CloudFront Functions JS 2.0 runtime has no URL and no
+ *    URLSearchParams — only Buffer/querystring/crypto). Instead kvsValue below
+ *    stores the destination already DECOMPOSED by this module, running in Node
+ *    with the real WHATWG URL: a `base` prefix, the destination's own query as
+ *    already-normalised `params` pairs, and its `hash`. The Function then applies
+ *    URLSearchParams.set semantics over those pairs and re-serialises with the
+ *    identical application/x-www-form-urlencoded algorithm, so both sides emit
+ *    the same bytes because both serialise the same pairs — neither re-parses a
+ *    URL. A destination this module cannot parse simply carries no `base`, and
+ *    the Function falls through to the Lambda.
  *
  *  - Only a plain 302: 301 and 307 both fall through to the Lambda. A 301's
  *    permanence is honoured on the Lambda with `public, max-age=300`
@@ -291,7 +308,6 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
     link.activatesAt == null &&
     link.archived === false &&
     link.safeBrowsingStatus === "clean" &&
-    link.forwardQuery === false &&
     link.utm == null &&
     link.deepLink === false &&
     link.hideReferrer === false &&
@@ -299,13 +315,83 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
   );
 }
 
+/** The destination split into the three pieces the edge needs to rebuild it.
+ *
+ *  Computed HERE, in Node, with the real WHATWG `URL` — the CloudFront Function
+ *  has neither `URL` nor `URLSearchParams`, so it must never parse a URL itself.
+ *
+ *  - `href`  the fully normalised destination, i.e. exactly what the redirect
+ *            Lambda's `buildDestination` returns when nothing is merged in
+ *            (`new URL(dest).toString()`). Storing the normalised form (not the
+ *            raw column) is what makes the no-incoming-query edge response
+ *            byte-identical to the Lambda's, including normalisations like
+ *            `https://EXAMPLE.com` -> `https://example.com/`.
+ *  - `base`  `href` with the query and fragment removed. Derived by slicing off
+ *            `search` + `hash` rather than by re-joining origin+pathname, so it
+ *            is correct for non-special schemes too (whose `origin` is "null").
+ *  - `params` the destination's OWN query as pairs, already run through
+ *            URLSearchParams — so re-serialising them reproduces what the
+ *            Lambda's `url.searchParams` mutation would emit.
+ *  - `hash`  the fragment including "#", or "" — preserved verbatim, exactly as
+ *            `URL` already percent-encoded it, and always emitted last.
+ *
+ *  Returns null for a destination `URL` cannot parse. Stored destinations are
+ *  validated on write, so that is a last resort — and it is a SAFE one: without
+ *  `base` the Function cannot merge and falls through to the Lambda. */
+export function decomposeDestination(
+  destination: string,
+): { href: string; base: string; params: Array<[string, string]>; hash: string } | null {
+  let url: URL;
+  try {
+    url = new URL(destination);
+  } catch {
+    return null;
+  }
+  const href = url.toString();
+  const hash = url.hash;
+  /* href === base + search + hash, so peel the two known tails off the end. */
+  const base = href.slice(0, href.length - url.search.length - hash.length);
+  const params: Array<[string, string]> = [];
+  for (const [key, value] of url.searchParams) params.push([key, value]);
+  return { href, base, params, hash };
+}
+
 /** The KeyValueStore value for a link: the minimum the edge needs to answer a
- *  redirect. JSON `{ destination, redirectType }` — a URL plus a 3-char code is
- *  far under the 1 KB per-value limit (and 5 MB per-store), so no truncation
- *  guard is needed. The CloudFront Function JSON.parses this and reads exactly
- *  these two fields. */
+ *  redirect.
+ *
+ *  `{ destination, redirectType }` is the whole payload for a link that does not
+ *  forward the query. A `forwardQuery` link additionally carries the decomposed
+ *  `base` / `params` / `hash` (see decomposeDestination) so the Function can
+ *  merge the incoming query without a URL parser. Those three are omitted
+ *  otherwise, which keeps the common value as small as it was before #395.
+ *
+ *  A URL plus a 3-char code is far under the 1 KB per-value limit; the decomposed
+ *  form roughly doubles it, which is still comfortably inside for ordinary links.
+ *  Pathological cases are not truncated here — the writer (KvsWriter.putIfEligible)
+ *  refuses an oversized value and leaves the link on the Lambda, because a
+ *  truncated value would produce a WRONG redirect rather than a missing one. */
 export function kvsValue(link: ProjectedLink): string {
-  return JSON.stringify({ destination: link.destination, redirectType: link.redirectType });
+  const parts = decomposeDestination(link.destination);
+  const value: {
+    destination: string;
+    redirectType: string;
+    forwardQuery?: true;
+    base?: string;
+    params?: Array<[string, string]>;
+    hash?: string;
+  } = {
+    destination: parts ? parts.href : link.destination,
+    redirectType: link.redirectType,
+  };
+  if (link.forwardQuery) {
+    value.forwardQuery = true;
+    if (parts) {
+      value.base = parts.base;
+      value.params = parts.params;
+      value.hash = parts.hash;
+    }
+  }
+  return JSON.stringify(value);
 }
 
 /** ProjectedDomain -> stored DomainItem. */

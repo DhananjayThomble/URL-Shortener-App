@@ -14,10 +14,12 @@
   },
   "devDependencies": {
     "@snapurl/database": "workspace:*",
+    "@snapurl/domain": "workspace:*",
     "@types/node": "^22",
     "aws-cdk": "^2.1029.4",
     "aws-cdk-lib": "^2.221.0",
     "constructs": "^10.4.2",
+    "fast-check": "^4.9.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"

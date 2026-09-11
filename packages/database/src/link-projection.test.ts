@@ -179,8 +179,13 @@ describe("isEdgeEligible", () => {
   /* Transform behaviours the Lambda applies on the happy path and the edge
      cannot reproduce — each independently makes a link ineligible so the raw
      stored destination is never served in place of the transformed one. */
-  it("is false when the link forwards the incoming query", () => {
-    expect(isEdgeEligible({ ...plain, forwardQuery: true })).toBe(false);
+
+  /* forwardQuery is the exception (#395): the edge DOES reproduce it, from the
+     base/params/hash kvsValue stores. It had to be admitted — forwardQuery
+     defaults to true, so gating on it made every default-created link ineligible
+     and the KeyValueStore stayed permanently empty. */
+  it("is TRUE when the link forwards the incoming query (the edge merges it)", () => {
+    expect(isEdgeEligible({ ...plain, forwardQuery: true })).toBe(true);
   });
 
   it("is false when the link injects stored UTM params", () => {

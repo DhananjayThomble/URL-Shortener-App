@@ -1,8 +1,40 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import fc from "fast-check";
 import { describe, expect, it, vi } from "vitest";
-import { kvsKey } from "@snapurl/database";
-import { decide, edgeKey } from "./redirect-viewer-request.logic.mjs";
+import { kvsKey, kvsValue, type ProjectedLink } from "@snapurl/database";
+import { buildDestination } from "@snapurl/domain";
+import {
+  decide,
+  edgeKey,
+  edgeLocation,
+  formEncode,
+} from "./redirect-viewer-request.logic.mjs";
+
+/** An edge-eligible link, mirroring the `plain` fixture in
+ *  packages/database/src/link-projection.test.ts. Tests override one field at a
+ *  time so what is under test is obvious. */
+const plainProjected: ProjectedLink = {
+  id: "11111111-1111-1111-1111-111111111111",
+  workspaceId: "22222222-2222-2222-2222-222222222222",
+  destination: "https://acme.com/x",
+  redirectType: "302",
+  rules: [],
+  expiresAt: null,
+  expiresTo: null,
+  activatesAt: null,
+  scheduledTo: null,
+  clickLimit: null,
+  clicks: 0,
+  hasPassword: false,
+  forwardQuery: false,
+  deepLink: false,
+  hideReferrer: false,
+  publicPreview: false,
+  archived: false,
+  safeBrowsingStatus: "clean",
+  utm: null,
+};
 
 /*
  * Unit tests for the RedirectViewerRequest CloudFront Function decision logic
@@ -221,5 +253,282 @@ describe("deployed CloudFront Function has valid module scaffolding (#357)", () 
 
   it("declares a global `handler` function (the runtime entry point)", () => {
     expect(runtime).toMatch(/^\s*(async\s+)?function\s+handler\s*\(/m);
+  });
+});
+
+/* ============================================================
+   #395 — the forwarded-query merge at the edge.
+
+   These are the tests that make the feature safe. The edge has no URL and no
+   URLSearchParams, so it hand-rolls the merge; if its output diverges from
+   buildDestination by even one byte, the SAME link redirects differently
+   depending on whether the edge or the Lambda answered — a cache-dependent,
+   near-undebuggable inconsistency. So rather than trust the reasoning, these
+   compare the edge against the real implementations over generated input.
+   ============================================================ */
+
+describe("formEncode matches URLSearchParams serialisation", () => {
+  /** How URLSearchParams encodes `s` as a value, extracted from real output. */
+  const refValue = (s: string) => new URLSearchParams([["x", s]]).toString().slice("x=".length);
+  /** How URLSearchParams encodes `s` as a key. */
+  const refKey = (s: string) => {
+    const out = new URLSearchParams([[s, "v"]]).toString();
+    return out.slice(0, out.length - "=v".length);
+  };
+
+  /* The characters where encodeURIComponent and the urlencoded set disagree are
+     the whole reason formEncode exists, so pin them explicitly as well as
+     generatively. */
+  it.each([
+    [" ", "+"],
+    ["!", "%21"],
+    ["'", "%27"],
+    ["(", "%28"],
+    [")", "%29"],
+    ["~", "%7E"],
+    ["*", "*"],
+    ["-", "-"],
+    [".", "."],
+    ["_", "_"],
+    ["+", "%2B"],
+    ["%", "%25"],
+    ["&", "%26"],
+    ["=", "%3D"],
+  ])("encodes %j as %j", (input, expected) => {
+    expect(formEncode(input)).toBe(expected);
+    expect(formEncode(input)).toBe(refValue(input));
+  });
+
+  it("agrees with URLSearchParams for arbitrary strings (key and value position)", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 40 }), (s) => {
+        expect(formEncode(s)).toBe(refValue(s));
+        expect(formEncode(s)).toBe(refKey(s));
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it("agrees with URLSearchParams for unicode and the tricky ASCII set", () => {
+    fc.assert(
+      fc.property(
+        fc.string({
+          // Array.from splits by CODE POINT, so astral characters stay whole. A
+          // lone surrogate is covered separately below — it is the one input where
+          // the two implementations legitimately differ.
+          unit: fc.constantFrom(
+            ...Array.from(" !'()~*-._+%&=?#/:@[]{}<>\"\\|^`$,;é日本語🙂"),
+            "a",
+            "0",
+          ),
+          maxLength: 30,
+        }),
+        (s) => {
+          expect(formEncode(s)).toBe(refValue(s));
+        },
+      ),
+      { numRuns: 500 },
+    );
+  });
+
+  /* The ONE divergence, pinned deliberately rather than discovered in production:
+     encodeURIComponent THROWS URIError on a lone surrogate, where URLSearchParams
+     substitutes U+FFFD. That is safe by construction — edgeLocation runs inside
+     decide's try/catch, so the throw becomes a fall-through to the Lambda, which
+     is always a correct answer. It is also unreachable in practice: a real query
+     arrives as bytes and malformed UTF-8 is already replaced before it becomes a
+     JS string. Asserted so the safety argument is a test, not a comment. */
+  it("throws on a lone surrogate (which decide turns into a safe fall-through)", () => {
+    const loneSurrogate = "\uD83D";
+    expect(() => formEncode(loneSurrogate)).toThrow(URIError);
+    expect(new URLSearchParams([["x", loneSurrogate]]).toString()).toBe("x=%EF%BF%BD");
+  });
+});
+
+describe("edgeLocation reproduces buildDestination byte-for-byte", () => {
+  /** CloudFront's parsed querystring shape for a raw query string. `value` is the
+   *  first occurrence and `multiValue` carries all of them in order, which is what
+   *  the real event provides for a repeated key. */
+  function cfQuerystring(query: string) {
+    const out: Record<string, { value: string; multiValue?: Array<{ value: string }> }> = {};
+    for (const [key, value] of new URLSearchParams(query)) {
+      const existing = out[key];
+      if (!existing) {
+        out[key] = { value };
+      } else {
+        existing.multiValue = existing.multiValue ?? [{ value: existing.value }];
+        existing.multiValue.push({ value });
+      }
+    }
+    return out;
+  }
+
+  /** The KVS payload the worker would store for a forwardQuery link. */
+  const payloadFor = (destination: string) =>
+    JSON.parse(
+      kvsValue({
+        ...plainProjected,
+        destination,
+        forwardQuery: true,
+      }),
+    );
+
+  /** What the Lambda would return for the same request. */
+  const viaLambda = (destination: string, incomingQuery: string) =>
+    buildDestination({ destination, incomingQuery, forwardQuery: true, utm: null });
+
+  const cases: Array<[string, string, string]> = [
+    ["appends to a destination with no query", "https://acme.com/x", "a=1&b=2"],
+    ["merges into an existing query", "https://acme.com/x?keep=1", "a=1"],
+    ["REPLACES a colliding key in the destination's own position", "https://acme.com/x?a=old&z=9", "a=new"],
+    ["keeps the fragment last", "https://acme.com/x#frag", "a=1"],
+    ["merges with both an existing query and a fragment", "https://acme.com/x?a=old#frag", "a=new&b=2"],
+    ["takes the LAST value of a repeated incoming key", "https://acme.com/x", "a=1&a=2&a=3"],
+    ["encodes spaces as +", "https://acme.com/x", "q=hello world"],
+    ["encodes the characters encodeURIComponent would leave alone", "https://acme.com/x", "q=a!b'c(d)e~f"],
+    ["handles an empty value", "https://acme.com/x", "a="],
+    ["normalises the destination host", "https://ACME.com", "a=1"],
+    ["preserves a port and userinfo-free authority", "https://acme.com:8443/x", "a=1"],
+    ["skips the unlock token k", "https://acme.com/x", "k=secret&a=1"],
+  ];
+
+  it.each(cases)("%s", (_name, destination, incomingQuery) => {
+    const got = edgeLocation(payloadFor(destination), cfQuerystring(incomingQuery));
+    expect(got).toBe(viaLambda(destination, incomingQuery));
+  });
+
+  it("returns the stored destination when there is no incoming query", () => {
+    const payload = payloadFor("https://acme.com/x?a=1#f");
+    expect(edgeLocation(payload, {})).toBe(viaLambda("https://acme.com/x?a=1#f", ""));
+  });
+
+  it("returns the raw destination (no merge) when the link does not forward the query", () => {
+    const payload = JSON.parse(kvsValue({ ...plainProjected, destination: "https://acme.com/x" }));
+    expect(payload.forwardQuery).toBeUndefined();
+    expect(edgeLocation(payload, cfQuerystring("a=1"))).toBe("https://acme.com/x");
+    // Which is also what the Lambda does with forwardQuery false.
+    expect(edgeLocation(payload, cfQuerystring("a=1"))).toBe(
+      buildDestination({
+        destination: "https://acme.com/x",
+        incomingQuery: "a=1",
+        forwardQuery: false,
+        utm: null,
+      }),
+    );
+  });
+
+  it("falls through (null) when the destination could not be decomposed", () => {
+    // No `base` — e.g. a stored destination URL could not parse.
+    expect(
+      edgeLocation(
+        { destination: "not a url", redirectType: "302", forwardQuery: true },
+        cfQuerystring("a=1"),
+      ),
+    ).toBeNull();
+  });
+
+  it("falls through (null) when an integer-like key makes the order unrecoverable", () => {
+    // "?a=1&0=2" reaches the Function as an object whose keys enumerate 0 first,
+    // so the original order is lost. Declining is correct; guessing is not.
+    expect(edgeLocation(payloadFor("https://acme.com/x"), cfQuerystring("a=1&0=2"))).toBeNull();
+    expect(edgeLocation(payloadFor("https://acme.com/x"), cfQuerystring("2=b"))).toBeNull();
+    // A non-numeric key that merely CONTAINS digits is fine.
+    expect(edgeLocation(payloadFor("https://acme.com/x"), cfQuerystring("a1=b"))).toBe(
+      viaLambda("https://acme.com/x", "a1=b"),
+    );
+  });
+
+  /* The real guarantee, and the invariant worth stating precisely: for ANY
+     destination and ANY incoming query the edge either reproduces the Lambda's
+     Location EXACTLY, or it declines (null) and the request falls through. There is
+     no third outcome — it never invents a different redirect. */
+  it("either matches buildDestination exactly or declines, for generated input", () => {
+    const token = fc.string({
+      unit: fc.constantFrom(...Array.from("abcXY019 -_.~!'()*+%&=?:/#[]é🙂")),
+      minLength: 1,
+      maxLength: 6,
+    });
+    const pair = fc.tuple(token, token);
+
+    const destination = fc
+      .tuple(
+        fc.constantFrom("https://acme.com", "https://acme.com:8443", "http://x.example"),
+        fc.constantFrom("", "/", "/p", "/a/b"),
+        fc.array(pair, { maxLength: 3 }),
+        fc.constantFrom("", "#f", "#a b"),
+      )
+      .map(([origin, path, params, hash]) => {
+        const search = params.length ? "?" + new URLSearchParams(params).toString() : "";
+        return origin + path + search + hash;
+      });
+
+    const incoming = fc
+      .array(pair, { maxLength: 4 })
+      .map((params) => new URLSearchParams(params).toString());
+
+    fc.assert(
+      fc.property(destination, incoming, (dest, query) => {
+        const got = edgeLocation(payloadFor(dest), cfQuerystring(query));
+        if (got === null) return; // declined — always safe, the Lambda answers
+        expect(got).toBe(viaLambda(dest, query));
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  /* Declining must stay RARE, or the fast path is pointless. A plain query of
+     word-like keys — the overwhelmingly common case — must always merge. */
+  it("does not decline for ordinary word-like query keys", () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.tuple(
+            fc.string({ unit: fc.constantFrom(..."abcdefgxyz_".split("")), minLength: 1, maxLength: 6 }),
+            fc.string({ unit: fc.constantFrom(..."abc019 -_".split("")), minLength: 0, maxLength: 6 }),
+          ),
+          { minLength: 1, maxLength: 4 },
+        ),
+        (params) => {
+          const query = new URLSearchParams(params).toString();
+          const got = edgeLocation(payloadFor("https://acme.com/x?keep=1"), cfQuerystring(query));
+          expect(got).not.toBeNull();
+          expect(got).toBe(viaLambda("https://acme.com/x?keep=1", query));
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+});
+
+describe("decide serves the merged Location on a forwardQuery KVS hit", () => {
+  it("returns the merged destination", async () => {
+    const payload = kvsValue({
+      ...plainProjected,
+      destination: "https://acme.com/landing?utm_id=7",
+      forwardQuery: true,
+    });
+    const res = await decide(
+      eventFor({ uri: "/promo", querystring: { ref: { value: "news" } } }),
+      async () => payload,
+    );
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location.value).toBe(
+      buildDestination({
+        destination: "https://acme.com/landing?utm_id=7",
+        incomingQuery: "ref=news",
+        forwardQuery: true,
+        utm: null,
+      }),
+    );
+  });
+
+  it("falls through to the origin when the payload cannot be merged", async () => {
+    const res = await decide(
+      eventFor({ uri: "/promo", querystring: { ref: { value: "news" } } }),
+      async () => JSON.stringify({ destination: "::::", redirectType: "302", forwardQuery: true }),
+    );
+    // A request object (fall-through), not a response.
+    expect(res.statusCode).toBeUndefined();
+    expect(res.headers["x-forwarded-host"].value).toBe("snap.to");
   });
 });
