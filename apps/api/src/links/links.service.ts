@@ -15,6 +15,7 @@ import type {
 import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
 import { DB, READ_DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
+import { ProjectionNudgeService } from "./projection-nudge.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import {
@@ -39,6 +40,7 @@ export class LinksService {
     // trap that makes the distinction load-bearing.
     @Inject(READ_DB) private readonly readDb: Database,
     private readonly safeBrowsing: SafeBrowsingService,
+    private readonly projectionNudge: ProjectionNudgeService,
   ) {}
 
   private readonly logger = new Logger(LinksService.name);
@@ -834,6 +836,12 @@ export class LinksService {
      instead of silently diverging. */
   private async enqueueProjection(tx: Executor, linkId: string, operation: "upsert" | "delete") {
     await tx.insert(projectionOutbox).values({ linkId, operation, payload: { linkId, operation } });
+    /* #394: nudge the worker to drain now instead of waiting out the 1-minute
+       schedule. Fire-and-forget and safe inside an open transaction — it never
+       awaits a network round trip that could stall the commit, and a failed
+       nudge changes nothing about correctness (the row is already committed
+       to projectionOutbox by the time this runs). */
+    this.projectionNudge.nudge();
   }
 
   private async resolveDomain(workspaceId: string, domain: string) {

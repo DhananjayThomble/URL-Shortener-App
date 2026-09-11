@@ -1142,6 +1142,23 @@ export class SnapUrlStack extends Stack {
       description: "Hourly maintenance: partition provisioning, salt rotation, retention and pruning.",
     });
 
+    /* #394: close the ~60s window between "link created" and "link
+       resolvable" caused by the projectionOutbox drain running only on the
+       1-minute schedule above. ProjectionNudgeService (apps/api/src/links)
+       fires an async Invoke of workerFn with {"task":"projection"} right
+       after every outbox enqueue, so the drain usually runs within a second
+       instead of waiting out WorkerSchedule. Needs workerFn to already exist,
+       so this grant is issued here rather than alongside apiFn above.
+       grantInvoke covers both lambda:InvokeFunction and (harmlessly, since
+       the API calls it directly rather than through a Function URL)
+       InvokeFunctionUrl. A failed or throttled invoke is caught and logged by
+       the service, not surfaced to the link-create request, and the row is
+       still durably in projectionOutbox for WorkerSchedule to pick up
+       regardless — this is a latency optimization, not a new source of
+       truth. */
+    workerFn.grantInvoke(apiFn);
+    apiFn.addEnvironment("WORKER_FUNCTION_NAME", workerFn.functionName);
+
     /* ---------------------------------------------------------
        Secret read grants (issue #292)
 
