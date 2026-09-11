@@ -109,6 +109,17 @@ export const EnvSchema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+
+  /* #394: on the AWS profile, a newly-created/edited link is invisible to the
+     redirect for up to ~60s — the projection_outbox row it lands in is only
+     drained on the worker's 1-minute EventBridge schedule. Setting this to the
+     deployed WorkerFn's name makes every projectionOutbox enqueue also fire an
+     async (fire-and-forget) Lambda Invoke carrying {"task":"projection"}, so
+     the drain usually runs within a second instead of waiting out the
+     schedule. Absent on every non-AWS profile (local dev, compose,
+     single-node, Kubernetes) — there the outbox is drained locally or is a
+     no-op (LINK_PROJECTION=none), so nothing to nudge. See ProjectionNudge. */
+  WORKER_FUNCTION_NAME: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

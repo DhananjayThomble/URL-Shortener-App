@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@aws-sdk/client-lambda": "^3.1121.0",
     "@aws-sdk/client-ses": "^3.1121.0",
     "@fastify/cors": "^11.0.1",
     "@fastify/static": "^10.1.3",

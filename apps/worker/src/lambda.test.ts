@@ -170,6 +170,18 @@ describe("worker task dispatch", () => {
     expect(backfillClickPartitions).not.toHaveBeenCalled();
   });
 
+  it("dispatches the projection task to runProjection only, not runFrequent (#394)", async () => {
+    runProjection.mockResolvedValue({ processed: 2, failed: 0 } as never);
+    const result = await handler({ task: "projection" });
+    expect(runProjection).toHaveBeenCalledWith(fakeDb);
+    expect(result).toEqual({ task: "projection", outbox: { processed: 2, failed: 0 } });
+    // The on-demand nudge must not also run the click-queue/rollup work — a
+    // link-create should not pay for unrelated work just because it shares a
+    // warm container with the scheduled "frequent" job.
+    expect(runFrequent).not.toHaveBeenCalled();
+    expect(runMaintenance).not.toHaveBeenCalled();
+  });
+
   it("does not treat a frequent invocation as a backfill", async () => {
     runFrequent.mockResolvedValue({ rolled: { events: 0 } } as never);
     runProjection.mockResolvedValue({ processed: 3, failed: 0 } as never);

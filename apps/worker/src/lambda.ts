@@ -20,6 +20,16 @@ import { backfillClickPartitions } from "./jobs/rollup.js";
  *                               (see below). A one-time adoption/repair op an
  *                               operator triggers manually, on no schedule.
  *   - `"maintenance"`        -> runMaintenance only.
+ *   - `"projection"`         -> runProjection only (#394: an on-demand drain
+ *                               the API's ProjectionNudgeService invokes right
+ *                               after enqueueing an outbox row, so a
+ *                               newly-created/edited link is usually
+ *                               resolvable within a second or two instead of
+ *                               waiting out the 1-minute schedule below. Not
+ *                               folded into "frequent" — runFrequent's queue
+ *                               drain and rollup work is unrelated to what
+ *                               this nudge is for and would make every
+ *                               link-create pay for it).
  *   - `"frequent"`           -> runProjection + runFrequent.
  *   - `"rollup"`             -> runProjection + runFrequent (back-compat alias
  *                               for the old payload; the previous handler
@@ -65,7 +75,7 @@ import { backfillClickPartitions } from "./jobs/rollup.js";
  * not the whole batch. The rollups then fold these rows as usual.
  */
 export interface WorkerEvent {
-  task?: "frequent" | "maintenance" | "rollup" | "migrate" | "backfill";
+  task?: "frequent" | "maintenance" | "rollup" | "migrate" | "backfill" | "projection";
   /** Optional per-chunk day bound for the `backfill` task, forwarded to
    *  backfillClickPartitions as its chunkSize. Omitted uses the routine's own
    *  default (CLICK_EVENTS_BACKFILL_CHUNK_DAYS). Ignored by every other task. */
@@ -153,6 +163,15 @@ export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
   if (workerEvent.task === "maintenance") {
     const maintenance = await runMaintenance(db);
     return { task: "maintenance", maintenance };
+  }
+
+  if (workerEvent.task === "projection") {
+    /* #394: the on-demand nudge path. Deliberately just the drain, not
+       runFrequent's click-queue/rollup work — a link-create should not pay
+       for unrelated work just because it happens to share a warm container
+       with the scheduled job. */
+    const outbox = await runProjection(db);
+    return { task: "projection", outbox };
   }
 
   if (workerEvent.task === "backfill") {

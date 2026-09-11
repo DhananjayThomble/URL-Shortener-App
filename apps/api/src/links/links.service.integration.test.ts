@@ -3,6 +3,7 @@ import { createDatabase, domains, eq, linkCounters, links, workspaces, type Data
 import { ListLinksQuery } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
+import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 
 /* ============================================================
    LinksService.list against a real Postgres.
@@ -23,6 +24,11 @@ const describeDb = DATABASE_URL ? describe : describe.skip;
 const safeBrowsingStub = {
   check: async () => ({ status: "clean" as const, checkedAt: new Date().toISOString() }),
 } as unknown as SafeBrowsingService;
+
+/** #394: this suite only exercises list(), which never enqueues a projection
+ *  row, so the nudge is never called — a no-op stub is all the constructor
+ *  needs. */
+const projectionNudgeStub = { nudge: () => {} } as unknown as ProjectionNudgeService;
 
 const query = (over: Partial<ListLinksQuery> = {}) => ListLinksQuery.parse({ status: "all", ...over });
 
@@ -86,7 +92,7 @@ describeDb("LinksService.list", () => {
     db = handle.db;
     // Second arg is the read-only handle. Single-node here, so it is the same
     // db handle as the primary (matches READ_DB === DB when no replica is set).
-    service = new LinksService(db, db, safeBrowsingStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
 
     const [ws] = await db
       .insert(workspaces)
