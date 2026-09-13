@@ -49,19 +49,18 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
   const { data: domains } = useDomains();
   const { data: members } = useMembers();
 
+  const counts = {
+    links: links?.total,
+    bio: bio?.length,
+    domains: domains?.length,
+    members: members?.length,
+  };
+
   return (
     <div className="flex min-h-screen">
-      <Sidebar
-        onCreate={() => setCreating(true)}
-        counts={{
-          links: links?.total,
-          bio: bio?.length,
-          domains: domains?.length,
-          members: members?.length,
-        }}
-      />
+      <Sidebar onCreate={() => setCreating(true)} counts={counts} />
       <div className="flex-1 min-w-0 flex flex-col">
-        <Topbar onCreate={() => setCreating(true)} />
+        <Topbar counts={counts} onCreate={() => setCreating(true)} />
         <main className="flex-1 px-[14px] sm:px-[22px] pt-[26px] pb-[60px]">{children}</main>
       </div>
       <CreateLinkDrawer open={creating} onClose={() => setCreating(false)} />
