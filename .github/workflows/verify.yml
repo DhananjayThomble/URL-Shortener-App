@@ -38,6 +38,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       non_e2e: ${{ steps.filter.outputs.non_e2e }}
+      workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -56,11 +57,17 @@ jobs:
               - '**'
               - '!e2e/**'
               - '!**/*.md'
+            # `workflows` is true when any GitHub Actions workflow file changes,
+            # so the actionlint job runs exactly when it has something to check.
+            workflows:
+              - '.github/workflows/**'
       # A push to main has no PR diff for paths-filter to read; force code=true
       # there so the default branch always runs the full suite.
       - name: Force full run on push to main
         if: github.event_name != 'pull_request'
-        run: echo "code=true" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "code=true" >> "$GITHUB_OUTPUT"
+          echo "workflows=true" >> "$GITHUB_OUTPUT"
 
   verify:
     name: Type-check, build, test
@@ -906,6 +913,30 @@ jobs:
       - name: Coverage delta check
         run: node scripts/coverage-delta.mjs --pr coverage/coverage-summary.json --baseline baseline/coverage-summary.json --base origin/main
 
+  # Lint the GitHub Actions workflows themselves. verify.yml's other jobs test the
+  # application; nothing tested the workflow YAML, so a malformed workflow (e.g. an
+  # embedded multi-line script starting at column 0 terminating a `run: |` block
+  # scalar) could reach main and only break at dispatch time. actionlint parses
+  # every workflow, type-checks expressions and `needs`, and runs shellcheck over
+  # `run:` scripts. The pinned rhysd/actionlint container bundles actionlint +
+  # shellcheck + pyflakes, so this job needs no toolchain setup. Gated on the
+  # workflows path filter so it runs only when a workflow changes (and always on
+  # push to main); ci-gate tolerates the skip on unrelated PRs.
+  actionlint:
+    name: Lint workflows (actionlint)
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
   # Single required status for this workflow (issue #349). A required check that
   # gets SKIPPED by path filtering never reports a conclusion, which leaves a PR
   # pending forever — so the branch protection requires THIS job, not the heavy
@@ -915,7 +946,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, coverage-delta]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, coverage-delta, actionlint]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
