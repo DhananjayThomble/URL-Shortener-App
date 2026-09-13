@@ -268,7 +268,61 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
 /* ---------------- Table ---------------- */
 export function TableWrap({ children, className }: { children: React.ReactNode; className?: string }) {
   // Wide tables scroll inside their own container so the page body never does.
-  return <div className={cn("overflow-x-auto", className)}>{children}</div>;
+  // On phones the table is wider than the viewport (min-w on <Table/>), so the
+  // right-hand columns would otherwise be silently clipped with no hint that
+  // they exist. We keep the same horizontal scroller and add a mobile-only
+  // affordance: a right-edge fade + "Scroll →" hint, shown only while there is
+  // still content to the right. Desktop (>= sm, where the table fits) is
+  // untouched — the overlay is sm:hidden and only mounts when overflow exists.
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = React.useState(false);
+  const [atEnd, setAtEnd] = React.useState(false);
+
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const canScroll = el.scrollWidth - el.clientWidth > 1;
+      setOverflow(canScroll);
+      setAtEnd(el.scrollLeft >= el.scrollWidth - el.clientWidth - 1);
+    };
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [children]);
+
+  const showHint = overflow && !atEnd;
+
+  return (
+    <div className="relative">
+      <div ref={ref} className={cn("overflow-x-auto", className)}>
+        {children}
+      </div>
+      {showHint ? (
+        <>
+          {/* Right-edge fade cueing more columns. Mobile only; purely decorative. */}
+          <div
+            aria-hidden
+            className="sm:hidden pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent"
+          />
+          {/* Text affordance so the cue is not colour-only (a11y). */}
+          <span
+            aria-hidden
+            className="sm:hidden pointer-events-none absolute bottom-1 right-1.5 rounded-[var(--radius-sm)] bg-surface-3 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.11em] text-ink-3"
+          >
+            Scroll →
+          </span>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {
