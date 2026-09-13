@@ -16,28 +16,16 @@
  */
 
 // --- DRIFT-GUARDED REGION START (must match redirect-viewer-request.js) ---
+// Must equal kvsKey() in @snapurl/database/src/link-projection.ts byte-for-byte.
 function edgeKey(host, slug) {
   return host.toLowerCase() + "/" + slug.toLowerCase();
 }
 
-/* One component, serialised the way URLSearchParams does. This runtime has no
-   URL and no URLSearchParams (JS 2.0 provides only Buffer/querystring/crypto),
-   so this is the hand-rolled equivalent — and it MUST match byte-for-byte, or the
-   same link would redirect differently depending on whether the edge or the
-   Lambda answered it.
-
-   encodeURIComponent already leaves ASCII alphanumerics and !'()*-._~ literal.
-   The application/x-www-form-urlencoded set differs in exactly two ways: space is
-   "+" not "%20", and !'()~ ARE escaped ("*", "-", "." and "_" stay literal in
-   both). Those six substitutions are the entire difference, and the property test
-   in redirect-viewer-request.test.ts asserts this against Node's real
-   URLSearchParams over generated input rather than trusting the reasoning.
-
-   ONE divergence remains and is deliberately left alone: encodeURIComponent THROWS
-   URIError on a lone surrogate, where URLSearchParams substitutes U+FFFD. decide()
-   calls this inside its try/catch, so the throw becomes a fall-through to the
-   Lambda — a correct answer, just a slower one — and a real query cannot carry a
-   lone surrogate anyway (malformed UTF-8 is replaced before it is a JS string). */
+/* URLSearchParams-compatible encoding, hand-rolled: JS 2.0 has no URL and no
+   URLSearchParams. These six substitutions ARE the whole difference from
+   encodeURIComponent; a property test asserts it against Node's real
+   URLSearchParams. Throws URIError on a lone surrogate — decide()'s try/catch
+   turns that into a fall-through. See README. */
 function formEncode(s) {
   return encodeURIComponent(s)
     .replace(/%20/g, "+")
@@ -57,10 +45,9 @@ function serialiseParams(pairs) {
   return out;
 }
 
-/* URLSearchParams.set semantics, which is what buildDestination applies: replace
-   the FIRST occurrence of the key IN PLACE — so a key the destination already has
-   keeps the destination's position, not the incoming query's — and drop any later
-   duplicates; append when the key is absent. */
+/* URLSearchParams.set semantics, as buildDestination applies: replace the FIRST
+   occurrence IN PLACE (keeping the destination's position), drop later
+   duplicates, append when absent. */
 function setParam(pairs, key, value) {
   var at = -1;
   for (var i = 0; i < pairs.length; i++) {
@@ -81,20 +68,10 @@ function setParam(pairs, key, value) {
   return out;
 }
 
-/* CloudFront's already-parsed querystring -> ordered [key, value] pairs, taking
-   the LAST value of a repeated key. That is exactly what iterating a
-   URLSearchParams and calling set() for each pair leaves behind: the key sits at
-   its first-appearance position carrying its last-seen value.
-
-   Returns null when the order cannot be trusted. This runtime, like V8,
-   enumerates INTEGER-LIKE object keys FIRST in ascending numeric order and only
-   then string keys in insertion order — so for "?a=1&0=2" the object
-   `{ a: .., 0: .. }` enumerates 0 before a and the original left-to-right order is
-   genuinely unrecoverable, because CloudFront gives us an object and no raw query
-   string. Since order decides the serialised query, emitting a differently-ordered
-   Location would be WRONG; falling through to the Lambda (which does still have
-   the raw query) is correct. A numeric query key is rare, so this costs almost
-   nothing. Found by the differential property test, not by reading the code. */
+/* Parsed querystring -> ordered pairs, last value of a repeated key. Returns
+   null when order is unrecoverable: an integer-like key enumerates FIRST, so
+   "?a=1&0=2" cannot be reordered back and a wrongly-ordered Location would be
+   incorrect — the Lambda still has the raw query, so decline. See README. */
 function isIndexLike(name) {
   return /^(0|[1-9][0-9]*)$/.test(name);
 }
@@ -115,13 +92,10 @@ function incomingPairs(qs) {
   return pairs;
 }
 
-/* The Location for a KVS hit, or null meaning "fall through to the Lambda".
- *
- * Mirrors buildDestination for the edge-eligible subset: isEdgeEligible requires
- * utm == null, so the forwarded query is the ONLY transform left to reproduce.
- * Neither side parses a URL here — the writer stored the destination already
- * decomposed into base/params/hash, and both sides serialise the same pairs with
- * the same algorithm, which is what makes the bytes agree. */
+/* Location for a KVS hit, or null = fall through. Mirrors buildDestination for
+   the edge-eligible subset (isEdgeEligible forces utm == null, so the forwarded
+   query is the only transform left). Neither side parses a URL: the writer
+   stored base/params/hash decomposed, and both serialise the same pairs. */
 function edgeLocation(parsed, querystring) {
   if (!parsed.forwardQuery) return parsed.destination;
 

@@ -2,72 +2,33 @@
 /*
  * RedirectViewerRequest — CloudFront viewer-request function (runtime JS_2_0).
  *
- * Two jobs, in order:
+ * Sets x-forwarded-host on EVERY path (#274), then serves the KeyValueStore edge
+ * fast path (#289/#395) when it can, falling through to the Lambda origin — which
+ * stays authoritative — on any failed guard, KVS miss or error.
  *
- *   1. x-forwarded-host (#274). The origin is a Lambda Function URL, which
- *      rejects any request whose Host is not its own, so CloudFront pins Host
- *      to the origin and this function copies the viewer's Host into
- *      x-forwarded-host for the redirect app to read. This MUST happen on every
- *      path, including the fall-through, or the Lambda cannot resolve the
- *      viewer's domain.
- *
- *   2. The KeyValueStore edge fast path (#289). For a plain, unconditional
- *      link, the worker writes a KVS entry `{ destination, redirectType }` keyed
- *      by `<host>/<slug>` (see kvsKey in @snapurl/database/link-projection). If
- *      this is a bare GET of a single slug and the KVS has a matching entry, the
- *      function returns the redirect itself — no Lambda invocation, no DynamoDB,
- *      no VPC. Anything it cannot answer (any failed guard, a KVS miss, or any
- *      error) returns the request unchanged so CloudFront forwards it to the
- *      Lambda origin, which stays authoritative.
- *
- * Testability: CloudFront's global `cloudfront` module is runtime-only and
- * cannot be imported by vitest. The decision logic therefore lives in a pure
- * `decide(event, kvsGet)` that takes an injectable KVS getter; `handler`
- * supplies the real `cf.kvs().get`. Because the `import cf from "cloudfront"`
- * above cannot be resolved by vitest, the test imports an identical twin of
- * `decide`/`edgeKey` from redirect-viewer-request.logic.mjs and asserts the two
- * are byte-for-byte identical (the DRIFT-GUARDED REGION below), so the tested
- * logic is provably the deployed logic.
- *
- * NOTE: keep this file small and dependency-free — CloudFront Functions have
- * tight CPU and size limits, and only a subset of JS is available.
+ * SIZE BUDGET: CloudFront caps a function at 10 KB and exceeding it fails ONLY at
+ * deploy time (CFN UPDATE_FAILED, "Status Code: 413"), after tests and cdk diff
+ * have all passed. That is not hypothetical: this file reached 11336 bytes and
+ * broke a production deploy, of which 7499 bytes were comments. So the full
+ * rationale — why the encoder must match URLSearchParams byte-for-byte, why an
+ * integer-like query key declines, the lone-surrogate divergence, and why there
+ * is no `export` — now lives in infra/functions/README.md. Keep this file terse
+ * and read that before changing anything here. A test enforces the budget.
  */
 
 import cf from "cloudfront";
 
-/*
- * The KVS key for a viewer host + slug MUST match kvsKey() in
- * @snapurl/database/src/link-projection.ts byte-for-byte: `<host>/<slug>`, host
- * lowercased (normaliseHost also trims, but a Host header carries no
- * surrounding whitespace), slug lowercased.
- *
- * `decide` is the pure decision logic: returns either a redirect response
- * object (KVS hit) or the (mutated: x-forwarded-host set) request to forward to
- * the origin. `kvsGet` is async (key) => string, throwing on miss or error.
- */
 // --- DRIFT-GUARDED REGION START (must match redirect-viewer-request.logic.mjs) ---
+// Must equal kvsKey() in @snapurl/database/src/link-projection.ts byte-for-byte.
 function edgeKey(host, slug) {
   return host.toLowerCase() + "/" + slug.toLowerCase();
 }
 
-/* One component, serialised the way URLSearchParams does. This runtime has no
-   URL and no URLSearchParams (JS 2.0 provides only Buffer/querystring/crypto),
-   so this is the hand-rolled equivalent — and it MUST match byte-for-byte, or the
-   same link would redirect differently depending on whether the edge or the
-   Lambda answered it.
-
-   encodeURIComponent already leaves ASCII alphanumerics and !'()*-._~ literal.
-   The application/x-www-form-urlencoded set differs in exactly two ways: space is
-   "+" not "%20", and !'()~ ARE escaped ("*", "-", "." and "_" stay literal in
-   both). Those six substitutions are the entire difference, and the property test
-   in redirect-viewer-request.test.ts asserts this against Node's real
-   URLSearchParams over generated input rather than trusting the reasoning.
-
-   ONE divergence remains and is deliberately left alone: encodeURIComponent THROWS
-   URIError on a lone surrogate, where URLSearchParams substitutes U+FFFD. decide()
-   calls this inside its try/catch, so the throw becomes a fall-through to the
-   Lambda — a correct answer, just a slower one — and a real query cannot carry a
-   lone surrogate anyway (malformed UTF-8 is replaced before it is a JS string). */
+/* URLSearchParams-compatible encoding, hand-rolled: JS 2.0 has no URL and no
+   URLSearchParams. These six substitutions ARE the whole difference from
+   encodeURIComponent; a property test asserts it against Node's real
+   URLSearchParams. Throws URIError on a lone surrogate — decide()'s try/catch
+   turns that into a fall-through. See README. */
 function formEncode(s) {
   return encodeURIComponent(s)
     .replace(/%20/g, "+")
@@ -87,10 +48,9 @@ function serialiseParams(pairs) {
   return out;
 }
 
-/* URLSearchParams.set semantics, which is what buildDestination applies: replace
-   the FIRST occurrence of the key IN PLACE — so a key the destination already has
-   keeps the destination's position, not the incoming query's — and drop any later
-   duplicates; append when the key is absent. */
+/* URLSearchParams.set semantics, as buildDestination applies: replace the FIRST
+   occurrence IN PLACE (keeping the destination's position), drop later
+   duplicates, append when absent. */
 function setParam(pairs, key, value) {
   var at = -1;
   for (var i = 0; i < pairs.length; i++) {
@@ -111,20 +71,10 @@ function setParam(pairs, key, value) {
   return out;
 }
 
-/* CloudFront's already-parsed querystring -> ordered [key, value] pairs, taking
-   the LAST value of a repeated key. That is exactly what iterating a
-   URLSearchParams and calling set() for each pair leaves behind: the key sits at
-   its first-appearance position carrying its last-seen value.
-
-   Returns null when the order cannot be trusted. This runtime, like V8,
-   enumerates INTEGER-LIKE object keys FIRST in ascending numeric order and only
-   then string keys in insertion order — so for "?a=1&0=2" the object
-   `{ a: .., 0: .. }` enumerates 0 before a and the original left-to-right order is
-   genuinely unrecoverable, because CloudFront gives us an object and no raw query
-   string. Since order decides the serialised query, emitting a differently-ordered
-   Location would be WRONG; falling through to the Lambda (which does still have
-   the raw query) is correct. A numeric query key is rare, so this costs almost
-   nothing. Found by the differential property test, not by reading the code. */
+/* Parsed querystring -> ordered pairs, last value of a repeated key. Returns
+   null when order is unrecoverable: an integer-like key enumerates FIRST, so
+   "?a=1&0=2" cannot be reordered back and a wrongly-ordered Location would be
+   incorrect — the Lambda still has the raw query, so decline. See README. */
 function isIndexLike(name) {
   return /^(0|[1-9][0-9]*)$/.test(name);
 }
@@ -145,13 +95,10 @@ function incomingPairs(qs) {
   return pairs;
 }
 
-/* The Location for a KVS hit, or null meaning "fall through to the Lambda".
- *
- * Mirrors buildDestination for the edge-eligible subset: isEdgeEligible requires
- * utm == null, so the forwarded query is the ONLY transform left to reproduce.
- * Neither side parses a URL here — the writer stored the destination already
- * decomposed into base/params/hash, and both sides serialise the same pairs with
- * the same algorithm, which is what makes the bytes agree. */
+/* Location for a KVS hit, or null = fall through. Mirrors buildDestination for
+   the edge-eligible subset (isEdgeEligible forces utm == null, so the forwarded
+   query is the only transform left). Neither side parses a URL: the writer
+   stored base/params/hash decomposed, and both serialise the same pairs. */
 function edgeLocation(parsed, querystring) {
   if (!parsed.forwardQuery) return parsed.destination;
 
@@ -247,21 +194,9 @@ async function handler(event) {
   });
 }
 
-/*
- * NO `export` STATEMENT. CloudFront Functions reject one outright:
- *
- *     SyntaxError: Illegal export statement
- *
- * and an invalid function makes the distribution answer every request with a
- * 503 — it does NOT fall through to the origin, so this single line took the
- * whole redirect path down. `import cf from "cloudfront"` above is a special
- * case the runtime allows; that exception does not extend to exports. The
- * runtime finds the entry point by looking for a global function named
- * `handler`, which is exactly what is declared above.
- *
- * `decide` and `edgeKey` are deliberately not exported either — they are
- * exercised through the byte-for-byte twin in redirect-viewer-request.logic.mjs
- * (the DRIFT-GUARDED REGION above is what the test asserts is identical), so the
- * deployed file stays a minimal, valid CloudFront Function while the logic
- * remains fully unit-tested.
- */
+/* NO `export` STATEMENT, and no second `import`: CloudFront rejects either
+   ("SyntaxError: Illegal export statement") and an invalid function answers
+   EVERY request with 503 rather than falling through — one line takes the whole
+   redirect path down. The runtime finds `handler` as a global. `decide` is
+   tested via the byte-identical twin in redirect-viewer-request.logic.mjs.
+   Full reasoning in infra/functions/README.md. */

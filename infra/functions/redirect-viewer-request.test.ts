@@ -254,6 +254,33 @@ describe("deployed CloudFront Function has valid module scaffolding (#357)", () 
   it("declares a global `handler` function (the runtime entry point)", () => {
     expect(runtime).toMatch(/^\s*(async\s+)?function\s+handler\s*\(/m);
   });
+
+  /*
+   * The size budget, and why it is a test rather than a code review habit.
+   *
+   * CloudFront caps a function's code at 10 KB. Exceeding it is invisible until
+   * DEPLOY, where it surfaces as a CloudFormation UPDATE_FAILED on the
+   * AWS::CloudFront::Function resource reading "Status Code: 413" (Payload Too
+   * Large) — after the unit tests, cdk synth, cdk diff and the CI gate have all
+   * gone green. On 2026-09-13 this file was 11336 bytes (3837 of code, 7499 of
+   * comments), which failed the production deploy of the #395 edge merge and
+   * auto-rolled it back. The feature had been unshippable since it merged and
+   * nothing in the repo could tell.
+   *
+   * So this asserts the real limit, and reports the current size and remaining
+   * headroom on failure so the fix is obvious. If this ever fails, prefer moving
+   * prose to infra/functions/README.md over deleting logic — comments are what
+   * blew the budget last time.
+   */
+  it("fits inside CloudFront's 10 KB function-size limit", () => {
+    const bytes = Buffer.byteLength(runtime, "utf8");
+    const LIMIT = 10 * 1024;
+    expect(
+      bytes,
+      `redirect-viewer-request.js is ${bytes} bytes; CloudFront's limit is ${LIMIT}. ` +
+        `Over by ${bytes - LIMIT}. Move explanation to infra/functions/README.md.`,
+    ).toBeLessThan(LIMIT);
+  });
 });
 
 /* ============================================================
