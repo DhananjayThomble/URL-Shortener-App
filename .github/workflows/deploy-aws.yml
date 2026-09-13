@@ -125,6 +125,31 @@ jobs:
       - name: Build workspace packages
         run: pnpm build:packages
 
+      # Fail BEFORE touching AWS if a deploy-critical variable is missing.
+      # infra/deploy.sh only appends a context flag when its variable is set, so
+      # an unset variable does not error — it silently omits the flag, and CDK
+      # then removes that feature from the live stack. That is exactly how the
+      # budget/SNS cost alarms and the API's OAuth client id have been proposed
+      # for deletion before. The diff below would reveal it, but a missing
+      # variable is always a configuration mistake, never an intent, so it fails
+      # fast rather than relying on a human spotting it in the diff.
+      - name: Require deploy-critical variables
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          missing=()
+          for v in AWS_ACCOUNT_ID DOMAIN_NAME BUDGET_EMAIL GOOGLE_OAUTH_CLIENT_ID; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error title=Missing repository variables::${missing[*]} — see docs/CD-AWS-OIDC.md. Omitting these DELETES live resources (cost alarms, OAuth client id)."
+            exit 1
+          fi
+          echo "All deploy-critical variables present."
+
       # A SEPARATE, read-only role. The deploy role's trust policy is bound to
       # `environment: production`, and this job deliberately declares no
       # environment (it must run BEFORE the approval), so its OIDC subject is
@@ -220,6 +245,25 @@ jobs:
 
       - name: Build workspace packages
         run: pnpm build:packages
+
+      # Same precondition as the plan job. Repeated deliberately: environment
+      # variables can be scoped to `production` and therefore resolve here but
+      # not there, so checking only in plan would not protect the apply.
+      - name: Require deploy-critical variables
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          missing=()
+          for v in AWS_ACCOUNT_ID DOMAIN_NAME BUDGET_EMAIL GOOGLE_OAUTH_CLIENT_ID; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error title=Missing variables::${missing[*]} — refusing to deploy. See docs/CD-AWS-OIDC.md."
+            exit 1
+          fi
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:

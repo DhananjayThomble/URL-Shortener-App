@@ -213,6 +213,13 @@ Create an environment named **`production`** (Settings → Environments):
   you read the diff the `plan` job wrote to the run summary.
 - Optionally restrict deployment branches to `main`.
 
+> **A run with `run_migrations` ticked prompts you twice.** Environment
+> protection is evaluated per job, and `migrate` must also declare
+> `environment: production` — that declaration is the only way it can obtain
+> credentials, since the deploy role trusts no other subject. So the second
+> prompt is a consequence of the trust boundary, not an oversight. It is also
+> defensible on its own: a schema migration deserves its own confirmation.
+
 ### Variables
 
 Repository or `production`-environment **variables** (Settings → Variables).
