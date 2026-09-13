@@ -687,9 +687,11 @@ jobs:
           # and without -i the container has no stdin, so gzip dies with
           # "stdout: Broken pipe". Harmless for the `-c` and pg_dump steps.
           pg_client="docker run --rm -i --network host -v /tmp:/tmp postgres:18-alpine"
-          echo "PG_CLIENT=$pg_client" >> "$GITHUB_ENV"
-          echo "PG_DUMP=$pg_client pg_dump" >> "$GITHUB_ENV"
-          echo "PSQL=$pg_client psql" >> "$GITHUB_ENV"
+          {
+            echo "PG_CLIENT=$pg_client"
+            echo "PG_DUMP=$pg_client pg_dump"
+            echo "PSQL=$pg_client psql"
+          } >> "$GITHUB_ENV"
 
       # Plant a deterministic marker in a dedicated probe table, and capture the
       # count of applied migrations from drizzle's bookkeeping table. Both must
@@ -719,7 +721,10 @@ jobs:
       - name: Resolve backup file
         run: |
           set -euo pipefail
-          backup_file="$(ls -1t /tmp/snapurl-backups/*.sql.gz | head -n1)"
+          # Newest *.sql.gz by mtime, without parsing `ls` (SC2012): find prints
+          # "<epoch> <path>" lines, sort numerically desc, take the first path.
+          backup_file="$(find /tmp/snapurl-backups -maxdepth 1 -name '*.sql.gz' -printf '%T@ %p\n' \
+            | sort -rn | head -n1 | cut -d' ' -f2-)"
           if [ -z "$backup_file" ]; then
             echo "::error::no backup file produced"
             exit 1
