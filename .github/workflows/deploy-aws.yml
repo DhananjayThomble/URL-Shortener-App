@@ -225,33 +225,42 @@ jobs:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
         run: |
           set -uo pipefail
-          repo="cdk-hnb659fds-container-assets-${AWS_ACCOUNT_ID}-${AWS_REGION}"
           manifest="infra/cdk.out/${{ inputs.stack }}.assets.json"
           if [ ! -f "$manifest" ]; then
             echo "No assets manifest at $manifest — skipping preflight."
             exit 0
           fi
-          tags="$(jq -r '(.dockerImages // {}) | to_entries[] | (.value.destinations | to_entries[0].value.imageTag)' "$manifest")"
+          # Read the repository AND region from the manifest rather than
+          # constructing them. CDK records both per destination, and an asset can
+          # legitimately target a different region than the stack (this app
+          # already spans ap-south-1 and us-east-1), so a hand-built name would
+          # silently look in the wrong place and report every image as missing.
+          # repositoryName carries a ${AWS::AccountId} placeholder to substitute.
           present=0
           absent=0
-          for tag in $tags; do
-            if aws ecr describe-images --repository-name "$repo" --image-ids "imageTag=$tag" >/dev/null 2>&1; then
-              echo "  cached in ECR : $tag"
+          while IFS=$'\t' read -r region repo tag; do
+            [ -n "$tag" ] || continue
+            repo="${repo//\$\{AWS::AccountId\}/$AWS_ACCOUNT_ID}"
+            if aws ecr describe-images --region "$region" --repository-name "$repo" \
+                 --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+              echo "  cached in ECR ($region): $tag"
               present=$((present+1))
             else
-              echo "  needs rebuild : $tag"
+              echo "  needs rebuild ($region): $tag"
               absent=$((absent+1))
             fi
-          done
+          done <<< "$(jq -r '(.dockerImages // {}) | to_entries[] | (.value.destinations | to_entries[0].value) | [.region, .repositoryName, .imageTag] | @tsv' "$manifest")"
           {
             echo "### Rollback preflight"
             echo
             echo "Deploying commit \`$(git rev-parse HEAD)\`."
             echo
-            if [ "$absent" -eq 0 ]; then
+            if [ "$absent" -eq 0 ] && [ "$present" -gt 0 ]; then
               echo "All $present image(s) already in ECR — the deploy skips the image build (fast path)."
-            else
+            elif [ "$absent" -gt 0 ]; then
               echo "$absent of $((present+absent)) image(s) must be rebuilt — expect several extra minutes."
+            else
+              echo "No container image assets found in this stack's manifest."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

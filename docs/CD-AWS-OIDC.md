@@ -107,7 +107,8 @@ detection. Neither can change anything.
       "Effect": "Allow",
       "Action": ["ecr:DescribeImages"],
       "Resource": [
-        "arn:aws:ecr:ap-south-1:646799484931:repository/cdk-hnb659fds-container-assets-646799484931-ap-south-1"
+        "arn:aws:ecr:ap-south-1:646799484931:repository/cdk-hnb659fds-container-assets-646799484931-ap-south-1",
+        "arn:aws:ecr:us-east-1:646799484931:repository/cdk-hnb659fds-container-assets-646799484931-us-east-1"
       ]
     },
     {
