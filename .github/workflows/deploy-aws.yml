@@ -1,0 +1,378 @@
+# AWS deploy (Phase 7 of the architecture epic, #288/#289).
+#
+# This replaces deploying from an operator's laptop. That path was not merely
+# inconvenient, it was unreliable for two structural reasons:
+#
+#   1. The Lambdas are arm64/Graviton. On an x86_64 laptop every image builds
+#      under QEMU emulation, so a cold build took ~50 minutes instead of ~3.
+#   2. Every deploy pushes three container images through the operator's home
+#      connection. Flapping egress to public.ecr.aws / ECR failed the build
+#      repeatedly ("TLS handshake timeout" fetching a base-image token,
+#      "timeout awaiting response headers" on an ECR manifest HEAD).
+#
+# Both disappear here: `ubuntu-24.04-arm` runners build arm64 NATIVELY (no
+# emulation), and a runner in a datacentre has stable egress to ECR.
+#
+# Authentication is OIDC role assumption — there are no long-lived AWS keys in
+# this repo or in GitHub secrets. The role itself is deliberately weak: it can
+# do little beyond assume the CDK bootstrap roles, which already hold the
+# deployment power. See docs/CD-AWS-OIDC.md for the trust policy and permissions
+# and for the one-time setup an operator must perform.
+#
+# Stage separation, and why it is in this order:
+#
+#   plan   -> synthesizes and runs `cdk diff`, writes it to the run summary.
+#             Needs no approval; changes nothing.
+#   deploy -> gated on the `production` GitHub Environment. A required reviewer
+#             approves AFTER reading the plan's diff. This is what keeps the
+#             standing rules "always cdk diff first" and "deploys are
+#             user-triggered, never autonomous" true by construction rather than
+#             by an operator remembering them. Two omitted context flags have
+#             silently destroyed live resources here before (the budget/SNS cost
+#             alarms, and the API's OAuth client id), which is exactly the class
+#             of change a human must see in a diff before it is applied.
+#   migrate-> optional; migrations are NOT automatic on deploy. RDS is
+#             unreachable from outside the VPC, so the only path is invoking the
+#             worker with {"task":"migrate"}.
+#   smoke  -> calls the existing reusable smoke-deployed.yml against the URLs
+#             this deploy just produced. A deploy is not successful until the
+#             real create-link-then-follow-redirect journey passes: production
+#             once served 403 for every short link while health checks, Lambda
+#             error counts and DLQ depth were all green.
+#
+# NOTE ON THE DOUBLE BUILD: `plan` and `deploy` each synthesize, and CDK builds
+# the Docker assets during synth to compute their hashes, so the images are built
+# twice. That is a deliberate trade: it is the only way the human approval can
+# sit BETWEEN a readable diff and the apply. It is cheap because the runner is
+# native arm64, and the second build's push is skipped for any digest already in
+# ECR.
+
+name: Deploy (AWS)
+
+on:
+  # Dispatch-only, by policy: a deploy to this live SaaS is always initiated by
+  # a human. Do not add a `push` trigger without also deciding what protects
+  # main from deploying itself.
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: CDK stack to deploy. Leave as SnapUrl unless you know otherwise.
+        required: true
+        type: string
+        default: SnapUrl
+      run_migrations:
+        description: Invoke the worker with {"task":"migrate"} after deploying.
+        required: false
+        type: boolean
+        default: false
+      skip_smoke:
+        description: "Skip the post-deploy smoke gate. Leave false: unchecked means the deploy must prove itself."
+        required: false
+        type: boolean
+        default: false
+
+# Least privilege at the top level. `id-token: write` is NOT granted here — it
+# is granted per job, only to the jobs that actually assume the AWS role, so a
+# future job added to this file cannot mint an AWS token by accident.
+permissions:
+  contents: read
+
+# Never let two deploys apply to the same account concurrently: CloudFormation
+# would reject the second, and a cancelled deploy mid-changeset is worse than a
+# queued one. cancel-in-progress is false for the same reason.
+concurrency:
+  group: deploy-aws-${{ inputs.stack }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  # Deploy-critical context, passed on EVERY invocation by infra/deploy.sh.
+  # Omitting any of these does not fail loudly in CDK — it silently redeploys
+  # that feature to a default and can tear down live infrastructure. These are
+  # all NON-SECRET (a public client id, a topology name, a billing alert
+  # address); they live in repo/environment variables, never in secrets.
+  NAT_STRATEGY: instance
+  DATABASE_SSL_NO_VERIFY: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. PLAN — read-only. Produces the diff a reviewer approves against.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Plan (cdk diff)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # to assume the AWS role via OIDC
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The workspace packages must be built before infra can synth: the CDK
+      # app imports @snapurl/database for the migration file list.
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      # Fail BEFORE touching AWS if a deploy-critical variable is missing.
+      # infra/deploy.sh only appends a context flag when its variable is set, so
+      # an unset variable does not error — it silently omits the flag, and CDK
+      # then removes that feature from the live stack. That is exactly how the
+      # budget/SNS cost alarms and the API's OAuth client id have been proposed
+      # for deletion before. The diff below would reveal it, but a missing
+      # variable is always a configuration mistake, never an intent, so it fails
+      # fast rather than relying on a human spotting it in the diff.
+      - name: Require deploy-critical variables
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          missing=()
+          for v in AWS_ACCOUNT_ID DOMAIN_NAME BUDGET_EMAIL GOOGLE_OAUTH_CLIENT_ID; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error title=Missing repository variables::${missing[*]} — see docs/CD-AWS-OIDC.md. Omitting these DELETES live resources (cost alarms, OAuth client id)."
+            exit 1
+          fi
+          echo "All deploy-critical variables present."
+
+      # A SEPARATE, read-only role. The deploy role's trust policy is bound to
+      # `environment: production`, and this job deliberately declares no
+      # environment (it must run BEFORE the approval), so its OIDC subject is
+      # the branch ref and it could not assume the deploy role even if it tried.
+      # That split is the point: planning needs no write access.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-snapurl-plan-${{ github.run_id }}
+
+      # cdk diff synthesizes, which builds the three arm64 images to compute
+      # their asset hashes. Nothing is pushed and nothing is applied.
+      - name: cdk diff
+        id: diff
+        working-directory: infra
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          set -o pipefail
+          # Mirror deploy.sh's flag set exactly. If these two ever drift the
+          # diff stops describing the deploy, which is worse than no diff.
+          ctx=(-c "natStrategy=${NAT_STRATEGY}" -c "configPrefix=/snapurl/prod")
+          [ -n "${DOMAIN_NAME}" ]            && ctx+=(-c "domainName=${DOMAIN_NAME}")
+          [ -n "${BUDGET_EMAIL}" ]           && ctx+=(-c "budgetEmail=${BUDGET_EMAIL}")
+          [ -n "${GOOGLE_OAUTH_CLIENT_ID}" ] && ctx+=(-c "googleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}")
+
+          npx cdk diff "${ctx[@]}" "${{ inputs.stack }}" 2>&1 | tee /tmp/cdk-diff.txt
+
+          {
+            echo "### cdk diff — \`${{ inputs.stack }}\`"
+            echo
+            echo "Read this before approving the deploy."
+            echo
+            echo '```'
+            cat /tmp/cdk-diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A destructive change is legitimate sometimes, but it must never pass
+      # unremarked. Surfacing it as a warning annotation puts it at the top of
+      # the run page, where an approver actually looks.
+      - name: Flag destructive changes
+        run: |
+          if grep -qE '\[-\]|destroy|requires replacement' /tmp/cdk-diff.txt; then
+            echo "::warning title=Destructive change in plan::This diff removes or replaces resources. Confirm every one is intended before approving."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdk-diff-${{ github.run_id }}
+          path: /tmp/cdk-diff.txt
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # 2. DEPLOY — gated on the `production` environment's required reviewer.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy ${{ inputs.stack }}
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    # The approval gate. Configure `production` with a required reviewer so this
+    # job waits for a human who has read the plan's diff.
+    environment:
+      name: production
+      url: ${{ steps.stack_outputs.outputs.redirect_url }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api_url: ${{ steps.stack_outputs.outputs.api_url }}
+      redirect_url: ${{ steps.stack_outputs.outputs.redirect_url }}
+      worker_function_name: ${{ steps.stack_outputs.outputs.worker_function_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      # Same precondition as the plan job. Repeated deliberately: environment
+      # variables can be scoped to `production` and therefore resolve here but
+      # not there, so checking only in plan would not protect the apply.
+      - name: Require deploy-critical variables
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          missing=()
+          for v in AWS_ACCOUNT_ID DOMAIN_NAME BUDGET_EMAIL GOOGLE_OAUTH_CLIENT_ID; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error title=Missing variables::${missing[*]} — refusing to deploy. See docs/CD-AWS-OIDC.md."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-snapurl-deploy-${{ github.run_id }}
+
+      # Always through deploy.sh, never `npx cdk deploy` directly. The wrapper
+      # is what guarantees the full context-flag set is passed and then asserts
+      # the two incident settings (NAT egress, DB TLS posture) actually landed.
+      # A raw cdk invocation looks like it works while silently proposing
+      # deletions.
+      - name: Deploy via infra/deploy.sh
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+        run: bash infra/deploy.sh "${{ inputs.stack }}"
+
+      # Read the URLs from the stack itself rather than hardcoding them, so the
+      # smoke gate always targets what was actually just deployed.
+      - name: Read stack outputs
+        id: stack_outputs
+        run: |
+          set -euo pipefail
+          outs="$(aws cloudformation describe-stacks \
+            --stack-name "${{ inputs.stack }}" \
+            --query 'Stacks[0].Outputs' --output json)"
+
+          get() { echo "$outs" | jq -r --arg k "$1" '.[] | select(.OutputKey==$k) | .OutputValue'; }
+
+          api_root="$(get ApiUrl)"
+          redirect_url="$(get RedirectDomain)"
+          worker="$(get WorkerFunctionName)"
+
+          # ApiUrl is the API Gateway root WITHOUT a path; the smoke workflow's
+          # api_base_url must include /api/v1. RedirectDomain already carries
+          # its https:// scheme.
+          echo "api_url=${api_root%/}/api/v1" >> "$GITHUB_OUTPUT"
+          echo "redirect_url=${redirect_url}"  >> "$GITHUB_OUTPUT"
+          echo "worker_function_name=${worker}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Deployed"
+            echo
+            echo "| Output | Value |"
+            echo "| --- | --- |"
+            echo "| API | \`${api_root%/}/api/v1\` |"
+            echo "| Redirect | \`${redirect_url}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 3. MIGRATE — opt-in. Not automatic, and deliberately so.
+  # ---------------------------------------------------------------------------
+  migrate:
+    name: Apply DB migrations
+    needs: deploy
+    if: inputs.run_migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-snapurl-migrate-${{ github.run_id }}
+
+      # The worker returns {"applied":true}. A Lambda-level failure appears as
+      # FunctionError in the response, which a 0 exit code would otherwise hide,
+      # so both are checked explicitly.
+      - name: Invoke worker migrate
+        run: |
+          set -euo pipefail
+          resp="$(aws lambda invoke \
+            --function-name '${{ needs.deploy.outputs.worker_function_name }}' \
+            --payload "$(printf '%s' '{"task":"migrate"}' | base64 -w0)" \
+            --cli-read-timeout 600 \
+            /tmp/migrate-out.json)"
+          echo "$resp"
+          if echo "$resp" | jq -e '.FunctionError' >/dev/null 2>&1; then
+            echo "::error title=Migration failed::$(cat /tmp/migrate-out.json)"
+            exit 1
+          fi
+          cat /tmp/migrate-out.json
+          jq -e '.applied == true' /tmp/migrate-out.json >/dev/null \
+            || { echo "::error title=Migration did not report applied::"; exit 1; }
+
+  # ---------------------------------------------------------------------------
+  # 4. SMOKE — the gate that decides whether this deploy actually worked.
+  # ---------------------------------------------------------------------------
+  # Wired exactly as smoke-deployed.yml's own header prescribes. `always()` with
+  # explicit result checks means a skipped optional migrate job does not skip
+  # the gate, but a FAILED one does.
+  smoke:
+    name: Post-deploy smoke
+    needs: [deploy, migrate]
+    if: |
+      always() &&
+      needs.deploy.result == 'success' &&
+      (needs.migrate.result == 'success' || needs.migrate.result == 'skipped') &&
+      !inputs.skip_smoke
+    uses: ./.github/workflows/smoke-deployed.yml
+    with:
+      redirect_base_url: ${{ needs.deploy.outputs.redirect_url }}
+      api_base_url: ${{ needs.deploy.outputs.api_url }}
