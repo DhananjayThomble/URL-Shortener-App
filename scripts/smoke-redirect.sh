@@ -129,6 +129,21 @@ if [ -n "${DATABASE_URL:-}" ]; then
   fi
 fi
 
+# Can this runner CONTROL the viewer country? Country-based routing keys off the
+# CloudFront-Viewer-Country header. Behind a real CloudFront distribution that
+# header is CloudFront-MANAGED: CloudFront derives it from the caller's IP geo and
+# OVERWRITES whatever the client sent, so a spoofed `-H 'CloudFront-Viewer-Country:
+# IN'` is silently replaced by the runner's actual country (a US GitHub runner ->
+# US, an India dev box -> IN). The header only passes through untouched when there
+# is no CDN in front — i.e. straight at the redirect service in local/compose/CI,
+# which is exactly the DB-available modes. So the country-routing assertions below
+# are meaningful ONLY when we can set the country; in deployed mode they are
+# skipped, and the "click_events.country is populated" analytics poll further down
+# carries the end-to-end proof that CloudFront's real country reaches the click row.
+# (Device/UA routing needs no such flag: the User-Agent is client-controlled in
+# every mode, so the iOS assertion runs everywhere.)
+CAN_SPOOF_COUNTRY=$DB_AVAILABLE
+
 # Block until the fixture links this run created are actually visible to the
 # redirect service, instead of racing the worker's projection_outbox drain
 # (issue #347). Under LINK_PROJECTION=dynamo a link written via the API only
@@ -266,9 +281,17 @@ contains "click-time UTM wins over stored" "utm_source=twitter" "$(loc "$RUN-utm
 
 echo
 echo "== routing chain =="
-contains "India goes to the India store" "example.in" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: IN' -H 'CloudFront-Viewer-City: Pune')"
+if [ "$CAN_SPOOF_COUNTRY" -eq 1 ]; then
+  contains "India goes to the India store" "example.in" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: IN' -H 'CloudFront-Viewer-City: Pune')"
+else
+  skip "India goes to the India store: CloudFront overwrites Viewer-Country (see analytics country proof)"
+fi
 contains "iOS goes to the App Store" "apps.apple.com" "$(loc "$RUN-geo" -H 'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')"
-contains "everyone else gets the default" "example.com/rest" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: FR')"
+if [ "$CAN_SPOOF_COUNTRY" -eq 1 ]; then
+  contains "everyone else gets the default" "example.com/rest" "$(loc "$RUN-geo" -H 'CloudFront-Viewer-Country: FR')"
+else
+  skip "everyone else gets the default: cannot set a non-matching Viewer-Country behind CloudFront"
+fi
 
 echo
 echo "== gates =="
@@ -356,24 +379,33 @@ else
   # surface is the analytics countries[] breakdown, which reads the
   # worker-populated breakdown_daily rollup (apps/api/src/analytics/
   # analytics.service.ts + apps/worker/src/jobs/rollup.ts). A worker IS running
-  # in a deployed environment, so poll GET /analytics until the country appears.
+  # in a deployed environment, so poll GET /analytics until a country appears.
   # The rollup folds only non-bot clicks, hence the non-bot UA on the driving
   # redirect above and the ~90s poll budget (worker rollup interval default
-  # ~30s, three cycles). The API maps country codes to names via COUNTRY_NAMES
-  # (IN -> "India"), so match on either the code or the mapped name.
+  # ~30s, three cycles).
+  #
+  # We assert that SOME country is populated, not a specific one: behind
+  # CloudFront the Viewer-Country header is CloudFront-managed and reflects the
+  # runner's REAL geolocation (a US GitHub runner -> "US"), NOT the "IN" the
+  # driving redirect tried to send — so the value is whatever CloudFront
+  # resolved, and matching on "IN" would fail on every non-India runner. A
+  # non-empty countries[] with a real 2-letter/label entry proves the end-to-end
+  # path — CloudFront-Viewer-Country -> click_events.country -> rollup ->
+  # analytics — which is the property under test; the exact code is CloudFront's.
   COUNTRY_FOUND=0
+  SEEN_COUNTRY=""
   if [ -n "$GEO_ID" ]; then
     for i in $(seq 1 90); do
       A=$(curl -s "$API/analytics?linkId=$GEO_ID&range=24h" -H "Authorization: Bearer $ACCESS")
-      HIT=$(echo "$A" | node -pe 'try{const d=JSON.parse(require("fs").readFileSync(0,"utf8"));(d.countries||[]).some(c=>c.label==="IN"||c.label==="India")?"1":""}catch(e){""}')
-      [ "$HIT" = "1" ] && { COUNTRY_FOUND=1; break; }
+      SEEN_COUNTRY=$(echo "$A" | node -pe 'try{const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const c=(d.countries||[]).find(x=>x&&x.label&&x.label!=="Unknown"&&x.label!=="");c?c.label:""}catch(e){""}')
+      [ -n "$SEEN_COUNTRY" ] && { COUNTRY_FOUND=1; break; }
       sleep 1
     done
   fi
   if [ "$COUNTRY_FOUND" -eq 1 ]; then
-    ok "click_events.country is populated (analytics shows IN/India)"
+    ok "click_events.country is populated (analytics shows country='$SEEN_COUNTRY')"
   else
-    bad "click_events.country not populated via analytics" "no IN/India in countries[] after 90s (linkId=$GEO_ID)"
+    bad "click_events.country not populated via analytics" "no country in countries[] after 90s (linkId=$GEO_ID)"
   fi
 fi
 
