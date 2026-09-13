@@ -414,9 +414,11 @@ jobs:
           # ApiUrl is the API Gateway root WITHOUT a path; the smoke workflow's
           # api_base_url must include /api/v1. RedirectDomain already carries
           # its https:// scheme.
-          echo "api_url=${api_root%/}/api/v1" >> "$GITHUB_OUTPUT"
-          echo "redirect_url=${redirect_url}"  >> "$GITHUB_OUTPUT"
-          echo "worker_function_name=${worker}" >> "$GITHUB_OUTPUT"
+          {
+            echo "api_url=${api_root%/}/api/v1"
+            echo "redirect_url=${redirect_url}"
+            echo "worker_function_name=${worker}"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "### Deployed"
