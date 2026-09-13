@@ -9,10 +9,11 @@ import { seedSession } from "../support/session";
    The fix adds a shared `tap-target` utility (globals.css) that enforces a
    >=44px hit box on viewports below 1024px only, leaving desktop untouched.
 
-   This spec renders each affected control at a 390x852 mobile viewport and
-   asserts its rendered box is at least 44px in the constrained dimension.
-   Fixtures mode; accessible-name selectors only. Desktop sizing is verified by
-   the unchanged existing specs (the utility is inert at >=1024px). */
+   This spec renders each affected control at a mobile viewport and asserts its
+   rendered box is at least 44px in the constrained dimension, then guards that
+   the size bumps introduce no horizontal overflow. Fixtures mode; accessible-name
+   selectors only. Desktop sizing is verified by the unchanged existing specs
+   (the utility is inert at >=1024px). */
 
 const MIN = 44;
 
@@ -78,6 +79,28 @@ test.describe("mobile touch targets (>=44px)", () => {
       const b = await box(option);
       expect(b.height).toBeGreaterThanOrEqual(MIN);
     });
+  });
+
+  // Bumping every Button size="sm" and Segmented option to a >=44px box on mobile
+  // must not push any page into horizontal overflow (the audit found none pre-fix;
+  // this guards the regression). Checked at 360px, the smallest target Android
+  // width, on pages that pack the most sm buttons / segmented rows.
+  test.describe("no horizontal overflow after the size bumps", () => {
+    test.use({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true });
+    for (const path of ["/links", "/team", "/settings"]) {
+      test(`${path} does not scroll horizontally on a 360px viewport`, async ({ page }) => {
+        await seedSession(page);
+        await page.goto(path);
+        const { scrollW, clientW } = await page.evaluate(() => ({
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+        }));
+        expect(
+          scrollW,
+          `${path} overflows: scrollWidth ${scrollW} > clientWidth ${clientW}`,
+        ).toBeLessThanOrEqual(clientW + 1);
+      });
+    }
   });
 
   test.describe("marketing site header (DC4)", () => {
