@@ -109,6 +109,18 @@ export interface SnapUrlStackProps extends StackProps {
    */
   budgetEmail?: string;
   /**
+   * The git commit this deploy was built from, surfaced as the
+   * `DeployedGitSha` output.
+   *
+   * Optional, and purely informational — nothing in the stack reads it. It
+   * exists because without it there is no way to ask a running environment
+   * which commit it is on, and that question has to be answerable BEFORE a
+   * rollback: "redeploy the last good commit" is not actionable if the current
+   * one is unknown. Set by CI with `-c deployedGitSha=${{ github.sha }}`; a
+   * local `cdk deploy` that omits it simply gets no such output.
+   */
+  deployedGitSha?: string;
+  /**
    * Custom domain for the CloudFront distribution (the redirect/short-link
    * edge), e.g. `snapurl.in`. Optional — unset means the raw
    * `*.cloudfront.net` hostname, exactly the prior behaviour. Set with
@@ -1310,6 +1322,18 @@ export class SnapUrlStack extends Stack {
       value: props.configPrefix,
       description: "Parameter Store prefix this stage reads. Change a value there, then redeploy.",
     });
+    /* Conditional on purpose: emitted only when CI passes the commit, so a
+       local deploy neither gains a misleading output nor has to invent a value.
+       Read it with:
+         aws cloudformation describe-stacks --stack-name SnapUrl \
+           --query 'Stacks[0].Outputs[?OutputKey==`DeployedGitSha`].OutputValue'
+       See docs/ROLLBACK.md, which starts from this value. */
+    if (props.deployedGitSha) {
+      new CfnOutput(this, "DeployedGitSha", {
+        value: props.deployedGitSha,
+        description: "Git commit this stack was last deployed from. The starting point for a rollback.",
+      });
+    }
     new CfnOutput(this, "JwtSecretArns", {
       value: `${config.jwtAccessSecret.secretArn} ${config.jwtRefreshSecret.secretArn}`,
       description: "JWT signing keys. Rotating either invalidates the tokens it signed.",

@@ -78,6 +78,11 @@ new SnapUrlStack(app, "SnapUrl", {
      Google Cloud Console client's id exactly, and matching
      NEXT_PUBLIC_GOOGLE_CLIENT_ID on the frontend. */
   googleOAuthClientId: app.node.tryGetContext("googleOAuthClientId"),
+  /* The commit this deploy was built from, surfaced as the DeployedGitSha
+     output. Set by CI (`-c deployedGitSha=<sha>`); omitted locally, in which
+     case the output is simply not created. Answering "which commit is live?"
+     is a precondition for rollback — see docs/ROLLBACK.md. */
+  deployedGitSha: app.node.tryGetContext("deployedGitSha"),
   description: "SnapURL: API, redirect service, worker, and the Postgres they share.",
   tags: {
     Project: "SnapURL",

@@ -1,0 +1,125 @@
+# CloudFormation drift detection.
+#
+# Why this exists: this account has carried infrastructure that CloudFormation
+# did not know about. During the redirect-403 incident a `lambda:InvokeFunction`
+# grant was added to the redirect function BY HAND (`aws lambda add-permission`)
+# to restore service, and it then existed outside the template until it was
+# made permanent in CDK and the hand-patched statement removed. For that whole
+# period the live account and the template disagreed, and nothing would have
+# told us.
+#
+# That is the class of problem drift detection catches: a resource changed
+# outside IaC. It is cheap (a few read-only API calls), so it runs weekly rather
+# than waiting for someone to suspect a problem.
+#
+# Deliberately READ-ONLY. It uses the PLAN role, not the deploy role — detecting
+# drift needs no write access, and a scheduled job that could deploy is a
+# standing risk with no upside. It does not attempt to CORRECT drift either:
+# resolving it means deciding whether the template or reality is right, which is
+# a judgement call for a human. This reports; you decide.
+
+name: Drift detection
+
+on:
+  schedule:
+    # Weekly, Monday 04:17 UTC. Off the hour deliberately — scheduled workflows
+    # bunch up on the hour across all of GitHub and get delayed.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Stack to check.
+        required: true
+        type: string
+        default: SnapUrl
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-detection
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect stack drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # to assume the read-only plan role via OIDC
+    steps:
+      # The plan role is trusted on the main branch ref, which is what a
+      # `schedule` trigger runs as. See docs/CD-AWS-OIDC.md.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: gha-snapurl-drift-${{ github.run_id }}
+
+      - name: Detect and report drift
+        env:
+          STACK: ${{ inputs.stack || 'SnapUrl' }}
+        run: |
+          set -euo pipefail
+
+          id="$(aws cloudformation detect-stack-drift \
+                  --stack-name "$STACK" \
+                  --query StackDriftDetectionId --output text)"
+          echo "Detection id: $id"
+
+          # Poll rather than sleep-and-hope: detection over ~80 resources takes
+          # a variable amount of time and the result is useless if read early.
+          for _ in $(seq 1 60); do
+            status="$(aws cloudformation describe-stack-drift-detection-status \
+                        --stack-drift-detection-id "$id" \
+                        --query DetectionStatus --output text)"
+            [ "$status" = "DETECTION_IN_PROGRESS" ] || break
+            sleep 10
+          done
+          echo "Detection status: $status"
+
+          if [ "$status" != "DETECTION_COMPLETE" ]; then
+            echo "::error title=Drift detection did not complete::status=$status"
+            exit 1
+          fi
+
+          drift="$(aws cloudformation describe-stack-drift-detection-status \
+                     --stack-drift-detection-id "$id" \
+                     --query StackDriftStatus --output text)"
+          drifted_count="$(aws cloudformation describe-stack-drift-detection-status \
+                             --stack-drift-detection-id "$id" \
+                             --query DriftedStackResourceCount --output text)"
+
+          {
+            echo "### Drift detection — \`$STACK\`"
+            echo
+            echo "Status: **$drift** ($drifted_count drifted resource(s))"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$drift" = "IN_SYNC" ]; then
+            echo "In sync with the template."
+            exit 0
+          fi
+
+          # Name the specific resources — "something drifted" is not actionable.
+          aws cloudformation describe-stack-resource-drifts \
+            --stack-name "$STACK" \
+            --stack-resource-drift-status-filters MODIFIED DELETED NOT_CHECKED \
+            --query 'StackResourceDrifts[].{Logical:LogicalResourceId,Type:ResourceType,Status:StackResourceDriftStatus}' \
+            --output table | tee /tmp/drifts.txt
+
+          {
+            echo
+            echo '```'
+            cat /tmp/drifts.txt
+            echo '```'
+            echo
+            echo "A resource changed outside CloudFormation. Decide which side is"
+            echo "correct: fold the change into the CDK stack, or revert it in the"
+            echo "account. Do not simply redeploy without looking — that silently"
+            echo "discards whatever was changed by hand."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error title=Stack drift detected::$drifted_count resource(s) differ from the template. See the run summary."
+          exit 1
