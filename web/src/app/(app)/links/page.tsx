@@ -121,7 +121,7 @@ export default function LinksPage() {
               aria-pressed={filter === f.value}
               onClick={() => setFilter(f.value)}
               className={cn(
-                "inline-flex items-center gap-[6px] px-[10px] py-[5px] border rounded-full text-[12.5px] transition-colors",
+                "tap-target inline-flex items-center gap-[6px] px-[10px] py-[5px] border rounded-full text-[12.5px] transition-colors",
                 filter === f.value
                   ? "bg-ink text-surface border-ink font-semibold"
                   : "bg-surface border-line-2 text-ink-2 hover:border-ink-3 hover:text-ink",
