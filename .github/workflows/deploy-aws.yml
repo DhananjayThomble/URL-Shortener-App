@@ -40,12 +40,27 @@
 #             once served 403 for every short link while health checks, Lambda
 #             error counts and DLQ depth were all green.
 #
-# NOTE ON THE DOUBLE BUILD: `plan` and `deploy` each synthesize, and CDK builds
-# the Docker assets during synth to compute their hashes, so the images are built
-# twice. That is a deliberate trade: it is the only way the human approval can
-# sit BETWEEN a readable diff and the apply. It is cheap because the runner is
-# native arm64, and the second build's push is skipped for any digest already in
-# ECR.
+# WHAT THE PLAN COSTS, measured rather than assumed: the first real run's plan
+# job took 2m16s and performed NO Docker build at all. An earlier version of this
+# comment claimed plan and deploy each build the three images and called that
+# "the deliberate cost" of putting approval between diff and apply. That was
+# WRONG. A CDK DockerImageAsset's hash is computed from its build CONTEXT, so
+# synth only hashes the directory; the image is built and pushed at asset-publish
+# time, which happens once, in `deploy`. Planning is therefore cheap, and the
+# approval gate costs essentially nothing.
+#
+# WHAT THE PLAN DIFF IS, precisely: a TEMPLATE diff, not a change-set diff. The
+# plan role can assume only CDK's read-only lookup role, so CDK cannot publish a
+# template to the assets bucket and logs "Could not create a change set, will
+# base the diff on template differences". That is the read-only boundary working,
+# not a misconfiguration. It matters for how much you can read into the diff: a
+# template diff reliably shows REMOVED resources (`[-]`), which is the main
+# destructive signal, but it detects REPLACEMENT less reliably than a change set
+# would. So treat the "destructive change" annotation below as a prompt to look
+# harder, not as an exhaustive guarantee. Granting the plan role change-set
+# creation would fix the fidelity at the cost of S3 writes and a CloudFormation
+# resource — i.e. it would stop being read-only, which is the property that makes
+# the two-role split worth having. The trade is deliberate.
 
 name: Deploy (AWS)
 
@@ -97,6 +112,13 @@ env:
   # address); they live in repo/environment variables, never in secrets.
   NAT_STRATEGY: instance
   DATABASE_SSL_NO_VERIFY: "true"
+  # ONE source for the Parameter Store prefix. infra/deploy.sh reads CONFIG_PREFIX
+  # from the environment (defaulting to /snapurl/prod) and the plan job reads the
+  # same variable, so the two cannot drift. They previously could: the plan
+  # hardcoded the literal while deploy.sh took the env var, which is the same
+  # divergence class as the deployedGitSha gap the first real run exposed — and it
+  # is exactly what would break first when a second stage is introduced.
+  CONFIG_PREFIX: /snapurl/prod
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -160,6 +182,16 @@ jobs:
           fi
           echo "All deploy-critical variables present."
 
+      # The plan must pass the SAME context flags as the deploy, including this
+      # one. The first real run proved why: the plan omitted deployedGitSha, so
+      # its diff showed no Outputs section while the deploy went on to add
+      # DeployedGitSha. Harmless in substance, but it broke the invariant the
+      # whole design rests on — the reviewed diff describes the apply. Pinning
+      # both jobs to the same commit and then diverging on a flag defeats that.
+      - name: Resolve commit under review
+        id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # A SEPARATE, read-only role. The deploy role's trust policy is bound to
       # `environment: production`, and this job deliberately declares no
       # environment (it must run BEFORE the approval), so its OIDC subject is
@@ -186,10 +218,11 @@ jobs:
           set -o pipefail
           # Mirror deploy.sh's flag set exactly. If these two ever drift the
           # diff stops describing the deploy, which is worse than no diff.
-          ctx=(-c "natStrategy=${NAT_STRATEGY}" -c "configPrefix=/snapurl/prod")
+          ctx=(-c "natStrategy=${NAT_STRATEGY}" -c "configPrefix=${CONFIG_PREFIX}")
           [ -n "${DOMAIN_NAME}" ]            && ctx+=(-c "domainName=${DOMAIN_NAME}")
           [ -n "${BUDGET_EMAIL}" ]           && ctx+=(-c "budgetEmail=${BUDGET_EMAIL}")
           [ -n "${GOOGLE_OAUTH_CLIENT_ID}" ] && ctx+=(-c "googleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}")
+          ctx+=(-c "deployedGitSha=${{ steps.rev.outputs.sha }}")
 
           npx cdk diff "${ctx[@]}" "${{ inputs.stack }}" 2>&1 | tee /tmp/cdk-diff.txt
 

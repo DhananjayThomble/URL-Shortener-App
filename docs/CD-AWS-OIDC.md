@@ -310,7 +310,23 @@ To roll back, dispatch the same workflow with `git_ref` set to an earlier commit
   in this repo and keeping Dependabot able to bump them. Pinning to full commit
   SHAs is stricter against a compromised action and is worth considering for
   this workflow specifically, since it is the one that holds AWS credentials.
-- **The images build twice** (once per synth in `plan` and `deploy`). This is the
-  cost of putting the human approval between a readable diff and the apply.
-  Native arm64 makes it cheap, and CDK skips pushing any digest already in ECR.
+- **Planning is cheap, and the approval gate is nearly free.** Measured on the
+  first real run: the plan job took **2m16s** and built **no** Docker images. A
+  CDK image asset's hash comes from its build *context*, so synth only hashes the
+  directory — the image is built and pushed once, at asset-publish time, during
+  `deploy`. (An earlier version of this document claimed plan and deploy each
+  build the images and framed that as the deliberate cost of the approval gate.
+  That was wrong, and the measurement is what corrected it.)
+- **The plan diff is a TEMPLATE diff, not a change-set diff.** The plan role can
+  assume only the read-only lookup role, so CDK cannot publish a template to the
+  assets bucket and logs `Could not create a change set, will base the diff on
+  template differences`. That is the read-only boundary working as intended. Read
+  it accordingly: a template diff reliably shows removed resources (`[-]`), but
+  detects *replacement* less reliably than a change set would, so the plan job's
+  "destructive change" warning is a prompt to look harder rather than an
+  exhaustive guarantee. Granting the plan role change-set creation would improve
+  fidelity at the cost of S3 writes and a CloudFormation resource — it would stop
+  being read-only, which is the property that justifies the two-role split. The
+  trade is deliberate; if you ever need a full change-set diff, run it from a
+  session with the deploy role rather than widening this one.
 - **No `push` trigger.** Deploys are dispatch-only by policy.
