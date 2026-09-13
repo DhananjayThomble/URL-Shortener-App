@@ -2,6 +2,17 @@ import pino from "pino";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore";
+/* The CloudFront KeyValueStore data-plane API is a GLOBAL (multi-region) service,
+   so its client signs with SigV4a, not plain SigV4. AWS SDK v3 does NOT bundle the
+   SigV4a implementation and does NOT auto-load it: the multi-region signer looks up
+   signatureV4aContainer.SignatureV4a at signing time and, finding it unset, throws
+   "Neither CRT nor JS SigV4a implementation is available". Importing this package
+   for its side effect registers the pure-JS SigV4a signer into that container. It
+   MUST be imported (a package.json dependency alone is inert) and must load before
+   the KVS client signs any request — a top-level side-effect import guarantees both.
+   Without it every PutKey/DeleteKey/DescribeKeyValueStore fails and the #289 edge
+   fast path never fills, silently, with redirects still served by the Lambda. */
+import "@aws-sdk/signature-v4a";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
