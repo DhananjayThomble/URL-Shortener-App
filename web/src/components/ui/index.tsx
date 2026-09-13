@@ -23,7 +23,7 @@ const button = cva(
       },
       size: {
         default: "px-[13px] py-[7px] text-[13px]",
-        sm: "px-[9px] py-[4px] text-[12px] font-medium",
+        sm: "tap-target px-[9px] py-[4px] text-[12px] font-medium",
         lg: "px-[18px] py-[10px] text-[14px]",
       },
     },
@@ -168,7 +168,7 @@ export function Segmented<T extends string>({
             aria-pressed={active}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex-1 px-[10px] py-[5px] text-[12px] rounded-[var(--radius-sm)] border transition-colors",
+              "tap-target flex-1 px-[10px] py-[5px] text-[12px] rounded-[var(--radius-sm)] border transition-colors",
               active
                 ? "bg-ink text-surface border-ink font-semibold"
                 : "border-line-2 text-ink-2 hover:text-ink hover:border-ink-3",

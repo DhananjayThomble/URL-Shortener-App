@@ -54,7 +54,7 @@ export function SiteHeader({ className }: { className?: string }) {
           aria-expanded={open}
           aria-controls="mobile-menu"
           onClick={() => setOpen((v) => !v)}
-          className="ml-auto md:hidden inline-flex items-center justify-center w-[38px] h-[38px] rounded-[var(--radius-sm)] border border-line-2 bg-surface text-ink-2 hover:bg-surface-3 hover:text-ink transition-colors"
+          className="tap-target ml-auto md:hidden inline-flex items-center justify-center w-[38px] h-[38px] max-lg:w-11 max-lg:h-11 rounded-[var(--radius-sm)] border border-line-2 bg-surface text-ink-2 hover:bg-surface-3 hover:text-ink transition-colors"
         >
           <span aria-hidden className="text-[16px] leading-none">
             {open ? "✕" : "☰"}

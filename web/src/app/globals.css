@@ -199,3 +199,23 @@ h4 {
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* ------------------------------------------------------------------
+   Touch-target sizing (WCAG 2.5.8). Below the lg breakpoint (the same
+   1024px line where the app shell switches to its mobile layout) every
+   primary interactive control must present at least a 44x44px hit area.
+   Only the interactive box grows, and only on touch-sized viewports;
+   desktop (>=1024px) sizing is completely unchanged.
+
+   Note: the .grid > * / .flex > * { min-width: 0 } reset above outranks a
+   single utility class, so flex/grid CHILD controls (segmented options, the
+   topbar create button) cannot rely on tap-target's min-width and instead set
+   an explicit max-lg width inline. tap-target still governs their min-height
+   and fully covers non-flex-child controls (avatar, hamburger, pills).
+   ------------------------------------------------------------------ */
+@utility tap-target {
+  @media (max-width: 1023.98px) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

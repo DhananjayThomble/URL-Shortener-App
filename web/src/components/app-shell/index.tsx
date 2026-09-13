@@ -238,7 +238,7 @@ export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => v
       <MobileNav counts={counts} onCreate={onCreate} />
       <button
         onClick={onCreate}
-        className="lg:hidden text-[13px] font-semibold text-accent"
+        className="tap-target lg:hidden max-lg:w-11 max-lg:h-11 inline-flex items-center justify-center text-[17px] font-semibold text-accent"
         aria-label="Create a link"
       >
         ＋
@@ -309,9 +309,14 @@ function AccountMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={me ? `Account menu for ${me.name}` : "Account menu"}
-        className="w-[29px] h-[29px] rounded-full bg-teal text-white grid place-items-center text-[11.5px] font-bold shrink-0 hover:opacity-90 transition-opacity"
+        className="tap-target inline-flex items-center justify-center shrink-0 rounded-full hover:opacity-90 transition-opacity"
       >
-        {initials}
+        <span
+          aria-hidden
+          className="w-[29px] h-[29px] rounded-full bg-teal text-white grid place-items-center text-[11.5px] font-bold"
+        >
+          {initials}
+        </span>
       </button>
 
       {open ? (
