@@ -60,11 +60,15 @@ on:
         required: true
         type: string
         default: SnapUrl
-      run_migrations:
-        description: Invoke the worker with {"task":"migrate"} after deploying.
+      git_ref:
+        description: >-
+          Commit, tag or branch to deploy. Blank = the ref this workflow was
+          dispatched from. Set it to an earlier commit to ROLL BACK — read
+          docs/ROLLBACK.md first, because redeploying old code does NOT undo a
+          database migration.
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ""
       skip_smoke:
         description: "Skip the post-deploy smoke gate. Leave false: unchecked means the deploy must prove itself."
         required: false
@@ -106,7 +110,13 @@ jobs:
       contents: read
       id-token: write # to assume the AWS role via OIDC
     steps:
+      # Pin to an explicit commit rather than the branch tip, and use the SAME
+      # one in the plan and deploy jobs. Two reasons: main advancing between the
+      # two jobs must not make the applied change differ from the reviewed diff,
+      # and `git_ref` needs a single place to take effect for a rollback.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -202,6 +212,49 @@ jobs:
             echo "::warning title=Destructive change in plan::This diff removes or replaces resources. Confirm every one is intended before approving."
           fi
 
+      # Informational, NOT a gate — and the distinction matters, so it is stated
+      # rather than implied. A CDK image asset's hash is derived from its build
+      # CONTEXT, so an older commit reproduces the same hash; if that image is
+      # absent from ECR, CDK rebuilds it from the checked-out source rather than
+      # failing. So a missing image cannot break a rollback, it can only make it
+      # slow (a full emulation-free but still multi-minute arm64 build) instead
+      # of near-instant. During an incident, knowing which of those you are in
+      # for is worth a few seconds; pretending it is a safety check would not be.
+      - name: Rollback preflight — are the target images already in ECR?
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          repo="cdk-hnb659fds-container-assets-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+          manifest="infra/cdk.out/${{ inputs.stack }}.assets.json"
+          if [ ! -f "$manifest" ]; then
+            echo "No assets manifest at $manifest — skipping preflight."
+            exit 0
+          fi
+          tags="$(jq -r '(.dockerImages // {}) | to_entries[] | (.value.destinations | to_entries[0].value.imageTag)' "$manifest")"
+          present=0
+          absent=0
+          for tag in $tags; do
+            if aws ecr describe-images --repository-name "$repo" --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+              echo "  cached in ECR : $tag"
+              present=$((present+1))
+            else
+              echo "  needs rebuild : $tag"
+              absent=$((absent+1))
+            fi
+          done
+          {
+            echo "### Rollback preflight"
+            echo
+            echo "Deploying commit \`$(git rev-parse HEAD)\`."
+            echo
+            if [ "$absent" -eq 0 ]; then
+              echo "All $present image(s) already in ECR — the deploy skips the image build (fast path)."
+            else
+              echo "$absent of $((present+absent)) image(s) must be rebuilt — expect several extra minutes."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
           name: cdk-diff-${{ github.run_id }}
@@ -229,7 +282,13 @@ jobs:
       redirect_url: ${{ steps.stack_outputs.outputs.redirect_url }}
       worker_function_name: ${{ steps.stack_outputs.outputs.worker_function_name }}
     steps:
+      # Pin to an explicit commit rather than the branch tip, and use the SAME
+      # one in the plan and deploy jobs. Two reasons: main advancing between the
+      # two jobs must not make the applied change differ from the reviewed diff,
+      # and `git_ref` needs a single place to take effect for a rollback.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -271,6 +330,13 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: gha-snapurl-deploy-${{ github.run_id }}
 
+      # Resolve the ACTUAL commit checked out rather than reusing github.sha,
+      # which is the dispatched ref and therefore wrong during a rollback. This
+      # is the value the stack records, so it has to be the one really deployed.
+      - name: Resolve deployed commit
+        id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # Always through deploy.sh, never `npx cdk deploy` directly. The wrapper
       # is what guarantees the full context-flag set is passed and then asserts
       # the two incident settings (NAT egress, DB TLS posture) actually landed.
@@ -283,7 +349,9 @@ jobs:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
-        run: bash infra/deploy.sh "${{ inputs.stack }}"
+        run: |
+          bash infra/deploy.sh "${{ inputs.stack }}" \
+            -c "deployedGitSha=${{ steps.rev.outputs.sha }}"
 
       # Read the URLs from the stack itself rather than hardcoding them, so the
       # smoke gate always targets what was actually just deployed.
@@ -318,12 +386,27 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
-  # 3. MIGRATE — opt-in. Not automatic, and deliberately so.
+  # 3. MIGRATE — unconditional, because a checkbox is a foot-gun.
   # ---------------------------------------------------------------------------
+  # This used to be an opt-in `run_migrations` input. That was wrong: it made
+  # correctness depend on an operator remembering to tick a box, and forgetting
+  # it on a deploy whose code needs a new column breaks production in a way the
+  # smoke gate may not even surface.
+  #
+  # Running unconditionally is safe because packages/database/src/migrate.ts uses
+  # Drizzle's migrator, which records applied migrations in its own table and
+  # applies only the pending ones. With nothing pending it is a no-op, so the
+  # cost of always running is one short Lambda invocation.
+  #
+  # The consequence to keep in mind: the order is now "new code, then new
+  # schema", so for the window between this job and the deploy above, new code
+  # runs against the old schema. Migrations must therefore stay
+  # backwards-compatible (expand/contract: add nullable, backfill, then tighten
+  # in a later release). A migration that drops or renames a column the previous
+  # release still reads will break that window.
   migrate:
     name: Apply DB migrations
     needs: deploy
-    if: inputs.run_migrations
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -361,17 +444,15 @@ jobs:
   # ---------------------------------------------------------------------------
   # 4. SMOKE — the gate that decides whether this deploy actually worked.
   # ---------------------------------------------------------------------------
-  # Wired exactly as smoke-deployed.yml's own header prescribes. `always()` with
-  # explicit result checks means a skipped optional migrate job does not skip
-  # the gate, but a FAILED one does.
+  # Wired exactly as smoke-deployed.yml's own header prescribes. `needs` covers
+  # both prior jobs, so a failed migration blocks the gate rather than letting a
+  # half-migrated environment report a successful deploy. No `always()` is
+  # needed now that migrate is unconditional — the default "all needs
+  # succeeded" is exactly the requirement.
   smoke:
     name: Post-deploy smoke
     needs: [deploy, migrate]
-    if: |
-      always() &&
-      needs.deploy.result == 'success' &&
-      (needs.migrate.result == 'success' || needs.migrate.result == 'skipped') &&
-      !inputs.skip_smoke
+    if: ${{ !inputs.skip_smoke }}
     uses: ./.github/workflows/smoke-deployed.yml
     with:
       redirect_base_url: ${{ needs.deploy.outputs.redirect_url }}

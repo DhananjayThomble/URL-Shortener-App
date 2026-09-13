@@ -75,7 +75,10 @@ ever plan from somewhere other than `main`.
 
 Its only permission is to assume the CDK **lookup** role, which `cdk diff` uses
 to read the deployed template. The lookup role is itself read-only, so this role
-cannot mutate infrastructure even transitively.
+cannot mutate infrastructure even transitively. It also carries a few direct
+read-only calls: the rollback preflight checks whether an image tag is already in
+ECR, and the weekly `drift-detection.yml` workflow runs CloudFormation drift
+detection. Neither can change anything.
 
 ```json
 {
@@ -98,10 +101,39 @@ cannot mutate infrastructure even transitively.
         "arn:aws:ssm:ap-south-1:646799484931:parameter/cdk-bootstrap/hnb659fds/version",
         "arn:aws:ssm:us-east-1:646799484931:parameter/cdk-bootstrap/hnb659fds/version"
       ]
+    },
+    {
+      "Sid": "RollbackPreflightReadImages",
+      "Effect": "Allow",
+      "Action": ["ecr:DescribeImages"],
+      "Resource": [
+        "arn:aws:ecr:ap-south-1:646799484931:repository/cdk-hnb659fds-container-assets-646799484931-ap-south-1"
+      ]
+    },
+    {
+      "Sid": "DriftDetection",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DetectStackDrift",
+        "cloudformation:DetectStackResourceDrift",
+        "cloudformation:DescribeStackDriftDetectionStatus",
+        "cloudformation:DescribeStackResourceDrifts",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:ap-south-1:646799484931:stack/SnapUrl/*"
+      ]
     }
   ]
 }
 ```
+
+> `DetectStackDrift` inspects the stack's resources, so the lookup role's own
+> read access is what makes the per-resource comparison possible. If drift
+> detection returns `DETECTION_FAILED` for specific resources, that is usually a
+> missing read permission on the resource's own service rather than a
+> CloudFormation problem.
 
 ### 2b. Deploy role trust policy
 
@@ -213,12 +245,12 @@ Create an environment named **`production`** (Settings → Environments):
   you read the diff the `plan` job wrote to the run summary.
 - Optionally restrict deployment branches to `main`.
 
-> **A run with `run_migrations` ticked prompts you twice.** Environment
-> protection is evaluated per job, and `migrate` must also declare
-> `environment: production` — that declaration is the only way it can obtain
-> credentials, since the deploy role trusts no other subject. So the second
-> prompt is a consequence of the trust boundary, not an oversight. It is also
-> defensible on its own: a schema migration deserves its own confirmation.
+> **Every run prompts you twice.** Environment protection is evaluated per job,
+> and `migrate` must also declare `environment: production` — that declaration is
+> the only way it can obtain credentials, since the deploy role trusts no other
+> subject. So the second prompt is a consequence of the trust boundary, not an
+> oversight. Migrations run on every deploy (a no-op when nothing is pending), so
+> this applies to rollbacks too.
 
 ### Variables
 
@@ -258,11 +290,13 @@ registration is ever disabled in production do you add `smoke_email` /
 2. `plan` runs and writes the diff to the run summary. **Read it.** Confirm it
    contains only what you intended and no unexpected deletion.
 3. Approve the `production` environment prompt. `deploy` applies it.
-4. `smoke` runs `scripts/smoke-redirect.sh` against the freshly-deployed URLs.
-   If it fails, the deploy is not successful, regardless of what CloudFormation
+4. `migrate` runs automatically (a no-op when nothing is pending), then `smoke`
+   runs `scripts/smoke-redirect.sh` against the freshly-deployed URLs. If it
+   fails, the deploy is not successful, regardless of what CloudFormation
    reported.
 
-Tick `run_migrations` only when a deploy ships new migration files.
+To roll back, dispatch the same workflow with `git_ref` set to an earlier commit
+— see `docs/ROLLBACK.md`, and read its warning about migrations first.
 
 ## Notes and deliberate choices
 
