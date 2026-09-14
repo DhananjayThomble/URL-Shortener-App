@@ -159,7 +159,7 @@ safe edge deploy:**
 | # | Loophole | How staging closes it |
 |---|----------|------------------------|
 | (a) | **Config drift** | Commit **`.env.staging.example`** (no real secrets): randomized-looking but throwaway `JWT_ACCESS_SECRET`/`JWT_REFRESH_SECRET` (≥32 chars, **identical between api and redirect** or unlock breaks), `MAIL_TRANSPORT=outbox`, `CACHE_DRIVER=memory`, `LINK_PROJECTION`/`CLICK_SINK` unset (Postgres path), `TRUSTED_PROXY_HOPS=0`. Web: `NEXT_PUBLIC_API_URL` points at the **staging api**, satisfying `web/next.config.ts` (see D1 — the guard rejects a localhost URL in a `NODE_ENV=production` build). |
-| (b) | **Data isolation** | Separate compose **project name** (`snapurl-staging`), a **distinct named volume** (`snapurl-staging-pgdata`), and a **different host port** (e.g. `5434:5432`) or no published port. A staging run never touches dev's `snapurl` project / `snapurl-pgdata` / `5433`. |
+| (b) | **Data isolation** | Separate compose **project name** (`snapurl-staging`), a **distinct named volume** (`snapurl-staging-pgdata`), and a **different host port** (e.g. `5435:5432`) or no published port. A staging run never touches dev's `snapurl` project / `snapurl-pgdata` / `5433`. |
 | (c) | **Migrations auto-run on up, idempotent** | Add a **`migrate` one-shot service** (mirror `deploy/single-node`: `node -e "runMigrations(...)"` on the worker image, `restart: "no"`), and make api/redirect/worker `depends_on: migrate: {condition: service_completed_successfully}`. `runMigrations` is idempotent (drizzle skips applied migrations), so re-`up` is safe. |
 | (d) | **Worker scheduled jobs actually fire** | The compose worker runs the **timer loop** (not `--once`), so projection-drain + rollup fire on `setInterval`, mirroring EventBridge. Proven by `integration-assertions.sh` (click → `click_events` → `click_daily` in ~90s). No cron container needed. |
 | (e) | **Health / readiness + CORE-journey verification** | api/redirect have compose **healthchecks** (`/api/v1/health`, `/health`); `--wait` blocks on them. But liveness ≠ verification — the documented "is staging really up?" step is **`scripts/smoke.sh` + `scripts/smoke-redirect.sh`**, which *create a link via the staging API and FOLLOW it, asserting 3xx + exact `Location`* (our deploy-verification rule), plus `integration-assertions.sh` for the rollup. |
@@ -171,46 +171,94 @@ safe edge deploy:**
 Given how much already exists, this is intentionally small. **PR1 is the whole
 staging environment**; PR2/PR3 are optional.
 
-- **PR1 — `feat/staging-compose` (this branch): the staging environment.**
-  - `docker-compose.staging.yml` (or a `staging` profile on the root file):
-    project `snapurl-staging`, volume `snapurl-staging-pgdata`, host port
-    `5434` (or none), a `migrate` one-shot, api/redirect/worker/**web** wired,
-    all reading `.env.staging`.
-  - `.env.staging.example` (loophole (a)) + `.gitignore` for `.env.staging`.
-  - **web service** — depends on **Decision D1**: either a new
-    `web/Dockerfile` (`next build` + `next start`, `NEXT_PUBLIC_API_URL` baked
-    to the staging api at build time) **or** run web via `pnpm dev:web` on the
-    host (no container, `NODE_ENV=development` so the guard is inert).
-  - `docs/` runbook section: `up` / verify (smoke) / teardown, and the §4
-    boundary.
-  - Reuse `scripts/smoke.sh`, `scripts/smoke-redirect.sh`,
+- **PR1 — `feat/staging-compose` (this branch): the staging environment. SHIPPED.**
+  - `docker-compose.staging.yml`: a SEPARATE file (not a profile on the root
+    file, so dev's `:5433` and CI's `integration` job stay untouched) — project
+    `snapurl-staging`, volume `snapurl-staging-pgdata`, Postgres host port
+    `5435`, a `migrate` one-shot, api/redirect/worker wired. **Web is NOT here**
+    (D1: run on the host via `pnpm dev:web`).
+  - `.env.staging.example` (loophole (a)) + `.gitignore` entries (`.env.staging`
+    ignored, `.env.staging.example` tracked).
+  - `staging:up` / `staging:smoke` / `staging:logs` / `staging:down` scripts,
+    reusing `scripts/smoke.sh` + `scripts/smoke-redirect.sh` +
     `scripts/integration-assertions.sh` unchanged for the core-journey gate.
-  - `pnpm` scripts: `staging:up`, `staging:smoke`, `staging:down`.
-- **PR2 — (optional) SMTP mail transport + mailhog.** Only if **Decision D2**
-  says staging should exercise real SMTP send. Adds an `smtp` case to
-  `MailService` (new code + tests) and a `mailhog` container. Otherwise `outbox`
-  covers email-generation and PR2 is dropped.
-- **PR3 — (optional) CI pre-deploy gate.** The compose integration harness is
-  *already* a per-PR gate in `verify.yml`. A separate "staging gate" is only
-  worth it if we want a distinct **staging profile** run (e.g. exercising the
-  containerised web + the `migrate`-on-up path) as an explicit pre-deploy check.
-  **Decision D3.** Feasible (it is the existing `integration` job plus web); not
-  built this round.
+  - The runbook (§8) and this boundary doc.
+- **PR2 — SMTP mail transport + mailhog: DROPPED (D2).** Staging keeps `outbox`,
+  which covers email generation; SMTP delivery is not exercised. Would need new
+  code (there is no SMTP transport), so it is out of scope.
+- **PR3 — separate CI staging gate: DROPPED (D3).** The existing `verify.yml`
+  `integration` job already gates every PR on the full compose stack; no distinct
+  staging-profile job is added.
 
-## 7. Decisions needed from the user
+## 7. Decisions — RESOLVED (2026-09-14) and shipped
 
-- **D1 — Web in staging: container or host?**
-  - *Containerise web* (new `web/Dockerfile`, `next build`+`next start`,
-    `NEXT_PUBLIC_API_URL` baked to the staging api): a true one-command
-    full-stack staging, but the guard forbids a `localhost` API URL in a prod
-    build, so the staging api must be reachable at a **non-localhost** name the
-    browser can hit (e.g. a host alias / LAN IP), or web must be served in dev
-    mode.
-  - *Run web on the host via `pnpm dev:web`*: zero new build, guard inert
-    (`NODE_ENV=development`), `NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1`
-    works because the browser is on the same host — but web is then not
-    containerised, so the "images actually work" property does not extend to web.
-- **D2 — Mailer: `outbox` (default, no new code) or add an SMTP transport +
-  mailhog (new code + tests, PR2)?**
-- **D3 — Wire a CI pre-deploy staging gate now (PR3), or leave the existing
-  `integration` job as the gate?**
+All three were approved as the recommended defaults and are built in this PR:
+
+- **D1 — Web runs on the HOST via `pnpm dev:web`.** No `web/Dockerfile`, no web
+  container. `pnpm dev:web` runs Next in development mode, so the
+  `web/next.config.ts` production guard is inert and
+  `NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1` is correct (the browser is
+  on the host that publishes `api:3001`). See the runbook below.
+- **D2 — Mailer stays `outbox`.** Emails are written to files inside the api
+  container (`/tmp/snapurl-outbox`), exercising generation. **SMTP delivery is
+  NOT exercised** — there is no SMTP transport in the code (only `outbox` +
+  `ses`), so mailhog/maildev would need new code and is out of scope.
+- **D3 — The existing `verify.yml` `integration` job stays the gate.** No new
+  staging-profile CI job. That job already brings up the root `--profile full`
+  stack, migrates, runs all three smoke suites and tears down on every PR.
+
+## 8. Runbook — how to run compose staging
+
+The delta lives in `docker-compose.staging.yml` (a **separate** file from the
+dev/CI root `docker-compose.yml`, so dev's `:5433` and the CI `integration` job
+are untouched), `.env.staging.example`, and `staging:*` scripts in
+`package.json`.
+
+```bash
+# 0. one-time: copy the throwaway env template (optional — the stack has safe
+#    defaults baked in and comes up with no .env.staging present)
+cp .env.staging.example .env.staging
+
+# 1. bring the stack up from clean — builds the images, runs the `migrate`
+#    one-shot to apply the schema, then starts api + redirect + worker.
+#    --wait blocks on the api/redirect healthchecks (the worker has none).
+pnpm staging:up
+
+# 2. start web on the HOST against staging (decision D1). Dev mode, so the
+#    next.config.ts prod guard is inert and a localhost API URL is correct.
+NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1 pnpm dev:web
+
+# 3. VERIFY the core journey — the "is staging really up?" step. Liveness is
+#    not verification; these create a link via the staging API and FOLLOW it
+#    (exact Location), with a real browser UA, and prove the live worker rolls a
+#    click from click_events into click_daily.
+pnpm staging:smoke     # smoke.sh + smoke-redirect.sh + integration-assertions.sh
+
+# tail logs while debugging
+pnpm staging:logs
+
+# 4. TEARDOWN — removes the containers AND the staging volume, so the next
+#    `up` starts from a fresh migrated database. Reproducible by construction.
+pnpm staging:down
+```
+
+**Data isolation:** staging uses compose project `snapurl-staging`, volume
+`snapurl-staging-pgdata`, and Postgres host port **5435** — none of which touch
+dev's `snapurl` project / `snapurl-pgdata` / `5433`. `staging:down`'s `-v` wipes
+only the staging volume.
+
+**Migrations-on-up:** the `migrate` one-shot (worker image,
+`runMigrations`, `restart: "no"`) runs before api/redirect/worker via
+`depends_on … condition: service_completed_successfully`, so a single
+`pnpm staging:up` is correct with no host `pnpm db:migrate`. Drizzle records
+applied migrations, so re-`up` migrates nothing (idempotent).
+
+**Worker scheduler:** the compose worker runs `node dist/main.js` (the timer
+loop, not `--once`), so the projection drain + rollup fire on their intervals —
+mirroring prod's EventBridge and closing the loophole that otherwise silently
+reproduces the 404-window / clicks-stay-0 bugs.
+
+**Rate-limiter / bot-filter parity:** the throttler is active
+(`THROTTLE_LIMIT=120/60s`); a burst over that returns 429 (correct, not a bug).
+The rollup counts only `is_bot=false AND blocked_reason IS NULL`, so the smoke
+scripts drive clicks with a real Chrome UA — never curl's default (a bot UA).
