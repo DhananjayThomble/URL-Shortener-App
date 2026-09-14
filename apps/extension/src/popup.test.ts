@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Link } from "@snapurl/contract";
 
-import { AuthError, RateLimitError } from "./lib/api-client.js";
+import { AuthError, RateLimitError, ScopeError } from "./lib/api-client.js";
 import { browserShortUrlOf, createPopup, POPUP_MARKUP } from "./popup.js";
 import type { PopupDeps } from "./popup.js";
 import type { Settings } from "./lib/storage.js";
@@ -30,6 +30,8 @@ const sampleLink = Link.parse({
   destination: "https://example.com/",
   status: "active",
   clicks: 3,
+  uniqueClicks: 2,
+  sparkline: [0, 1, 0, 2, 3, 1, 0],
   safeBrowsing: { status: "clean", checkedAt: "2024-01-01T00:00:00.000Z" },
   createdAt: "2024-01-01T00:00:00.000Z",
 });
@@ -215,6 +217,149 @@ describe("popup controller", () => {
     const err = document.querySelector<HTMLElement>('[data-testid="error"]');
     expect(err?.dataset.kind).toBe("rate-limit");
     expect(err?.textContent).toContain("30 seconds");
+  });
+
+  it("shows a distinct scope-error kind when the key lacks a scope", async () => {
+    const deps = makeDeps({
+      createLink: vi.fn(async () => {
+        throw new ScopeError("This API key is missing the \"links:write\" scope.", "links:write");
+      }),
+    });
+    await createPopup(document, deps);
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.click();
+    await flush();
+    const err = document.querySelector<HTMLElement>('[data-testid="error"]');
+    expect(err?.dataset.kind).toBe("scope");
+    expect(err?.textContent).toContain("links:write");
+  });
+
+  it("populates the domain picker from listDomains and submits the chosen domain", async () => {
+    const listDomains = vi.fn(async () => [
+      { id: "d1", domain: "snp.li", status: "live", ssl: "active", links: 1, rootRedirect: null, notFoundRedirect: null },
+      { id: "d2", domain: "go.acme.com", status: "live", ssl: "active", links: 0, rootRedirect: null, notFoundRedirect: null },
+    ]);
+    const deps = makeDeps({ listDomains } as Partial<PopupDeps>);
+    await createPopup(document, deps);
+    await flush();
+
+    const select = document.querySelector<HTMLSelectElement>('[data-testid="domain-select"]');
+    expect(select).not.toBeNull();
+    expect(select?.options.length).toBe(2);
+    // Default domain snp.li is preselected.
+    expect(select?.value).toBe("snp.li");
+
+    select!.value = "go.acme.com";
+    document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.click();
+    await flush();
+    const [, params] = (deps.createLink as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(params.domain).toBe("go.acme.com");
+  });
+
+  it("auto-resolves a domain from listDomains even without a default domain", async () => {
+    const listDomains = vi.fn(async () => [
+      { id: "d2", domain: "go.acme.com", status: "live", ssl: "active", links: 0, rootRedirect: null, notFoundRedirect: null },
+    ]);
+    const deps = makeDeps({
+      loadSettings: vi.fn(async () => ({ ...configured, defaultDomain: undefined })),
+      listDomains,
+    } as Partial<PopupDeps>);
+    await createPopup(document, deps);
+    await flush();
+
+    // needs-domain must NOT be shown because the picker resolved a domain.
+    expect(document.querySelector<HTMLElement>('[data-testid="needs-domain"]')?.hidden).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.hidden).toBe(false);
+  });
+
+  it("rejects an invalid custom alias before submitting", async () => {
+    const deps = makeDeps();
+    await createPopup(document, deps);
+    await flush();
+
+    const alias = document.querySelector<HTMLInputElement>('[data-testid="alias-input"]');
+    alias!.value = "bad slug!";
+    document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.click();
+    await flush();
+
+    expect(document.querySelector<HTMLElement>('[data-testid="alias-error"]')?.hidden).toBe(false);
+    expect(deps.createLink).not.toHaveBeenCalled();
+  });
+
+  it("passes a valid alias and UTM tags into the create body", async () => {
+    const deps = makeDeps();
+    await createPopup(document, deps);
+    await flush();
+
+    document.querySelector<HTMLInputElement>('[data-testid="alias-input"]')!.value = "my-link";
+    document.querySelector<HTMLInputElement>('[data-testid="utm-source"]')!.value = "newsletter";
+    document.querySelector<HTMLInputElement>('[data-testid="utm-medium"]')!.value = "email";
+    document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.click();
+    await flush();
+
+    const [, params] = (deps.createLink as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(params.slug).toBe("my-link");
+    expect(params.utm).toEqual({ source: "newsletter", medium: "email" });
+  });
+
+  it("renders a QR panel and wires the PNG download after shortening", async () => {
+    const qrPng = vi.fn(async () => "data:image/png;base64,AAA");
+    const qrSvg = vi.fn(async () => "<svg></svg>");
+    const download = vi.fn();
+    const deps = makeDeps({ qrPng, qrSvg, download } as Partial<PopupDeps>);
+    await createPopup(document, deps);
+    await flush();
+
+    document.querySelector<HTMLButtonElement>('[data-action="shorten"]')?.click();
+    await flush();
+
+    const qr = document.querySelector<HTMLElement>('[data-testid="qr"]');
+    expect(qr?.hidden).toBe(false);
+    const img = document.querySelector<HTMLImageElement>('[data-testid="qr-preview"]');
+    expect(img?.getAttribute("src")).toBe("data:image/png;base64,AAA");
+
+    document.querySelector<HTMLButtonElement>('[data-testid="qr-download-png"]')?.click();
+    await flush();
+    expect(download).toHaveBeenCalledWith(expect.stringContaining(".png"), "data:image/png;base64,AAA", "image/png");
+
+    document.querySelector<HTMLButtonElement>('[data-testid="qr-download-svg"]')?.click();
+    await flush();
+    expect(download).toHaveBeenCalledWith(expect.stringContaining(".svg"), "<svg></svg>", "image/svg+xml");
+  });
+
+  it("issues a server-side search query when typing in the recent search box", async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    await createPopup(document, deps);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const search = document.querySelector<HTMLInputElement>('[data-testid="recent-search"]');
+    search!.value = "campaign";
+    search!.dispatchEvent(new Event("input"));
+    vi.advanceTimersByTime(300);
+    await Promise.resolve();
+
+    const calls = (deps.listLinks as ReturnType<typeof vi.fn>).mock.calls;
+    const searched = calls.find((c) => c[1]?.search === "campaign");
+    expect(searched).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("renders per-row copy, a click badge and a sparkline for recent links", async () => {
+    const deps = makeDeps();
+    await createPopup(document, deps);
+    await flush();
+
+    const badge = document.querySelector<HTMLElement>('[data-testid="recent-clicks"]');
+    expect(badge?.textContent).toBe("3 clicks");
+    expect(document.querySelector('.recent__sparkline')).not.toBeNull();
+
+    const copyBtn = document.querySelector<HTMLButtonElement>('[data-testid="recent-copy"]');
+    expect(copyBtn).not.toBeNull();
+    copyBtn?.click();
+    await flush();
+    expect(deps.copyToClipboard).toHaveBeenCalledWith("https://snp.li/abc");
   });
 });
 

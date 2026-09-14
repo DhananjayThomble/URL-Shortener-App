@@ -117,6 +117,9 @@ importers:
       '@snapurl/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
     devDependencies:
       '@types/chrome':
         specifier: ^0.0.287
@@ -124,6 +127,9 @@ importers:
       '@types/node':
         specifier: ^22
         version: 22.20.1
+      '@types/qrcode':
+        specifier: ^1.5.5
+        version: 1.5.6
       esbuild:
         specifier: ^0.24.2
         version: 0.24.2

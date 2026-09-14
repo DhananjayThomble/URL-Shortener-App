@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SnapURL Browser Extension — Privacy Policy</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { max-width: 760px; margin: 2.5rem auto; padding: 0 1.25rem;
+      font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    h1 { font-size: 1.7rem; } h2 { margin-top: 2rem; font-size: 1.15rem; }
+    code { background: rgba(127,127,127,.15); padding: .1em .35em; border-radius: 4px; }
+    .updated { color: #6b7280; font-size: .9rem; }
+    ul { padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <h1>SnapURL Browser Extension — Privacy Policy</h1>
+  <p class="updated">Last updated: 2026-09-14</p>
+
+  <p>SnapURL is a browser extension that shortens the current tab against
+  <strong>your own</strong> SnapURL API. You point it at an API base URL you
+  control and authenticate with a key you issue. This policy describes exactly
+  what data the extension handles, where it goes, and what it never does.</p>
+
+  <h2>Summary</h2>
+  <ul>
+    <li>The extension talks <strong>only</strong> to the SnapURL API URL <strong>you</strong>
+        configure — not to the extension authors, Mozilla, Google, or any third party.</li>
+    <li>It stores your API base URL, API key, and an optional default domain in your
+        browser's local extension storage. Nothing is uploaded to us.</li>
+    <li><strong>No analytics, no tracking, no telemetry, no advertising.</strong></li>
+    <li>It requests <strong>no access to your browsing</strong>. It reads a page's URL and
+        title only when you explicitly ask it to shorten that page.</li>
+    <li>Nothing is ever sold or shared.</li>
+  </ul>
+
+  <h2>What data the extension handles</h2>
+  <p><strong>Settings you enter (stored locally):</strong></p>
+  <ul>
+    <li><strong>API base URL</strong> — the address of your SnapURL instance.</li>
+    <li><strong>API key</strong> — a scoped SnapURL key (<code>snap_live_…</code>) you generate.
+        A secret; stored and never logged.</li>
+    <li><strong>Default domain</strong> (optional) — a short domain to use by default.</li>
+  </ul>
+  <p>Stored via <code>chrome.storage.local</code> on your device. Never transmitted
+  anywhere except as the <code>Authorization</code> header on requests to the API
+  base URL you configured.</p>
+
+  <p><strong>Data you choose to act on (sent to your API only):</strong></p>
+  <ul>
+    <li>Shortening a page sends its URL (plus any custom alias / UTM parameters you add)
+        to <code>POST &lt;your-api-base&gt;/api/v1/links</code>.</li>
+    <li>Searching / viewing recent links sends a search query to
+        <code>GET &lt;your-api-base&gt;/api/v1/links</code>.</li>
+    <li>Picking a domain reads your configured domains from
+        <code>GET &lt;your-api-base&gt;/api/v1/domains</code>.</li>
+  </ul>
+  <p>Every request goes <strong>only</strong> to the API base URL you set, carrying your
+  API key as a Bearer token. The extension makes no other network requests.</p>
+
+  <h2>What the extension does NOT do</h2>
+  <ul>
+    <li>Does not read, monitor, or collect your browsing history or page content. No
+        host permissions (<code>host_permissions: []</code>), no <code>&lt;all_urls&gt;</code>.
+        It reads only the tab you explicitly shorten, via <code>activeTab</code>.</li>
+    <li>Does not send data to the developers or to any analytics/ad/tracking service.</li>
+    <li>Contains no remote code. All logic ships in the extension (MV3, strict CSP, no <code>eval</code>).</li>
+  </ul>
+
+  <h2>Permissions and why</h2>
+  <ul>
+    <li><strong>activeTab</strong> — read the current tab's URL/title only when you invoke "Shorten".</li>
+    <li><strong>storage</strong> — save your API URL, key, and default domain locally.</li>
+    <li><strong>contextMenus</strong> — the "Shorten with SnapURL" right-click item.</li>
+    <li><strong>commands</strong> (top-level key) — the keyboard shortcut.</li>
+    <li>No host permissions.</li>
+  </ul>
+
+  <h2>Data retention and deletion</h2>
+  <p>Your settings live in your browser's extension storage until you clear them
+  (options page, removing the extension, or clearing browser data). The extension
+  keeps no server-side copy — it has no server of its own. Links you create live in
+  <strong>your</strong> SnapURL instance under its own retention.</p>
+
+  <h2>Data sharing and sale</h2>
+  <p>None. The only network destination is the SnapURL API you configure and control.</p>
+
+  <h2>Children</h2>
+  <p>A developer/productivity tool, not directed at children.</p>
+
+  <h2>Contact</h2>
+  <p>Questions: <strong>support@snapurl.in</strong> (replace with your real support address before publishing).</p>
+</body>
+</html>

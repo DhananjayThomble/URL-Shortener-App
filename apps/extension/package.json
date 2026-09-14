@@ -9,16 +9,19 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "package": "node scripts/package.mjs",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "echo \"no lint configured\" && exit 0"
   },
   "dependencies": {
-    "@snapurl/contract": "workspace:*"
+    "@snapurl/contract": "workspace:*",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
     "@types/node": "^22",
+    "@types/qrcode": "^1.5.5",
     "esbuild": "^0.24.2",
     "happy-dom": "^15.11.7",
     "typescript": "^5.7.3",

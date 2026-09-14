@@ -1,0 +1,194 @@
+{
+  "bg_context_menu": {
+    "message": "Shorten with SnapURL",
+    "description": "Context-menu entry label for shortening a page or a right-clicked link."
+  },
+  "bg_copied": {
+    "message": "Short link copied: $1",
+    "description": "Notification after a context-menu shorten succeeds; $1 is the short URL."
+  },
+  "bg_failed": {
+    "message": "Couldn't shorten that link. Try again.",
+    "description": "Generic failure notification for a background shorten."
+  },
+  "bg_needs_config": {
+    "message": "Add your SnapURL API key in the extension options first.",
+    "description": "Notification when a background shorten is attempted with no credentials."
+  },
+  "bg_needs_domain": {
+    "message": "Set a default short domain in the extension options first.",
+    "description": "Notification when a background shorten is attempted with no default domain."
+  },
+  "bg_not_shortenable": {
+    "message": "That page can't be shortened.",
+    "description": "Notification when a context-menu target is not an http(s) URL."
+  },
+  "bg_title_error": {
+    "message": "SnapURL",
+    "description": "Notification title for an error toast."
+  },
+  "bg_title_success": {
+    "message": "SnapURL",
+    "description": "Notification title for a success toast."
+  },
+  "back": {
+    "message": "Back",
+    "description": "Onboarding stepper: go to the previous step."
+  },
+  "copied": {
+    "message": "Copied",
+    "description": "Transient confirmation after a copy-to-clipboard action."
+  },
+  "copy": {
+    "message": "Copy",
+    "description": "Copy-to-clipboard button label (extension origin / .env line)."
+  },
+  "corsEnvLabel": {
+    "message": ".env line to add",
+    "description": "Label for the EXTENSION_ORIGINS .env line to paste into the API config."
+  },
+  "corsIdLabel": {
+    "message": "Extension origin",
+    "description": "Label for this extension's chrome-extension:// origin."
+  },
+  "corsIntro": {
+    "message": "In production the API's CORS is origin-restricted. Add this extension's origin to the API's EXTENSION_ORIGINS allowlist (comma-separated) and restart the API. In development any origin is reflected, so this only matters in production.",
+    "description": "Explains why the extension origin must be added to EXTENSION_ORIGINS."
+  },
+  "finish": {
+    "message": "Finish",
+    "description": "Onboarding stepper: finish setup on the last step."
+  },
+  "hintApiKeyScopes": {
+    "message": "A snap_live_… key with the links:read and links:write scopes (domains:read for the domain picker, analytics:read is optional).",
+    "description": "Hint under the API key field describing the scopes it needs."
+  },
+  "hintDefaultDomain": {
+    "message": "New links are created under this domain. Required — the API rejects a create with an empty domain.",
+    "description": "Hint under the default domain field."
+  },
+  "hideKey": {
+    "message": "Hide",
+    "description": "Toggle button label to hide the API key value."
+  },
+  "labelApiBaseUrl": {
+    "message": "API base URL",
+    "description": "Label for the API base URL input."
+  },
+  "labelApiKey": {
+    "message": "API key",
+    "description": "Label for the API key input."
+  },
+  "labelDefaultDomain": {
+    "message": "Default short domain",
+    "description": "Label for the default short domain input."
+  },
+  "next": {
+    "message": "Next",
+    "description": "Onboarding stepper: advance to the next step."
+  },
+  "onboardingDone": {
+    "message": "You're all set. This extension is ready to shorten links.",
+    "description": "Message shown when onboarding completes with a green verdict."
+  },
+  "onboardingTitle": {
+    "message": "Set up SnapURL",
+    "description": "Title of the first-run onboarding view."
+  },
+  "openShortcuts": {
+    "message": "Open shortcuts settings",
+    "description": "Button/link to chrome://extensions/shortcuts."
+  },
+  "optionsIntro": {
+    "message": "Point the extension at your SnapURL API and paste a scoped API key.",
+    "description": "Intro paragraph on the options page."
+  },
+  "optionsTitle": {
+    "message": "SnapURL settings",
+    "description": "Title of the options page."
+  },
+  "save": {
+    "message": "Save",
+    "description": "Save button label on the options form."
+  },
+  "saved": {
+    "message": "Settings saved.",
+    "description": "Confirmation shown after settings are saved."
+  },
+  "sectionConnection": {
+    "message": "Connection",
+    "description": "Options section heading: API connection settings."
+  },
+  "sectionCors": {
+    "message": "This extension's origin",
+    "description": "Options section heading: CORS / extension origin."
+  },
+  "sectionDefaults": {
+    "message": "Defaults",
+    "description": "Options section heading: default link settings."
+  },
+  "sectionShortcuts": {
+    "message": "Shortcuts",
+    "description": "Options section heading: keyboard shortcuts."
+  },
+  "shortcutsIntro": {
+    "message": "Change the keyboard shortcut at chrome://extensions/shortcuts.",
+    "description": "Hint explaining where to remap the keyboard shortcut."
+  },
+  "showKey": {
+    "message": "Show",
+    "description": "Toggle button label to reveal the API key value."
+  },
+  "stepApiKeyBody": {
+    "message": "Paste a snap_live_… key from the dashboard Developers page. It needs links:read and links:write; domains:read for the domain picker.",
+    "description": "Onboarding step 2 body text."
+  },
+  "stepApiKeyTitle": {
+    "message": "2. Your API key",
+    "description": "Onboarding step 2 title."
+  },
+  "stepApiUrlBody": {
+    "message": "Enter the origin of your SnapURL API — no trailing /api/v1.",
+    "description": "Onboarding step 1 body text."
+  },
+  "stepApiUrlTitle": {
+    "message": "1. Your SnapURL API",
+    "description": "Onboarding step 1 title."
+  },
+  "stepCorsBody": {
+    "message": "Add the origin below to your API's EXTENSION_ORIGINS, restart the API, then test the connection. A green result finishes setup.",
+    "description": "Onboarding step 3 body text."
+  },
+  "stepCorsTitle": {
+    "message": "3. Allow this extension & test",
+    "description": "Onboarding step 3 title."
+  },
+  "testConnection": {
+    "message": "Test connection",
+    "description": "Button label to run a live connection test."
+  },
+  "testing": {
+    "message": "Testing…",
+    "description": "Transient status while a connection test is in flight."
+  },
+  "verdictAuth": {
+    "message": "Your API key was rejected (401/403). Check the key and its scopes.",
+    "description": "Test-connection verdict: authentication/authorization failure."
+  },
+  "verdictGeneric": {
+    "message": "The API responded with an error. See the message above.",
+    "description": "Test-connection verdict: generic API error."
+  },
+  "verdictNeedsConfig": {
+    "message": "Enter an API base URL and key first.",
+    "description": "Test-connection verdict: missing configuration."
+  },
+  "verdictNetwork": {
+    "message": "Couldn't reach the API. If this is a production API, add this extension's origin (below) to EXTENSION_ORIGINS and restart it.",
+    "description": "Test-connection verdict: network/CORS failure."
+  },
+  "verdictOk": {
+    "message": "Connected. Your key works and can reach the API.",
+    "description": "Test-connection verdict: success."
+  }
+}

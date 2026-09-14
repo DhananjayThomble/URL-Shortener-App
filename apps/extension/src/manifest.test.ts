@@ -40,10 +40,14 @@ describe("public/manifest.json", () => {
     expect((manifest.version as string).length).toBeGreaterThan(0);
   });
 
-  it("ships a first-release version", () => {
-    // A brand-new store listing starts at 1.0.0; a higher initial version is
-    // confusing for a first submission.
-    expect(manifest.version).toBe("1.0.0");
+  it("ships the production feature-release version", () => {
+    // v1.0.0 was the minimal first scaffold; the production feature set (context
+    // menu, keyboard command, QR, UTM, domain picker) ships as 1.1.0 (SPEC §7).
+    expect(manifest.version).toBe("1.1.0");
+  });
+
+  it("declares default_locale for the _locales/ bundle", () => {
+    expect(manifest.default_locale).toBe("en");
   });
 
   it("registers a module service worker for the background", () => {
@@ -53,13 +57,25 @@ describe("public/manifest.json", () => {
     expect(background?.type).toBe("module");
   });
 
-  it("requests only least-privilege permissions (subset of activeTab + storage)", () => {
+  it("requests only least-privilege permissions (subset of activeTab + storage + contextMenus + commands)", () => {
     const permissions = (manifest.permissions ?? []) as string[];
     expect(Array.isArray(permissions)).toBe(true);
-    const allowed = new Set(["activeTab", "storage"]);
+    // contextMenus + commands are the two production additions (SPEC §7); both
+    // are plain `permissions`, not host permissions. Nothing broader is allowed.
+    const allowed = new Set(["activeTab", "storage", "contextMenus", "commands"]);
     for (const permission of permissions) {
       expect(allowed.has(permission)).toBe(true);
     }
+  });
+
+  it("registers the shorten-active-tab keyboard command", () => {
+    const commands = manifest.commands as Record<string, unknown> | undefined;
+    expect(commands).toBeDefined();
+    const shorten = commands?.["shorten-active-tab"] as Record<string, unknown> | undefined;
+    expect(shorten).toBeDefined();
+    expect(typeof shorten?.description).toBe("string");
+    const suggested = shorten?.suggested_key as Record<string, unknown> | undefined;
+    expect(typeof suggested?.default).toBe("string");
   });
 
   it("does not request the <all_urls> host permission", () => {
@@ -104,4 +120,28 @@ describe("public/manifest.json", () => {
       expect((icons?.[size] as string).length).toBeGreaterThan(0);
     }
   });
+
+  // Firefox (AMO) readiness. The same manifest ships to Chrome and Firefox: Chrome
+  // uses background.service_worker, Firefox uses the background.scripts fallback and
+  // requires browser_specific_settings.gecko.id (permanent AMO add-on id). web-ext
+  // lint (AMO's own validator) reports 0 errors with these keys present.
+  it("is Firefox/AMO ready (gecko id + background.scripts fallback)", () => {
+    const bss = manifest.browser_specific_settings as Record<string, unknown> | undefined;
+    expect(bss).toBeDefined();
+    const gecko = bss?.gecko as Record<string, unknown> | undefined;
+    expect(gecko).toBeDefined();
+    expect(typeof gecko?.id).toBe("string");
+    expect((gecko?.id as string).length).toBeGreaterThan(0);
+    expect(typeof gecko?.strict_min_version).toBe("string");
+    const background = manifest.background as Record<string, unknown> | undefined;
+    const scripts = (background?.scripts ?? []) as string[];
+    expect(Array.isArray(scripts)).toBe(true);
+    expect(scripts).toContain("background.js");
+  });
+
+  it("does not list 'commands' as a permission (it is a top-level manifest key)", () => {
+    const permissions = (manifest.permissions ?? []) as string[];
+    expect(permissions).not.toContain("commands");
+  });
+
 });
