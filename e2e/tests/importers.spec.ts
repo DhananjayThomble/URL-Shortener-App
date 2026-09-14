@@ -105,3 +105,27 @@ test.describe("import links (Bitly source)", () => {
     await expect(page.getByText(`${FIRST_DOMAIN}/${key}`, { exact: true })).toBeVisible();
   });
 });
+
+test.describe("import links (YOURLS source)", () => {
+  test.beforeEach(async ({ page }) => {
+    await seedSession(page);
+  });
+
+  test("a YOURLS export imports, using the bare keyword as the back-half", async ({ page }) => {
+    await page.goto("/links");
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await page.getByRole("combobox", { name: "Import source" }).selectOption({ label: "YOURLS" });
+
+    const kw = `y${Date.now().toString(36)}`;
+    const csv = "keyword,url,title,clicks\n" + `${kw},https://example.com/y,Landing,7`;
+    await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
+
+    // The dropped-field notice discloses the clicks column before submit
+    // (full li text is unique — the bare word "Clicks" appears all over the shell).
+    await expect(page.getByText("Historical click counts are not imported.")).toBeVisible();
+
+    await page.getByRole("button", { name: /^Import 1 link$/ }).click();
+    await expect(page.getByRole("status")).toContainText("1 imported");
+    await expect(page.getByText(`${FIRST_DOMAIN}/${kw}`, { exact: true })).toBeVisible();
+  });
+});
