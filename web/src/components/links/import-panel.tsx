@@ -125,7 +125,7 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,text/csv,text/plain"
+              accept=".csv,.json,text/csv,application/json,text/plain"
               onChange={onFile}
               className="hidden"
               aria-label="Choose export file"
