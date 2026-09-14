@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui";
-import { useLogout, useMe, useWorkspace } from "@/lib/api/hooks";
+import { useLinks, useLogout, useMe, useWorkspace } from "@/lib/api/hooks";
 import { cn, compact } from "@/lib/utils";
 
 type Counts = { links?: number; bio?: number; domains?: number; members?: number };
@@ -243,19 +243,199 @@ export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => v
       >
         ＋
       </button>
-      <div className="flex-1 max-w-[400px] hidden sm:flex items-center gap-2 px-[11px] py-[6px] bg-surface-2 border border-line rounded-[var(--radius-sm)] text-ink-3 text-[13px]">
-        <span aria-hidden>⌕</span>
-        <span className="truncate">Search links, slugs, destinations, tags</span>
-        <kbd className="ml-auto font-mono text-[10px] px-[5px] py-px border border-line-2 rounded-[4px] hidden sm:block">
-          ⌘K
-        </kbd>
-      </div>
+      <TopbarSearch />
       <div className="ml-auto flex items-center gap-[9px]">
         <Button size="sm" variant="ghost" className="hidden sm:inline-flex">
           Import from Bitly
         </Button>
         <AccountMenu />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The top-bar link search (DC5 follow-up, issue #408).
+ *
+ * The input that lived here was a non-functional stub — placeholder text with
+ * no handler and no route. This wires it into an accessible combobox that
+ * queries the workspace's links as you type and shows matches in a listbox
+ * directly under the input.
+ *
+ * Filtering is done SERVER-SIDE through the existing links hook: `useLinks`
+ * sends `?search=` to GET /links, and LinksService.list (and the fixtures
+ * backend, web/src/lib/api/fixtures.ts) already filter slug/destination/title/
+ * comment by that term. So there is no client-side re-filtering and no fixtures
+ * change — the dropdown shows exactly what the links page would for the same
+ * query, just capped to a handful of rows.
+ *
+ * Layout is unchanged from the stub: the same `flex-1 max-w-[400px] hidden
+ * sm:flex` wrapper, so the control is desktop/tablet only (DC5 keeps search off
+ * phones) and the desktop bar is visually identical until the user types.
+ *
+ * A11y: input is role="combobox" with aria-expanded / aria-controls /
+ * aria-activedescendant; results are a role="listbox" of role="option" rows.
+ * ArrowUp/Down move the active option, Enter opens it, Escape closes. The
+ * dropdown closes on outside-click and on route change.
+ */
+function TopbarSearch() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+  const listId = React.useId();
+
+  const [raw, setRaw] = React.useState("");
+  const [query, setQuery] = React.useState("");
+  const [open, setOpen] = React.useState(false);
+  const [active, setActive] = React.useState(0);
+
+  // Debounce the typed value (~250ms) into `query`, which is what actually
+  // drives the request — so a fast typist fires one query, not one per keypress.
+  React.useEffect(() => {
+    const t = setTimeout(() => setQuery(raw.trim()), 250);
+    return () => clearTimeout(t);
+  }, [raw]);
+
+  // Only query when there is a non-empty term; an empty query means the dropdown
+  // is closed and nothing is fetched.
+  const enabled = query.length > 0;
+  const { data, isFetching } = useLinks(enabled ? { search: query, limit: 8 } : undefined);
+  const results = enabled ? (data?.items ?? []) : [];
+
+  // Keep the highlighted row in range as results change, and open the dropdown
+  // whenever there is a live query.
+  React.useEffect(() => {
+    setActive(0);
+  }, [query]);
+  React.useEffect(() => {
+    if (enabled) setOpen(true);
+  }, [enabled]);
+
+  // Close on route change — navigating to a result (or anywhere) must not leave
+  // the dropdown floating over the new page.
+  React.useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  // Close on outside click.
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
+
+  const go = (id: string) => {
+    setOpen(false);
+    setRaw("");
+    setQuery("");
+    router.push(`/links/${id}`);
+  };
+
+  const showDropdown = open && enabled;
+  const showEmpty = showDropdown && !isFetching && results.length === 0;
+  const activeId = results.length > 0 ? `${listId}-opt-${active}` : undefined;
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!showDropdown) setOpen(true);
+      if (results.length > 0) setActive((i) => (i + 1) % results.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (results.length > 0) setActive((i) => (i - 1 + results.length) % results.length);
+      return;
+    }
+    if (event.key === "Enter") {
+      const hit = results[active];
+      if (hit) {
+        event.preventDefault();
+        go(hit.id);
+      }
+    }
+  };
+
+  return (
+    <div
+      ref={wrapRef}
+      className="relative flex-1 max-w-[400px] hidden sm:flex items-center"
+    >
+      <div className="flex-1 flex items-center gap-2 px-[11px] py-[6px] bg-surface-2 border border-line rounded-[var(--radius-sm)] text-[13px] focus-within:border-line-2">
+        <span aria-hidden className="text-ink-3">⌕</span>
+        <input
+          type="text"
+          role="combobox"
+          aria-expanded={showDropdown}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={showDropdown ? activeId : undefined}
+          aria-label="Search links, slugs, destinations, tags"
+          placeholder="Search links, slugs, destinations, tags"
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          onFocus={() => {
+            if (enabled) setOpen(true);
+          }}
+          onKeyDown={onKeyDown}
+          className="flex-1 min-w-0 bg-transparent outline-none text-ink placeholder:text-ink-3 truncate"
+        />
+        <kbd className="ml-auto font-mono text-[10px] px-[5px] py-px border border-line-2 rounded-[4px] text-ink-3 hidden sm:block">
+          ⌘K
+        </kbd>
+      </div>
+
+      {showDropdown ? (
+        <div
+          className="absolute left-0 right-0 top-[calc(100%+6px)] bg-surface border border-line rounded-[var(--radius-sm)] shadow-lg py-[5px] z-40 overflow-hidden"
+        >
+          {results.length > 0 ? (
+            <ul id={listId} role="listbox" aria-label="Link results" className="max-h-[320px] overflow-y-auto">
+              {results.map((link, i) => (
+                <li
+                  key={link.id}
+                  id={`${listId}-opt-${i}`}
+                  role="option"
+                  aria-selected={i === active}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => {
+                    // mousedown (not click) so the input's blur/outside-close
+                    // does not fire first and cancel the navigation.
+                    e.preventDefault();
+                    go(link.id);
+                  }}
+                  className={cn(
+                    "px-[11px] py-[7px] cursor-pointer flex flex-col gap-[1px]",
+                    i === active ? "bg-surface-3" : "hover:bg-surface-3",
+                  )}
+                >
+                  <span className="font-mono text-[13px] font-semibold text-ink truncate">
+                    <span className="text-ink-3">{link.domain}/</span>
+                    <span className="text-accent">{link.slug}</span>
+                    <span className="ml-2 font-sans font-normal text-ink-3 tnum">{compact(link.clicks)} clicks</span>
+                  </span>
+                  <span className="text-[12px] text-ink-3 truncate">{link.destination}</span>
+                </li>
+              ))}
+            </ul>
+          ) : showEmpty ? (
+            <div id={listId} role="listbox" aria-label="Link results" className="px-[11px] py-[9px] text-[13px] text-ink-3">
+              No matches
+            </div>
+          ) : (
+            <div id={listId} role="listbox" aria-label="Link results" className="px-[11px] py-[9px] text-[13px] text-ink-3">
+              Searching…
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
