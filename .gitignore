@@ -21,6 +21,8 @@ dist/
 .env
 .env.local
 !.env.example
+.env.staging
+!.env.staging.example
 dist/
 logs/
 *.tsbuildinfo

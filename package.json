@@ -26,7 +26,11 @@
     "db:migrate": "pnpm --filter @snapurl/database migrate",
     "db:seed": "pnpm --filter @snapurl/database seed",
     "db:studio": "pnpm --filter @snapurl/database studio",
-    "db:reset": "docker compose down -v && docker compose up -d postgres && pnpm db:migrate && pnpm db:seed"
+    "db:reset": "docker compose down -v && docker compose up -d postgres && pnpm db:migrate && pnpm db:seed",
+    "staging:up": "docker compose -f docker-compose.staging.yml up -d --build --wait",
+    "staging:smoke": "API=http://localhost:3001/api/v1 RD=http://localhost:3002 DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl bash scripts/smoke.sh && API=http://localhost:3001/api/v1 RD=http://localhost:3002 DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl bash scripts/smoke-redirect.sh && API=http://localhost:3001/api/v1 RD=http://localhost:3002 DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl bash scripts/integration-assertions.sh",
+    "staging:logs": "docker compose -f docker-compose.staging.yml logs --no-color",
+    "staging:down": "docker compose -f docker-compose.staging.yml down -v"
   },
   "repository": {
     "type": "git",
