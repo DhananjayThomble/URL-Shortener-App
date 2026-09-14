@@ -299,7 +299,7 @@ function TopbarSearch() {
   // Only query when there is a non-empty term; an empty query means the dropdown
   // is closed and nothing is fetched.
   const enabled = query.length > 0;
-  const { data, isFetching } = useLinks(enabled ? { search: query, limit: 8 } : undefined);
+  const { data, isFetching } = useLinks({ search: query, limit: 8 }, { enabled });
   const results = enabled ? (data?.items ?? []) : [];
 
   // Keep the highlighted row in range as results change, and open the dropdown
