@@ -1,0 +1,81 @@
+import { expect, test } from "@playwright/test";
+import { seedSession } from "../support/session";
+
+/* Importers PR1 (import core) — the generic-CSV path end to end in fixtures
+   mode. Mirrors create-link.spec.ts: accessible-name selectors only, no CSS /
+   data-testid. The import panel calls the same POST /links/bulk the fixtures
+   backend already serves (fixtures.ts /links/bulk), so no fixture change is
+   needed — the import rows are ordinary bulk rows.
+
+   role=option collision note: the source/domain <select>s render <option>s, so
+   assertions scope to the result <ol role via getByText/getByRole("status">
+   and to the panel region, never a bare getByRole("option"). */
+
+const FIRST_DOMAIN = "snap.to"; // fixtures DOMAINS[0]
+
+async function openImport(page: import("@playwright/test").Page) {
+  await page.goto("/links");
+  await expect(page).toHaveURL(/\/links$/);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  const panel = page.getByRole("button", { name: /^Import \d* ?links?$/ });
+  await expect(panel).toBeVisible();
+}
+
+test.describe("import links (generic CSV core)", () => {
+  test.beforeEach(async ({ page }) => {
+    await seedSession(page);
+  });
+
+  test("a user pastes a CSV export and sees the links imported", async ({ page }) => {
+    await openImport(page);
+
+    // Unique back-halves per run so they cannot collide with a seeded fixture.
+    const s1 = `imp-${Date.now().toString(36)}`;
+    const s2 = `${s1}-b`;
+    const csv =
+      "long_url,back_half,title\n" +
+      `https://example.com/one,${s1},First imported\n` +
+      `https://example.com/two,${s2},Second imported`;
+
+    await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
+
+    // The default domain is the first fixture domain; assert the picker shows it.
+    await expect(page.getByRole("combobox", { name: "Import into domain" })).toHaveValue(FIRST_DOMAIN);
+
+    await page.getByRole("button", { name: /^Import 2 links$/ }).click();
+
+    // Result status line reports both created.
+    await expect(page.getByRole("status")).toContainText("2 imported");
+    // And each landed row is listed as domain/slug.
+    await expect(page.getByText(`${FIRST_DOMAIN}/${s1}`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`${FIRST_DOMAIN}/${s2}`, { exact: true })).toBeVisible();
+  });
+
+  test("a back-half that already exists is SKIPPED, not overwritten", async ({ page }) => {
+    await openImport(page);
+
+    // `spring-sale` is a seeded link on snap.to (fixtures.ts) — importing it
+    // again must be reported as skipped, and the whole batch is all-or-nothing
+    // so nothing else in that batch is created either.
+    const csv = "long_url,back_half\nhttps://example.com/dupe,spring-sale";
+    await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
+    await page.getByRole("button", { name: /^Import 1 link$/ }).click();
+
+    const status = page.getByRole("status");
+    await expect(status).toContainText("0 imported");
+    await expect(status).toContainText("1 skipped");
+    // The row line names it as skipped rather than failed.
+    await expect(page.getByText(/Skipped —/)).toBeVisible();
+  });
+
+  test("fields SnapURL cannot store are disclosed before import", async ({ page }) => {
+    await openImport(page);
+
+    const csv = "url,created,clicks\nhttps://example.com/x,2020-01-01,999";
+    await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
+
+    // The dropped-field notice appears without submitting.
+    await expect(page.getByText("Original created date")).toBeVisible();
+    await expect(page.getByText("Click history")).toBeVisible();
+  });
+});
