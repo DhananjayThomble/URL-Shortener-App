@@ -120,4 +120,28 @@ describe("public/manifest.json", () => {
       expect((icons?.[size] as string).length).toBeGreaterThan(0);
     }
   });
+
+  // Firefox (AMO) readiness. The same manifest ships to Chrome and Firefox: Chrome
+  // uses background.service_worker, Firefox uses the background.scripts fallback and
+  // requires browser_specific_settings.gecko.id (permanent AMO add-on id). web-ext
+  // lint (AMO's own validator) reports 0 errors with these keys present.
+  it("is Firefox/AMO ready (gecko id + background.scripts fallback)", () => {
+    const bss = manifest.browser_specific_settings as Record<string, unknown> | undefined;
+    expect(bss).toBeDefined();
+    const gecko = bss?.gecko as Record<string, unknown> | undefined;
+    expect(gecko).toBeDefined();
+    expect(typeof gecko?.id).toBe("string");
+    expect((gecko?.id as string).length).toBeGreaterThan(0);
+    expect(typeof gecko?.strict_min_version).toBe("string");
+    const background = manifest.background as Record<string, unknown> | undefined;
+    const scripts = (background?.scripts ?? []) as string[];
+    expect(Array.isArray(scripts)).toBe(true);
+    expect(scripts).toContain("background.js");
+  });
+
+  it("does not list 'commands' as a permission (it is a top-level manifest key)", () => {
+    const permissions = (manifest.permissions ?? []) as string[];
+    expect(permissions).not.toContain("commands");
+  });
+
 });
