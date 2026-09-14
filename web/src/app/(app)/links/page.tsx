@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BulkCreatePanel } from "@/components/links/bulk-create-panel";
+import { ImportPanel } from "@/components/links/import-panel";
 import { LinkRow } from "@/components/links/link-row";
 import { Button, Card, EmptyState, ErrorState, Input, Skeleton, Tabs } from "@/components/ui";
 import { useDomains, useExportLinks, useLinks } from "@/lib/api/hooks";
@@ -24,6 +25,7 @@ const SELECT_CLASS =
 export default function LinksPage() {
   const [filter, setFilter] = useState<ListLinksQuery["status"]>("all");
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const exportLinks = useExportLinks();
   const [view, setView] = useState<"list" | "grid">("list");
 
@@ -95,6 +97,7 @@ export default function LinksPage() {
         actions={
           <>
             <Button onClick={() => setBulkOpen((v) => !v)}>{bulkOpen ? "Cancel" : "Bulk create"}</Button>
+            <Button onClick={() => setImportOpen((v) => !v)}>{importOpen ? "Cancel import" : "Import"}</Button>
             {/* Exports whatever the current filter shows, not always everything —
                 otherwise "Export" after filtering to Expiring would quietly hand
                 back the full workspace. */}
@@ -106,6 +109,8 @@ export default function LinksPage() {
       />
 
       {bulkOpen ? <BulkCreatePanel onClose={() => setBulkOpen(false)} /> : null}
+
+      {importOpen ? <ImportPanel onClose={() => setImportOpen(false)} /> : null}
 
       {exportLinks.error ? (
         <p className="text-[12.5px] text-bad mb-2" role="alert">
