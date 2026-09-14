@@ -79,3 +79,29 @@ test.describe("import links (generic CSV core)", () => {
     await expect(page.getByText("Click history")).toBeVisible();
   });
 });
+
+test.describe("import links (Bitly source)", () => {
+  test.beforeEach(async ({ page }) => {
+    await seedSession(page);
+  });
+
+  test("a Bitly export imports, deriving the back-half from the Bitlink URL", async ({ page }) => {
+    await page.goto("/links");
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+
+    // Choose the Bitly source.
+    await page.getByRole("combobox", { name: "Import source" }).selectOption({ label: "Bitly" });
+
+    const key = `bl${Date.now().toString(36)}`;
+    const csv =
+      "Bitlink,Title,Long URL,Tags\n" +
+      `https://bit.ly/${key},Spring Sale,https://example.com/spring,"promo, seasonal"`;
+    await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
+
+    await page.getByRole("button", { name: /^Import 1 link$/ }).click();
+
+    await expect(page.getByRole("status")).toContainText("1 imported");
+    // The derived back-half (last path segment of the Bitlink) lands under the domain.
+    await expect(page.getByText(`${FIRST_DOMAIN}/${key}`, { exact: true })).toBeVisible();
+  });
+});
