@@ -43,13 +43,17 @@ function toSearchParams(query: Partial<ListLinksQuery>): string {
   return qs ? `?${qs}` : "";
 }
 
-export function useLinks(filter?: LinksFilter) {
+export function useLinks(filter?: LinksFilter, options?: { enabled?: boolean }) {
   const query = normalise(filter);
   return useQuery({
     // Serialised so that two different filter objects with the same meaning
     // share a cache entry, and a mutation invalidating ["links"] clears them all.
     queryKey: qk.links(toSearchParams(query) || "all"),
     queryFn: () => request(`/links${toSearchParams(query)}`, LinkList),
+    // Callers that only want to fetch under a condition (e.g. the top-bar search,
+    // which must not fetch the whole list while its box is empty) pass enabled.
+    // Defaulting to true keeps every existing call site unchanged.
+    enabled: options?.enabled ?? true,
   });
 }
 
