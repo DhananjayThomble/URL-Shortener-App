@@ -110,3 +110,27 @@ export function pick(rec: Record<string, string>, aliases: string[]): string {
   }
   return "";
 }
+
+/**
+ * Extract a back-half from a short-URL cell.
+ *
+ * Bitly and Dub export the short link as a full URL ("bit.ly/3abcXyz",
+ * "https://on.bra.nd/promo") rather than a bare back-half, so the slug is the
+ * last non-empty path segment. YOURLS and Kutt export the bare keyword and use
+ * `pick` directly. Returns "" when there is no path (a bare domain), which the
+ * caller treats as "let the server generate one".
+ */
+export function slugFromShortUrl(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  // Strip scheme, then take everything after the first "/".
+  const noScheme = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const slash = noScheme.indexOf("/");
+  if (slash === -1) return ""; // bare domain, no back-half
+  const path = noScheme
+    .slice(slash + 1)
+    .split(/[?#]/)[0]! // drop any query/fragment
+    .replace(/\/+$/, ""); // drop trailing slashes
+  const segments = path.split("/").filter(Boolean);
+  return segments.length ? segments[segments.length - 1]! : "";
+}
