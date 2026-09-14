@@ -47,8 +47,8 @@ test.describe("import links (generic CSV core)", () => {
     // Result status line reports both created.
     await expect(page.getByRole("status")).toContainText("2 imported");
     // And each landed row is listed as domain/slug.
-    await expect(page.getByText(`${FIRST_DOMAIN}/${s1}`, { exact: true })).toBeVisible();
-    await expect(page.getByText(`${FIRST_DOMAIN}/${s2}`, { exact: true })).toBeVisible();
+    await expect(page.locator("ol").getByText(`${FIRST_DOMAIN}/${s1}`, { exact: true })).toBeVisible();
+    await expect(page.locator("ol").getByText(`${FIRST_DOMAIN}/${s2}`, { exact: true })).toBeVisible();
   });
 
   test("a back-half that already exists is SKIPPED, not overwritten", async ({ page }) => {
@@ -102,7 +102,7 @@ test.describe("import links (Bitly source)", () => {
 
     await expect(page.getByRole("status")).toContainText("1 imported");
     // The derived back-half (last path segment of the Bitlink) lands under the domain.
-    await expect(page.getByText(`${FIRST_DOMAIN}/${key}`, { exact: true })).toBeVisible();
+    await expect(page.locator("ol").getByText(`${FIRST_DOMAIN}/${key}`, { exact: true })).toBeVisible();
   });
 });
 
@@ -126,7 +126,7 @@ test.describe("import links (YOURLS source)", () => {
 
     await page.getByRole("button", { name: /^Import 1 link$/ }).click();
     await expect(page.getByRole("status")).toContainText("1 imported");
-    await expect(page.getByText(`${FIRST_DOMAIN}/${kw}`, { exact: true })).toBeVisible();
+    await expect(page.locator("ol").getByText(`${FIRST_DOMAIN}/${kw}`, { exact: true })).toBeVisible();
   });
 });
 
@@ -151,6 +151,32 @@ test.describe("import links (Kutt source)", () => {
 
     await page.getByRole("button", { name: /^Import 1 link$/ }).click();
     await expect(page.getByRole("status")).toContainText("1 imported");
-    await expect(page.getByText(`${FIRST_DOMAIN}/${addr}`, { exact: true })).toBeVisible();
+    await expect(page.locator("ol").getByText(`${FIRST_DOMAIN}/${addr}`, { exact: true })).toBeVisible();
+  });
+});
+
+
+test.describe("import links (Dub source)", () => {
+  test.beforeEach(async ({ page }) => {
+    await seedSession(page);
+  });
+
+  test("a Dub export imports, using the Key as the back-half", async ({ page }) => {
+    await page.goto("/links");
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await page.getByRole("combobox", { name: "Import source" }).selectOption({ label: "Dub" });
+
+    const key = `d${Date.now().toString(36)}`;
+    const csv =
+      "Key,Destination URL,Title,Description,Clicks\n" +
+      `${key},https://example.com/dub,Launch,Our launch page,5`;
+    await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
+
+    // Clicks disclosed as dropped via the unique full sentence (not the bare word).
+    await expect(page.getByText("Historical click counts are not imported.")).toBeVisible();
+
+    await page.getByRole("button", { name: /^Import 1 link$/ }).click();
+    await expect(page.getByRole("status")).toContainText("1 imported");
+    await expect(page.locator("ol").getByText(`${FIRST_DOMAIN}/${key}`, { exact: true })).toBeVisible();
   });
 });
