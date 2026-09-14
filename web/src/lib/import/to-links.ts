@@ -44,6 +44,7 @@ export function prepareRows(rows: MappedRow[], domain: string): PreparedRow[] {
       ...(slugOk ? { slug: r.slug } : {}),
       tags: r.tags ?? [],
       ...(comment ? { comment } : {}),
+      ...(r.expiresAt ? { expiresAt: r.expiresAt } : {}),
       redirectType: "302",
       rules: [],
       forwardQuery: true,

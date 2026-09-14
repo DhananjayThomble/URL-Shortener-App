@@ -129,3 +129,28 @@ test.describe("import links (YOURLS source)", () => {
     await expect(page.getByText(`${FIRST_DOMAIN}/${kw}`, { exact: true })).toBeVisible();
   });
 });
+
+test.describe("import links (Kutt source)", () => {
+  test.beforeEach(async ({ page }) => {
+    await seedSession(page);
+  });
+
+  test("a Kutt JSON export imports, mapping target + address", async ({ page }) => {
+    await page.goto("/links");
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await page.getByRole("combobox", { name: "Import source" }).selectOption({ label: "Kutt" });
+
+    const addr = `k${Date.now().toString(36)}`;
+    const json = JSON.stringify([
+      { address: addr, target: "https://example.com/kutt", description: "From Kutt", created_at: "2021-01-01" },
+    ]);
+    await page.getByRole("textbox", { name: "Export contents" }).fill(json);
+
+    // created_at is disclosed as dropped (unique li sentence, not the bare word).
+    await expect(page.getByText("Imported links are dated at import time.").first()).toBeVisible();
+
+    await page.getByRole("button", { name: /^Import 1 link$/ }).click();
+    await expect(page.getByRole("status")).toContainText("1 imported");
+    await expect(page.getByText(`${FIRST_DOMAIN}/${addr}`, { exact: true })).toBeVisible();
+  });
+});

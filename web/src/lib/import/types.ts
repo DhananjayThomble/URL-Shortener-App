@@ -24,6 +24,9 @@ export interface MappedRow {
   title?: string;
   /** Free-form tags. */
   tags?: string[];
+  /** An ISO-8601 expiry, when the source carries one (Kutt, Dub). SnapURL has
+   *  an `expiresAt` field; a source's created-at has no home and is dropped. */
+  expiresAt?: string;
   /** The 0-based row number in the source file, for error attribution. */
   sourceIndex: number;
 }
