@@ -1,0 +1,223 @@
+# Compose STAGING — a pre-prod, data-isolated, one-command full stack.
+#
+# This is the cheap arm of the #267 deployment-profiles epic: the whole server
+# stack (api + redirect + worker + postgres) running from BUILT container
+# images, wired end to end, on one host, at essentially zero cost. It is the
+# same Postgres/in-memory adapter set as single-node self-hosting (Profile 1) —
+# see docs/staging-compose.md for the full port→adapter table and, crucially,
+# the sharp boundary of what compose staging CANNOT cover.
+#
+#   ── quick start ────────────────────────────────────────────────────────────
+#   cp .env.staging.example .env.staging          # once; throwaway secrets
+#   pnpm staging:up                                # migrate → api/redirect/worker
+#   pnpm staging:smoke                             # the three real smoke suites
+#   pnpm dev:web                                   # web on the HOST (see below)
+#   pnpm staging:down                              # tears the stack + its VOLUME
+#
+# It is deliberately a SEPARATE file from the repo-root docker-compose.yml so it
+# cannot collide with day-to-day dev:
+#   • its own compose PROJECT name (snapurl-staging), so containers, network and
+#     volume are namespaced away from dev's `snapurl` project;
+#   • its own named VOLUME (snapurl-staging-pgdata), so a staging run never reads
+#     or clobbers the dev database;
+#   • a distinct host PORT for Postgres (5435, vs dev's 5433 — 5434 was taken by an unrelated container on the build host).
+# The dev file and the CI `integration` job (which uses the root compose) are
+# untouched.
+#
+#   ── the web tier runs on the HOST, not here (decision D1) ────────────────────
+# There is no web container: web ships via Vercel in prod and has no Dockerfile.
+# Run it from source against this stack:
+#
+#   NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1 pnpm dev:web
+#
+# `pnpm dev:web` runs Next in development mode, so web/next.config.ts's
+# production build guard (which rejects a localhost NEXT_PUBLIC_API_URL) is
+# INERT — localhost is correct here because the browser runs on the same host
+# that publishes api:3001. If you instead do a production `next build`/`next
+# start`, that guard fires and you must point NEXT_PUBLIC_API_URL at a
+# non-localhost name the browser can reach. See docs/staging-compose.md D1.
+#
+#   ── mail is `outbox`, not SMTP (decision D2) ─────────────────────────────────
+# MAIL_TRANSPORT=outbox writes each message to a file inside the api container
+# (/tmp/snapurl-outbox). This exercises email GENERATION (invite / reset /
+# verify bodies + links) but NOT SMTP DELIVERY — there is no SMTP transport in
+# the code (only outbox + ses), so mailhog/maildev cannot be wired without new
+# code. SMTP delivery is not covered by staging.
+
+name: snapurl-staging
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: snapurl-staging-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-snapurl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-snapurl}
+      POSTGRES_DB: ${POSTGRES_DB:-snapurl}
+    ports:
+      # 5435 on the host so a staging run never fights dev's 5433. Inside the
+      # compose network the containers still reach it on 5432. The smoke scripts
+      # that read the DB directly pick this up via DATABASE_URL (see the runbook
+      # and package.json's staging:smoke target).
+      - "5435:5432"
+    volumes:
+      # A DEDICATED named volume, separate from dev's snapurl-pgdata, so a
+      # `down -v` here can wipe staging data without touching dev's database.
+      - snapurl-staging-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-snapurl} -d ${POSTGRES_DB:-snapurl}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Applies pending migrations, then EXITS. This is what makes a single
+  # `docker compose up` correct with no host `pnpm db:migrate` step — the whole
+  # point of the migrations-on-up loophole fix. The server images run
+  # NODE_ENV=production and do NOT auto-migrate on boot, so without this they
+  # would crash-loop against an unmigrated database.
+  #
+  # It reuses the WORKER image (APP=worker) because that image ships the
+  # drizzle/*.sql folder (packages/database lists "drizzle" in its "files") and
+  # bundles @snapurl/database under node_modules via `pnpm deploy`, whose main
+  # (dist/index.js) re-exports runMigrations. Building APP=worker here is the
+  # same image the `worker` service builds, so Docker builds it once.
+  #
+  # Drizzle records applied migrations in __drizzle_migrations and skips them,
+  # so re-running `up` is idempotent — a second `up` migrates nothing.
+  migrate:
+    build:
+      context: .
+      target: runtime
+      args:
+        APP: worker
+    image: snapurl-worker:staging
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-snapurl}:${POSTGRES_PASSWORD:-snapurl}@postgres:5432/${POSTGRES_DB:-snapurl}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    command:
+      - node
+      - -e
+      - "require('@snapurl/database').runMigrations(process.env.DATABASE_URL, process.env.DATABASE_SSL==='true').then(r=>{console.log('migrations applied',r.folder);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+
+  api:
+    build:
+      context: .
+      target: runtime
+      args:
+        APP: api
+    image: snapurl-api:staging
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Do not start until the schema exists. service_completed_successfully
+      # blocks api until the one-shot migrate has exited 0.
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      # Optional — every value below has a safe default, so the stack comes up
+      # with no .env.staging present. Copy .env.staging.example to override.
+      - path: .env.staging
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: postgres://${POSTGRES_USER:-snapurl}:${POSTGRES_PASSWORD:-snapurl}@postgres:5432/${POSTGRES_DB:-snapurl}
+      # Matched between api and redirect (see redirect below) or unlock tokens
+      # for password-protected links break silently. Throwaway staging values;
+      # nothing here is a real secret. ≥32 chars or the zod schema fails at boot.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-staging-compose-access-secret-0000000000}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-staging-compose-refresh-secret-000000000}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      DEFAULT_DOMAIN: ${DEFAULT_DOMAIN:-localhost:3002}
+      REDIRECT_ORIGIN: ${REDIRECT_ORIGIN:-http://localhost:3002}
+      # Postgres/in-memory adapter set (Profile 1). LINK_PROJECTION and
+      # CLICK_SINK are deliberately unset so the redirect resolves from Postgres
+      # and clicks INSERT into Postgres — the same path single-node runs.
+      CACHE_DRIVER: memory
+      MAIL_TRANSPORT: outbox
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  redirect:
+    build:
+      context: .
+      target: runtime
+      args:
+        APP: redirect
+    image: snapurl-redirect:staging
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env.staging
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      DATABASE_URL: postgres://${POSTGRES_USER:-snapurl}:${POSTGRES_PASSWORD:-snapurl}@postgres:5432/${POSTGRES_DB:-snapurl}
+      # MUST match the API's JWT_ACCESS_SECRET (same default, same override var):
+      # the redirect service verifies unlock tokens the API signed.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-staging-compose-access-secret-0000000000}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      CACHE_DRIVER: memory
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      target: runtime
+      args:
+        APP: worker
+    image: snapurl-worker:staging
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env.staging
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-snapurl}:${POSTGRES_PASSWORD:-snapurl}@postgres:5432/${POSTGRES_DB:-snapurl}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # No command override: the worker runs `node dist/main.js`, i.e. the
+    # long-lived TIMER LOOP (setInterval on ROLLUP_INTERVAL_SECONDS ~30s,
+    # PROJECTION_INTERVAL_SECONDS, MAINTENANCE_INTERVAL_SECONDS 3600s) — NOT the
+    # `--once` Lambda path. This is the loophole that matters: the projection
+    # drain + rollup actually FIRE on a schedule here, mirroring prod's
+    # EventBridge, so the 404-window / clicks-stay-0 bugs cannot silently
+    # reappear. scripts/integration-assertions.sh proves the live worker folds a
+    # real click from click_events into click_daily.
+    # No healthcheck and no ports: the worker serves no HTTP.
+
+volumes:
+  # Distinct from dev's snapurl-pgdata. `docker compose -f
+  # docker-compose.staging.yml down -v` removes this and only this.
+  snapurl-staging-pgdata:
