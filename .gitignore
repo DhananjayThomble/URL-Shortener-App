@@ -38,6 +38,17 @@ logs/
 # contributor following the same convention is protected too.
 .gh-token
 
+# QA run scratch: screenshots, HAR/DOM dumps, driver logs and raw findings.
+# Large and machine-generated — the distilled report is what gets committed,
+# never the artifacts. Sessions also mint real staging tokens into these dirs.
+.qa-runs/
+.staging-qa/
+.mobile-audit/
+.mobile-audit-build.log
+
+# Agent track-coordination markers (e.g. EXT-R3.done). Local handoff state.
+*.done
+
 # Internal agent task-state (planning artifacts, not product code)
 .tasks/
 .agents/
