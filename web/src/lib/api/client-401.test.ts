@@ -33,9 +33,10 @@ describe("toApiError — 401 on auth credential routes", () => {
     "/auth/login",
     "/auth/register",
     "/auth/oauth",
-    "/auth/password-reset",
+    "/auth/password-reset/request",
     "/auth/password-reset/confirm",
-    "/auth/verify-email",
+    "/auth/email/verify",
+    "/auth/email/resend",
   ];
 
   for (const path of authRoutes) {

@@ -77,13 +77,18 @@ export class ApiError extends Error {
  * The server's parsed message is authoritative for these; the session-expiry
  * override must not apply.
  */
+/* Paths where a 401 means "those credentials are wrong", not "your session ended".
+   Matched exactly, so each entry must be the real route as declared in
+   apps/api/src/auth/auth.controller.ts — a near-miss here silently restores the
+   bug for that route. */
 const AUTH_CREDENTIAL_PATHS = new Set([
   "/auth/login",
   "/auth/register",
   "/auth/oauth",
-  "/auth/password-reset",
+  "/auth/password-reset/request",
   "/auth/password-reset/confirm",
-  "/auth/verify-email",
+  "/auth/email/verify",
+  "/auth/email/resend",
 ]);
 
 /** Turns a failed response into a message a person can act on.
