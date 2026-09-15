@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { REAL_BACKEND } from "../support/real-session";
+import { makeEmail, RUN_PASSWORD, registerAccount } from "../support/unique-identity";
 
 /* E2E journey: the real login FORM. Unlike the other journeys, this deliberately
    does NOT seed a session — it drives the actual email+password form, exercising
@@ -9,7 +11,22 @@ import { expect, test } from "@playwright/test";
    (A true 2FA-login journey is not possible yet — the login page has no TOTP
    challenge step; that gap is tracked in issue #377.) */
 
+/* Idempotency (issue #440): email and password are per-run unique so the account
+   never exists from a previous run. In fixtures mode registerAccount() is NOT
+   called — the fake accepts any credentials. In real-stack mode a beforeAll
+   creates the account before the sign-in test tries to use it. */
+const LOGIN_EMAIL = makeEmail("login");
+const LOGIN_PASSWORD = RUN_PASSWORD;
+
 test.describe("login form", () => {
+  test.beforeAll(async () => {
+    // Only register the account when talking to the real backend.
+    // In fixtures mode this is a no-op: the in-memory fake accepts any creds.
+    if (REAL_BACKEND) {
+      await registerAccount(LOGIN_EMAIL, LOGIN_PASSWORD);
+    }
+  });
+
   test("an unauthenticated user can sign in through the form and reach the dashboard", async ({ page }) => {
     await page.goto("/login");
 
@@ -19,8 +36,8 @@ test.describe("login form", () => {
     await expect(email).toBeVisible();
     await expect(password).toBeVisible();
 
-    await email.fill("demo@snapurl.local");
-    await password.fill("demo-password-1234");
+    await email.fill(LOGIN_EMAIL);
+    await password.fill(LOGIN_PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
 
     // On success the app navigates to the dashboard link list.

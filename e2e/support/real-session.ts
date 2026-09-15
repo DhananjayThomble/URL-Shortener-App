@@ -124,6 +124,14 @@ export async function seedRealSession(page: Page): Promise<void> {
 }
 
 /**
+ * True once installRealSession() has been called (i.e. the real-stack config
+ * is active). Specs that need to create pre-existing accounts (login-form,
+ * 2fa-login) can import this to guard their beforeAll hooks so they remain
+ * harmless in fixtures mode.
+ */
+export let REAL_BACKEND = false;
+
+/**
  * Swap seedRealSession in for support/session.ts#seedSession without editing
  * either that file or any spec.
  *
@@ -135,6 +143,7 @@ export async function seedRealSession(page: Page): Promise<void> {
  * test file, so calling this at config module scope covers all workers.
  */
 export function installRealSession(): void {
+  REAL_BACKEND = true;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const sessionModule = require("./session") as {
     seedSession: (page: Page) => Promise<void>;
