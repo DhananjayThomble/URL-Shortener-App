@@ -37,14 +37,20 @@ const changed = execSync(`git diff --name-only ${base}...HEAD`, { encoding: "utf
   .filter(Boolean);
 if (changed.length === 0) pass("no changed files detected");
 
+// Docs are out of scope entirely: a Markdown-only change cannot and need not move
+// coverage, so it must never be held to the "raise covered lines" requirement.
+const isDoc = (f) => /\.md$/.test(f);
+if (changed.every(isDoc)) {
+  pass(`docs-only PR (${changed.length} Markdown file(s)); the coverage guard does not apply`);
+}
+
 const isTestOrSupport = (f) =>
   /\.test\.ts$/.test(f) ||
   /(^|\/)__(tests|fixtures|mocks)__\//.test(f) ||
-  /\.md$/.test(f) ||
   /(^|\/)vitest\.config\.ts$/.test(f) ||
   f === "vitest.coverage.base.ts";
 
-const nonTest = changed.filter((f) => !isTestOrSupport(f));
+const nonTest = changed.filter((f) => !isTestOrSupport(f) && !isDoc(f));
 if (nonTest.length > 0) {
   pass(`PR changes ${nonTest.length} non-test file(s); the guard only applies to test-only PRs`);
 }
