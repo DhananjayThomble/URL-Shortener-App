@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { NotFoundException } from "@nestjs/common";
 import { createDatabase, domains, eq, linkCounters, links, workspaces, type Database } from "@snapurl/database";
-import { ListLinksQuery } from "@snapurl/contract";
+import { CloneLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
+import { toActor } from "../common/activity.js";
 
 /* ============================================================
    LinksService.list against a real Postgres.
@@ -313,5 +315,129 @@ describeDb("LinksService.list", () => {
     } finally {
       await db.delete(workspaces).where(eq(workspaces.id, other!.id));
     }
+  });
+});
+
+/* ============================================================
+   LinksService.get() and the workspace-ownership clause on getFrom() (#430).
+
+   #430's bug-injection run dropped `eq(links.workspaceId, workspaceId)` from
+   getFrom()'s where clause and all 169 API tests still passed — get() itself
+   had zero direct coverage in this file. These three pin the contract get()
+   is supposed to have: the happy path, the not-found shape the rest of this
+   file's convention uses (NotFoundException — see the reports.service
+   integration suite for the same idiom), and the cross-workspace read this
+   suite was missing. The third test is the one that must go red if the
+   ownership clause is ever dropped again.
+
+   clone(), update() and remove() are the sibling :id methods the controller
+   exposes. clone() and update() call getFrom() first thing, so they share the
+   exact code path get()'s cross-workspace test pins; remove() scopes its own
+   guard select by workspaceId separately. None had a cross-workspace
+   assertion here, so one is added per method in the same style.
+   ============================================================ */
+describeDb("LinksService.get / clone / update / remove — workspace ownership", () => {
+  let handle: ReturnType<typeof createDatabase>;
+  let db: Database;
+  let service: LinksService;
+  let wsA: string;
+  let wsB: string;
+  let domainA: string;
+  let linkAId: string;
+
+  const stamp = Date.now();
+  const slugA = `own${stamp}-a`;
+
+  beforeAll(async () => {
+    handle = createDatabase({ url: DATABASE_URL!, max: 1 });
+    db = handle.db;
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+
+    const [a] = await db
+      .insert(workspaces)
+      .values({ name: "own test A", slug: `own-a-${stamp}` })
+      .returning({ id: workspaces.id });
+    wsA = a!.id;
+
+    const [b] = await db
+      .insert(workspaces)
+      .values({ name: "own test B", slug: `own-b-${stamp}` })
+      .returning({ id: workspaces.id });
+    wsB = b!.id;
+
+    const [dom] = await db
+      .insert(domains)
+      .values({ workspaceId: wsA, domain: `own-${stamp}.test` })
+      .returning({ id: domains.id });
+    domainA = dom!.id;
+
+    const [link] = await db
+      .insert(links)
+      .values({
+        workspaceId: wsA,
+        domainId: domainA,
+        slug: slugA,
+        destination: `https://example.com/${slugA}`,
+        tags: ["gap-test"],
+        folder: "gap-folder",
+      })
+      .returning({ id: links.id });
+    linkAId = link!.id;
+    await db.insert(linkCounters).values({ linkId: linkAId, clicks: 3, uniqueClicks: 2 });
+  });
+
+  afterAll(async () => {
+    if (wsA) await db.delete(workspaces).where(eq(workspaces.id, wsA));
+    if (wsB) await db.delete(workspaces).where(eq(workspaces.id, wsB));
+    await handle?.close();
+  });
+
+  const actor = toActor({ userId: null, label: "qa-gap-test@example.com" });
+
+  describe("get", () => {
+    it("returns the link's fields when it belongs to the caller's workspace", async () => {
+      const result = await service.get(wsA, linkAId);
+      expect(result.id).toBe(linkAId);
+      expect(result.slug).toBe(slugA);
+      expect(result.destination).toBe(`https://example.com/${slugA}`);
+      expect(result.domain).toBe(`own-${stamp}.test`);
+      expect(result.tags).toEqual(["gap-test"]);
+      expect(result.folder).toBe("gap-folder");
+      expect(result.clicks).toBe(3);
+      expect(result.uniqueClicks).toBe(2);
+    });
+
+    it("throws NotFoundException for an id that does not exist, the same shape as elsewhere in this file", async () => {
+      await expect(service.get(wsA, "00000000-0000-0000-0000-000000000000")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("throws NotFoundException — not the link — when the id belongs to a different workspace", async () => {
+      // This is the assertion that must fail if eq(links.workspaceId, workspaceId)
+      // is ever dropped from getFrom(): today a cross-workspace get() 404s.
+      await expect(service.get(wsB, linkAId)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe("cross-workspace protection on the sibling :id methods", () => {
+    it("clone() does not let workspace B clone workspace A's link", async () => {
+      await expect(service.clone(wsB, linkAId, actor, CloneLinkInput.parse({}))).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("update() does not let workspace B edit workspace A's link", async () => {
+      await expect(service.update(wsB, linkAId, actor, UpdateLinkInput.parse({}))).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("remove() does not let workspace B delete workspace A's link, and the link survives", async () => {
+      await expect(service.remove(wsB, linkAId, actor)).rejects.toBeInstanceOf(NotFoundException);
+
+      const stillThere = await db.select({ id: links.id }).from(links).where(eq(links.id, linkAId));
+      expect(stillThere).toHaveLength(1);
+    });
   });
 });
