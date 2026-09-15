@@ -19,6 +19,17 @@ import path from "node:path";
      4. Is idempotent: running twice against the same workspace does not create
         duplicates or fail.
 
+   Narrowing rule (issue after first seeding attempt): "seed only what specs READ;
+   never what they WRITE." Violations cause regressions:
+   - Bio pages: bio.spec.ts writes its own page, so we must NOT pre-seed one.
+     The editor auto-selects pages[0]; a seeded page in slot 0 causes the spec's
+     "Publish" click to target the wrong page.
+   - Importer "skip" test: relies on spring-sale being "already taken" on whatever
+     domain the import panel defaults to. We seed spring-sale UNSUFFIXED on the
+     workspace's default domain (localhost:3002) so it is always taken there.
+     We also clean up stale verifying custom domains left by domains.spec parallel
+     runs, so localhost:3002 stays as domains[0] and the import panel default.
+
    Oracles:
    - Entity shapes: packages/contract/src/* (declared payload truth).
    - Entity literals: web/src/lib/api/fixtures.ts (defines what specs assert on).
@@ -123,25 +134,38 @@ async function registerAccount(name: string, email: string, password: string): P
 // Step 2 — Links
 //
 // Spec assertions requiring specific slugs:
-//   spring-sale  → edit-delete-link.spec.ts, reports.spec.ts (abuse report)
-//   app          → reports.spec.ts (abuse report against /app)
-//   webinar-q3   → topbar-search.spec.ts (asserts slug in listbox + navigates to /links/<id>)
+//   spring-sale  → reports.spec.ts (aria-labels hardcode "Mark report on /spring-sale reviewed"
+//                  and "Flag the link for report on /spring-sale"); also importers "skip" test
+//                  (needs spring-sale to be "already taken" on the import panel's default domain).
+//   app          → reports.spec.ts (aria-label "Dismiss report on /app")
+//   webinar-q3   → topbar-search.spec.ts (asserts /webinar-q3/ slug in listbox)
+//
+// Narrowing rule: specs that READ slugs get exact slugs. Specs that WRITE entities
+// to the workspace get no help from the seeder.
+//
+// "spring-sale" and "app" are seeded WITHOUT workspace-prefix so the slug names match
+// the hardcoded aria-labels in reports.spec.ts exactly. They are created on the
+// workspace's default domain (localhost:3002); being on that domain also ensures
+// they are "already taken" when the importers "skip" test tries to import them.
 //
 // Additional links for QR (first link → QR preview), conversions (utm.campaign),
-// and full list (importers asserts domain is first domain's value).
+// and full list; these use a workspace prefix to avoid collisions.
 // ---------------------------------------------------------------------------
 
 interface LinkSeed {
   slug: string;
   destination: string;
   title: string;
+  suffixed?: boolean; // default true; false = seed without workspace prefix
   utm?: { source?: string; medium?: string; campaign?: string };
 }
 
 const LINK_SEEDS: LinkSeed[] = [
-  { slug: "spring-sale",   destination: "https://acme.com/collections/spring-2026", title: "Spring Sale 2026",
+  // Unseeded (exact slug required by specs):
+  { slug: "spring-sale", suffixed: false, destination: "https://acme.com/collections/spring-2026", title: "Spring Sale 2026",
     utm: { source: "instagram", medium: "social", campaign: "Spring 2026" } },
-  { slug: "app",           destination: "https://apps.apple.com/acme/download",      title: "Download the Acme app" },
+  { slug: "app",         suffixed: false, destination: "https://apps.apple.com/acme/download",      title: "Download the Acme app" },
+  // Suffixed (topbar-search needs /webinar-q3/ regex match, accepts suffix):
   { slug: "demo",          destination: "https://calendly.com/acme/demo?team=sales",  title: "Book a demo" },
   { slug: "pricing",       destination: "https://acme.com/pricing",                   title: "Pricing" },
   { slug: "beta-invite",   destination: "https://acme.com/beta/signup",              title: "Private beta invite" },
@@ -152,17 +176,12 @@ const LINK_SEEDS: LinkSeed[] = [
 async function seedLinks(token: string, domain: string, existing: Record<string, string>, wsPrefix: string): Promise<Record<string, string>> {
   const ids: Record<string, string> = { ...existing };
 
-  // Store the slug suffix so real-session.ts can expose it to specs if needed.
-  // Using the workspaceId prefix means the same workspace always gets the same slugs (idempotent).
-  const suffix = ids["__slug_suffix__"] ?? wsPrefix;
-  ids["__slug_suffix__"] = suffix;
+  ids["__slug_suffix__"] = wsPrefix;
 
   for (const link of LINK_SEEDS) {
-    // Resolve the actual slug: append workspace prefix to avoid system-domain collisions.
-    // e.g. "spring-sale" → "spring-sale-a1b2c3d4"
-    // Specs that use /spring-sale/ regex still match; specs that need exact slug are a gap.
-    const actualSlug = `${link.slug}-${suffix}`;
-    const storeKey = link.slug; // we index by the base slug
+    const useSuffix = link.suffixed !== false;
+    const actualSlug = useSuffix ? `${link.slug}-${wsPrefix}` : link.slug;
+    const storeKey = link.slug;
 
     if (ids[storeKey]) continue; // already seeded
 
@@ -175,7 +194,7 @@ async function seedLinks(token: string, domain: string, existing: Record<string,
     }, token);
 
     if (result === null) {
-      // 409 — this suffixed slug is taken; find it in this workspace
+      // 409 — this slug is taken; find it in this workspace
       const list = await apiGet(`/links?search=${encodeURIComponent(actualSlug)}`, token) as {
         items: Array<{ id: string; slug: string }>;
       };
@@ -190,6 +209,11 @@ async function seedLinks(token: string, domain: string, existing: Record<string,
       ids[storeKey] = (result as { id: string }).id;
     }
   }
+
+  // Convenience lookup keys
+  ids["__spring_sale_slug__"] = "spring-sale";
+  ids["__app_slug__"] = "app";
+  ids["__webinar_slug__"] = `webinar-q3-${wsPrefix}`;
 
   return ids;
 }
@@ -309,34 +333,57 @@ async function seedForms(
 // ---------------------------------------------------------------------------
 // Step 4 — Bio page
 //
-// bio.spec.ts:67 waits for getByRole("row", { name: /\/acme\b/ }) to be visible.
-// PUT /bio-pages is an upsert keyed on (domain, slug) — but the unique index is
-// global on (domainId, slug). If "acme" was already created by another workspace
-// on the system domain, the upsert updates that row but list() for the current
-// workspace returns nothing → 404.
+// bio.spec.ts has TWO tests:
+//   (a) "cannot create a bio page without a back-half" — reads getByRole("row", { name: /\/acme\b/ })
+//   (b) "create a bio page as a draft, see it listed, then publish it" — WRITES a new bio page
 //
-// We use a workspace-prefixed slug: "acme-<wsprefix>" which is workspace-unique.
-// The spec asserts /\/acme\b/ — this regex also matches "/acme-abc12345" ✓
+// Rule: seed only what specs READ; never what they WRITE.
+// Test (b) creates its own bio page via the UI (PUT /bio-pages upsert). When we pre-seed
+// a bio page in the shared workspace, the UI's /bio page opens with the seeder's page in
+// the editor (pages[0]). The spec then creates a NEW draft page and clicks "Publish" —
+// but the Publish button still acts on pages[0] (the seeder's already-live page), so the
+// new draft's row never transitions to "Live" and the assertion fails.
+//
+// Therefore: do NOT seed a bio page here. Test (a)'s /acme row is a genuine seed-data need,
+// but seeding it breaks test (b). Since both tests run in the same shared workspace and we
+// cannot seed selectively per test, bio pages are NOT seeded. Test (a) is categorised (a)
+// in the triage: still missing seed data.
 // ---------------------------------------------------------------------------
 
-async function seedBioPage(token: string, domain: string, wsPrefix: string): Promise<void> {
-  // Use workspace-prefixed slug to avoid cross-workspace collisions on the system domain.
-  // /\/acme\b/ matches "acme-abc12345" because \b is a word boundary and "-" is non-word.
-  // Actually /\/acme\b/ will NOT match "/acme-abc12345" because the char after "acme" is "-"
-  // which is a word boundary terminator — wait, \b matches between \w and \W. "acme-" has
-  // "acme" (\w) followed by "-" (\W), so \b IS satisfied after "acme". ✓
-  const slug = `acme-${wsPrefix}`;
-  await apiPut("/bio-pages", {
-    domain,
-    slug,
-    status: "live",
-    profile: { name: "Acme", bio: "Tools for people who make things." },
-    blocks: [
-      { kind: "header", title: "Header", subtitle: "Logo, name and one-line bio", metric: null, locked: true },
-      { kind: "link",   title: "Shop the spring collection", subtitle: "→ spring-sale", metric: null, locked: false },
-      { kind: "link",   title: "Download the app",           subtitle: "→ app",          metric: null, locked: false },
-    ],
-  }, token);
+// seedBioPage is intentionally absent.
+// bio.spec.ts "cannot create without back-half" (reads /acme) → category (a): missing seed.
+// bio.spec.ts "create a draft, publish it" (writes its own page) → must NOT have existing pages.
+
+// ---------------------------------------------------------------------------
+// Step 1.5 — Clean up stale verifying custom domains
+//
+// domains.spec.ts WRITES a new custom domain per run (e.g. "e2e-{ts}.example.com").
+// Over multiple runs on the same shared workspace, these accumulate and remain in
+// "verifying" status. The API's GET /domains returns them BEFORE localhost:3002
+// (the live default domain) in its list. The import panel uses domains[0].domain as
+// its default target: if domains[0] is a verifying domain, the importers "skip" test
+// gets "isn't verified yet" instead of "already taken" → "1 failed" not "1 skipped".
+//
+// We delete any non-live custom domains before seeding links. localhost:3002 stays
+// untouched (it is the workspace default and cannot be deleted via the domains API).
+// ---------------------------------------------------------------------------
+
+async function cleanStaleVerifyingDomains(token: string): Promise<void> {
+  const domains = await apiGet("/domains", token) as Array<{ id: string; domain: string; status: string }>;
+  for (const d of domains) {
+    if (d.status !== "live" && d.domain !== "localhost:3002") {
+      try {
+        const { status } = await req("DELETE", `/domains/${d.id}`, undefined, token);
+        if (status < 400) {
+          console.log(`[seed] deleted stale verifying domain ${d.domain}`);
+        } else {
+          console.warn(`[seed] could not delete domain ${d.domain}: status ${status}`);
+        }
+      } catch (e) {
+        console.warn(`[seed] domain delete threw: ${e}`);
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -393,14 +440,12 @@ async function seedArjunKapoor(
 // Step 6 — Abuse reports
 //
 // reports.spec.ts asserts:
-//   /spring-sale-<wsprefix> row with status "Open" (for review+flag path)
-//   /app-<wsprefix> row (for dismiss path)
+//   /spring-sale row with status "Open" (for review+flag path)
+//   /app row (for dismiss path)
 //
-// The spec button aria-labels embed the slug: "Mark report on /<slug> reviewed".
-// Since we suffix slugs, the actual aria-labels will embed the suffixed slugs.
-// The spec hardcodes "spring-sale" in the aria-label — this is a structural gap
-// documented in summary.md. We still seed the reports so the /reports page renders
-// rows (required for the first assertion in both tests).
+// The spec button aria-labels hardcode the slug: "Mark report on /spring-sale reviewed",
+// "Flag the link for report on /spring-sale", "Dismiss report on /app".
+// The links are seeded without suffix (exact slug names) to match these aria-labels.
 //
 // POST /public/links/:slug/report is unauthenticated, returns { ok: true }.
 // Idempotency: check existing reports before posting.
@@ -547,28 +592,25 @@ export default async function globalSetup(): Promise<void> {
   domain = state.domain;
   workspaceId = state.workspaceId;
 
+  // ---- Step 1.5: Clean stale verifying custom domains ----
+  // domains.spec.ts adds a custom domain per run; accumulated verifying domains
+  // shift domains[0] away from localhost:3002 and break the importers "skip" test.
+  console.log("[seed] cleaning stale verifying domains …");
+  await cleanStaleVerifyingDomains(token);
+
   // ---- Step 2: Links ----
   console.log("[seed] seeding links …");
   // wsPrefix: first 8 chars of workspaceId (no dashes), stable per workspace
   const wsPrefix = workspaceId.replace(/-/g, "").slice(0, 8);
   state.linkIds = await seedLinks(token, domain, state.linkIds ?? {}, wsPrefix);
-  const springSaleSlug = `spring-sale-${wsPrefix}`;
-  const appSlug = `app-${wsPrefix}`;
   console.log(`[seed] links: ${Object.entries(state.linkIds).filter(([k]) => !k.startsWith('__')).map(([k,v]) => `${k}=${v.slice(0,8)}`).join(", ")}`);
-  // Write slugs to state for reference
-  state.linkIds["__spring_sale_slug__"] = springSaleSlug;
-  state.linkIds["__app_slug__"] = appSlug;
-  state.linkIds["__webinar_slug__"] = `webinar-q3-${wsPrefix}`;
 
   // ---- Step 3: Forms ----
   console.log("[seed] seeding forms …");
   state.formIds = await seedForms(token, state.formIds ?? {}, workspaceId);
   console.log(`[seed] forms: spring-feedback=${state.formIds["spring-feedback"]}, beta-waitlist=${state.formIds["beta-waitlist"]}`);
 
-  // ---- Step 4: Bio page ----
-  console.log("[seed] seeding bio page …");
-  await seedBioPage(token, domain, wsPrefix);
-  console.log("[seed] bio page upserted");
+  // Step 4 (bio pages): intentionally skipped — see seedBioPage comment above.
 
   // ---- Step 5: Team member ----
   console.log("[seed] seeding team member …");
@@ -576,8 +618,9 @@ export default async function globalSetup(): Promise<void> {
   state.linkIds = updatedIds;
 
   // ---- Step 6: Abuse reports ----
+  // spring-sale and app are now seeded without suffix so aria-labels match exactly.
   console.log("[seed] seeding abuse reports …");
-  await seedReports(token, springSaleSlug, appSlug);
+  await seedReports(token, "spring-sale", "app");
 
   // ---- Step 7: Conversions ----
   console.log("[seed] seeding conversions …");
