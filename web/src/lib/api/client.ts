@@ -159,7 +159,10 @@ async function refreshSession(): Promise<boolean> {
 }
 
 async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOptions = {}, retry = true): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // Only set Content-Type when there is actually a body to send. Fastify's
+  // JSON parser rejects Content-Type: application/json with an empty body
+  // (status 400), breaking every bodyless DELETE and any bodyless POST.
+  const headers: Record<string, string> = opts.body !== undefined ? { "Content-Type": "application/json" } : {};
   const access = tokens.access;
   if (access && !opts.anonymous) headers.Authorization = `Bearer ${access}`;
 

@@ -50,6 +50,23 @@ async function bootstrap() {
   app.useLogger(app.get(Logger));
   const env = app.get<Env>(ENV);
 
+  /* Fastify's built-in JSON parser rejects an empty body with a 400 whenever
+     the request carries Content-Type: application/json, which breaks every
+     bodyless DELETE (and bodyless POSTs such as /auth/2fa/setup) sent from
+     web clients that set the header unconditionally. This parser replaces the
+     default: an empty string is normalised to undefined so that routes with no
+     @Body() decorator receive nothing and succeed, while routes that declare a
+     body schema still reject an empty body via their zod validation layer —
+     exactly the invariant required by issue #442. */
+  app.useBodyParser("application/json", { bodyLimit: 10_485_760 }, (_req, body, done) => {
+    if ((body as unknown as string) === "") return done(null, undefined);
+    try {
+      done(null, JSON.parse(body as unknown as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   app.setGlobalPrefix(env.API_PREFIX);
 
   /* The dashboard is a separate origin, and the frontend sends its token in an
