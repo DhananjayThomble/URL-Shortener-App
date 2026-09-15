@@ -72,8 +72,27 @@ export class ApiError extends Error {
   }
 }
 
-/** Turns a failed response into a message a person can act on. */
-async function toApiError(res: Response): Promise<ApiError> {
+/**
+ * Routes where a 401 means "wrong credentials", not "session expired".
+ * The server's parsed message is authoritative for these; the session-expiry
+ * override must not apply.
+ */
+const AUTH_CREDENTIAL_PATHS = new Set([
+  "/auth/login",
+  "/auth/register",
+  "/auth/oauth",
+  "/auth/password-reset",
+  "/auth/password-reset/confirm",
+  "/auth/verify-email",
+]);
+
+/** Turns a failed response into a message a person can act on.
+ *
+ * @param path  The API path (without base URL), used to decide whether a 401
+ *              means "bad credentials" (auth routes) or "session expired"
+ *              (authenticated routes).
+ */
+export async function toApiError(res: Response, path: string): Promise<ApiError> {
   let detail: unknown;
   let message = res.statusText;
   try {
@@ -84,7 +103,8 @@ async function toApiError(res: Response): Promise<ApiError> {
   } catch {
     /* body wasn't JSON — keep the status text */
   }
-  if (res.status === 401) message = "Your session has expired. Sign in again to continue.";
+  if (res.status === 401 && !AUTH_CREDENTIAL_PATHS.has(path))
+    message = "Your session has expired. Sign in again to continue.";
   if (res.status === 403) message = "You don't have permission to do that.";
   if (res.status === 429) message = "Too many requests. Wait a moment and try again.";
   if (res.status >= 500) message = "The API is having trouble. Try again in a moment.";
@@ -152,7 +172,7 @@ async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOp
     tokens.clear();
   }
 
-  if (!res.ok) throw await toApiError(res);
+  if (!res.ok) throw await toApiError(res, path);
   if (res.status === 204) return schema.parse(undefined);
 
   const json = await res.json();
