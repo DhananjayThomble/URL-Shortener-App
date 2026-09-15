@@ -29,10 +29,20 @@ export class FormsController {
   }
 
   /* Streamed like the links export, so a form with 50,000 responses does not
-     have to fit in memory before the first byte reaches the browser. */
+     have to fit in memory before the first byte reaches the browser.
+
+     The workspace-scoped lookup happens here, BEFORE writeHead, rather than
+     relying on exportCsv()'s own `this.get(...)` at the top of its body.
+     exportCsv is an async generator: its body does not run at all until the
+     first `next()`, which the `for await` below only issues *after* the head
+     has already gone out. A not-readable id would otherwise throw once the
+     response is already committed, leaving the exception filter unable to
+     send a normal 404 (see PostgresErrorFilter). Resolving it out here means
+     the throw happens while the response is still uncommitted. */
   @Get(":id/responses.csv")
   @Scope("links:read")
   async exportResponses(@Actor() actor: RequestActor, @Param("id") id: string, @Res() reply: FastifyReply) {
+    await this.forms.get(actor.workspaceId, id);
     reply.raw.writeHead(200, {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="snapurl-responses.csv"',

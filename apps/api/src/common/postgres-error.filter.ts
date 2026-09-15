@@ -45,6 +45,19 @@ export class PostgresErrorFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
 
+    /* A streaming route (forms/links CSV export) can throw after its head is
+       already on the wire — see forms.controller.ts's exportResponses for the
+       ordering trap that used to make this reachable. reply.status().send()
+       on an already-committed response raises ERR_HTTP_HEADERS_SENT from
+       inside this filter, where nothing catches it, and that is an unhandled
+       exception that kills the whole process. A late error on a streaming
+       route has to degrade to a dropped connection, never a second send. */
+    if (reply.raw.headersSent || reply.raw.writableEnded) {
+      this.logger.error({ err: exception }, "exception after response head was already sent; dropping connection");
+      if (!reply.raw.writableEnded) reply.raw.destroy();
+      return;
+    }
+
     // Anything the application raised deliberately passes straight through.
     if (exception instanceof HttpException) {
       const response = exception.getResponse();
