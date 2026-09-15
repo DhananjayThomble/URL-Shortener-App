@@ -58,7 +58,11 @@ async function bootstrap() {
      @Body() decorator receive nothing and succeed, while routes that declare a
      body schema still reject an empty body via their zod validation layer —
      exactly the invariant required by issue #442. */
-  app.useBodyParser("application/json", { bodyLimit: 10_485_760 }, (_req, body, done) => {
+  /* No bodyLimit here on purpose: omitting it inherits the server default, which
+     is what the adapter used before this parser existed. Naming a limit would
+     silently change how large a payload the API accepts, which is a different
+     change from the one this fix is making. */
+  app.useBodyParser("application/json", {}, (_req, body, done) => {
     if ((body as unknown as string) === "") return done(null, undefined);
     try {
       done(null, JSON.parse(body as unknown as string));
