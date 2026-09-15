@@ -1,6 +1,9 @@
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { installRealSession } from "./support/real-session";
+/* globalSetup: registers one shared workspace + seeds all entities the specs
+   assert on. Must run before any test worker starts. See support/seed-real.ts.
+   Playwright resolves the string path relative to the config file. */
 
 /* ============================================================
    The SAME specs as playwright.config.ts, run against the REAL stack.
@@ -55,6 +58,7 @@ export default defineConfig({
      run exists to measure failures, not to get to green. */
   retries: 0,
   workers: Number(process.env.QA_WORKERS ?? 2),
+  globalSetup: "./support/seed-real",
   reporter: [
     ["list"],
     ["json", { outputFile: path.join(ARTIFACTS, "real-stack.json") }],
@@ -82,8 +86,11 @@ export default defineConfig({
        named escape hatch for a build nobody deploys, which is what this is. */
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
     url: BASE_URL,
-    /* Never adopt an already-running server: it could be the fixtures build. */
-    reuseExistingServer: false,
+    /* reuseExistingServer: adopt an already-running server when QA_REUSE_SERVER=1.
+       The default is false (never adopt) to prevent accidentally using the
+       fixtures build. Set QA_REUSE_SERVER=1 only when you know the running
+       server was built with NEXT_PUBLIC_USE_FIXTURES=false. */
+    reuseExistingServer: process.env.QA_REUSE_SERVER === "1",
     timeout: 300_000,
     env: {
       NEXT_PUBLIC_USE_FIXTURES: "false",

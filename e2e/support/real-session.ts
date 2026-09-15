@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import type { Page } from "@playwright/test";
 
 /* ============================================================
@@ -25,6 +26,41 @@ const TOKEN_KEY = "snapurl.accessToken";
 const REFRESH_KEY = "snapurl.refreshToken";
 
 const API_URL = process.env.QA_API_URL ?? "http://localhost:3001/api/v1";
+
+/* ----  Shared seed-state  ------------------------------------------------
+   When globalSetup (seed-real.ts) runs, it creates a single seeded workspace
+   and writes its tokens to SEED_STATE_FILE. Tests that need the seeded entities
+   (links, forms, bio pages, members, reports) must reuse THAT workspace, not
+   register a fresh empty one.
+
+   We load the file once (module scope = one load per worker process) and fall
+   back to fresh-registration if the file is absent (e.g. running without the
+   real-stack config).
+   ---------------------------------------------------------------------- */
+const RUN_DIR = process.env.QA_RUN_DIR ?? path.resolve(__dirname, "../../.qa-runs/real-stack");
+const SEED_STATE_FILE = path.join(RUN_DIR, "seed-state.json");
+
+interface SeedState {
+  accessToken: string;
+  refreshToken: string;
+  email: string;
+  password: string;
+}
+
+let _seedState: SeedState | null = null;
+
+function loadSeedState(): SeedState | null {
+  if (_seedState) return _seedState;
+  try {
+    if (existsSync(SEED_STATE_FILE)) {
+      _seedState = JSON.parse(readFileSync(SEED_STATE_FILE, "utf8")) as SeedState;
+      return _seedState;
+    }
+  } catch {
+    // Unreadable state — fall back to fresh registration
+  }
+  return null;
+}
 
 /**
  * Per-process password, never persisted and never a literal in this file.
@@ -107,20 +143,68 @@ export async function registerRealUser(): Promise<RealSession> {
  * runs on every document load and the dashboard's route guard reads
  * localStorage as soon as it hydrates.
  *
- * Each call registers a NEW account, so every test gets an isolated workspace —
- * the closest real-stack analogue of fixtures state being re-initialised on
- * every full document load.
+ * When a seed-state.json file is present (written by globalSetup / seed-real.ts),
+ * ALL tests share the SAME workspace so they can see the seeded entities (links,
+ * forms, bio pages, members, reports, conversions). Without the state file (e.g.
+ * running specs individually without globalSetup), each call registers a fresh
+ * account — the original behaviour, which gives an isolated but empty workspace.
+ *
+ * Note: sharing one workspace means mutations in one test are visible to others.
+ * That is intentional: the real-stack run exists to measure behaviour against
+ * real data, not to guarantee test isolation. Isolation is the fixtures run's job.
  */
 export async function seedRealSession(page: Page): Promise<void> {
-  const session = await registerRealUser();
+  const seed = loadSeedState();
+  let access: string;
+  let refresh: string;
+
+  if (seed) {
+    // Reuse the shared seeded workspace. Verify the token is still live; if not,
+    // re-login with the stored password.
+    const check = await fetch(`${API_URL}/workspaces/current`, {
+      headers: { authorization: `Bearer ${seed.accessToken}` },
+    });
+    if (check.ok) {
+      access = seed.accessToken;
+      refresh = seed.refreshToken;
+    } else {
+      // Token may have expired between globalSetup and this test. Re-login.
+      const loginRes = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: seed.email, password: seed.password }),
+      });
+      if (loginRes.ok) {
+        const body = await loginRes.json() as { accessToken: string; refreshToken: string };
+        access = body.accessToken;
+        refresh = body.refreshToken;
+        // Update in-memory cache so subsequent tests in this worker don't re-login
+        _seedState = { ...seed, accessToken: access, refreshToken: refresh };
+      } else {
+        // Can't reuse — fall back to fresh account (test will see an empty workspace)
+        diag("seed re-login failed, falling back to fresh account");
+        const fresh = await registerRealUser();
+        access = fresh.accessToken;
+        refresh = fresh.refreshToken;
+      }
+    }
+    diag(`seeded from shared workspace email=${seed.email}`);
+  } else {
+    // No state file — register a fresh isolated account (original behaviour)
+    const fresh = await registerRealUser();
+    access = fresh.accessToken;
+    refresh = fresh.refreshToken;
+    diag(`seeded fresh account`);
+  }
+
   await page.addInitScript(
-    ([tokenKey, refreshKey, access, refresh]) => {
-      window.localStorage.setItem(tokenKey, access);
-      window.localStorage.setItem(refreshKey, refresh);
+    ([tokenKey, refreshKey, a, r]) => {
+      window.localStorage.setItem(tokenKey, a);
+      window.localStorage.setItem(refreshKey, r);
     },
-    [TOKEN_KEY, REFRESH_KEY, session.accessToken, session.refreshToken] as const,
+    [TOKEN_KEY, REFRESH_KEY, access, refresh] as const,
   );
-  diag(`seeded keys=${TOKEN_KEY},${REFRESH_KEY}`);
+  diag(`set keys=${TOKEN_KEY},${REFRESH_KEY}`);
 }
 
 /**
