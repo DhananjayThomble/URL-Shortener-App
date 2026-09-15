@@ -49,7 +49,7 @@ notification was missed, not that the report was ignored.
 - Authentication and session handling, including token rotation and revocation
 - Workspace isolation — any path where one workspace can read or modify another's
   links, analytics, members, domains, or bio pages
-- Authorization and role enforcement (`owner` / `admin` / `member`)
+- Authorization and role enforcement (`owner` / `admin` / `editor` / `viewer`)
 - **Open redirect** via the routing chain, deep links, or destination validation
 - Stored or reflected **XSS**, particularly on user-rendered surfaces such as bio
   pages, link titles, and form submissions
