@@ -62,6 +62,52 @@ route({
   responses: { 204: { description: "Revoked" } },
 });
 
+/* P0 — account recovery. Both public: someone locked out has no session.
+   request always answers 202 with no body, the same for known and unknown
+   emails, so it isn't an enumeration oracle. */
+route({
+  method: "post",
+  path: "/auth/password-reset/request",
+  tag,
+  summary: "Request a password reset email (5/min per IP, same response for any email)",
+  public: true,
+  body: refs.PasswordResetRequestInput,
+  responses: { 202: { description: "Accepted" } },
+});
+
+route({
+  method: "post",
+  path: "/auth/password-reset/confirm",
+  tag,
+  summary: "Consume a password reset token and set a new password (5/min per IP)",
+  public: true,
+  body: refs.PasswordResetConfirmInput,
+  responses: { 200: { description: "Password reset" } },
+});
+
+/* P0 — email verification. verify is public since the link is clicked from an
+   email, often before signing in. resend is public + throttled and, like
+   password-reset request, gives the same response for any email. */
+route({
+  method: "post",
+  path: "/auth/email/verify",
+  tag,
+  summary: "Consume an email verification token",
+  public: true,
+  body: refs.EmailVerifyInput,
+  responses: { 200: { description: "Email verified" } },
+});
+
+route({
+  method: "post",
+  path: "/auth/email/resend",
+  tag,
+  summary: "Resend the email verification link (5/min per IP, same response for any email)",
+  public: true,
+  body: refs.EmailVerifyResendInput,
+  responses: { 202: { description: "Accepted" } },
+});
+
 route({
   method: "get",
   path: "/auth/me",
