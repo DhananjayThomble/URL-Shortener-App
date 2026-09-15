@@ -1,0 +1,17 @@
+{
+  "name": "snapurl-qa-l4-semantic",
+  "private": true,
+  "version": "1.0.0",
+  "description": "L4 semantic e2e QA harness. Standalone (npm-installed, not a pnpm workspace member) so it can pull a QR decoder and a raw Postgres client without touching the app dependency graph. See README.md.",
+  "type": "module",
+  "scripts": {
+    "run": "tsx run.mts"
+  },
+  "dependencies": {
+    "jsqr": "1.4.0",
+    "pngjs": "7.0.0",
+    "postgres": "3.4.7",
+    "qrcode": "1.5.4",
+    "tsx": "4.19.4"
+  }
+}
