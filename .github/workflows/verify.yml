@@ -852,6 +852,28 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    # The DB-backed integration tests use `describeDb = DATABASE_URL ? describe :
+    # describe.skip`. Without a database they SKIP, so the baseline would measure
+    # only the unit lane and systematically under-report what the suite covers.
+    # coverage-delta must run under the identical setup or the comparison is not
+    # like-for-like.
+    services:
+      postgres:
+        # Must match docker-compose.yml — the schema uses uuidv7(), native in 18.
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: snapurl
+          POSTGRES_PASSWORD: snapurl
+          POSTGRES_DB: snapurl
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U snapurl -d snapurl"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://snapurl:snapurl@localhost:5433/snapurl
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -863,6 +885,8 @@ jobs:
           cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Apply migrations
+        run: pnpm db:migrate
       - name: Run coverage
         run: pnpm test:coverage
       - name: Merge coverage
@@ -887,6 +911,26 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    # Must mirror coverage-baseline exactly — same database, same migrations — or
+    # the PR summary and the nightly baseline are measuring different suites and
+    # the delta is meaningless. Without a database the integration tests skip, so
+    # a PR that adds integration coverage shows no increase and the guard fails it.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: snapurl
+          POSTGRES_PASSWORD: snapurl
+          POSTGRES_DB: snapurl
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U snapurl -d snapurl"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://snapurl:snapurl@localhost:5433/snapurl
     steps:
       - uses: actions/checkout@v4
         with:
@@ -902,6 +946,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Ensure origin/main is available
         run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - name: Apply migrations
+        run: pnpm db:migrate
       - name: Run coverage
         run: pnpm test:coverage
       - name: Merge coverage
