@@ -475,21 +475,32 @@ async function seedReports(token: string, springSaleSlug: string, appSlug: strin
 //   getByText("Spring 2026")          — a campaign in byLink (from utm.campaign)
 //
 // POST /conversions records an event. externalId makes it idempotent.
-// The spring-sale link must have utm.campaign = "Spring 2026" (seeded in step 2).
+// We try the spring-sale link first (may or may not be seeded depending on global
+// slug availability). Fall back to spring-launch with a UTM campaign added so the
+// "Spring 2026" assertion is satisfied via whichever link is available.
 // ---------------------------------------------------------------------------
 
 async function seedConversions(token: string, linkIds: Record<string, string>): Promise<void> {
   const existing = await apiGet("/conversions", token) as { events: Array<{ name: string }> };
   if (existing.events.some((e) => e.name === "Subscription started")) return;
 
-  const springSaleId = linkIds["spring-sale"];
-  if (!springSaleId) {
-    console.warn("[seed] spring-sale link not found, skipping conversions");
-    return;
+  // Prefer spring-sale (has utm.campaign "Spring 2026" from link seeding).
+  // Fall back to spring-launch — add the UTM campaign to it first so the "Spring 2026" text appears.
+  let linkId = linkIds["spring-sale"];
+  if (!linkId) {
+    const fallbackId = linkIds["spring-launch"];
+    if (!fallbackId) {
+      console.warn("[seed] no suitable link for conversions, skipping");
+      return;
+    }
+    // Add utm.campaign to spring-launch so conversions by-link shows "Spring 2026"
+    await apiPatch(`/links/${fallbackId}`, { utm: { source: "email", medium: "newsletter", campaign: "Spring 2026" } }, token);
+    linkId = fallbackId;
+    console.log("[seed] conversions: using spring-launch as fallback with utm.campaign=Spring 2026");
   }
 
   await apiPost("/conversions", {
-    linkId: springSaleId,
+    linkId,
     kind: "sale",
     name: "Subscription started",
     valueMinor: 99900,
@@ -497,7 +508,7 @@ async function seedConversions(token: string, linkIds: Record<string, string>): 
   }, token);
 
   await apiPost("/conversions", {
-    linkId: springSaleId,
+    linkId,
     kind: "signup",
     name: "Account created",
     valueMinor: 0,
