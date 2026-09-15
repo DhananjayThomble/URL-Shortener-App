@@ -62,10 +62,29 @@ async function bootstrap() {
      is what the adapter used before this parser existed. Naming a limit would
      silently change how large a payload the API accepts, which is a different
      change from the one this fix is making. */
+  /* parseAs: "string" is load-bearing, not cosmetic. Without it Fastify hands the
+     parser a Buffer, so the empty-body check below never matches (an empty Buffer
+     is not ""), JSON.parse runs on it and throws "Unexpected end of JSON input" —
+     the 400 comes back under a different message and the bug is still there.
+     The cast exists only because the adapter's callback type is fixed to Buffer;
+     parseAs is what makes the value actually a string at runtime. */
+  /* The body arrives as a Buffer: Nest's adapter fixes parseAs to "buffer", which
+     is why NestFastifyBodyParserOptions has no parseAs to override and why the
+     callback is typed FastifyBodyParser<Buffer>. Comparing that Buffer to "" never
+     matches, so an earlier version of this parser fell through to JSON.parse on an
+     empty Buffer — which coerces to "" and throws "Unexpected end of JSON input".
+     The 400 came back under a new message and looked fixed while it was not.
+     Check the Buffer's length instead.
+
+     Registration must go through app.useBodyParser, not the raw Fastify instance:
+     Nest registers its own application/json parser during init, and adding one
+     directly makes that throw FST_ERR_CTP_ALREADY_PRESENT at boot. */
   app.useBodyParser("application/json", {}, (_req, body, done) => {
-    if ((body as unknown as string) === "") return done(null, undefined);
+    const buf = body as unknown as Buffer | string | undefined;
+    const empty = buf === undefined || (typeof buf === "string" ? buf === "" : buf.length === 0);
+    if (empty) return done(null, undefined);
     try {
-      done(null, JSON.parse(body as unknown as string));
+      done(null, JSON.parse(typeof buf === "string" ? buf : buf.toString("utf8")));
     } catch (err) {
       done(err as Error, undefined);
     }
