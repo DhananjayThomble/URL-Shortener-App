@@ -13,7 +13,9 @@
   "include": [
     "playwright.config.ts",
     "playwright.real.config.ts",
+    "playwright.journeys.config.ts",
     "tests/**/*.ts",
-    "support/**/*.ts"
+    "support/**/*.ts",
+    "journeys/**/*.ts"
   ]
 }
