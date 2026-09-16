@@ -509,6 +509,13 @@ export const CONVERSIONS: ConversionsReport = {
   revenueSeries: spark(120),
 };
 
+/* The fixture login password. Any non-2fa email + this password signs in;
+   anything else is rejected with a 401-style error so the wrong-password path
+   is exercisable in the fixtures lane too.
+   Keep in sync with FIXTURE_LOGIN_PASSWORD in e2e/support/unique-identity.ts.
+   (#445 fixture-fidelity fix) */
+export const FIXTURE_PASSWORD = "Fixture.pw-445";
+
 const SESSION: AuthSession = {
   accessToken: "fixture.access.token",
   refreshToken: "fixture.refresh.token",
@@ -666,10 +673,27 @@ export async function fixtureRequest<T>(
   if (m(/^\/auth\/login$/) && method === "POST") {
     // A designated fixture account has 2FA on, so login returns a CHALLENGE
     // rather than a session — this is what lets the TOTP login flow (issue #377)
-    // be exercised in fixtures mode. Everyone else signs in directly, as before.
-    const email = (opts.body as { email?: string })?.email ?? "";
-    if (email.toLowerCase() === "2fa@snapurl.local") {
+    // be exercised in fixtures mode.
+    // Password is now honoured: known fixture accounts use their own hard-coded
+    // passwords; all other emails require FIXTURE_PASSWORD; anything else is
+    // rejected so the wrong-password path is exercisable in the fixtures lane.
+    // (#445 fixture-fidelity fix)
+    const email = ((opts.body as { email?: string })?.email ?? "").toLowerCase();
+    const password = (opts.body as { password?: string })?.password ?? "";
+
+    // Known fixture accounts with their own passwords (from 2fa-login.spec.ts).
+    const FIXTURE_ACCOUNTS: Record<string, string> = {
+      "2fa@snapurl.local": "whatever-password",
+      "demo@snapurl.local": "demo-password-1234",
+    };
+
+    if (email === "2fa@snapurl.local") {
       data = { challenge: "totp", challengeToken: "fixture.totp.challenge" } satisfies TotpChallenge;
+    } else if (Object.prototype.hasOwnProperty.call(FIXTURE_ACCOUNTS, email)) {
+      if (password !== FIXTURE_ACCOUNTS[email]) throw new Error("Invalid credentials.");
+      data = SESSION;
+    } else if (password !== FIXTURE_PASSWORD) {
+      throw new Error("Invalid credentials.");
     } else {
       data = SESSION;
     }
