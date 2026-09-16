@@ -137,18 +137,20 @@ export function Field({
   const fieldId = React.useId();
   const helpId = help || error ? `${fieldId}-hint` : undefined;
 
-  // Clone the first input-like child to inject the matching id and aria-describedby.
-  // We only need to do this once — Field always wraps a single control.
-  const child = React.Children.toArray(children)[0];
-  const controlWithId =
-    React.isValidElement(child)
-      ? React.cloneElement(child as React.ReactElement<Record<string, unknown>>, {
-          id: (child.props as Record<string, unknown>).id ?? fieldId,
-          ...(helpId && !(child.props as Record<string, unknown>)['aria-describedby']
-            ? { 'aria-describedby': helpId }
-            : {}),
-        })
-      : child;
+  // Inject the matching id (and aria-describedby) into the FIRST element child so the
+  // label points at a real control. Every other child is passed through untouched —
+  // rendering only the cloned one would silently drop the rest of any Field that wraps
+  // more than a single element.
+  let cloned = false;
+  const controlWithId = React.Children.map(children, (child) => {
+    if (cloned || !React.isValidElement(child)) return child;
+    cloned = true;
+    const props = child.props as Record<string, unknown>;
+    return React.cloneElement(child as React.ReactElement<Record<string, unknown>>, {
+      id: props.id ?? fieldId,
+      ...(helpId && !props['aria-describedby'] ? { 'aria-describedby': helpId } : {}),
+    });
+  });
 
   return (
     <div className="flex flex-col gap-[6px]">
