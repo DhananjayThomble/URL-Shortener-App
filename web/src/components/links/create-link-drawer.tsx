@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Button, Field, Input, SectionLabel, Segmented, Toggle } from "@/components/ui";
 import { QrPreview } from "@/components/qr/qr-preview";
@@ -24,6 +24,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   const [tab, setTab] = useState<TabId>("dest");
   const { data: domains } = useDomains();
   const create = useCreateLink();
+  const drawerRef = useRef<HTMLElement>(null);
 
   const form = useForm<CreateLinkFormValues, unknown, CreateLinkInput>({
     resolver: zodResolver(CreateLinkInput),
@@ -60,17 +61,55 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     }
   }, [domains, domain, setValue]);
 
-  // Escape closes; body scroll locks while the drawer owns the screen.
+  // Escape closes; body scroll locks; focus is trapped inside the drawer while
+  // it is open — Tab/Shift+Tab cycle within it, never leaking to content behind.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+
+    const el = drawerRef.current;
+    if (!el) return;
+
+    // Selector for anything that can receive keyboard focus.
+    const FOCUSABLE =
+      'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+    // Move initial focus to the first focusable element in the drawer.
+    const first = el.querySelector<HTMLElement>(FOCUSABLE);
+    first?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      const focusable = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (node) => !node.closest('[aria-hidden="true"]'),
+      );
+      if (focusable.length === 0) return;
+
+      const firstEl = focusable[0];
+      const lastEl = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === firstEl) {
+          e.preventDefault();
+          lastEl.focus();
+        }
+      } else {
+        if (document.activeElement === lastEl) {
+          e.preventDefault();
+          firstEl.focus();
+        }
+      }
     };
-    document.addEventListener("keydown", onKey);
+
+    document.addEventListener("keydown", onKeyDown);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = prev;
     };
   }, [open, onClose]);
@@ -111,6 +150,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     <>
       <div className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[100] backdrop-blur-[2px]" onClick={onClose} />
       <aside
+        ref={drawerRef}
         role="dialog"
         aria-modal="true"
         aria-label="Create a link"
@@ -160,6 +200,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                   <div className="flex items-stretch">
                     <select
                       {...register("domain")}
+                      aria-label="Short-link domain"
                       className="px-[11px] py-[9px] bg-surface-3 border border-line-2 border-r-0 rounded-l-[var(--radius-sm)] font-mono text-[12.5px] text-ink-2 focus:outline-none"
                     >
                       {(domains ?? []).map((d) => (

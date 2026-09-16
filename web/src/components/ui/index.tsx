@@ -132,14 +132,39 @@ export function Field({
   error?: string;
   children: React.ReactNode;
 }) {
+  // Generate a stable id so the <label htmlFor> ↔ input id association is
+  // programmatically correct for assistive technologies (fixes axe `label` rule).
+  const fieldId = React.useId();
+  const helpId = help || error ? `${fieldId}-hint` : undefined;
+
+  // Inject the matching id (and aria-describedby) into the FIRST element child so the
+  // label points at a real control. Every other child is passed through untouched —
+  // rendering only the cloned one would silently drop the rest of any Field that wraps
+  // more than a single element.
+  let cloned = false;
+  const controlWithId = React.Children.map(children, (child) => {
+    if (cloned || !React.isValidElement(child)) return child;
+    cloned = true;
+    const props = child.props as Record<string, unknown>;
+    return React.cloneElement(child as React.ReactElement<Record<string, unknown>>, {
+      id: props.id ?? fieldId,
+      ...(helpId && !props['aria-describedby'] ? { 'aria-describedby': helpId } : {}),
+    });
+  });
+
   return (
     <div className="flex flex-col gap-[6px]">
-      {label ? <label className="text-[12.5px] font-semibold flex items-center gap-[7px]">{label}</label> : null}
-      {children}
+      {label ? (
+        <label htmlFor={fieldId} className="text-[12.5px] font-semibold flex items-center gap-[7px]">
+          {label}
+        </label>
+      ) : null}
+      {controlWithId}
+      {React.Children.toArray(children).slice(1)}
       {error ? (
-        <span className="text-[11.5px] text-bad leading-[1.5]">{error}</span>
+        <span id={helpId} className="text-[11.5px] text-bad leading-[1.5]">{error}</span>
       ) : help ? (
-        <span className="text-[11.5px] text-ink-3 leading-[1.5]">{help}</span>
+        <span id={helpId} className="text-[11.5px] text-ink-3 leading-[1.5]">{help}</span>
       ) : null}
     </div>
   );
