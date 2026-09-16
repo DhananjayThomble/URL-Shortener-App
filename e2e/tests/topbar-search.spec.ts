@@ -54,9 +54,16 @@ test.describe("top-bar link search (desktop/tablet)", () => {
     await search.fill("webinar");
 
     const listbox = page.getByRole("listbox", { name: "Link results" });
-    await listbox.getByRole("option", { name: /webinar-q3/ }).click();
+    const option = listbox.getByRole("option", { name: /webinar-q3/ });
+    await expect(option).toBeVisible();
 
-    await expect(page).toHaveURL(/\/links\/lnk_webinar$/);
+    await option.click();
+
+    // Assert we landed on a link detail route without encoding the id format —
+    // real API issues uuidv7; the fixture uses short ids. (#445 fixture-fidelity fix)
+    await expect(page).toHaveURL(/\/links\/[^/]+$/);
+    // Confirm it is the webinar-q3 link (slug visible on the detail page).
+    await expect(page.getByText(/webinar-q3/, { exact: false })).toBeVisible();
     // Dropdown closed on navigation.
     await expect(page.getByRole("listbox", { name: "Link results" })).toHaveCount(0);
   });
@@ -66,14 +73,19 @@ test.describe("top-bar link search (desktop/tablet)", () => {
     await search.fill("webinar");
 
     const listbox = page.getByRole("listbox", { name: "Link results" });
-    await expect(listbox.getByRole("option", { name: /webinar-q3/ })).toBeVisible();
+    const option = listbox.getByRole("option", { name: /webinar-q3/ });
+    await expect(option).toBeVisible();
 
     // ArrowDown selects the first option (aria-selected), Enter opens it.
     await search.press("ArrowDown");
-    await expect(listbox.getByRole("option", { name: /webinar-q3/ })).toHaveAttribute("aria-selected", "true");
+    await expect(option).toHaveAttribute("aria-selected", "true");
     await search.press("Enter");
 
-    await expect(page).toHaveURL(/\/links\/lnk_webinar$/);
+    // Assert the detail page for this specific link without encoding the id format.
+    // (#445 fixture-fidelity fix: do not hard-code lnk_webinar)
+    await expect(page).toHaveURL(/\/links\/[^/]+$/);
+    // Confirm the right link.
+    await expect(page.getByText(/webinar-q3/, { exact: false })).toBeVisible();
   });
 
   test("a no-match query shows the empty state", async ({ page }) => {

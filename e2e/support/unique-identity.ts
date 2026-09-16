@@ -60,6 +60,17 @@ export function makeEmail(intent: string): string {
  */
 export const RUN_PASSWORD = `run-pw-${RUN_ID}`;
 
+/**
+ * The password the fixtures fake (web/src/lib/api/fixtures.ts) accepts for
+ * login. Any email + this password → SESSION; any other password → rejected.
+ * Used by login-form.spec.ts in the fixtures lane so the happy path passes and
+ * the wrong-password path can actually fail.
+ *
+ * Keep in sync with FIXTURE_PASSWORD in web/src/lib/api/fixtures.ts.
+ * (#445 fixture-fidelity fix)
+ */
+export const FIXTURE_LOGIN_PASSWORD = "Fixture.pw-445";
+
 /* ------------------------------------------------------------ */
 /* TOTP helpers — RFC 6238/4226 in pure Node.js crypto.         */
 /* No external library needed; used only by enableTotp().       */
