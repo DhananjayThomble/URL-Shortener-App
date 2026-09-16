@@ -63,7 +63,7 @@ function NavLinks({ counts, onNavigate }: { counts: Counts; onNavigate?: () => v
                   active ? "bg-accent-wash text-accent font-semibold" : "text-ink-2 hover:bg-surface-3 hover:text-ink",
                 )}
               >
-                <span className="w-4 text-center opacity-85 shrink-0">{item.icon}</span>
+                <span aria-hidden="true" className="w-4 text-center opacity-85 shrink-0">{item.icon}</span>
                 {item.label}
                 {count !== undefined ? (
                   <span className="ml-auto font-mono text-[11px] text-ink-3 tnum">{compact(count)}</span>

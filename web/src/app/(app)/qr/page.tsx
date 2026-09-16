@@ -97,6 +97,7 @@ export default function QrStudioPage() {
               <select
                 value={selected}
                 onChange={(e) => setSelected(Number(e.target.value))}
+                aria-label="Select link for QR code"
                 className="w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[13px] font-mono focus:outline-none focus:border-accent"
               >
                 {links.map((l, i) => (
