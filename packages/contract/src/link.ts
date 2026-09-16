@@ -119,9 +119,13 @@ export const CreateLinkInput = z.object({
   redirectType: RedirectType.default("302"),
   rules: z.array(RoutingRule).default([]),
   expiresAt: z.string().nullable().optional(),
-  expiresTo: z.string().nullable().optional(),
+  /* Guarded like every other URL-bearing field: the redirect service emits this
+     verbatim as its Location header for an expired link, so an unguarded value
+     here is a redirect target chosen by whoever created the link. */
+  expiresTo: HttpUrl.nullable().optional(),
   activatesAt: z.string().nullable().optional(),
-  scheduledTo: z.string().nullable().optional(),
+  /* Same as expiresTo, for a link that is not live yet. */
+  scheduledTo: HttpUrl.nullable().optional(),
   clickLimit: z.number().nullable().optional(),
   password: z.string().nullable().optional(),
   forwardQuery: z.boolean().default(true),
