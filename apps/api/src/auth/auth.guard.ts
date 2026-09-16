@@ -108,8 +108,30 @@ export class AuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (scope && request.actor.scopes && !request.actor.scopes.includes(scope)) {
-      throw new ForbiddenException(`This API key is missing the "${scope}" scope.`);
+
+    /* API keys fail CLOSED.
+
+       Scope used to be checked only when a route declared @Scope, so every route
+       without one accepted any valid key regardless of what it was granted — the
+       absence of a decorator read as "no restriction" rather than "not part of the
+       API surface". A key scoped [links:read] could therefore read the member
+       roster, including each member's email and whether they have 2FA enabled.
+
+       API_SCOPES (packages/contract/src/workspace.ts) is a closed set covering
+       links, analytics, domains and conversions. Nothing in it grants members,
+       workspaces, developers or bio-pages, so a key was never granted authority
+       over those — it only reached them because nothing said no. A key may now
+       reach a route only if that route names a scope the key actually holds.
+
+       User sessions are unaffected: they carry no scopes and are governed by
+       @Roles above. */
+    if (request.actor.apiKeyId) {
+      if (!scope) {
+        throw new ForbiddenException("This route is not available to API keys.");
+      }
+      if (!request.actor.scopes?.includes(scope)) {
+        throw new ForbiddenException(`This API key is missing the "${scope}" scope.`);
+      }
     }
 
     return true;
