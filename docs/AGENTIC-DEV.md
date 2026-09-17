@@ -85,7 +85,7 @@ kiro-cli chat --no-interactive --trust-all-tools --agent snapurl-cloud "Run one 
 ### Stopping it
 
 - Add the `agents:paused` label to any open issue (works from the GitHub mobile app), or
-- `touch .agents-paused` on the Factory, or
+- `sudo /opt/snapurl/bin/factory-pause --wait 900` on the Factory (or `touch $PAUSE_FILE`), or
 - stop the Factory itself from the ops repo's power workflow.
 
 ## Safety model

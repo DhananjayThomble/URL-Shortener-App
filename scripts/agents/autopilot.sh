@@ -13,6 +13,8 @@ HOURS="${HOURS:-4}"
 SLEEP_MIN="${SLEEP_MIN:-10}"
 DEVS_PER_CYCLE="${DEVS_PER_CYCLE:-1}"
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-90m}"
+# On the Factory this points at /run, so a reboot clears a pause and the host comes back working.
+PAUSE_FILE="${PAUSE_FILE:-.agents-paused}"
 # Engine per role: "claude" or "kiro". The reviewer must use a different engine
 # from the developer and QA roles so no model grades its own work.
 ENGINE_MANAGER="${ENGINE_MANAGER:-claude}"
@@ -29,12 +31,15 @@ mkdir -p "$LOG_DIR"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_DIR/autopilot.log"; }
 
 paused() {
-  [ -f .agents-paused ] && return 0
+  [ -f "$PAUSE_FILE" ] && return 0
   [ "$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length')" != "0" ]
 }
 
 run_agent() { # role engine task
   local role=$1 engine=$2 task=$3 out
+  # Checked here, not only per cycle: a long session must not be followed by another one
+  # after the kill switch goes on.
+  if paused; then log "skipping $role: paused"; return 99; fi
   out="$LOG_DIR/$(date -u +%H%M%S)-$role.log"
   log "→ $role ($engine)"
   if [ "$engine" = "claude" ]; then
@@ -137,7 +142,7 @@ END=$(( $(date +%s) + HOURS * 3600 ))
 cycle=0
 
 while [ "$(date +%s)" -lt "$END" ]; do
-  if paused; then log "paused (agents:paused label or .agents-paused file)"; break; fi
+  if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
   cycle=$((cycle + 1)); log "=== cycle $cycle ==="
   git fetch -q origin
 
