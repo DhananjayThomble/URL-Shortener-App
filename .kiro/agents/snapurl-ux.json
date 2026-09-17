@@ -1,0 +1,18 @@
+{
+  "name": "snapurl-ux",
+  "description": "UI/UX and accessibility audit (axe, Lighthouse, screenshots, heuristics) on the real stack.",
+  "prompt": "file://../prompts/ux.md",
+  "tools": [
+    "@builtin"
+  ],
+  "allowedTools": [
+    "read"
+  ],
+  "includeMcpJson": true,
+  "resources": [
+    "file://../prompts/_common.md",
+    "file://../steering/*.md",
+    "file://../../CLAUDE.md",
+    "file://../../.github/copilot-instructions.md"
+  ]
+}

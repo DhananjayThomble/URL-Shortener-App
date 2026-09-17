@@ -1,0 +1,18 @@
+{
+  "name": "snapurl-security",
+  "description": "Static and dynamic security testing against staging; writes evidence to .qa-runs.",
+  "prompt": "file://../prompts/security.md",
+  "tools": [
+    "@builtin"
+  ],
+  "allowedTools": [
+    "read"
+  ],
+  "includeMcpJson": false,
+  "resources": [
+    "file://../prompts/_common.md",
+    "file://../steering/*.md",
+    "file://../../CLAUDE.md",
+    "file://../../.github/copilot-instructions.md"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "snapurl-developer",
+  "description": "Implement one agent:ready issue in a worktree and open a PR with passing checks.",
+  "prompt": "file://../prompts/developer.md",
+  "tools": [
+    "@builtin"
+  ],
+  "allowedTools": [
+    "read"
+  ],
+  "includeMcpJson": false,
+  "resources": [
+    "file://../prompts/_common.md",
+    "file://../steering/*.md",
+    "file://../../CLAUDE.md",
+    "file://../../.github/copilot-instructions.md"
+  ]
+}

@@ -1,0 +1,214 @@
+name: QA lab
+
+# Agent-driven QA against the real staging stack (docs/AGENTIC-DEV.md).
+#
+# SAFETY — this job holds the Kiro API key and a token for the private ops repo:
+#   - Triggers are schedule and manual dispatch only; never pull_request, so a
+#     fork or an agent branch cannot run it with secrets.
+#   - Secrets live in the `qa-lab` environment, which only `main` may use.
+#   - This repo is public, so job logs are public: agent output goes to files
+#     that are pushed to the private ops repo (and S3 when configured). Nothing
+#     from a session is printed, and nothing is uploaded as a workflow artifact.
+
+on:
+  schedule:
+    # 09:00 IST daily. Each session spends Kiro credits; widen with care.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      charters:
+        description: "Comma-separated role:focus list, e.g. qa:desktop,qa:mobile,ux,security"
+        required: false
+        default: ""
+      debug:
+        description: "On failure, open a 30-minute tmate session limited to you"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-lab
+  cancel-in-progress: false
+
+env:
+  OPS_REPO: DhananjayThomble/snapurl-ops
+  AWS_REGION: ap-south-1
+
+jobs:
+  plan:
+    name: Plan sessions
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          CHARTERS: ${{ inputs.charters || vars.QA_LAB_CHARTERS || 'qa:desktop,qa:mobile,ux,security' }}
+        run: |
+          set -euo pipefail
+          matrix="$(jq -cn --arg c "$CHARTERS" '
+            $c | split(",") | map(gsub("\\s"; "")) | map(select(length > 0))
+            | map(split(":") | {role: .[0], focus: (.[1] // .[0])})
+            | map(select(.role | test("^(qa|ux|security)$")))')"
+          [ "$matrix" != "[]" ] || { echo "::error::no valid charters in '$CHARTERS'"; exit 1; }
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$matrix"
+
+  session:
+    name: ${{ matrix.charter.role }} (${{ matrix.charter.focus }})
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: qa-lab
+    timeout-minutes: 80
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        charter: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      ROLE: ${{ matrix.charter.role }}
+      FOCUS: ${{ matrix.charter.focus }}
+      QA_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.charter.role }}-${{ matrix.charter.focus }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('e2e/package.json') }}
+
+      # `chrome` is the branded browser the Playwright MCP server drives; it
+      # installs system-wide, so it is not covered by the cache above.
+      - name: Install browsers
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            pnpm --filter snapurl-e2e exec playwright install-deps chromium firefox webkit
+          else
+            pnpm --filter snapurl-e2e exec playwright install --with-deps chromium firefox webkit
+          fi
+          pnpm --filter snapurl-e2e exec playwright install --with-deps chrome
+
+      - name: Install security tools
+        if: matrix.charter.role == 'security'
+        run: sudo BIN_DIR=/usr/local/bin bash .devcontainer/install-tools.sh
+
+      - name: Start staging stack
+        run: pnpm staging:up
+
+      - name: Build web against staging
+        env:
+          NEXT_PUBLIC_USE_FIXTURES: "false"
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+          SNAPURL_ALLOW_UNCONFIGURED_BUILD: "true"
+        run: pnpm --filter snapurl-web exec next build
+
+      - name: Install kiro-cli
+        run: |
+          curl -fsSL https://cli.kiro.dev/install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run agent session
+        id: agent
+        env:
+          KIRO_API_KEY: ${{ secrets.KIRO_API_KEY }}
+          QA_CI: "true"
+        run: |
+          run_dir=".qa-runs/$QA_RUN_ID"
+          mkdir -p "$run_dir"
+          prompt="Run one $ROLE session now. Focus: $FOCUS. You are in CI mode: QA_RUN_ID=$QA_RUN_ID, write everything under $run_dir/. The staging stack is already up and the web app is already built; serve it with: NEXT_PUBLIC_USE_FIXTURES=false NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1 SNAPURL_ALLOW_UNCONFIGURED_BUILD=true pnpm --filter snapurl-web exec next start --port 3000"
+          set +e
+          timeout 60m kiro-cli chat --no-interactive --trust-all-tools --agent "snapurl-$ROLE" "$prompt" \
+            > "$run_dir/transcript.log" 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > "$run_dir/exit-code.txt"
+          findings=0
+          [ -f "$run_dir/findings.jsonl" ] && findings=$(grep -c . "$run_dir/findings.jsonl" || true)
+          echo "Session exit code $rc; $findings finding(s). Details are in the private ops repo."
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          if [ "$findings" = "0" ]; then
+            # qa-oracles.md §2: a run with zero findings is a failed run.
+            echo "::warning::zero findings — treated as a failed run per qa-oracles.md §2"
+          fi
+
+      - name: Configure AWS credentials
+        if: always() && vars.QA_S3_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.QA_S3_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload evidence to S3
+        if: always() && vars.QA_S3_ROLE_ARN != ''
+        run: |
+          [ -d ".qa-runs/$QA_RUN_ID" ] || exit 0
+          aws s3 sync ".qa-runs/$QA_RUN_ID" "s3://${{ vars.QA_S3_BUCKET }}/qa-runs/$QA_RUN_ID" --only-show-errors
+
+      - name: Record run in ops repo
+        if: always()
+        env:
+          OPS_REPO_TOKEN: ${{ secrets.OPS_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          src=".qa-runs/$QA_RUN_ID"
+          [ -d "$src" ] || { echo "no run directory"; exit 0; }
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$OPS_REPO_TOKEN" | base64 -w0)"
+          echo "::add-mask::$(printf 'x-access-token:%s' "$OPS_REPO_TOKEN" | base64 -w0)"
+          git -c http.extraheader="$auth" clone -q --depth 1 --branch main "https://github.com/$OPS_REPO.git" ops
+          dest="ops/qa-runs/$(date -u +%Y-%m-%d)/$QA_RUN_ID"
+          mkdir -p "$dest"
+          # Text records only; binaries (screenshots, traces, video) go to S3.
+          for f in findings.jsonl summary.md exit-code.txt; do
+            if [ -f "$src/$f" ]; then cp "$src/$f" "$dest/"; fi
+          done
+          gzip -c "$src/transcript.log" > "$dest/transcript.log.gz" 2>/dev/null || true
+          (cd "$src" && find . -type f | sort) > "$dest/manifest.txt"
+          cat > "$dest/run.json" <<EOF
+          {"run_id":"$QA_RUN_ID","role":"$ROLE","focus":"$FOCUS","commit":"$GITHUB_SHA",
+           "workflow_run":"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID",
+           "evidence":"${{ vars.QA_S3_BUCKET && format('s3://{0}/qa-runs/', vars.QA_S3_BUCKET) || 'not uploaded (S3 not configured)' }}$QA_RUN_ID"}
+          EOF
+          cd ops
+          git config user.name "snapurl-qa-lab"
+          git config user.email "qa-lab@users.noreply.github.com"
+          git add -A
+          git commit -q -m "qa: $QA_RUN_ID"
+          for i in 1 2 3 4 5; do
+            if git -c http.extraheader="$auth" push -q origin HEAD:main; then exit 0; fi
+            sleep $((i * 3))
+            git -c http.extraheader="$auth" pull -q --rebase origin main
+          done
+          echo "::error::could not push the run record"; exit 1
+
+      - name: Debug session
+        if: failure() && inputs.debug
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        timeout-minutes: 30
+        with:
+          limit-access-to-actor: true
+
+      - name: Tear down
+        if: always()
+        run: pnpm staging:down
