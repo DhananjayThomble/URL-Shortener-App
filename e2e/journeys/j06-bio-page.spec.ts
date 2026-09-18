@@ -1,12 +1,15 @@
 /**
  * Journey 6 — Bio page
  *
- * Create a bio page with a name, publish it, and verify it is live.
+ * Create a bio page with a name, publish it, and verify it is live — then
+ * confirm a signed-out visitor can load it at /public/bio-pages/:slug and /b/<slug>.
  *
  * Oracles:
- *   - packages/contract — UpsertBioPageInput
+ *   - packages/contract — UpsertBioPageInput, PublicBioPage
  *   - bio/page.tsx: placeholder "yourname" / "Acme Growth", button "Create as draft" / "Publish"
- *   - Invariant: a live bio page shows status "live" in the API.
+ *   - PublicController GET /public/bio-pages/:slug serves a live page unauthenticated (#457)
+ *   - Invariant: a live bio page shows status "live" in the API, is reachable
+ *     without auth, and its public shape never leaks workspace view/click analytics.
  */
 
 import { expect, test } from "@playwright/test";
@@ -72,24 +75,33 @@ test.describe("Journey 6 — Bio page", () => {
     expect(bioPage, "Created bio page should appear in API response").toBeTruthy();
     expect(bioPage?.status, "Bio page should be live after publish").toBe("live");
 
-    /* ---- 9. Check public route ---- */
-    // Bio pages may be served at /b/<slug> or another route in the web app.
-    // We probe and record what happens — no assertion that it MUST be served
-    // (the public bio route depends on hosting config).
-    const bioPaths = [`/b/${slug}`, `/bio/${slug}`];
-    for (const path of bioPaths) {
-      const resp = await page.request.get(path, { maxRedirects: 3 });
-      if (resp.status() === 200) {
-        const body = await resp.text();
-        // Oracle: the page must contain the bio page display name
-        expect(body).toContain("J6 Journey Bio");
-        break;
-      } else {
-        console.log(
-          `[FINDING] J6: GET ${path} → ${resp.status()}. ` +
-          `Public bio page not served at this path in the Next.js build.`,
-        );
-      }
-    }
+    /* ---- 9. Public route serves the published page to a signed-out visitor ---- */
+    // #457: a published bio page must be reachable without auth, both at the
+    // API (@Public() GET /public/bio-pages/:slug) and at the web route /b/<slug>.
+    // Before #457 this step only probed and recorded a finding; now the route
+    // exists, so it asserts.
+
+    // 9a. The @Public() API endpoint, called with NO Authorization header.
+    const publicApiRes = await fetch(`${API_URL}/public/bio-pages/${slug}`);
+    expect(publicApiRes.ok, "GET /public/bio-pages/:slug should serve a live page anonymously").toBe(true);
+    const publicPage = (await publicApiRes.json()) as {
+      slug: string;
+      profile: { name: string };
+      views?: unknown;
+      clickThrough?: unknown;
+    };
+    // Oracle: PublicBioPage in packages/contract — profile.name is the display name.
+    expect(publicPage.profile.name, "Public API returns the page's display name").toBe("J6 Journey Bio");
+    // Oracle: PublicBioPage does not declare workspace analytics — they must not leak.
+    expect(publicPage.views, "Public shape must not leak view count").toBeUndefined();
+    expect(publicPage.clickThrough, "Public shape must not leak click-through").toBeUndefined();
+
+    // 9b. The web route renders it for a signed-out visitor. Use a fresh,
+    // unauthenticated context so no token from seedAccount leaks in.
+    const anon = await page.context().browser()!.newContext();
+    const anonPage = await anon.newPage();
+    await anonPage.goto(`/b/${slug}`, { waitUntil: "networkidle", timeout: 15_000 });
+    await expect(anonPage.getByText("J6 Journey Bio")).toBeVisible({ timeout: 10_000 });
+    await anon.close();
   });
 });
