@@ -1,0 +1,52 @@
+{
+  "name": "SnapURL agentic dev",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22-bookworm",
+  "hostRequirements": {
+    // Playwright (3 engines) + the staging compose stack + an agent do not fit in 2 cores / 8 GB.
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
+  },
+  "forwardPorts": [3000, 3001, 3002, 5433, 5435, 5476],
+  "portsAttributes": {
+    "3000": { "label": "web" },
+    "3001": { "label": "api" },
+    "3002": { "label": "redirect" },
+    "5433": { "label": "postgres (dev)" },
+    "5435": { "label": "postgres (staging)" },
+    "5476": { "label": "kiro crew dashboard", "onAutoForward": "silent" }
+  },
+  "containerEnv": {
+    "PLAYWRIGHT_BROWSERS_PATH": "/home/node/.cache/ms-playwright"
+  },
+  "secrets": {
+    "KIRO_API_KEY": {
+      "description": "Kiro API key for headless kiro-cli runs (Pro and above)."
+    },
+    "AGENT_GH_TOKEN": {
+      "description": "Optional fine-grained PAT (issues, pull requests, contents: write on this repo) used by the autopilot instead of the Codespace token."
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "docker compose up -d postgres || true",
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["CLAUDE.md", "docs/AGENTIC-DEV.md"]
+    },
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "ms-playwright.playwright",
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "github.vscode-github-actions"
+      ]
+    }
+  }
+}
