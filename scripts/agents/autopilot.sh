@@ -4,7 +4,7 @@
 #   HOURS=6 bash scripts/agents/autopilot.sh
 #
 # Each cycle: kill-switch check → manager → reviewer → merge approved PRs →
-# developer(s) → one rotating QA/UX/security/cloud run → sleep.
+# developer(s) → every SLOT_EVERY cycles, one ROTATION role (default: cloud) → sleep.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -53,9 +53,12 @@ run_agent() { # role engine task
   fi
   local rc=$?
   log "← $role exit $rc ($out)"
-  # A usage-limit or auth failure should not burn the rest of the cycle retrying.
-  if grep -qiE "usage limit|rate limit|quota|not logged in|unauthori[sz]ed" "$out"; then
+  # A usage-limit or auth failure should not burn the rest of the cycle retrying. Only a failed
+  # run's last lines count: agents print issue text, API responses and their own summaries, and
+  # this product has rate limits and 401s of its own, so matching the whole log misfires.
+  if [ "$rc" -ne 0 ] && tail -n 30 "$out" | grep -qiE "usage limit|rate limit|quota|out of credits|insufficient credits|credit limit|not logged in|unauthori[sz]ed"; then
     log "!! $role hit a limit or auth error; skipping the rest of this cycle"
+    LIMIT_HIT=1
     return 99
   fi
   return 0
@@ -122,7 +125,7 @@ merge_approved() {
       DIRTY)
         log "PR #$n: merge conflict; back to the developer"
         gh pr edit "$n" -R "$REPO" --remove-label agent:approved --add-label agent:changes-requested >/dev/null
-        gh pr comment "$n" -R "$REPO" --body "Autopilot: this PR conflicts with \`main\`. Rebase or merge \`main\` and resolve the conflict." >/dev/null
+        gh pr comment "$n" -R "$REPO" --body "Autopilot: this PR conflicts with \`main\`. Merge \`main\` into the branch (do not rebase or force-push) and resolve the conflict." >/dev/null
         ;;
       *)
         if [ "$gate" = "SUCCESS" ]; then
@@ -137,13 +140,18 @@ merge_approved() {
   done
 }
 
-ROTATION=(qa:desktop qa:mobile ux security qa:desktop qa:mobile cloud)
+# Extra role run every SLOT_EVERY cycles, as role[:focus]. QA, UX and security run in the QA lab
+# workflow on GitHub Actions, not here; put them back only on a host that does QA.
+read -r -a ROTATION <<<"${ROTATION:-cloud}"
+SLOT_EVERY="${SLOT_EVERY:-3}"
 END=$(( $(date +%s) + HOURS * 3600 ))
 cycle=0
+slot_n=0
 
 while [ "$(date +%s)" -lt "$END" ]; do
   if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
   cycle=$((cycle + 1)); log "=== cycle $cycle ==="
+  LIMIT_HIT=0
   git fetch -q origin
 
   run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now." || { sleep $((SLEEP_MIN*60)); continue; }
@@ -159,9 +167,12 @@ while [ "$(date +%s)" -lt "$END" ]; do
     run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
   done
 
-  slot=${ROTATION[$(( (cycle - 1) % ${#ROTATION[@]} ))]}
-  role=${slot%%:*}; focus=${slot#*:}
-  paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+  if [ "$LIMIT_HIT" -eq 0 ] && [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
+    slot=${ROTATION[$(( slot_n % ${#ROTATION[@]} ))]}
+    slot_n=$((slot_n + 1))
+    role=${slot%%:*}; focus=${slot#*:}
+    paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+  fi
 
   log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
   sleep $((SLEEP_MIN * 60))

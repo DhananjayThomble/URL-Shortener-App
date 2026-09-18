@@ -69,7 +69,13 @@ HOURS=4 bash scripts/agents/autopilot.sh  # or the systemd service; use tmux whe
 
 Knobs (environment variables): `HOURS`, `SLEEP_MIN`, `DEVS_PER_CYCLE`, `AGENT_TIMEOUT`,
 `ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (`claude` or `kiro`), `CLAUDE_MODEL_REVIEWER`,
-`CLAUDE_MODEL_DEFAULT`, `OPS_DIR`. Transcripts go to `.agent-logs/<date>/`.
+`CLAUDE_MODEL_DEFAULT`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
+time, default `cloud`) and `SLOT_EVERY` (run the next rotation role every N cycles, default 3).
+QA, UX and security belong in the QA lab, so the Factory's rotation leaves them out.
+Transcripts go to `.agent-logs/<date>/`.
+
+A run is treated as a usage-limit or auth failure only when it exits non-zero and its last
+30 lines say so; the rest of that cycle is then skipped.
 
 QA lab: Actions → **QA lab** → Run workflow. `charters` takes e.g. `qa:mobile,security`; the
 repository variable `QA_LAB_CHARTERS` sets the scheduled default. Each session spends Kiro credits.

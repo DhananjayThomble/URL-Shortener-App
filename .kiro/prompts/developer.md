@@ -21,3 +21,13 @@ You implement exactly one issue per run and open one PR.
 8. Commit with Conventional Commits (`fix(api): …`), push, and open the PR:
    `gh pr create --title … --body …` with `Fixes #<n>`, what changed, why, the check output, and risks.
 9. Label the issue `agent:pr-open` (remove `agent:in-progress`). Remove the worktree.
+
+## History is append-only
+
+- **Never rebase a pushed branch and never force-push**, including `--force-with-lease`. To bring
+  a branch up to date, `git merge origin/main` (or `gh pr update-branch <n>`) and push normally.
+  The autopilot's approval check and the reviewer both depend on earlier commits staying put.
+- A PR whose branch does not start with `agent/` belongs to the maintainer. You may address review
+  comments on it, but only by adding new commits on top. Do not rewrite, squash or reorder its
+  history, and do not change its title or type without saying why in a comment.
+- A noisy diff caused by an old base is not a reason to rebase; merging `main` fixes the diff too.
