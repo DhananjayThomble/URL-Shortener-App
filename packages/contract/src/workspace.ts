@@ -185,6 +185,28 @@ export const BioPage = z.object({
 });
 export type BioPage = z.infer<typeof BioPage>;
 
+/**
+ * What a signed-out visitor sees at /b/<slug>. Deliberately not the full
+ * `BioPage`: views, click-through and per-block click metrics are the
+ * workspace's analytics, not a visitor's business — the same rule `PublicForm`
+ * follows. A block's `href` IS included, because a public bio page whose links
+ * don't go anywhere is pointless.
+ */
+export const PublicBioBlock = z.object({
+  kind: z.enum(["header", "link", "embed", "email", "social"]),
+  title: z.string(),
+  subtitle: z.string().nullable().optional(),
+  href: z.string().nullable().optional(),
+});
+export type PublicBioBlock = z.infer<typeof PublicBioBlock>;
+
+export const PublicBioPage = z.object({
+  slug: z.string(),
+  profile: z.object({ name: z.string(), bio: z.string(), initials: z.string() }),
+  blocks: z.array(PublicBioBlock),
+});
+export type PublicBioPage = z.infer<typeof PublicBioPage>;
+
 export const UpsertBioPageInput = z.object({
   domain: z.string(),
   slug: z.string().regex(/^[a-zA-Z0-9._-]+$/),

@@ -6,6 +6,7 @@ import { Public } from "../auth/auth.guard.js";
 import { PublicService } from "./public.service.js";
 import { FormsService } from "../forms/forms.service.js";
 import { ReportsService } from "../reports/reports.service.js";
+import { BioPagesService } from "../bio-pages/bio-pages.service.js";
 
 /* Every route here is unauthenticated, and each one says so individually.
    @Public() on the controller would mean one forgotten decorator on a future
@@ -16,6 +17,7 @@ export class PublicController {
     private readonly publicService: PublicService,
     private readonly forms: FormsService,
     private readonly reports: ReportsService,
+    private readonly bio: BioPagesService,
   ) {}
 
   @Public()
@@ -49,6 +51,18 @@ export class PublicController {
   @Get("forms/:slug")
   form(@Param("slug") slug: string) {
     return this.forms.publicForm(slug);
+  }
+
+  /* Bio pages.
+
+     A draft or missing page 404s here rather than 403ing, exactly like a
+     form: whether a workspace has a page at an address is not a stranger's
+     business. Only the profile and blocks a visitor is meant to click cross
+     this boundary — never the workspace's view/click analytics. */
+  @Public()
+  @Get("bio-pages/:slug")
+  bioPage(@Param("slug") slug: string) {
+    return this.bio.publicPage(slug);
   }
 
   /* 200 with `ok: false` rather than a 400 for a validation failure. The
