@@ -46,9 +46,12 @@ logs/
 .mobile-audit/
 .mobile-audit-build.log
 
-# Autopilot transcripts and its local kill switch (scripts/agents/autopilot.sh).
+# Autopilot transcripts, its local kill switch and engine state (scripts/agents/autopilot.sh).
 .agent-logs/
 .agents-paused
+.agent-state/
+# Shared agent memory from the private ops repo, symlinked in by its tools/link-shared-context.sh.
+.kiro/steering/shared-memory-*
 
 # Agent track-coordination markers (e.g. EXT-R3.done). Local handoff state.
 *.done
