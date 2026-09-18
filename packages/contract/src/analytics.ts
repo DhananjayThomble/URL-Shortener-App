@@ -115,7 +115,9 @@ export type ConversionsReport = z.infer<typeof ConversionsReport>;
 
 /** Ingest — how a customer's site reports a conversion back to us. */
 export const RecordConversionInput = z.object({
-  linkId: z.string().optional(),
+  /* A uuid, not any string: the value reaches a uuid column, so a malformed one
+     used to surface as a 500 from Postgres rather than a 400 naming the field. */
+  linkId: z.string().uuid("linkId must be a link id").optional(),
   slug: z.string().optional(),
   kind: z.enum(["lead", "signup", "sale", "custom"]),
   name: z.string().min(1).max(120),
