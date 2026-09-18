@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, bioBlocks, bioPages, domains, eq, sql, type Database } from "@snapurl/database";
+import { and, asc, bioBlocks, bioPages, domains, eq, inArray, sql, type Database } from "@snapurl/database";
 import type { BioPage, PublicBioPage, UpsertBioPageInput } from "@snapurl/contract";
 import { isSlugAvailableShape } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
@@ -22,9 +22,7 @@ export class BioPagesService {
     const blocks = await this.db
       .select()
       .from(bioBlocks)
-      .where(
-        sql`${bioBlocks.bioPageId} in ${sql.raw(`(${pages.map((p) => `'${p.page.id}'::uuid`).join(",")})`)}`,
-      )
+      .where(inArray(bioBlocks.bioPageId, pages.map((p) => p.page.id)))
       .orderBy(asc(bioBlocks.position));
 
     const byPage = new Map<string, typeof blocks>();
