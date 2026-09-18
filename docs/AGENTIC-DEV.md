@@ -48,15 +48,74 @@ Switching, re-read every cycle, first match wins:
 2. **On the Factory:** `factory-engine claude|kiro|auto|status` (writes `.agent-state/engine-mode`).
 3. **Default:** the `ENGINE_MODE` environment variable (`auto`).
 
-Models: the reviewer always runs on an Opus-class model (`opus` on Claude, `claude-opus-5` on Kiro)
-and every other role on a Sonnet-class one (`sonnet`, `claude-sonnet-5`), so no model reviews its own
-work whichever engines are in use. Kiro bills Opus 5 at 2.2× and Sonnet 5 at 1.3× credits.
+**Models and effort.** Two separate guarantees. First, the reviewer never runs the model that wrote
+the code. Second, on Kiro it runs a *different vendor's* model, so its blind spots are not correlated
+with the author's — Kiro's catalogue is multi-vendor, Claude Code's is not, so on Claude the best
+available separation is Opus over Sonnet.
+
+| | Reviewer | Every other role |
+| --- | --- | --- |
+| Kiro | `gpt-5.6-terra` (2.2×), `--effort max` | `claude-sonnet-5` (1.3×), `--effort xhigh` |
+| Claude Code | `opus` | `sonnet` |
+
+Override with `KIRO_MODEL_REVIEWER`, `KIRO_MODEL_DEFAULT`, `KIRO_EFFORT_REVIEWER`,
+`KIRO_EFFORT_DEFAULT`, `CLAUDE_MODEL_REVIEWER`, `CLAUDE_MODEL_DEFAULT`. The autopilot logs a warning
+at shift start if an override leaves the reviewer in the developer's vendor family. Effort raises the
+credit cost of every run, which is what the day budget below is for.
 
 **Shared context.** Both tools load the same rules (`CLAUDE.md` imports `.kiro/steering/`, which
 Kiro reads natively) and the same role prompts. Durable memory lives in the private ops repo's
 `memory/` folder: every agent reads it at the start of a run and records what it learns there
 (`_common.md`), and the autopilot commits it after each role. On a person's machine, the ops repo's
 `tools/link-shared-context.sh` points Claude Code's auto-memory and Kiro's steering at the same files.
+
+## What the autopilot does when a run goes wrong
+
+The maintainer is usually away, so the loop has to tell the difference between "try again later",
+"try the other engine" and "stop, this needs a human". Every finished run is classified from its
+exit code and the last `TAIL_LINES` (200) of its log — never the whole log, because agents print
+issue bodies, API responses and the product's own UI. A real cycle was once aborted because a
+*successful* UX audit logged SnapURL's own click-quota bar ("One quota, clicks only") and a 401
+body from a sad-path test.
+
+| Class | When | What happens |
+| --- | --- | --- |
+| `ok` | exit 0 | Counted as work. A quota phrase in the tail is noted and ignored — the run finished. |
+| `limited` | non-zero exit **and** the tail matches a quota/auth pattern | The engine cools down for `COOLDOWN_MIN`; the run is retried once on the other engine. |
+| `timeout` | exit 124 | Alerted, **never retried** — a retry costs another full `AGENT_TIMEOUT`. |
+| `broken` | any other non-zero exit | Alerted, retried once on the other engine. No cooldown: a missing binary or a rejected `--model` is not a quota problem and waiting does not fix it. |
+
+Two circuit breakers then protect an unattended box:
+
+- **Broken streak.** After `BROKEN_CYCLES_MAX` (3) consecutive cycles in which something failed for
+  a non-quota reason and *nothing* succeeded, the factory pauses itself. A throttled factory heals
+  when its cooldown expires; a broken one does not, and grinding on is pure spend.
+- **Day budget.** `CREDIT_CEILING_DAY` (2000) caps credits per UTC day, summed from the engines' own
+  reported usage (Kiro prints `Credits: N` per run; Claude Code reports nothing, so only Kiro spend
+  is counted). No new agent session starts once the ceiling is reached, so an overshoot costs one run
+  at most, and the factory pauses. Counted per day rather than per shift so a crash-restart loop
+  cannot reset the budget. Set it to `0` to disable — at which point nothing bounds a bad night.
+
+Both pause via the same kill switch a human uses, so recovery is always the one documented action.
+
+## Daily digest
+
+The factory comments once per UTC day on a single issue labelled `factory:digest`, creating it on
+first run. One comment a day is a phone notification and a permanent record; editing a body in place
+would be neither. It carries the day's spend against the ceiling, the kill-switch state, what merged
+in the last 24 hours, every open PR with its mergeability and labels, issues labelled `decision` or
+`agent:blocked` that are waiting on a human, and any alerts raised since the last digest. Close the
+issue to stop the digest.
+
+## Tests
+
+`scripts/agents/autopilot.test.sh` covers the decisions above against stub `claude`, `kiro-cli` and
+`gh` commands — no network, no agent CLIs, no GitHub. It needs only bash, coreutils and awk, and runs
+in CI as the **Autopilot tests** job whenever `scripts/agents/**` changes.
+
+```bash
+bash scripts/agents/autopilot.test.sh
+```
 
 ## Board
 
@@ -95,13 +154,18 @@ HOURS=4 bash scripts/agents/autopilot.sh  # or the systemd service; use tmux whe
 
 Knobs (environment variables): `HOURS`, `SLEEP_MIN`, `DEVS_PER_CYCLE`, `AGENT_TIMEOUT`,
 `ENGINE_MODE`, `ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (preferred engine per role in auto mode),
-`COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
+`COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`,
+`KIRO_EFFORT_REVIEWER|DEFAULT`, `TAIL_LINES`, `BROKEN_CYCLES_MAX`, `CREDIT_CEILING_DAY`,
+`DIGEST_LABEL`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
 time, default `cloud`) and `SLOT_EVERY` (run the next rotation role every N cycles, default 3).
 QA, UX and security belong in the QA lab, so the Factory's rotation leaves them out.
 Transcripts go to `.agent-logs/<date>/`.
 
-A run is treated as a usage-limit or auth failure only when it exits non-zero and its last
-30 lines say so; that engine then cools down (see Engines).
+On a long-lived host, point `STATE_DIR` outside the checkout (`/var/lib/snapurl`): it holds the
+cooldowns and the day's credit total, and a `git clean` in the repo would otherwise reset the budget.
+
+How a failed run is classified, and the two circuit breakers that can pause the factory on their
+own, are described under [What the autopilot does when a run goes wrong](#what-the-autopilot-does-when-a-run-goes-wrong).
 
 QA lab: Actions → **QA lab** → Run workflow. `charters` takes e.g. `qa:mobile,security`; the
 repository variable `QA_LAB_CHARTERS` sets the scheduled default. Each session spends Kiro credits.
