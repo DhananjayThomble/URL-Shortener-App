@@ -83,6 +83,36 @@ describe("every contract field routes through HttpUrl", () => {
   const metadata = "http://169.254.169.254/latest/meta-data/";
   const good = "https://example.com/ok";
 
+  /* Exhaustive by construction, not by enumeration.
+
+     The cases below name specific fields, and that is exactly how expiresTo and
+     scheduledTo came to be emitted verbatim as Location headers: both were added
+     later as bare z.string(), and a test that lists fields by hand cannot notice
+     a field nobody added to the list. http-url.ts states the intent — "a URL
+     field added to the contract later cannot quietly skip the check" — so assert
+     that mechanically: walk the schema's own keys, pick out the ones whose names
+     denote a URL, and require each to reject a dangerous value. A new URL-ish
+     field on CreateLinkInput now fails here until it is piped through HttpUrl. */
+  const URLISH = /^(then|destination|href|endpoint|image)$|(To|Redirect|Url|Uri|Image|Href)$/;
+
+  it("every URL-denoting field on CreateLinkInput rejects a dangerous value", () => {
+    const keys = Object.keys(CreateLinkInput.shape).filter((k) => URLISH.test(k));
+
+    // Guard the guard: if this finds nothing, the heuristic broke and the test
+    // would pass vacuously.
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys).toContain("expiresTo");
+    expect(keys).toContain("scheduledTo");
+    expect(keys).toContain("destination");
+
+    for (const key of keys) {
+      const payload = { destination: good, domain: "d", [key]: bad };
+      expect(CreateLinkInput.safeParse(payload).success, `${key} accepted ${bad}`).toBe(false);
+      const meta = { destination: good, domain: "d", [key]: metadata };
+      expect(CreateLinkInput.safeParse(meta).success, `${key} accepted ${metadata}`).toBe(false);
+    }
+  });
+
   it("CreateLinkInput.destination rejects dangerous URLs", () => {
     expect(CreateLinkInput.safeParse({ destination: bad, domain: "d" }).success).toBe(false);
     expect(CreateLinkInput.safeParse({ destination: metadata, domain: "d" }).success).toBe(false);
