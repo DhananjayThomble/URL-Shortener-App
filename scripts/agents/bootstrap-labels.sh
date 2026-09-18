@@ -18,4 +18,5 @@ qa:agent-confirmed|c5def5|QA finding reproduced and filed by the reviewer agent
 needs-human|b60205|Agent-approved PR that only the maintainer may merge (changes CI workflows)
 engine:claude|d4c5f9|Force every agent onto Claude Code (put on any open issue; remove to return to auto)
 engine:kiro|d4c5f9|Force every agent onto Kiro CLI (put on any open issue; remove to return to auto)
+factory:digest|ededed|Carries the autopilot's once-a-day digest for the maintainer
 EOF
