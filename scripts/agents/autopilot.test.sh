@@ -181,6 +181,8 @@ printf 'done\n\033[38;5;8m\n ▸ Credits: 13.11 • Time: 15m 57s\n\n\033[0m\n' 
 is "$(run_credits spend.log)" 13.11 "parses the ANSI-wrapped Kiro credits footer"
 printf 'no meter here\n' > nospend.log
 is "$(run_credits nospend.log)" "" "prints nothing when the engine reports no usage"
+printf 'A typical reviewer shift reports Credits: 900 across the cycle, well under the ceiling.\n ▸ (no footer in this run)\n' > prose.log
+is "$(run_credits prose.log)" "" "credit-shaped prose without the real footer is not read as spend"
 
 # ---------------------------------------------------------------------------------------------
 section "the day budget is a hard stop"

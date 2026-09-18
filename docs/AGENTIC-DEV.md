@@ -97,13 +97,14 @@ Two circuit breakers then protect an unattended box:
 - **Broken streak.** After `BROKEN_CYCLES_MAX` (3) consecutive cycles in which something failed for
   a non-quota reason and *nothing* succeeded, the factory pauses itself. A throttled factory heals
   when its cooldown expires; a broken one does not, and grinding on is pure spend.
-- **Day budget.** `CREDIT_CEILING_DAY` (2000) caps credits per UTC day, summed from the engines' own
-  reported usage (Kiro prints `Credits: N • Time: …` per run; Claude Code reports nothing, so only
-  Kiro spend is counted). No new agent session starts once the ceiling is reached, so an overshoot
-  costs one run at most. Counted per day rather than per shift so a crash-restart loop cannot reset
-  the budget. Set it to `0` to disable — at which point nothing bounds a bad night.
+- **Day budget.** `CREDIT_CEILING_DAY` (2000) caps credits per local (`DISPLAY_TZ`) day, summed from
+  the engines' own reported usage (Kiro prints `Credits: N • Time: …` per run; Claude Code reports
+  nothing, so only Kiro spend is counted). No new agent session starts once the ceiling is reached,
+  so an overshoot costs one run at most. Counted per day rather than per shift so a crash-restart
+  loop cannot reset the budget. Set it to `0` to disable — at which point nothing bounds a bad night.
+  It is a human concept, so it is keyed to the day you are having, not UTC's — see Timezones below.
 
-  A spent budget **does not** set the kill switch: it idles and resumes by itself at `00:00Z`,
+  A spent budget **does not** set the kill switch: it idles and resumes by itself at local midnight,
   re-checking every five minutes so that raising the ceiling also resumes it. A budget that needed a
   human to clear it would stop the factory on Tuesday and leave it stopped all week.
 
@@ -148,9 +149,10 @@ The QA lab's `cron: "30 3 * * *"` is 09:00 IST; Actions cron cannot be expressed
 
 ## Daily digest
 
-The factory comments once per UTC day on a single issue labelled `factory:digest`, creating it on
-first run. One comment a day is a phone notification and a permanent record; editing a body in place
-would be neither. It carries the day's spend against the ceiling, the kill-switch state, what merged
+The factory comments once per local (`DISPLAY_TZ`) day on a single issue labelled `factory:digest`,
+creating it on first run, posted at or after `DIGEST_HOUR` local time rather than at UTC rollover.
+One comment a day is a phone notification and a permanent record; editing a body in place would be
+neither. It carries the day's spend against the ceiling, the kill-switch state, what merged
 in the last 24 hours, every open PR with its mergeability and labels, issues labelled `decision` or
 `agent:blocked` that are waiting on a human, and any alerts raised since the last digest. Close the
 issue to stop the digest.
