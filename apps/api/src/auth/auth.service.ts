@@ -571,7 +571,7 @@ async function insertWorkspaceWithUniqueSlug(
         ? base
         : attempt < 20
           ? `${base}-${attempt + 1}`
-          : `${base}-${randomBytes(6).toString("base64url")}`;
+          : `${base}-${randomBytes(6).toString("hex")}`;
 
     const [workspace] = await tx
       .insert(workspaces)

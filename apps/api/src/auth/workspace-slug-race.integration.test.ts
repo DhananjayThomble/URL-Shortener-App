@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { JwtService } from "@nestjs/jwt";
 import { createDatabase, domains, eq, inArray, memberships, users, workspaces, type Database } from "@snapurl/database";
+import { UpdateWorkspaceInput } from "@snapurl/contract";
 import { AuthService } from "./auth.service.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
@@ -126,5 +127,16 @@ describeDb("AuthService workspace slug allocation under concurrency", () => {
     const slugs = rows.map((r) => r.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
     expect(slugs.length).toBe(CONCURRENCY);
+
+    // Every allocated slug — including the past-the-ladder fallback — must
+    // also be well-formed, not merely unique: `PATCH /workspaces/current`
+    // validates a resubmitted (unchanged) slug against this same schema
+    // (`UpdateWorkspaceInput.shape.slug`), so a generated slug outside the
+    // contract's charset locks the workspace's owner out of settings
+    // permanently. Asserted against the contract's own schema, not a copy
+    // of its regex, so the two cannot drift.
+    for (const slug of slugs) {
+      expect(() => UpdateWorkspaceInput.shape.slug.parse(slug)).not.toThrow();
+    }
   });
 });
