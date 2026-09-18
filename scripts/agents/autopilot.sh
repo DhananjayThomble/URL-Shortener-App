@@ -75,7 +75,12 @@ DIGEST_HOUR="${DIGEST_HOUR:-9}"
 
 LOG_DIR=".agent-logs/$(date -u +%Y%m%d)"
 mkdir -p "$LOG_DIR" "$STATE_DIR"
-log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_DIR/autopilot.log" >&2; }
+# Timestamped in DISPLAY_TZ and always labelled with the zone. journald stamps its own prefix in
+# whatever TZ the reader passes, so an unlabelled local time next to it produced two different
+# clocks on one line; the label makes the line unambiguous whichever way the journal is read.
+log() {
+  echo "[$(TZ="$DISPLAY_TZ" date '+%H:%M:%S %Z')] $*" | tee -a "$LOG_DIR/autopilot.log" >&2
+}
 
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0

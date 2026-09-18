@@ -500,6 +500,16 @@ else
   ok "the budget file is not the UTC day when they differ (zones agree right now; skipped)"
 fi
 
+# Log lines sit next to journald's own prefix, which the reader can render in any zone, so the
+# factory's timestamps must say which clock they are on.
+reset_stubs; load
+DISPLAY_TZ=Asia/Kolkata
+line=$(log "hello" 2>&1)
+contains "$line" "IST" "log lines name their timezone so they cannot be misread next to journald's prefix"
+is "$(echo "$line" | grep -cE '^\[[0-9]{2}:[0-9]{2}:[0-9]{2} [A-Z]{3,5}\] hello$')" 1 "log format is [HH:MM:SS ZONE] message"
+DISPLAY_TZ=UTC
+contains "$(log "hi" 2>&1)" "UTC" "with DISPLAY_TZ=UTC the log says UTC"
+
 # Rendering must not leak into artefacts that have to line up with GitHub and CI.
 reset_stubs; load
 DISPLAY_TZ=Pacific/Kiritimati
