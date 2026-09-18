@@ -651,6 +651,7 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["PATCH"], pattern: /^\/reports\/([^/]+)$/ },
   { methods: ["GET"], pattern: /^\/reports$/ },
   { methods: ["GET", "POST"], pattern: /^\/public\/forms\/([^/]+)$/ },
+  { methods: ["GET"], pattern: /^\/public\/bio-pages\/([^/]+)$/ },
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/unlock$/ },
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/report$/ },
   { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/preview$/ },
@@ -707,6 +708,12 @@ export async function fixtureRequest<T>(
     } satisfies TotpSetup;
   } else if (m(/^\/auth\/2fa\/enable$/)) {
     // Ten codes, shown once. Fixed strings so a reviewer can see the shape.
+    // Reflect the new state in the members list — the settings UI derives the
+    // current user's 2FA status from Member.twoFactor (matched by email, since
+    // Member.id is the membership id not the user id), so without this the
+    // fixtures lane would show the button doing nothing.
+    const self = memberStore.find((x) => x.email.toLowerCase() === SESSION.user.email.toLowerCase());
+    if (self) self.twoFactor = true;
     data = {
       recoveryCodes: Array.from({ length: 10 }, (_, i) => `${1000 + i * 137}-${7300 - i * 91}`),
     } satisfies TotpRecoveryCodes;
@@ -716,7 +723,11 @@ export async function fixtureRequest<T>(
     const code = (opts.body as { code?: string })?.code ?? "";
     if (code !== "123456") throw new Error("That code isn't right. Try again.");
     data = SESSION;
-  } else if (m(/^\/auth\/2fa\/disable$/)) data = undefined;
+  } else if (m(/^\/auth\/2fa\/disable$/)) {
+    const self = memberStore.find((x) => x.email.toLowerCase() === SESSION.user.email.toLowerCase());
+    if (self) self.twoFactor = false;
+    data = undefined;
+  }
   /* ---- workspace ---- */
   else if (m(/^\/workspaces\/current$/) && method === "PATCH") {
     Object.assign(WORKSPACE, opts.body as UpdateWorkspaceInput);
@@ -1051,6 +1062,24 @@ export async function fixtureRequest<T>(
     removeById(bioStore, m(/^\/bio-pages\/([^/]+)$/)![1]);
     data = undefined;
   } else if (m(/^\/bio-pages$/)) data = bioStore;
+  /* ---- public bio page (#457) ---- */
+  else if (m(/^\/public\/bio-pages\/([^/]+)$/)) {
+    const slug = m(/^\/public\/bio-pages\/([^/]+)$/)![1];
+    // Mirrors the server: only a LIVE page resolves; a draft or missing slug
+    // 404s rather than leaking that it exists.
+    const page = bioStore.find((b) => b.slug === slug && b.status === "live");
+    if (!page) throw new Error(`No fixture bio page ${path}`);
+    data = {
+      slug: page.slug,
+      profile: { name: page.profile.name, bio: page.profile.bio, initials: page.profile.initials },
+      blocks: page.blocks.map((b) => ({
+        kind: b.kind,
+        title: b.title,
+        subtitle: b.subtitle ?? null,
+        href: (b as { href?: string | null }).href ?? null,
+      })),
+    };
+  }
   /* ---- abuse reports (operator side, #291) ---- */
   else if (m(/^\/reports\/([^/]+)$/) && method === "PATCH") {
     const report = reportStore.find((r) => r.id === m(/^\/reports\/([^/]+)$/)![1]);

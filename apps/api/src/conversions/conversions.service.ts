@@ -119,6 +119,18 @@ export class ConversionsService {
         .limit(1);
       if (!link) throw new BadRequestException(`No link with the back-half "${input.slug}" in this workspace.`);
       linkId = link.id;
+    } else if (linkId) {
+      /* The slug branch above has always been workspace-scoped; a caller-supplied
+         linkId was not checked at all, so a conversion could be written against
+         another workspace's link. The report joins links on conversions.linkId, so
+         such a row also surfaces that link's slug and destination to the wrong
+         tenant. Resolve it under the same scope the slug branch uses. */
+      const [link] = await this.db
+        .select({ id: links.id })
+        .from(links)
+        .where(and(eq(links.workspaceId, workspaceId), eq(links.id, linkId)))
+        .limit(1);
+      if (!link) throw new BadRequestException("No link with that id in this workspace.");
     }
 
     const [workspace] = await this.db
