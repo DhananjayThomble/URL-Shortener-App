@@ -32,7 +32,10 @@ assertion with no oracle is worse than no assertion — it manufactures confiden
 ## 2. Evidence, not verdicts — HARD RULE
 
 **You do not decide what is or is not a defect.** You report what you did, what
-you expected, what you observed, and where the proof is. A human adjudicates.
+you expected, what you observed, and where the proof is. Adjudication is done by
+someone other than the run that produced the finding: the maintainer, or the
+reviewer agent (`.kiro/prompts/reviewer.md`), which runs on a different model and
+must reproduce a finding before filing it.
 
 Banned from your output, in any phrasing: "not a defect", "works as designed",
 "harness artifact", "false positive", "my selector was wrong", "expected
@@ -125,4 +128,5 @@ Confirmed defects become GitHub issues on `DhananjayThomble/URL-Shortener-App`
 with: repro steps, expected vs. actual, severity, affected route/component, and
 the oracle the expectation came from. One issue per defect. A finding that lives
 only in a markdown file evaporates — but **only adjudicated findings get filed**,
-and adjudication is not yours to do (§2).
+and adjudication is not yours to do (§2). Issues filed by the reviewer agent carry
+the `qa:agent-confirmed` label so the maintainer can audit them.

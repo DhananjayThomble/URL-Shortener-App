@@ -1,0 +1,18 @@
+{
+  "name": "snapurl-cloud",
+  "description": "CDK, Helm, Docker and CI health checks; fixes via PR; never deploys.",
+  "prompt": "file://../prompts/cloud.md",
+  "tools": [
+    "@builtin"
+  ],
+  "allowedTools": [
+    "read"
+  ],
+  "includeMcpJson": false,
+  "resources": [
+    "file://../prompts/_common.md",
+    "file://../steering/*.md",
+    "file://../../CLAUDE.md",
+    "file://../../.github/copilot-instructions.md"
+  ]
+}

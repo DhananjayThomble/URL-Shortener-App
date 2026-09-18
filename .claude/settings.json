@@ -1,0 +1,50 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm:*)",
+      "Bash(npx playwright:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git fetch:*)",
+      "Bash(git worktree:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(semgrep:*)",
+      "Bash(gitleaks:*)",
+      "Bash(trivy:*)",
+      "Bash(osv-scanner:*)",
+      "Bash(actionlint:*)",
+      "Bash(hadolint:*)",
+      "mcp__playwright",
+      "mcp__chrome-devtools"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push origin main:*)",
+      "Bash(gh repo edit:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh api -X DELETE:*)",
+      "Bash(cdk deploy:*)",
+      "Bash(pnpm --filter ./infra exec cdk deploy:*)",
+      "Bash(aws * create-*:*)",
+      "Bash(aws * delete-*:*)",
+      "Bash(aws * put-*:*)",
+      "Bash(aws * update-*:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./.gh-token)"
+    ]
+  },
+  "enableAllProjectMcpServers": true
+}
