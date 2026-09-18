@@ -41,6 +41,15 @@ export const Roles = (...roles: Array<"owner" | "admin" | "editor" | "viewer">) 
   SetMetadata(REQUIRED_ROLES, roles);
 
 export const REQUIRED_SCOPE = "requiredScope";
+/** Names the API-key scope a route requires.
+ *
+ *  API keys fail CLOSED: a route with no `@Scope` is **not reachable by an API
+ *  key at all** (it 403s), because the absence of a decorator means "outside the
+ *  key surface", not "unrestricted". So a route that should be callable with a
+ *  key MUST declare a scope from `API_SCOPES` (packages/contract/src/workspace.ts)
+ *  — omitting it fails silently at runtime, not at compile time. Session callers
+ *  are unaffected; they carry no scopes and are governed by `@Roles`. See the
+ *  fail-closed ADR in docs/DECISIONS.md. */
 export const Scope = (scope: string) => SetMetadata(REQUIRED_SCOPE, scope);
 
 export const Actor = createParamDecorator((_data: unknown, ctx: ExecutionContext): RequestActor => {
@@ -108,8 +117,30 @@ export class AuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (scope && request.actor.scopes && !request.actor.scopes.includes(scope)) {
-      throw new ForbiddenException(`This API key is missing the "${scope}" scope.`);
+
+    /* API keys fail CLOSED.
+
+       Scope used to be checked only when a route declared @Scope, so every route
+       without one accepted any valid key regardless of what it was granted — the
+       absence of a decorator read as "no restriction" rather than "not part of the
+       API surface". A key scoped [links:read] could therefore read the member
+       roster, including each member's email and whether they have 2FA enabled.
+
+       API_SCOPES (packages/contract/src/workspace.ts) is a closed set covering
+       links, analytics, domains and conversions. Nothing in it grants members,
+       workspaces, developers or bio-pages, so a key was never granted authority
+       over those — it only reached them because nothing said no. A key may now
+       reach a route only if that route names a scope the key actually holds.
+
+       User sessions are unaffected: they carry no scopes and are governed by
+       @Roles above. */
+    if (request.actor.apiKeyId) {
+      if (!scope) {
+        throw new ForbiddenException("This route is not available to API keys.");
+      }
+      if (!request.actor.scopes?.includes(scope)) {
+        throw new ForbiddenException(`This API key is missing the "${scope}" scope.`);
+      }
     }
 
     return true;
