@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { seedSession } from "../support/session";
+import { createRealLink, registerRealUser, seedSessionTokens } from "../support/real-session";
 
 /* ============================================================
    Issue #459 — programmatic-label audit (axe `label` + `select-name`).
@@ -15,16 +16,40 @@ import { seedSession } from "../support/session";
    components regardless of the data source, but running real keeps this audit
    honest and identical to the run that first filed #438.
 
-   Coverage: every (app) route that renders a form or a filter control, plus the
-   create-link drawer (its `Field` inputs were the specific `label`-rule nodes in
-   #438) — across two viewports (1280 / 390) and two themes (light / dark).
+   --- What this scans (be precise; the issue counts routes) ---
+   11 static (app) routes in ROUTES below, each × 2 viewports × 2 themes = 44 checks.
+   Plus per (viewport × theme):
+     · the create-link drawer, walking its 6 tabs               → 4 checks
+     · the /links/[id] detail page's "Edit destination" Field   → 4 checks
+   Total = 52 checks. (An earlier revision of this file said "13 routes" and
+   scanned 11; that prose was wrong. The set below is the real set.)
+
+   --- Coverage gaps (qa-oracles §3 requires stating these) ---
+   · /links/[id] is a DYNAMIC route: the a11y config drops the entity-seed
+     globalSetup, so there is no pre-seeded link to open. The dedicated test
+     below registers its own account and creates ONE link via the API, then
+     scans that page's `<Field label="Destination">` — the same Field
+     association the whole issue turns on. If the API is unreachable that test
+     errors (it does not silently pass).
+   · Auth routes (/login, /register, /2fa, /forgot) live OUTSIDE (app) and are
+     NOT scanned here — this audit is scoped to the authenticated dashboard,
+     matching the surface #438/#459 were filed against.
+   · Modals/menus that only open on a specific row action (e.g. per-link
+     dropdowns) beyond the create-link drawer are not exhaustively opened.
+
+   --- CI does NOT run this suite ---
+   Nothing in .github/workflows/, the root package.json or e2e/package.json
+   references playwright.a11y.config.ts or e2e/a11y. `pnpm test:e2e` resolves to
+   the fixtures config (testDir: ./tests) and never matches these files. This is
+   a manual QA-lab suite, run against a live staging stack; it is a guard you
+   invoke, not a gate that runs on every push. Wiring it into the QA lab is
+   tracked separately.
    ============================================================ */
 
 const RULES = ["label", "select-name"];
 
 const ROUTES = [
   "/links",
-  "/links/new", // not a real route; the drawer opens on /links — see the drawer block below
   "/analytics",
   "/conversions",
   "/forms",
@@ -35,7 +60,7 @@ const ROUTES = [
   "/team",
   "/reports",
   "/settings",
-].filter((r) => r !== "/links/new");
+];
 
 const VIEWPORTS = [
   { name: "desktop", width: 1280, height: 900 },
@@ -101,6 +126,28 @@ for (const theme of THEMES) {
           const found = summarise(violations);
           expect(found, `tab "${tabName}": ${JSON.stringify(found, null, 2)}`).toEqual([]);
         }
+      });
+
+      test("/links/[id] Edit destination Field has no label/select-name violations", async ({ page }) => {
+        // Dynamic route: no globalSetup seeds a link, so create one against the
+        // real API as a fresh account and drive the browser as that same account.
+        // The `<Field label="Destination">` at links/[id]/page.tsx is exactly the
+        // association this issue turns on; it only mounts after clicking "Edit".
+        const session = await registerRealUser();
+        const link = await createRealLink(session);
+        await seedSessionTokens(page, session);
+
+        await page.goto(`/links/${link.id}`);
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+        // Field label + associated input must be present before scanning. Match
+        // the control by its exact accessible name — "Destination" as a substring
+        // also appears in the topbar search's aria-label and the Cancel button.
+        await expect(page.getByRole("textbox", { name: "Destination", exact: true })).toBeVisible();
+
+        const { violations } = await runAxe(page);
+        const found = summarise(violations);
+        expect(found, JSON.stringify(found, null, 2)).toEqual([]);
       });
     });
   }
