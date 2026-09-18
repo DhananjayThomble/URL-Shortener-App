@@ -7,7 +7,9 @@
 # developer(s) → every SLOT_EVERY cycles, one ROTATION role (default: cloud) → sleep.
 # Any role runs on Claude Code or Kiro CLI; see "Engines" below and docs/AGENTIC-DEV.md.
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)"
+# Without the guard a failed rev-parse would leave the loop running in whatever directory it
+# started in, writing state and logs somewhere unexpected.
+cd "$(git rev-parse --show-toplevel)" || { echo "not inside a git checkout" >&2; exit 1; }
 
 REPO="${REPO:-DhananjayThomble/URL-Shortener-App}"
 HOURS="${HOURS:-4}"
@@ -30,19 +32,55 @@ ENGINE_REVIEWER="${ENGINE_REVIEWER:-claude}"
 ENGINE_DEVELOPER="${ENGINE_DEVELOPER:-kiro}"
 ENGINE_QA="${ENGINE_QA:-kiro}"
 COOLDOWN_MIN="${COOLDOWN_MIN:-60}"
+# State that governs spend and cooldowns. Keep it off the working tree on a real host
+# (STATE_DIR=/var/lib/snapurl): `git clean` in here would otherwise reset the budget.
 STATE_DIR="${STATE_DIR:-.agent-state}"
-# Models per engine. The reviewer is always on an Opus-class model and every other role is not,
-# so whichever engines are in use, no model reviews its own work.
+# Models per engine. Two independent guarantees:
+#   1. the reviewer never runs the model that wrote the code, and
+#   2. on Kiro the reviewer runs a *different vendor's* model, so its blind spots are not
+#      correlated with the developer's. Kiro's catalogue is multi-vendor; Claude Code is not,
+#      so on Claude the best available separation is Opus-over-Sonnet.
 CLAUDE_MODEL_REVIEWER="${CLAUDE_MODEL_REVIEWER:-opus}"
 CLAUDE_MODEL_DEFAULT="${CLAUDE_MODEL_DEFAULT:-sonnet}"
-KIRO_MODEL_REVIEWER="${KIRO_MODEL_REVIEWER:-claude-opus-5}"
+KIRO_MODEL_REVIEWER="${KIRO_MODEL_REVIEWER:-gpt-5.6-terra}"
 KIRO_MODEL_DEFAULT="${KIRO_MODEL_DEFAULT:-claude-sonnet-5}"
+# Reasoning effort (Kiro only; valid: low|medium|high|xhigh|max). The reviewer is the component
+# that lets an absent maintainer trust a merge, so it gets the ceiling; everything else runs one
+# step below it. Both raise credit burn per run, which is what CREDIT_CEILING_DAY is there to bound.
+KIRO_EFFORT_REVIEWER="${KIRO_EFFORT_REVIEWER:-max}"
+KIRO_EFFORT_DEFAULT="${KIRO_EFFORT_DEFAULT:-xhigh}"
+
+# How many trailing lines of a run's log may be used to classify why it failed. The whole log is
+# never searched: agents print issue bodies, API responses and the product's own UI. A live run
+# was aborted because SnapURL's click-quota bar says "One quota, clicks only" and a sad-path test
+# captured a 401 body — on a run that had exited 0.
+TAIL_LINES="${TAIL_LINES:-200}"
+# Consecutive cycles in which every role failed for a non-quota reason (missing binary, bad model
+# name, crash) before the factory pauses itself. A broken engine cannot do work, so grinding on is
+# pure spend. Fail closed and wait for a human.
+BROKEN_CYCLES_MAX="${BROKEN_CYCLES_MAX:-3}"
+# Rolling credit ceiling for one factory day, summed from the engines' own reported usage. Counted
+# per day rather than per shift so a crash-restart loop cannot reset the budget. 0 disables it.
+CREDIT_CEILING_DAY="${CREDIT_CEILING_DAY:-2000}"
+# The timezone the factory *talks* in. Timestamps the machine has to match against something else —
+# run ids, log directories, GitHub, Actions cron — stay UTC, because those systems are UTC and no
+# local clock can change that. Everything a human reads, and every boundary a human reasons about
+# ("today's spend", "the daily summary"), uses this. Set DISPLAY_TZ=UTC to render in UTC.
+DISPLAY_TZ="${DISPLAY_TZ:-Asia/Kolkata}"
+# Local hour (0-23) at or after which the daily digest is posted. Deliberately not midnight: a
+# summary that arrives at 05:30 was written for the machine's convenience, not the reader's.
+DIGEST_HOUR="${DIGEST_HOUR:-9}"
 
 [ -n "${AGENT_GH_TOKEN:-}" ] && export GH_TOKEN="$AGENT_GH_TOKEN"
 
 LOG_DIR=".agent-logs/$(date -u +%Y%m%d)"
 mkdir -p "$LOG_DIR" "$STATE_DIR"
-log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_DIR/autopilot.log" >&2; }
+# Timestamped in DISPLAY_TZ and always labelled with the zone. journald stamps its own prefix in
+# whatever TZ the reader passes, so an unlabelled local time next to it produced two different
+# clocks on one line; the label makes the line unambiguous whichever way the journal is read.
+log() {
+  echo "[$(TZ="$DISPLAY_TZ" date '+%H:%M:%S %Z')] $*" | tee -a "$LOG_DIR/autopilot.log" >&2
+}
 
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
@@ -59,8 +97,12 @@ engine_mode() {
     "engine:claude") echo claude; return ;;
     "engine:kiro") echo kiro; return ;;
   esac
-  file=$(tr -d '[:space:]' < "$STATE_DIR/engine-mode" 2>/dev/null)
-  case "$file" in claude|kiro|auto) echo "$file"; return ;; esac
+  # `2>/dev/null` on a redirect does not suppress the shell's own "No such file" for it, and this
+  # runs every cycle, so the absence of the file is checked rather than tolerated.
+  if [ -r "$STATE_DIR/engine-mode" ]; then
+    file=$(tr -d '[:space:]' < "$STATE_DIR/engine-mode")
+    case "$file" in claude|kiro|auto) echo "$file"; return ;; esac
+  fi
   echo "$ENGINE_MODE"
 }
 
@@ -86,35 +128,276 @@ model_for() { # engine role
   fi
 }
 
-# Only a failed run's last lines count: agents print issue text, API responses and their own
-# summaries, and this product has rate limits and 401s of its own, so matching a whole log misfires.
-hit_limit() { # rc logfile
-  [ "$1" -ne 0 ] && tail -n 30 "$2" | grep -qiE "usage limit|rate limit|quota|out of credits|insufficient credits|credit limit|not logged in|unauthori[sz]ed"
+effort_for() { # engine role   (Kiro only; Claude Code has no effort flag)
+  [ "$1" = claude ] && return 0
+  [ "$2" = reviewer ] && echo "$KIRO_EFFORT_REVIEWER" || echo "$KIRO_EFFORT_DEFAULT"
+}
+
+# A model's vendor family, used to prove the reviewer is not the author's sibling.
+model_family() { # model
+  case "$1" in
+    *opus*|*sonnet*|*haiku*|claude*) echo anthropic ;;
+    gpt-*|o[0-9]*) echo openai ;;
+    glm*) echo zai ;;
+    deepseek*) echo deepseek ;;
+    minimax*) echo minimax ;;
+    qwen*) echo qwen ;;
+    *) echo unknown ;;
+  esac
+}
+
+# Warns rather than fails: a maintainer overriding the models deserves a heads-up, not a halt.
+check_reviewer_independence() { # engine
+  local r d
+  r=$(model_family "$(model_for "$1" reviewer)")
+  d=$(model_family "$(model_for "$1" developer)")
+  [ "$r" != "$d" ] && return 0
+  log "note: on $1 the reviewer and developer models are both $r; review errors may correlate"
+}
+
+strip_ansi() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z]//g'; }
+
+# Quota exhaustion, as the engines themselves report it. Deliberately narrow: bare "quota" and
+# bare "unauthorized" both occur in this product's own output and cost us a cycle already.
+LIMIT_RE='usage limit|rate limit(ed)? (reached|exceeded)|quota (exceeded|reached|exhausted)|out of credits|insufficient credits|credit limit|too many requests|429 |resource_exhausted'
+AUTH_RE='not logged in|login required|please (log|sign) in to (use|continue using)|invalid (api )?key|authentication failed|credentials (are )?(invalid|expired)'
+
+limit_text() { # logfile
+  tail -n "$TAIL_LINES" "$1" 2>/dev/null | strip_ansi | grep -qiE "$LIMIT_RE|$AUTH_RE"
+}
+
+# ok | limited | timeout | broken.
+#   ok      the run finished. Even if its text mentions a quota, it did the work.
+#   limited the engine refused for quota/auth reasons: retry elsewhere, cool this engine down.
+#   timeout it used the whole AGENT_TIMEOUT: never retried, because a retry costs as much again.
+#   broken  a missing binary, a rejected --model, a crash: no engine cooldown, but escalate.
+classify_run() { # rc logfile
+  case "$1" in
+    0)   echo ok ;;
+    124) echo timeout ;;
+    *)   limit_text "$2" && echo limited || echo broken ;;
+  esac
+}
+
+# Kiro ends a run with "▸ Credits: 13.11 • Time: 15m 57s"; Claude Code reports no usage, so its
+# spend is invisible here and the ceiling only governs Kiro. Prints nothing when absent.
+#
+# Anchored on the whole footer, not on "credits: N" alone. Agents print arbitrary text — including
+# this repo's own documentation about credits — and a number lifted from an agent's prose would
+# corrupt the ceiling in whichever direction the text happened to say.
+run_credits() { # logfile
+  tail -n 20 "$1" 2>/dev/null | strip_ansi \
+    | grep -oiE 'Credits:[[:space:]]*[0-9]+(\.[0-9]+)?[[:space:]]*•[[:space:]]*Time:' | tail -n 1 \
+    | grep -oE '[0-9]+(\.[0-9]+)?'
+}
+
+# The factory's own day, in the timezone it reports in. A budget is a human concept: "spend today"
+# has to mean the reader's today, or the number in the digest never matches the day they are having.
+factory_day() { TZ="$DISPLAY_TZ" date +%Y%m%d; }
+
+credit_file() { echo "$STATE_DIR/credits-$(factory_day)"; }
+
+add_credits() { # amount
+  local f total
+  [ -n "${1:-}" ] || return 0
+  f=$(credit_file)
+  total=$(awk -v a="$(cat "$f" 2>/dev/null || echo 0)" -v b="$1" 'BEGIN{printf "%.2f", a+b}')
+  echo "$total" > "$f"
+  log "spend today: $total credits"
+}
+
+# Hard stop, not advice: an unattended overspend is the failure a solo maintainer cannot catch.
+over_budget() {
+  [ "$CREDIT_CEILING_DAY" = 0 ] && return 1
+  awk -v t="$(cat "$(credit_file)" 2>/dev/null || echo 0)" -v c="$CREDIT_CEILING_DAY" \
+    'BEGIN{exit !(t>=c)}'
+}
+
+# Everything an absent maintainer must be told, in one place the digest can read.
+alert() { # subject
+  log "!! $*"
+  printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$*" >> "$STATE_DIR/alerts.log"
+}
+
+# Stops the loop the same way the human kill switch does, so recovery is one documented action.
+# Reserved for conditions a human must actually look at; a spent budget is not one of them.
+pause_factory() { # reason
+  alert "pausing the factory: $1"
+  : > "$PAUSE_FILE"
+}
+
+# A day budget is a budget, not a kill switch. Setting $PAUSE_FILE here would be wrong: the budget
+# resets when the factory day rolls over but the kill switch does not, so a factory that spent its
+# allowance on Tuesday would still be stopped on Friday, waiting for a human who is away. Idle
+# instead, and resume by itself. Re-checked every 5 minutes so raising the ceiling also resumes it.
+wait_out_budget() {
+  local nap
+  alert "day budget of $CREDIT_CEILING_DAY credits reached ($(cat "$(credit_file)" 2>/dev/null) spent); idling until midnight $(TZ="$DISPLAY_TZ" date +%Z)"
+  while over_budget; do
+    [ "$(date +%s)" -lt "$END" ] || { log "shift ended while over budget"; return 1; }
+    paused && { log "paused while over budget"; return 1; }
+    nap=$(( $(TZ="$DISPLAY_TZ" date -d 'tomorrow 00:00' +%s 2>/dev/null || echo 0) - $(date +%s) ))
+    { [ "$nap" -gt 300 ] || [ "$nap" -le 0 ]; } && nap=300
+    sleep "$nap"
+  done
+  log "budget window rolled over; resuming"
+}
+
+# Counted by run_agent, read by the circuit breaker. Declared here so the functions are safe to
+# source and test on their own.
+CYCLE_WORKED=0
+CYCLE_BROKEN=0
+
+# --- Daily digest -------------------------------------------------------------------------------
+# The maintainer is a solo engineer with a day job: the factory must be readable in a couple of
+# minutes without opening a laptop. One comment a day on one issue gives a phone notification and
+# a permanent record, which editing a body in place would not.
+DIGEST_LABEL="${DIGEST_LABEL:-factory:digest}"
+# Everything above computes in UTC and always will: the host is UTC, GitHub's API returns UTC, and
+# Actions cron is UTC-only, so a local clock anywhere in the machinery would make correlating a
+# factory log line with a CI run an exercise in arithmetic. This is the one place a human reads, so
+# it is the one place that renders local time. Set DISPLAY_TZ=UTC to turn it off.
+DISPLAY_TZ="${DISPLAY_TZ:-Asia/Kolkata}"
+
+# "2026-09-18 18:56 IST (13:26Z)" — local first because that is the one being read, UTC in
+# parentheses so it can still be matched against a log line or a GitHub timestamp.
+local_stamp() {
+  local l z
+  l=$(TZ="$DISPLAY_TZ" date "+%F %H:%M %Z" 2>/dev/null)
+  z=$(date -u +%H:%MZ)
+  if [ -n "$l" ] && [ "$DISPLAY_TZ" != UTC ]; then echo "$l ($z)"; else date -u "+%F %H:%MZ"; fi
+}
+
+digest_issue() {
+  local n
+  n=$(gh issue list -R "$REPO" --state open --label "$DIGEST_LABEL" --limit 1 \
+    --json number -q '.[0].number' 2>/dev/null)
+  if [ -z "$n" ] || [ "$n" = null ]; then
+    gh label create "$DIGEST_LABEL" -R "$REPO" -c ededed \
+      -d "Daily autopilot digest for the maintainer" >/dev/null 2>&1
+    n=$(gh issue create -R "$REPO" --title "Factory digest" --label "$DIGEST_LABEL" \
+      --body "The autopilot comments here once a day: what merged, what is stuck, what needs your decision, and what it cost. Close this issue to stop the digest." \
+      2>/dev/null | grep -oE '[0-9]+$')
+  fi
+  [ -n "$n" ] && echo "$n"
+}
+
+digest_now() { # reason
+  local n body since spent alerts merged open waiting blocked
+  n=$(digest_issue) || return 0
+  [ -n "$n" ] || { log "digest: no issue to post to"; return 0; }
+  since=$(date -u -d '24 hours ago' +%F 2>/dev/null || echo "")
+  spent=$(cat "$(credit_file)" 2>/dev/null || echo 0)
+  alerts=$(tail -n 20 "$STATE_DIR/alerts.log" 2>/dev/null | sed 's/^/- /')
+
+  # Each section is built in its own variable with a single-quoted jq filter. Inlining these in the
+  # body string meant the filters sat inside a double-quoted "$( )" and had to be backslash-escaped;
+  # the backslashes reached jq literally, it refused the program, and because the call was
+  # `|| true` the section rendered blank instead of failing. Never nest a jq filter in a quoted body.
+  merged=$(gh pr list -R "$REPO" --state merged --search "merged:>=$since" --limit 20 \
+    --json number,title -q '.[] | "- #\(.number) \(.title)"' 2>/dev/null)
+  # `join` on an empty array is "", and jq's // only substitutes null/false, so an unlabelled PR
+  # needs an explicit emptiness test rather than `// "no labels"`.
+  open=$(gh pr list -R "$REPO" --state open --limit 20 \
+    --json number,title,mergeStateStatus,labels \
+    -q '.[] | ([.labels[].name] | join(", ")) as $l
+        | "- #\(.number) [\(.mergeStateStatus)] \(.title) — \(if $l == "" then "no labels" else $l end)"' \
+    2>/dev/null)
+  waiting=$(gh issue list -R "$REPO" --state open --label decision --limit 10 \
+    --json number,title -q '.[] | "- #\(.number) \(.title)"' 2>/dev/null)
+  blocked=$(gh issue list -R "$REPO" --state open --label agent:blocked --limit 10 \
+    --json number,title -q '.[] | "- #\(.number) (blocked) \(.title)"' 2>/dev/null)
+
+  body="## Factory digest — $(local_stamp)
+_Trigger: $1._
+
+**Spend today:** $spent / ${CREDIT_CEILING_DAY} credits (Kiro-reported; Claude Code usage is not counted).
+Budget day is midnight-to-midnight $(TZ="$DISPLAY_TZ" date +%Z) and resets by itself.
+**Kill switch:** $([ -f "$PAUSE_FILE" ] && echo '**PAUSED** — clear it with `factory-pause off`' || echo 'running')
+
+### Merged in the last 24h
+${merged:-_none_}
+
+### Open PRs
+${open:-_none_}
+
+### Waiting on you
+${waiting:-_no decisions pending_}
+${blocked:-}
+
+### Recent alerts
+${alerts:-_none_}"
+
+  if gh issue comment "$n" -R "$REPO" --body "$body" >/dev/null 2>&1; then
+    log "digest posted to #$n"
+  else
+    log "digest post failed; kept in $STATE_DIR/alerts.log"
+  fi
+}
+
+# Once per factory day, and not before DIGEST_HOUR local. Firing on the first cycle after the day
+# rolls over would deliver the summary at 05:30 IST — written for the machine's convenience. This
+# waits until the reader's morning, then posts on the first cycle at or after it.
+digest_daily() {
+  local stamp hour
+  hour=$(TZ="$DISPLAY_TZ" date +%-H 2>/dev/null || echo 0)
+  [ "$hour" -ge "$DIGEST_HOUR" ] || return 0
+  stamp="$STATE_DIR/digest-$(factory_day)"
+  [ -f "$stamp" ] && return 0
+  : > "$stamp"
+  digest_now "daily"
 }
 
 run_agent() { # role preferred-engine task
-  local role=$1 pref=$2 task=$3 engine model out rc attempt
-  # Checked here, not only per cycle: a long session must not be followed by another one
-  # after the kill switch goes on.
-  if paused; then log "skipping $role: paused"; return 99; fi
+  local role=$1 pref=$2 task=$3 engine model effort out rc attempt class credits
   for attempt in 1 2; do
+    # Re-checked every attempt: a retry must not start a fresh 90-minute session after the
+    # kill switch has gone on.
+    if paused; then log "skipping $role: paused"; return 99; fi
+    # Checked per run rather than only per cycle, so an overshoot past the ceiling is bounded by
+    # one agent session instead of a whole cycle's worth of them.
+    if over_budget; then
+      log "skipping $role: day budget of $CREDIT_CEILING_DAY credits reached"
+      return 99
+    fi
     engine=$(pick_engine "$pref")
     if [ -z "$engine" ]; then log "skipping $role: no engine available (mode $MODE)"; return 99; fi
     model=$(model_for "$engine" "$role")
+    effort=$(effort_for "$engine" "$role")
     out="$LOG_DIR/$(date -u +%H%M%S)-$role-$engine.log"
-    log "→ $role ($engine, $model)"
+    [ "$attempt" -gt 1 ] && log "retry $attempt for $role"
+    log "→ $role ($engine, $model${effort:+, effort $effort})"
     if [ "$engine" = claude ]; then
       timeout "$AGENT_TIMEOUT" claude -p "$task" --agent "snapurl-$role" --model "$model" \
         --dangerously-skip-permissions >"$out" 2>&1
     else
       timeout "$AGENT_TIMEOUT" kiro-cli chat --no-interactive --trust-all-tools \
-        --agent "snapurl-$role" --model "$model" "$task" >"$out" 2>&1
+        --agent "snapurl-$role" --model "$model" ${effort:+--effort "$effort"} "$task" >"$out" 2>&1
     fi
     rc=$?
-    log "← $role exit $rc ($out)"
-    hit_limit "$rc" "$out" || return 0
-    # A limited engine's run did no work, so retry it once on whichever engine is left.
-    cool_down "$engine"
+    class=$(classify_run "$rc" "$out")
+    log "← $role exit $rc ($class) ($out)"
+    credits=$(run_credits "$out"); add_credits "$credits"
+
+    case "$class" in
+      ok)
+        # The old check searched whole logs and aborted on text like this; say so and carry on.
+        limit_text "$out" && log "note: $role exited 0 but its tail mentions a limit; treating as success"
+        CYCLE_WORKED=$((CYCLE_WORKED + 1))
+        return 0
+        ;;
+      timeout)
+        alert "$role hit the ${AGENT_TIMEOUT} timeout on $engine; not retried (see $out)"
+        return 1
+        ;;
+      limited)
+        cool_down "$engine"   # retry on whichever engine is left
+        ;;
+      broken)
+        CYCLE_BROKEN=$((CYCLE_BROKEN + 1))
+        alert "$role failed on $engine for a non-quota reason (exit $rc); see $out"
+        ;;
+    esac
   done
   return 99
 }
@@ -200,15 +483,30 @@ merge_approved() {
 # workflow on GitHub Actions, not here; put them back only on a host that does QA.
 read -r -a ROTATION <<<"${ROTATION:-cloud}"
 SLOT_EVERY="${SLOT_EVERY:-3}"
+
+# Sourced by scripts/agents/autopilot.test.sh, which exercises the functions above against stub
+# engines. Everything below this line is the loop itself and must not run during a test.
+[ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
+
 END=$(( $(date +%s) + HOURS * 3600 ))
 cycle=0
 slot_n=0
+broken_streak=0
+
+log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
+check_reviewer_independence claude
+check_reviewer_independence kiro
 
 while [ "$(date +%s)" -lt "$END" ]; do
   if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
+  if over_budget; then wait_out_budget || break; fi
   cycle=$((cycle + 1))
   MODE=$(engine_mode)
   log "=== cycle $cycle (engine mode: $MODE) ==="
+  # Counted per cycle so the circuit breaker can tell "quota exhausted, will self-heal" from
+  # "something is broken and no amount of waiting fixes it".
+  CYCLE_WORKED=0
+  CYCLE_BROKEN=0
   git fetch -q origin
   # Shared memory lives in the ops repo; pull before any agent reads it, push after they write.
   ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
@@ -234,7 +532,23 @@ while [ "$(date +%s)" -lt "$END" ]; do
     ops_push
   fi
 
+  # A quota-limited cycle is not a broken one: its cooldown expires on its own. A cycle where
+  # something failed for another reason and nothing at all succeeded is the one worth stopping for.
+  if [ "$CYCLE_BROKEN" -gt 0 ] && [ "$CYCLE_WORKED" -eq 0 ]; then
+    broken_streak=$((broken_streak + 1))
+    log "no role succeeded this cycle ($broken_streak in a row, limit $BROKEN_CYCLES_MAX)"
+    if [ "$broken_streak" -ge "$BROKEN_CYCLES_MAX" ]; then
+      pause_factory "$broken_streak cycles with no successful run; the engines look broken, not throttled"
+      break
+    fi
+  else
+    broken_streak=0
+  fi
+
+  digest_daily
+
   log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
   sleep $((SLEEP_MIN * 60))
 done
+digest_now "shift ended"
 log "autopilot stopped"

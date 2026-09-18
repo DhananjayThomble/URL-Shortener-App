@@ -48,15 +48,128 @@ Switching, re-read every cycle, first match wins:
 2. **On the Factory:** `factory-engine claude|kiro|auto|status` (writes `.agent-state/engine-mode`).
 3. **Default:** the `ENGINE_MODE` environment variable (`auto`).
 
-Models: the reviewer always runs on an Opus-class model (`opus` on Claude, `claude-opus-5` on Kiro)
-and every other role on a Sonnet-class one (`sonnet`, `claude-sonnet-5`), so no model reviews its own
-work whichever engines are in use. Kiro bills Opus 5 at 2.2× and Sonnet 5 at 1.3× credits.
+**Models and effort.** Two separate guarantees. First, the reviewer never runs the model that wrote
+the code. Second, on Kiro it runs a *different vendor's* model, so its blind spots are not correlated
+with the author's — Kiro's catalogue is multi-vendor, Claude Code's is not, so on Claude the best
+available separation is Opus over Sonnet.
+
+| | Reviewer | Every other role |
+| --- | --- | --- |
+| Kiro | `gpt-5.6-terra` (2.2×), `--effort max` | `claude-sonnet-5` (1.3×), `--effort xhigh` |
+| Claude Code | `opus` | `sonnet` |
+
+Override with `KIRO_MODEL_REVIEWER`, `KIRO_MODEL_DEFAULT`, `KIRO_EFFORT_REVIEWER`,
+`KIRO_EFFORT_DEFAULT`, `CLAUDE_MODEL_REVIEWER`, `CLAUDE_MODEL_DEFAULT`. The autopilot logs a warning
+at shift start if an override leaves the reviewer in the developer's vendor family. Effort raises the
+credit cost of every run, which is what the day budget below is for.
+
+**A caveat on the default reviewer.** `kiro-cli chat --list-models` describes `gpt-5.6-terra` as an
+*"Experimental preview"*. The vendor-independence argument for it is deliberate — it is the component
+that makes an unattended merge trustworthy, so its mistakes should not be the author's mistakes — but
+it does mean the last line of defence runs on a preview model. If you would rather trade
+decorrelation for maturity, `KIRO_MODEL_REVIEWER=claude-opus-5` costs the same 2.2× and is GA; the
+shift-start warning will then tell you the reviewer and developer share a vendor.
 
 **Shared context.** Both tools load the same rules (`CLAUDE.md` imports `.kiro/steering/`, which
 Kiro reads natively) and the same role prompts. Durable memory lives in the private ops repo's
 `memory/` folder: every agent reads it at the start of a run and records what it learns there
 (`_common.md`), and the autopilot commits it after each role. On a person's machine, the ops repo's
 `tools/link-shared-context.sh` points Claude Code's auto-memory and Kiro's steering at the same files.
+
+## What the autopilot does when a run goes wrong
+
+The maintainer is usually away, so the loop has to tell the difference between "try again later",
+"try the other engine" and "stop, this needs a human". Every finished run is classified from its
+exit code and the last `TAIL_LINES` (200) of its log — never the whole log, because agents print
+issue bodies, API responses and the product's own UI. A real cycle was once aborted because a
+*successful* UX audit logged SnapURL's own click-quota bar ("One quota, clicks only") and a 401
+body from a sad-path test.
+
+| Class | When | What happens |
+| --- | --- | --- |
+| `ok` | exit 0 | Counted as work. A quota phrase in the tail is noted and ignored — the run finished. |
+| `limited` | non-zero exit **and** the tail matches a quota/auth pattern | The engine cools down for `COOLDOWN_MIN`; the run is retried once on the other engine. |
+| `timeout` | exit 124 | Alerted, **never retried** — a retry costs another full `AGENT_TIMEOUT`. |
+| `broken` | any other non-zero exit | Alerted, retried once on the other engine. No cooldown: a missing binary or a rejected `--model` is not a quota problem and waiting does not fix it. |
+
+Two circuit breakers then protect an unattended box:
+
+- **Broken streak.** After `BROKEN_CYCLES_MAX` (3) consecutive cycles in which something failed for
+  a non-quota reason and *nothing* succeeded, the factory pauses itself. A throttled factory heals
+  when its cooldown expires; a broken one does not, and grinding on is pure spend.
+- **Day budget.** `CREDIT_CEILING_DAY` (2000) caps credits per local (`DISPLAY_TZ`) day, summed from
+  the engines' own reported usage (Kiro prints `Credits: N • Time: …` per run; Claude Code reports
+  nothing, so only Kiro spend is counted). No new agent session starts once the ceiling is reached,
+  so an overshoot costs one run at most. Counted per day rather than per shift so a crash-restart
+  loop cannot reset the budget. Set it to `0` to disable — at which point nothing bounds a bad night.
+  It is a human concept, so it is keyed to the day you are having, not UTC's — see Timezones below.
+
+  A spent budget **does not** set the kill switch: it idles and resumes by itself at local midnight,
+  re-checking every five minutes so that raising the ceiling also resumes it. A budget that needed a
+  human to clear it would stop the factory on Tuesday and leave it stopped all week.
+
+  **Sizing it.** Measured on 2026-09-18 at default effort: ~51 credits for a cycle of
+  manager+reviewer+developer, ~74 when the rotation slot also runs, ~53 minutes per cycle — about
+  **1,600 credits/day**. Raising effort to `xhigh`/`max` roughly doubles that, so a 2000 ceiling will
+  be reached partway through the day and the factory will idle until midnight. That is a legitimate
+  way to cap spend, but if you want it to run continuously at high effort, budget nearer 3,500, or
+  keep `max` for the reviewer and leave `KIRO_EFFORT_DEFAULT` unset.
+
+The broken-streak breaker pauses via the same kill switch a human uses, so recovery is always the
+one documented action. The budget deliberately does not — see above.
+
+## Timezones
+
+**The host stays on UTC and always will.** GitHub's API returns UTC, Actions cron is UTC-only, and
+CloudWatch and Vercel report UTC, so a local clock in the machinery would mean converting timestamps
+by hand at the exact moment you are debugging. Run ids (`.qa-runs/20260918T…Z-desktop`) and log
+directories (`.agent-logs/20260918/`) stay on the UTC day for the same reason: they have to line up
+with a CI run.
+
+**Everything the factory reports to you is in your timezone.** `DISPLAY_TZ` (default
+`Asia/Kolkata`) governs both what is rendered and the day boundaries a person reasons about:
+
+| | Timezone | Why |
+| --- | --- | --- |
+| Digest header, alerts | `DISPLAY_TZ` | You read them. `2026-09-18 19:02 IST (13:32Z)` — local first, UTC in brackets so it can still be matched to a log line. |
+| "Spend today" / budget day | `DISPLAY_TZ` | A budget is a human concept; *today* has to mean your today. Midnight-to-midnight IST. |
+| Digest posting time | `DISPLAY_TZ` | `DIGEST_HOUR` (default `9`) — the first cycle at or after 09:00 local. **Not** at day rollover, which would deliver the summary at 05:30. |
+| Log dirs, run ids, cron | UTC | Forensic. They must match GitHub and CI. |
+| Cooldowns, shift length | epoch | Timezone-independent by construction. |
+
+`DISPLAY_TZ=UTC` renders everything in UTC if you would rather.
+
+Reading the service log in IST — journald stores UTC but renders in whatever `TZ` you give it:
+
+```bash
+TZ=Asia/Kolkata journalctl -u snapurl-autopilot -f
+```
+
+The QA lab's `cron: "30 3 * * *"` is 09:00 IST; Actions cron cannot be expressed in anything but UTC.
+
+## Daily digest
+
+The factory comments once per local (`DISPLAY_TZ`) day on a single issue labelled `factory:digest`,
+creating it on first run, posted at or after `DIGEST_HOUR` local time rather than at UTC rollover.
+One comment a day is a phone notification and a permanent record; editing a body in place would be
+neither. It carries the day's spend against the ceiling, the kill-switch state, what merged
+in the last 24 hours, every open PR with its mergeability and labels, issues labelled `decision` or
+`agent:blocked` that are waiting on a human, and any alerts raised since the last digest. Close the
+issue to stop the digest.
+
+## Tests
+
+`scripts/agents/autopilot.test.sh` covers the decisions above against stub `claude`, `kiro-cli` and
+`gh` commands — no network, no agent CLIs, no GitHub. It needs only bash, coreutils and awk.
+
+```bash
+bash scripts/agents/autopilot.test.sh
+```
+
+It is **not yet wired into CI.** Adding the job requires a token with `workflow` scope, which the
+agent token deliberately lacks, so the `verify.yml` change (an `agents` path filter and an
+*Autopilot tests* job added to `ci-gate`'s `needs`) has to be applied by the maintainer. Until then
+the suite only runs when someone runs it. Run it by hand after any change to `scripts/agents/`.
 
 ## Board
 
@@ -95,13 +208,18 @@ HOURS=4 bash scripts/agents/autopilot.sh  # or the systemd service; use tmux whe
 
 Knobs (environment variables): `HOURS`, `SLEEP_MIN`, `DEVS_PER_CYCLE`, `AGENT_TIMEOUT`,
 `ENGINE_MODE`, `ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (preferred engine per role in auto mode),
-`COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
+`COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`,
+`KIRO_EFFORT_REVIEWER|DEFAULT`, `TAIL_LINES`, `BROKEN_CYCLES_MAX`, `CREDIT_CEILING_DAY`,
+`DIGEST_LABEL`, `DISPLAY_TZ`, `DIGEST_HOUR`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
 time, default `cloud`) and `SLOT_EVERY` (run the next rotation role every N cycles, default 3).
 QA, UX and security belong in the QA lab, so the Factory's rotation leaves them out.
 Transcripts go to `.agent-logs/<date>/`.
 
-A run is treated as a usage-limit or auth failure only when it exits non-zero and its last
-30 lines say so; that engine then cools down (see Engines).
+On a long-lived host, point `STATE_DIR` outside the checkout (`/var/lib/snapurl`): it holds the
+cooldowns and the day's credit total, and a `git clean` in the repo would otherwise reset the budget.
+
+How a failed run is classified, and the two circuit breakers that can pause the factory on their
+own, are described under [What the autopilot does when a run goes wrong](#what-the-autopilot-does-when-a-run-goes-wrong).
 
 QA lab: Actions → **QA lab** → Run workflow. `charters` takes e.g. `qa:mobile,security`; the
 repository variable `QA_LAB_CHARTERS` sets the scheduled default. Each session spends Kiro credits.

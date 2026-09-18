@@ -69,6 +69,10 @@ function loadSeedState(): SeedState | null {
  */
 const PASSWORD = process.env.QA_E2E_PASSWORD ?? randomBytes(24).toString("base64url");
 
+/** Per-process monotonic counter, part of the registration local-part so two
+ *  registrations in the same worker+millisecond cannot collide. */
+let _regSeq = 0;
+
 /**
  * Optional harness diagnostic: proves this module — rather than
  * support/session.ts — is what ran, and in which worker. Token VALUES are never
@@ -101,11 +105,32 @@ export interface RealSession {
  * silently producing a half-authenticated page.
  */
 export async function registerRealUser(): Promise<RealSession> {
-  const email = `l1-cal-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}@example.com`;
+  // The 409 this previously hit ("That already exists") was NOT an email
+  // collision — 8 random bytes do not collide across dozens of registrations,
+  // and a duplicate email produces a different message
+  // (AuthService.register's own pre-check: "An account with that email
+  // already exists. Try signing in instead."). "That already exists" is the
+  // generic Postgres 23505 unique-violation mapping
+  // (apps/api/src/common/postgres-error.filter.ts), and the column that
+  // actually collided is the WORKSPACE SLUG: every registration previously
+  // sent a constant display name, so provisionWorkspace's
+  // `baseSlug = slugify(displayName)` was identical for every account, and
+  // uniqueWorkspaceSlug (auth.service.ts) is a check-then-act loop over
+  // `base`, `base-2` … `base-20` before falling back to a millisecond-only
+  // suffix with no randomness — a fallback two parallel workers can land on
+  // together. Making the email unique alone cannot fix a slug collision, so
+  // the suffix is now shared by both the email and the display name, which
+  // keeps `baseSlug` itself unique per registration and means
+  // uniqueWorkspaceSlug never has to walk the ladder. slugify() also
+  // truncates to 40 chars, so the display name uses a short "l1cal" prefix
+  // rather than "L1 Calibration" — otherwise the truncation would cut into
+  // the random part of the suffix and reopen the same collision.
+  const suffix = `${Date.now().toString(36)}-${process.pid.toString(36)}-${(_regSeq++).toString(36)}-${randomBytes(8).toString("hex")}`;
+  const email = `l1-cal-${suffix}@example.com`;
   const res = await fetch(`${API_URL}/auth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "L1 Calibration", email, password: PASSWORD }),
+    body: JSON.stringify({ name: `l1cal ${suffix}`, email, password: PASSWORD }),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -134,6 +159,71 @@ export async function registerRealUser(): Promise<RealSession> {
     email,
     userId: session.user?.id ?? "",
   };
+}
+
+/**
+ * Create one link in a session's workspace through the real API and return its
+ * id. Used by the a11y audit to reach `/links/[id]` — a dynamic route that
+ * cannot be scanned without a real entity to point at, and which the a11y
+ * config deliberately does not run the entity-seed globalSetup for.
+ *
+ * Oracle for the request/response shape: packages/contract/src/link.ts —
+ * `CreateLinkInput` (destination piped through HttpUrl, domain required, slug
+ * optional) and `Link` (carries `id`). The workspace's default domain comes
+ * from GET /workspaces/current (contract: workspace.ts `Workspace.defaultDomain`).
+ */
+export async function createRealLink(
+  session: RealSession,
+  destination = "https://example.com/a11y-links-id-audit",
+): Promise<{ id: string }> {
+  const ws = (await (
+    await fetch(`${API_URL}/workspaces/current`, {
+      headers: { authorization: `Bearer ${session.accessToken}` },
+    })
+  ).json()) as { defaultDomain?: string };
+  const domain = ws.defaultDomain;
+  if (!domain) {
+    throw new Error("real-session: GET /workspaces/current returned no defaultDomain");
+  }
+  const slug = `a11y-${randomBytes(4).toString("hex")}`;
+  const res = await fetch(`${API_URL}/links`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.accessToken}`,
+    },
+    body: JSON.stringify({ destination, domain, slug }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      `real-session: POST ${API_URL}/links returned ${res.status}; body=${text.slice(0, 400)}`,
+    );
+  }
+  const link = JSON.parse(text) as { id?: string };
+  if (typeof link.id !== "string") {
+    throw new Error(
+      `real-session: POST /links response is missing id (contract Link); body=${text.slice(0, 200)}`,
+    );
+  }
+  return { id: link.id };
+}
+
+/**
+ * Seed a specific set of tokens (from an already-registered RealSession) into
+ * localStorage before the app boots — the same keys web/src/lib/api/client.ts
+ * reads. Lets a test that registered its own account (to create an entity it
+ * then scans) drive the browser as that same account, rather than the
+ * fresh-per-call account seedRealSession would mint.
+ */
+export async function seedSessionTokens(page: Page, session: RealSession): Promise<void> {
+  await page.addInitScript(
+    ([tokenKey, refreshKey, a, r]) => {
+      window.localStorage.setItem(tokenKey, a);
+      window.localStorage.setItem(refreshKey, r);
+    },
+    [TOKEN_KEY, REFRESH_KEY, session.accessToken, session.refreshToken] as const,
+  );
 }
 
 /**

@@ -160,7 +160,6 @@ export function Field({
         </label>
       ) : null}
       {controlWithId}
-      {React.Children.toArray(children).slice(1)}
       {error ? (
         <span id={helpId} className="text-[11.5px] text-bad leading-[1.5]">{error}</span>
       ) : help ? (
