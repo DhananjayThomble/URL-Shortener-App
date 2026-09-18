@@ -119,20 +119,32 @@ one documented action. The budget deliberately does not — see above.
 
 ## Timezones
 
-**The factory computes in UTC and the host stays on UTC.** Not a preference — GitHub's API returns
-UTC, Actions cron is UTC-only, and CloudWatch and Vercel report UTC, so a local clock in the
-machinery would mean converting timestamps by hand at the exact moment you are debugging. Run ids
-(`.qa-runs/20260918T…Z-desktop`), log directories and the credit file are all keyed by UTC day, so
-changing the host timezone would also split one day across two directories.
+**The host stays on UTC and always will.** GitHub's API returns UTC, Actions cron is UTC-only, and
+CloudWatch and Vercel report UTC, so a local clock in the machinery would mean converting timestamps
+by hand at the exact moment you are debugging. Run ids (`.qa-runs/20260918T…Z-desktop`) and log
+directories (`.agent-logs/20260918/`) stay on the UTC day for the same reason: they have to line up
+with a CI run.
 
-**The digest renders local time, because it is the one surface a human reads.** `DISPLAY_TZ`
-(default `Asia/Kolkata`) controls it; the header reads
-`## Factory digest — 2026-09-18 18:57 IST (13:27Z)` — local first, UTC in parentheses so a line can
-still be matched against a log or a CI run. Set `DISPLAY_TZ=UTC` to turn it off. It affects rendering
-only; nothing computed depends on it.
+**Everything the factory reports to you is in your timezone.** `DISPLAY_TZ` (default
+`Asia/Kolkata`) governs both what is rendered and the day boundaries a person reasons about:
 
-Useful conversions: the budget day and the digest boundary are 00:00Z = **05:30 IST**. The QA lab's
-`cron: "30 3 * * *"` is **09:00 IST**.
+| | Timezone | Why |
+| --- | --- | --- |
+| Digest header, alerts | `DISPLAY_TZ` | You read them. `2026-09-18 19:02 IST (13:32Z)` — local first, UTC in brackets so it can still be matched to a log line. |
+| "Spend today" / budget day | `DISPLAY_TZ` | A budget is a human concept; *today* has to mean your today. Midnight-to-midnight IST. |
+| Digest posting time | `DISPLAY_TZ` | `DIGEST_HOUR` (default `9`) — the first cycle at or after 09:00 local. **Not** at day rollover, which would deliver the summary at 05:30. |
+| Log dirs, run ids, cron | UTC | Forensic. They must match GitHub and CI. |
+| Cooldowns, shift length | epoch | Timezone-independent by construction. |
+
+`DISPLAY_TZ=UTC` renders everything in UTC if you would rather.
+
+Reading the service log in IST — journald stores UTC but renders in whatever `TZ` you give it:
+
+```bash
+TZ=Asia/Kolkata journalctl -u snapurl-autopilot -f
+```
+
+The QA lab's `cron: "30 3 * * *"` is 09:00 IST; Actions cron cannot be expressed in anything but UTC.
 
 ## Daily digest
 
@@ -196,7 +208,7 @@ Knobs (environment variables): `HOURS`, `SLEEP_MIN`, `DEVS_PER_CYCLE`, `AGENT_TI
 `ENGINE_MODE`, `ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (preferred engine per role in auto mode),
 `COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`,
 `KIRO_EFFORT_REVIEWER|DEFAULT`, `TAIL_LINES`, `BROKEN_CYCLES_MAX`, `CREDIT_CEILING_DAY`,
-`DIGEST_LABEL`, `DISPLAY_TZ`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
+`DIGEST_LABEL`, `DISPLAY_TZ`, `DIGEST_HOUR`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
 time, default `cloud`) and `SLOT_EVERY` (run the next rotation role every N cycles, default 3).
 QA, UX and security belong in the QA lab, so the Factory's rotation leaves them out.
 Transcripts go to `.agent-logs/<date>/`.

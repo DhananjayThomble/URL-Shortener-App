@@ -59,9 +59,17 @@ TAIL_LINES="${TAIL_LINES:-200}"
 # name, crash) before the factory pauses itself. A broken engine cannot do work, so grinding on is
 # pure spend. Fail closed and wait for a human.
 BROKEN_CYCLES_MAX="${BROKEN_CYCLES_MAX:-3}"
-# Rolling per-UTC-day credit ceiling, summed from the engines' own reported usage. Counted per day
-# rather than per shift so a crash-restart loop cannot reset the budget. 0 disables it.
+# Rolling credit ceiling for one factory day, summed from the engines' own reported usage. Counted
+# per day rather than per shift so a crash-restart loop cannot reset the budget. 0 disables it.
 CREDIT_CEILING_DAY="${CREDIT_CEILING_DAY:-2000}"
+# The timezone the factory *talks* in. Timestamps the machine has to match against something else —
+# run ids, log directories, GitHub, Actions cron — stay UTC, because those systems are UTC and no
+# local clock can change that. Everything a human reads, and every boundary a human reasons about
+# ("today's spend", "the daily summary"), uses this. Set DISPLAY_TZ=UTC to render in UTC.
+DISPLAY_TZ="${DISPLAY_TZ:-Asia/Kolkata}"
+# Local hour (0-23) at or after which the daily digest is posted. Deliberately not midnight: a
+# summary that arrives at 05:30 was written for the machine's convenience, not the reader's.
+DIGEST_HOUR="${DIGEST_HOUR:-9}"
 
 [ -n "${AGENT_GH_TOKEN:-}" ] && export GH_TOKEN="$AGENT_GH_TOKEN"
 
@@ -178,7 +186,11 @@ run_credits() { # logfile
     | grep -oE '[0-9]+(\.[0-9]+)?'
 }
 
-credit_file() { echo "$STATE_DIR/credits-$(date -u +%Y%m%d)"; }
+# The factory's own day, in the timezone it reports in. A budget is a human concept: "spend today"
+# has to mean the reader's today, or the number in the digest never matches the day they are having.
+factory_day() { TZ="$DISPLAY_TZ" date +%Y%m%d; }
+
+credit_file() { echo "$STATE_DIR/credits-$(factory_day)"; }
 
 add_credits() { # amount
   local f total
@@ -210,16 +222,16 @@ pause_factory() { # reason
 }
 
 # A day budget is a budget, not a kill switch. Setting $PAUSE_FILE here would be wrong: the budget
-# resets at 00:00Z but the kill switch does not, so a factory that spent its allowance on Tuesday
-# would still be stopped on Friday, waiting for a human who is away. Idle instead, and resume by
-# itself when the day rolls over. Re-checked every 5 minutes so raising the ceiling also resumes it.
+# resets when the factory day rolls over but the kill switch does not, so a factory that spent its
+# allowance on Tuesday would still be stopped on Friday, waiting for a human who is away. Idle
+# instead, and resume by itself. Re-checked every 5 minutes so raising the ceiling also resumes it.
 wait_out_budget() {
   local nap
-  alert "day budget of $CREDIT_CEILING_DAY credits reached ($(cat "$(credit_file)" 2>/dev/null) spent); idling until 00:00Z"
+  alert "day budget of $CREDIT_CEILING_DAY credits reached ($(cat "$(credit_file)" 2>/dev/null) spent); idling until midnight $(TZ="$DISPLAY_TZ" date +%Z)"
   while over_budget; do
     [ "$(date +%s)" -lt "$END" ] || { log "shift ended while over budget"; return 1; }
     paused && { log "paused while over budget"; return 1; }
-    nap=$(( $(date -u -d 'tomorrow 00:00' +%s 2>/dev/null || echo 0) - $(date +%s) ))
+    nap=$(( $(TZ="$DISPLAY_TZ" date -d 'tomorrow 00:00' +%s 2>/dev/null || echo 0) - $(date +%s) ))
     { [ "$nap" -gt 300 ] || [ "$nap" -le 0 ]; } && nap=300
     sleep "$nap"
   done
@@ -295,7 +307,7 @@ digest_now() { # reason
 _Trigger: $1._
 
 **Spend today:** $spent / ${CREDIT_CEILING_DAY} credits (Kiro-reported; Claude Code usage is not counted).
-The budget day runs 00:00Z–00:00Z, i.e. **05:30–05:30 IST**, and resets by itself.
+Budget day is midnight-to-midnight $(TZ="$DISPLAY_TZ" date +%Z) and resets by itself.
 **Kill switch:** $([ -f "$PAUSE_FILE" ] && echo '**PAUSED** — clear it with `factory-pause off`' || echo 'running')
 
 ### Merged in the last 24h
@@ -318,10 +330,14 @@ ${alerts:-_none_}"
   fi
 }
 
-# At most one digest per UTC day, so the notification stays worth reading.
+# Once per factory day, and not before DIGEST_HOUR local. Firing on the first cycle after the day
+# rolls over would deliver the summary at 05:30 IST — written for the machine's convenience. This
+# waits until the reader's morning, then posts on the first cycle at or after it.
 digest_daily() {
-  local stamp
-  stamp="$STATE_DIR/digest-$(date -u +%Y%m%d)"
+  local stamp hour
+  hour=$(TZ="$DISPLAY_TZ" date +%-H 2>/dev/null || echo 0)
+  [ "$hour" -ge "$DIGEST_HOUR" ] || return 0
+  stamp="$STATE_DIR/digest-$(factory_day)"
   [ -f "$stamp" ] && return 0
   : > "$stamp"
   digest_now "daily"

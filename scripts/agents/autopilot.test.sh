@@ -213,7 +213,8 @@ if [ -f "$PAUSE_FILE" ]; then
 else
   ok "a spent budget does not set the human kill switch"
 fi
-contains "$(cat "$STATE_DIR/alerts.log")" "idling until 00:00Z" "the budget alert says it will resume by itself"
+contains "$(cat "$STATE_DIR/alerts.log")" "idling until midnight" "the budget alert says it will resume by itself"
+contains "$(cat "$STATE_DIR/alerts.log")" "IST" "the budget alert names the timezone the reader thinks in"
 
 # Raising the ceiling (or the day rolling over) must let it continue without intervention.
 reset_stubs; load
@@ -453,16 +454,27 @@ digest_now "test" >/dev/null 2>&1
 lacks "$(cat "$BIN/gh.calls")" "issue create" "an existing digest issue is reused, not duplicated"
 contains "$(cat "$BIN/gh.calls")" "issue comment 42" "the digest comments on the existing issue"
 
-# One notification a day: a digest per cycle would be ignored within a week.
+# One notification a day, at an hour a person would want it.
 reset_stubs; load
 echo 42 > "$BIN/gh.digestissue"
+DIGEST_HOUR=0                      # so the case does not depend on the wall clock
 digest_daily >/dev/null 2>&1
 digest_daily >/dev/null 2>&1
 digest_daily >/dev/null 2>&1
-is "$(grep -c 'issue comment' "$BIN/gh.calls")" 1 "digest_daily posts at most once per UTC day"
+is "$(grep -c 'issue comment' "$BIN/gh.calls")" 1 "digest_daily posts at most once per factory day"
 
-# The factory computes in UTC because GitHub and Actions cron leave it no choice; the digest is the
-# one surface a human reads, so it is the one surface that renders local time.
+# The summary must not arrive at 05:30 local just because that is when the UTC date changed.
+reset_stubs; load
+echo 42 > "$BIN/gh.digestissue"
+DIGEST_HOUR=99                     # an hour that can never have arrived
+digest_daily >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "issue comment" "no digest before DIGEST_HOUR"
+DIGEST_HOUR=0
+digest_daily >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "issue comment" "the digest posts on the first cycle at or after DIGEST_HOUR"
+
+# The factory computes against GitHub and CI in UTC, but everything it reports — and every boundary
+# a human reasons about — is in their timezone.
 reset_stubs; load
 DISPLAY_TZ=Asia/Kolkata
 stamp=$(local_stamp)
@@ -472,10 +484,26 @@ DISPLAY_TZ=UTC
 lacks "$(local_stamp)" "IST" "DISPLAY_TZ=UTC turns local rendering off"
 contains "$(local_stamp)" "Z" "with DISPLAY_TZ=UTC the stamp is still unambiguous"
 
-# Rendering must not leak into anything computed: filenames and the budget window stay UTC.
+# "Spend today" has to mean the reader's today, so the budget day follows DISPLAY_TZ.
 reset_stubs; load
 DISPLAY_TZ=Asia/Kolkata
-is "$(credit_file)" "$STATE_DIR/credits-$(date -u +%Y%m%d)" "the credit file is keyed by UTC day regardless of DISPLAY_TZ"
+is "$(factory_day)" "$(TZ=Asia/Kolkata date +%Y%m%d)" "the factory day is the local day"
+is "$(credit_file)" "$STATE_DIR/credits-$(TZ=Asia/Kolkata date +%Y%m%d)" "the budget is keyed to the local day, not the UTC one"
+
+# A timezone far enough ahead to be on a different date from UTC proves the key really moves.
+reset_stubs; load
+DISPLAY_TZ=Pacific/Kiritimati      # UTC+14
+is "$(factory_day)" "$(TZ=Pacific/Kiritimati date +%Y%m%d)" "a timezone on tomorrow's date gets tomorrow's budget file"
+if [ "$(TZ=Pacific/Kiritimati date +%Y%m%d)" != "$(date -u +%Y%m%d)" ]; then
+  lacks "$(credit_file)" "$(date -u +%Y%m%d)" "the budget file is not the UTC day when they differ"
+else
+  ok "the budget file is not the UTC day when they differ (zones agree right now; skipped)"
+fi
+
+# Rendering must not leak into artefacts that have to line up with GitHub and CI.
+reset_stubs; load
+DISPLAY_TZ=Pacific/Kiritimati
+is "$LOG_DIR" ".agent-logs/$(date -u +%Y%m%d)" "log directories stay on the UTC day, to match CI and GitHub"
 
 # ---------------------------------------------------------------------------------------------
 section "paused: the kill switch fails closed"
