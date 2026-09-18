@@ -98,12 +98,24 @@ Two circuit breakers then protect an unattended box:
   a non-quota reason and *nothing* succeeded, the factory pauses itself. A throttled factory heals
   when its cooldown expires; a broken one does not, and grinding on is pure spend.
 - **Day budget.** `CREDIT_CEILING_DAY` (2000) caps credits per UTC day, summed from the engines' own
-  reported usage (Kiro prints `Credits: N` per run; Claude Code reports nothing, so only Kiro spend
-  is counted). No new agent session starts once the ceiling is reached, so an overshoot costs one run
-  at most, and the factory pauses. Counted per day rather than per shift so a crash-restart loop
-  cannot reset the budget. Set it to `0` to disable — at which point nothing bounds a bad night.
+  reported usage (Kiro prints `Credits: N • Time: …` per run; Claude Code reports nothing, so only
+  Kiro spend is counted). No new agent session starts once the ceiling is reached, so an overshoot
+  costs one run at most. Counted per day rather than per shift so a crash-restart loop cannot reset
+  the budget. Set it to `0` to disable — at which point nothing bounds a bad night.
 
-Both pause via the same kill switch a human uses, so recovery is always the one documented action.
+  A spent budget **does not** set the kill switch: it idles and resumes by itself at `00:00Z`,
+  re-checking every five minutes so that raising the ceiling also resumes it. A budget that needed a
+  human to clear it would stop the factory on Tuesday and leave it stopped all week.
+
+  **Sizing it.** Measured on 2026-09-18 at default effort: ~51 credits for a cycle of
+  manager+reviewer+developer, ~74 when the rotation slot also runs, ~53 minutes per cycle — about
+  **1,600 credits/day**. Raising effort to `xhigh`/`max` roughly doubles that, so a 2000 ceiling will
+  be reached partway through the day and the factory will idle until midnight. That is a legitimate
+  way to cap spend, but if you want it to run continuously at high effort, budget nearer 3,500, or
+  keep `max` for the reviewer and leave `KIRO_EFFORT_DEFAULT` unset.
+
+The broken-streak breaker pauses via the same kill switch a human uses, so recovery is always the
+one documented action. The budget deliberately does not — see above.
 
 ## Daily digest
 

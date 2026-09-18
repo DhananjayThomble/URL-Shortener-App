@@ -200,6 +200,29 @@ pause_factory "test reason" >/dev/null
 if [ -f "$PAUSE_FILE" ]; then ok "pause_factory writes the same kill switch a human uses"; else bad "pause_factory writes the kill switch"; fi
 contains "$(cat "$STATE_DIR/alerts.log")" "pausing the factory" "pausing records an alert for the digest"
 
+# A spent budget must not leave the factory stopped past midnight waiting for a human. The kill
+# switch is for conditions someone has to look at; a budget resets on its own.
+reset_stubs; load
+CREDIT_CEILING_DAY=10
+add_credits 11 >/dev/null
+END=$(( $(date +%s) - 1 ))     # shift already over, so wait_out_budget returns instead of sleeping
+wait_out_budget >/dev/null 2>&1; rc=$?
+is "$rc" 1 "an over-budget shift ends rather than looping"
+if [ -f "$PAUSE_FILE" ]; then
+  bad "a spent budget does not set the human kill switch"
+else
+  ok "a spent budget does not set the human kill switch"
+fi
+contains "$(cat "$STATE_DIR/alerts.log")" "idling until 00:00Z" "the budget alert says it will resume by itself"
+
+# Raising the ceiling (or the day rolling over) must let it continue without intervention.
+reset_stubs; load
+CREDIT_CEILING_DAY=10
+add_credits 11 >/dev/null
+if over_budget; then ok "over budget before the ceiling is raised"; else bad "over budget before the ceiling is raised"; fi
+CREDIT_CEILING_DAY=1000
+if over_budget; then bad "raising the ceiling clears the over-budget state"; else ok "raising the ceiling clears the over-budget state"; fi
+
 # ---------------------------------------------------------------------------------------------
 section "engine selection and cooldown"
 # ---------------------------------------------------------------------------------------------

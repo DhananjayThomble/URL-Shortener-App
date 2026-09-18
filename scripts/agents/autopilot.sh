@@ -203,9 +203,27 @@ alert() { # subject
 }
 
 # Stops the loop the same way the human kill switch does, so recovery is one documented action.
+# Reserved for conditions a human must actually look at; a spent budget is not one of them.
 pause_factory() { # reason
   alert "pausing the factory: $1"
   : > "$PAUSE_FILE"
+}
+
+# A day budget is a budget, not a kill switch. Setting $PAUSE_FILE here would be wrong: the budget
+# resets at 00:00Z but the kill switch does not, so a factory that spent its allowance on Tuesday
+# would still be stopped on Friday, waiting for a human who is away. Idle instead, and resume by
+# itself when the day rolls over. Re-checked every 5 minutes so raising the ceiling also resumes it.
+wait_out_budget() {
+  local nap
+  alert "day budget of $CREDIT_CEILING_DAY credits reached ($(cat "$(credit_file)" 2>/dev/null) spent); idling until 00:00Z"
+  while over_budget; do
+    [ "$(date +%s)" -lt "$END" ] || { log "shift ended while over budget"; return 1; }
+    paused && { log "paused while over budget"; return 1; }
+    nap=$(( $(date -u -d 'tomorrow 00:00' +%s 2>/dev/null || echo 0) - $(date +%s) ))
+    { [ "$nap" -gt 300 ] || [ "$nap" -le 0 ]; } && nap=300
+    sleep "$nap"
+  done
+  log "budget window rolled over; resuming"
 }
 
 # Counted by run_agent, read by the circuit breaker. Declared here so the functions are safe to
@@ -445,10 +463,7 @@ check_reviewer_independence kiro
 
 while [ "$(date +%s)" -lt "$END" ]; do
   if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
-  if over_budget; then
-    pause_factory "day budget of $CREDIT_CEILING_DAY credits reached ($(cat "$(credit_file)") spent)"
-    break
-  fi
+  if over_budget; then wait_out_budget || break; fi
   cycle=$((cycle + 1))
   MODE=$(engine_mode)
   log "=== cycle $cycle (engine mode: $MODE) ==="
