@@ -31,7 +31,7 @@
     "@aws-sdk/client-secrets-manager": "^3.1121.0",
     "@snapurl/contract": "workspace:*",
     "@snapurl/domain": "workspace:*",
-    "drizzle-orm": "^0.44.6",
+    "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.7"
   },
   "devDependencies": {
