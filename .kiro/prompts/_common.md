@@ -55,6 +55,22 @@ The private repo `DhananjayThomble/snapurl-ops` (cloned at `$OPS_DIR`, default
 path given in `run.json`. Never copy anything from there into the public repo
 without redacting it (steering §7).
 
+## Shared memory
+
+You may be running on Claude Code or on Kiro CLI; the next run of your role may be on the other
+one. Durable knowledge must therefore live in files both can read, not in either tool's own memory.
+
+- The shared memory is `$OPS_DIR/memory/` (the private ops repo). Start every run by reading
+  `$OPS_DIR/memory/MEMORY.md` and any note it points to that is relevant to your task.
+- When you learn something future runs need and cannot get from the code or git history — a
+  decision the maintainer made, a recurring pitfall, where something lives outside this repo —
+  add or update one note there: one topic per file, frontmatter with `name`, `description` and
+  `type` (`user`, `feedback`, `project` or `reference`), and a one-line pointer in `MEMORY.md`.
+  Update an existing note rather than adding a near-duplicate; delete notes that proved wrong.
+- Never write secrets, tokens or anything from `.qa-runs/` there.
+- The autopilot commits and pushes the ops repo after each role, so do not commit it yourself.
+- If `$OPS_DIR` does not exist (for example in the QA lab), skip this section.
+
 ## Finish every run with a short report
 
 Print: what you did, links to the issues and PRs you touched, and what you could not do and why.

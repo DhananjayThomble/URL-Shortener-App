@@ -3,8 +3,9 @@
 #
 #   HOURS=6 bash scripts/agents/autopilot.sh
 #
-# Each cycle: kill-switch check → manager → reviewer → merge approved PRs →
+# Each cycle: kill-switch check → engine mode → manager → reviewer → merge approved PRs →
 # developer(s) → every SLOT_EVERY cycles, one ROTATION role (default: cloud) → sleep.
+# Any role runs on Claude Code or Kiro CLI; see "Engines" below and docs/AGENTIC-DEV.md.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -15,53 +16,107 @@ DEVS_PER_CYCLE="${DEVS_PER_CYCLE:-1}"
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-90m}"
 # On the Factory this points at /run, so a reboot clears a pause and the host comes back working.
 PAUSE_FILE="${PAUSE_FILE:-.agents-paused}"
-# Engine per role: "claude" or "kiro". The reviewer must use a different engine
-# from the developer and QA roles so no model grades its own work.
+# Engines. Every role can run on either "claude" (Claude Code) or "kiro" (Kiro CLI); both read the
+# same prompts, steering and shared memory. ENGINE_<ROLE> is each role's preferred engine in auto
+# mode. The engine mode (auto | claude | kiro) is re-read every cycle, first match wins:
+#   1. an open issue labelled engine:claude or engine:kiro   (switch from a phone)
+#   2. $STATE_DIR/engine-mode                                 (factory-engine on the host)
+#   3. $ENGINE_MODE                                           (default auto)
+# In auto mode an engine that hits a usage or credit limit cools down for COOLDOWN_MIN and its
+# roles run on the other engine meanwhile. A forced engine that is limited runs nothing.
+ENGINE_MODE="${ENGINE_MODE:-auto}"
 ENGINE_MANAGER="${ENGINE_MANAGER:-claude}"
 ENGINE_REVIEWER="${ENGINE_REVIEWER:-claude}"
 ENGINE_DEVELOPER="${ENGINE_DEVELOPER:-kiro}"
 ENGINE_QA="${ENGINE_QA:-kiro}"
+COOLDOWN_MIN="${COOLDOWN_MIN:-60}"
+STATE_DIR="${STATE_DIR:-.agent-state}"
+# Models per engine. The reviewer is always on an Opus-class model and every other role is not,
+# so whichever engines are in use, no model reviews its own work.
 CLAUDE_MODEL_REVIEWER="${CLAUDE_MODEL_REVIEWER:-opus}"
 CLAUDE_MODEL_DEFAULT="${CLAUDE_MODEL_DEFAULT:-sonnet}"
+KIRO_MODEL_REVIEWER="${KIRO_MODEL_REVIEWER:-claude-opus-5}"
+KIRO_MODEL_DEFAULT="${KIRO_MODEL_DEFAULT:-claude-sonnet-5}"
 
 [ -n "${AGENT_GH_TOKEN:-}" ] && export GH_TOKEN="$AGENT_GH_TOKEN"
 
 LOG_DIR=".agent-logs/$(date -u +%Y%m%d)"
-mkdir -p "$LOG_DIR"
-log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_DIR/autopilot.log"; }
+mkdir -p "$LOG_DIR" "$STATE_DIR"
+log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_DIR/autopilot.log" >&2; }
 
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
   [ "$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length')" != "0" ]
 }
 
-run_agent() { # role engine task
-  local role=$1 engine=$2 task=$3 out
+# Prints auto, claude or kiro. Labels beat the state file, which beats the environment.
+engine_mode() {
+  local labels file
+  labels=$(gh issue list -R "$REPO" --state open --search "label:engine:claude,engine:kiro" \
+    --json labels -q '[.[].labels[].name | select(startswith("engine:"))] | unique | join(" ")' 2>/dev/null)
+  case "$labels" in
+    "engine:claude engine:kiro") log "both engine:claude and engine:kiro labels are on open issues; ignoring both" ;;
+    "engine:claude") echo claude; return ;;
+    "engine:kiro") echo kiro; return ;;
+  esac
+  file=$(tr -d '[:space:]' < "$STATE_DIR/engine-mode" 2>/dev/null)
+  case "$file" in claude|kiro|auto) echo "$file"; return ;; esac
+  echo "$ENGINE_MODE"
+}
+
+other_engine() { [ "$1" = claude ] && echo kiro || echo claude; }
+cooling() { [ "$(date +%s)" -lt "$(cat "$STATE_DIR/cooldown-$1" 2>/dev/null || echo 0)" ]; }
+cool_down() {
+  echo $(( $(date +%s) + COOLDOWN_MIN * 60 )) > "$STATE_DIR/cooldown-$1"
+  log "!! $1 hit a usage/credit limit; it cools down for ${COOLDOWN_MIN}m"
+}
+
+# The engine a role should use right now, or nothing if none is available.
+pick_engine() { # preferred-engine
+  if [ "$MODE" != auto ]; then cooling "$MODE" || echo "$MODE"; return; fi
+  if ! cooling "$1"; then echo "$1"; return; fi
+  cooling "$(other_engine "$1")" || other_engine "$1"
+}
+
+model_for() { # engine role
+  if [ "$1" = claude ]; then
+    [ "$2" = reviewer ] && echo "$CLAUDE_MODEL_REVIEWER" || echo "$CLAUDE_MODEL_DEFAULT"
+  else
+    [ "$2" = reviewer ] && echo "$KIRO_MODEL_REVIEWER" || echo "$KIRO_MODEL_DEFAULT"
+  fi
+}
+
+# Only a failed run's last lines count: agents print issue text, API responses and their own
+# summaries, and this product has rate limits and 401s of its own, so matching a whole log misfires.
+hit_limit() { # rc logfile
+  [ "$1" -ne 0 ] && tail -n 30 "$2" | grep -qiE "usage limit|rate limit|quota|out of credits|insufficient credits|credit limit|not logged in|unauthori[sz]ed"
+}
+
+run_agent() { # role preferred-engine task
+  local role=$1 pref=$2 task=$3 engine model out rc attempt
   # Checked here, not only per cycle: a long session must not be followed by another one
   # after the kill switch goes on.
   if paused; then log "skipping $role: paused"; return 99; fi
-  out="$LOG_DIR/$(date -u +%H%M%S)-$role.log"
-  log "→ $role ($engine)"
-  if [ "$engine" = "claude" ]; then
-    local model=$CLAUDE_MODEL_DEFAULT
-    [ "$role" = "reviewer" ] && model=$CLAUDE_MODEL_REVIEWER
-    timeout "$AGENT_TIMEOUT" claude -p "$task" --agent "snapurl-$role" --model "$model" \
-      --dangerously-skip-permissions >"$out" 2>&1
-  else
-    timeout "$AGENT_TIMEOUT" kiro-cli chat --no-interactive --trust-all-tools \
-      --agent "snapurl-$role" "$task" >"$out" 2>&1
-  fi
-  local rc=$?
-  log "← $role exit $rc ($out)"
-  # A usage-limit or auth failure should not burn the rest of the cycle retrying. Only a failed
-  # run's last lines count: agents print issue text, API responses and their own summaries, and
-  # this product has rate limits and 401s of its own, so matching the whole log misfires.
-  if [ "$rc" -ne 0 ] && tail -n 30 "$out" | grep -qiE "usage limit|rate limit|quota|out of credits|insufficient credits|credit limit|not logged in|unauthori[sz]ed"; then
-    log "!! $role hit a limit or auth error; skipping the rest of this cycle"
-    LIMIT_HIT=1
-    return 99
-  fi
-  return 0
+  for attempt in 1 2; do
+    engine=$(pick_engine "$pref")
+    if [ -z "$engine" ]; then log "skipping $role: no engine available (mode $MODE)"; return 99; fi
+    model=$(model_for "$engine" "$role")
+    out="$LOG_DIR/$(date -u +%H%M%S)-$role-$engine.log"
+    log "→ $role ($engine, $model)"
+    if [ "$engine" = claude ]; then
+      timeout "$AGENT_TIMEOUT" claude -p "$task" --agent "snapurl-$role" --model "$model" \
+        --dangerously-skip-permissions >"$out" 2>&1
+    else
+      timeout "$AGENT_TIMEOUT" kiro-cli chat --no-interactive --trust-all-tools \
+        --agent "snapurl-$role" --model "$model" "$task" >"$out" 2>&1
+    fi
+    rc=$?
+    log "← $role exit $rc ($out)"
+    hit_limit "$rc" "$out" || return 0
+    # A limited engine's run did no work, so retry it once on whichever engine is left.
+    cool_down "$engine"
+  done
+  return 99
 }
 
 OPS_REPO="${OPS_REPO:-DhananjayThomble/snapurl-ops}"
@@ -73,9 +128,10 @@ ops_pull() {
 }
 
 ops_push() {
+  [ -d "$OPS_DIR/.git" ] || return 0
   git -C "$OPS_DIR" add -A
   git -C "$OPS_DIR" diff --cached --quiet && return 0
-  git -C "$OPS_DIR" commit -q -m "reviewer: adjudication $(date -u +%FT%TZ)"
+  git -C "$OPS_DIR" commit -q -m "agents: memory and QA adjudication $(date -u +%FT%TZ)"
   git -C "$OPS_DIR" pull -q --rebase origin main && git -C "$OPS_DIR" push -q origin HEAD:main \
     || log "ops repo push failed"
 }
@@ -150,28 +206,32 @@ slot_n=0
 
 while [ "$(date +%s)" -lt "$END" ]; do
   if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
-  cycle=$((cycle + 1)); log "=== cycle $cycle ==="
-  LIMIT_HIT=0
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  log "=== cycle $cycle (engine mode: $MODE) ==="
   git fetch -q origin
+  # Shared memory lives in the ops repo; pull before any agent reads it, push after they write.
+  ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
 
-  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now." || { sleep $((SLEEP_MIN*60)); continue; }
-  ops_pull || log "ops repo pull failed; reviewer will see stale findings"
+  # Each role runs regardless of how the one before it fared: a limit on one engine, or one
+  # agent failing, must not stop the work the other engine can still do.
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
   run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
-  rc=$?
   ops_push
-  [ "$rc" -eq 0 ] || { sleep $((SLEEP_MIN*60)); continue; }
-  merge_approved
+  merge_approved   # merges only what is already approved and green, so it is safe after a failed review
 
   for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
     paused && break
     run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
   done
+  ops_push
 
-  if [ "$LIMIT_HIT" -eq 0 ] && [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
+  if [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
     slot=${ROTATION[$(( slot_n % ${#ROTATION[@]} ))]}
     slot_n=$((slot_n + 1))
     role=${slot%%:*}; focus=${slot#*:}
     paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+    ops_push
   fi
 
   log "cycle $cycle done; sleeping ${SLEEP_MIN}m"

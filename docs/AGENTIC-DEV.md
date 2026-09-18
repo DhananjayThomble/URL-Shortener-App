@@ -30,7 +30,33 @@ output and never uploads workflow artifacts; everything goes to the ops repo or 
 
 Every role also reads `.kiro/prompts/_common.md` and `.kiro/steering/*.md`. The same prompts back
 both `.kiro/agents/snapurl-*.json` and `.claude/agents/snapurl-*.md`, so either tool can play any role.
-The reviewer runs on a different engine from the authors so no model grades its own work.
+
+## Engines: Claude Code and Kiro, interchangeably
+
+No role depends on one tool. "Default engine" above is only each role's preference in **auto** mode.
+
+| Mode | Behaviour |
+| --- | --- |
+| `auto` (default) | Each role uses its preferred engine. An engine that hits a usage or credit limit cools down for `COOLDOWN_MIN` (60); its roles move to the other engine meanwhile, and the failed run is retried there once. |
+| `claude` | Every role on Claude Code. If Claude is limited, nothing runs until it recovers. |
+| `kiro` | Every role on Kiro CLI. If Kiro is out of credits, nothing runs until it recovers. |
+
+Switching, re-read every cycle, first match wins:
+
+1. **From a phone:** add the label `engine:claude` or `engine:kiro` to any open issue; remove it
+   to go back. Both labels at once are ignored.
+2. **On the Factory:** `factory-engine claude|kiro|auto|status` (writes `.agent-state/engine-mode`).
+3. **Default:** the `ENGINE_MODE` environment variable (`auto`).
+
+Models: the reviewer always runs on an Opus-class model (`opus` on Claude, `claude-opus-5` on Kiro)
+and every other role on a Sonnet-class one (`sonnet`, `claude-sonnet-5`), so no model reviews its own
+work whichever engines are in use. Kiro bills Opus 5 at 2.2× and Sonnet 5 at 1.3× credits.
+
+**Shared context.** Both tools load the same rules (`CLAUDE.md` imports `.kiro/steering/`, which
+Kiro reads natively) and the same role prompts. Durable memory lives in the private ops repo's
+`memory/` folder: every agent reads it at the start of a run and records what it learns there
+(`_common.md`), and the autopilot commits it after each role. On a person's machine, the ops repo's
+`tools/link-shared-context.sh` points Claude Code's auto-memory and Kiro's steering at the same files.
 
 ## Board
 
@@ -68,14 +94,14 @@ HOURS=4 bash scripts/agents/autopilot.sh  # or the systemd service; use tmux whe
 ```
 
 Knobs (environment variables): `HOURS`, `SLEEP_MIN`, `DEVS_PER_CYCLE`, `AGENT_TIMEOUT`,
-`ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (`claude` or `kiro`), `CLAUDE_MODEL_REVIEWER`,
-`CLAUDE_MODEL_DEFAULT`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
+`ENGINE_MODE`, `ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (preferred engine per role in auto mode),
+`COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
 time, default `cloud`) and `SLOT_EVERY` (run the next rotation role every N cycles, default 3).
 QA, UX and security belong in the QA lab, so the Factory's rotation leaves them out.
 Transcripts go to `.agent-logs/<date>/`.
 
 A run is treated as a usage-limit or auth failure only when it exits non-zero and its last
-30 lines say so; the rest of that cycle is then skipped.
+30 lines say so; that engine then cools down (see Engines).
 
 QA lab: Actions → **QA lab** → Run workflow. `charters` takes e.g. `qa:mobile,security`; the
 repository variable `QA_LAB_CHARTERS` sets the scheduled default. Each session spends Kiro credits.
@@ -109,8 +135,9 @@ Agents merge to `main` without a human. What stands in the way of a bad change:
 
 ## Limits worth knowing
 
-- **Claude subscription usage** resets on a rolling window; the autopilot skips the rest of a cycle
-  when it sees a usage-limit error. Keep Claude for the manager and reviewer, and put volume on Kiro.
+- **Claude subscription usage** resets on a rolling window and is **shared with your own interactive
+  Claude sessions** (the agents use your subscription's token). When it runs out, auto mode moves
+  Claude's roles to Kiro until it recovers.
 - **Kiro credits** are spent by every developer and QA session; watch usage in the first week before
   raising `DEVS_PER_CYCLE` or adding QA charters.
 - **GitHub-hosted runners** have 4 vCPU / 16 GB and a 6-hour job limit; QA sessions are capped at 60
