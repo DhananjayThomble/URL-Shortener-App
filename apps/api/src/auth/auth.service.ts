@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -140,14 +141,7 @@ export class AuthService {
    */
   private async provisionWorkspace(tx: Executor, userId: string, displayName: string, email: string) {
     const baseSlug = slugify(displayName) || "workspace";
-    const [workspace] = await tx
-      .insert(workspaces)
-      .values({
-        name: `${displayName.trim()}'s workspace`,
-        slug: await uniqueWorkspaceSlug(tx, baseSlug),
-        defaultRedirect: "302",
-      })
-      .returning();
+    const workspace = await insertWorkspaceWithUniqueSlug(tx, baseSlug, `${displayName.trim()}'s workspace`);
 
     /* The shared short domain is a system domain owned by nobody, so every
        workspace points at the same row rather than trying to claim it.
@@ -171,11 +165,11 @@ export class AuthService {
       .limit(1);
 
     if (systemDomain) {
-      await tx.update(workspaces).set({ defaultDomainId: systemDomain.id }).where(eq(workspaces.id, workspace!.id));
+      await tx.update(workspaces).set({ defaultDomainId: systemDomain.id }).where(eq(workspaces.id, workspace.id));
     }
 
     await tx.insert(memberships).values({
-      workspaceId: workspace!.id,
+      workspaceId: workspace.id,
       userId,
       email,
       role: "owner",
@@ -183,7 +177,7 @@ export class AuthService {
       acceptedAt: new Date(),
     });
 
-    return workspace!;
+    return workspace;
   }
 
   /**
@@ -540,15 +534,56 @@ function slugify(value: string): string {
     .slice(0, 40);
 }
 
-async function uniqueWorkspaceSlug(tx: Executor, base: string): Promise<string> {
-  for (let i = 0; i < 20; i++) {
-    const candidate = i === 0 ? base : `${base}-${i + 1}`;
-    const [taken] = await tx
-      .select({ id: workspaces.id })
-      .from(workspaces)
-      .where(eq(workspaces.slug, candidate))
-      .limit(1);
-    if (!taken) return candidate;
+/**
+ * Inserts a new workspace whose slug is unique, making the INSERT itself the
+ * authority rather than a prior SELECT.
+ *
+ * The previous version picked a candidate with a SELECT ... WHERE slug = ...
+ * and only then inserted it. That is check-then-act: two concurrent
+ * registrations with the same display name can both see `base` (or
+ * `base-2`, `base-3`, ...) as free and both attempt it, and one loses on
+ * `workspaces_slug_key` — a raw 23505 that `PostgresErrorFilter` turns into
+ * an unhelpful "That already exists." 409, failing the signup outright.
+ *
+ * This version never SELECTs first. Every attempt is an INSERT ...
+ * ON CONFLICT (slug) DO NOTHING RETURNING *, so a lost race simply returns no
+ * row instead of throwing, and the loop retries with a fresh candidate. The
+ * readable base / base-2 / base-3 ladder is kept for the first 20 attempts —
+ * that is cosmetic, not a correctness mechanism, since ON CONFLICT makes each
+ * attempt safe regardless of whether the candidate happens to collide.
+ *
+ * Past the ladder, the fallback adds real randomness (`randomBytes`) instead
+ * of relying on `Date.now()` alone: millisecond-precision timestamps collide
+ * whenever two registrations for the same base land in the same millisecond,
+ * which is exactly the regime a busy shared name (e.g. a common company name)
+ * puts you in. Random suffixes plus the retry loop make a second collision on
+ * the fallback vanishingly unlikely, and even that residual case just retries.
+ */
+async function insertWorkspaceWithUniqueSlug(
+  tx: Executor,
+  base: string,
+  name: string,
+): Promise<typeof workspaces.$inferSelect> {
+  const MAX_ATTEMPTS = 30;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const candidate =
+      attempt === 0
+        ? base
+        : attempt < 20
+          ? `${base}-${attempt + 1}`
+          : `${base}-${randomBytes(6).toString("base64url")}`;
+
+    const [workspace] = await tx
+      .insert(workspaces)
+      .values({ name, slug: candidate, defaultRedirect: "302" })
+      .onConflictDoNothing({ target: workspaces.slug })
+      .returning();
+
+    if (workspace) return workspace;
+    // Lost the race (or the ladder candidate was already taken) — loop and
+    // try the next candidate. No 23505 ever reaches the caller from here.
   }
-  return `${base}-${Date.now().toString(36)}`;
+  // Astronomically unlikely with 6 random bytes per attempt over 30 tries,
+  // but fail loudly rather than silently returning an unpersisted workspace.
+  throw new Error(`Could not allocate a unique workspace slug for base "${base}" after ${MAX_ATTEMPTS} attempts.`);
 }
