@@ -41,6 +41,15 @@ export const Roles = (...roles: Array<"owner" | "admin" | "editor" | "viewer">) 
   SetMetadata(REQUIRED_ROLES, roles);
 
 export const REQUIRED_SCOPE = "requiredScope";
+/** Names the API-key scope a route requires.
+ *
+ *  API keys fail CLOSED: a route with no `@Scope` is **not reachable by an API
+ *  key at all** (it 403s), because the absence of a decorator means "outside the
+ *  key surface", not "unrestricted". So a route that should be callable with a
+ *  key MUST declare a scope from `API_SCOPES` (packages/contract/src/workspace.ts)
+ *  — omitting it fails silently at runtime, not at compile time. Session callers
+ *  are unaffected; they carry no scopes and are governed by `@Roles`. See the
+ *  fail-closed ADR in docs/DECISIONS.md. */
 export const Scope = (scope: string) => SetMetadata(REQUIRED_SCOPE, scope);
 
 export const Actor = createParamDecorator((_data: unknown, ctx: ExecutionContext): RequestActor => {

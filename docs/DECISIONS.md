@@ -1014,6 +1014,53 @@ is a per-provider hashing step before that comparison for Apple's native SDK, an
 should be added in the same change as the Apple button, for the same reason Google's
 nonce shipped with Google's button.
 
+### API keys fail closed: a route with no `@Scope` is off the key surface
+
+**Decision.** An API-key principal may reach a route **only** if the route
+declares a `@Scope` naming a scope the key actually holds. A route with no
+`@Scope` decorator is not reachable by an API key at all — it returns 403.
+Session callers are untouched: they carry no scopes and stay governed by
+`@Roles`.
+
+The guard used to consult scope *only when a route declared one*, so every
+route without a `@Scope` accepted any valid key regardless of what it was
+granted. The absence of a decorator read as "no restriction" rather than "not
+part of the key surface". A key scoped `[links:read]` could therefore read
+`GET /members`, which returns each member's email, role, last-active and
+whether they have 2FA enabled.
+
+This is derived, not a judgement call. `API_SCOPES`
+(`packages/contract/src/workspace.ts`) is a **closed set** — `links:read`,
+`links:write`, `analytics:read`, `domains:read`, `domains:write`,
+`conversions:write`. Nothing in it grants members, workspaces, developers or
+bio-pages. A key was never *granted* authority over those routes; it only
+reached them because nothing said no. Fail-closed is the rule the contract's
+own scope list already implies.
+
+**What it was chosen over.** The status quo (open-by-default: a scope-less
+route accepts any key) is the bug being fixed. A per-route allowlist — an
+explicit "these scope-less routes are key-callable" table — was rejected: it is
+a second place to keep in sync with the route set, and it re-introduces the
+exact failure mode (a route silently open because the table was not updated).
+Keying reachability off the presence of `@Scope` keeps the decision in one
+place, next to the route.
+
+The cost is a sharp edge for route authors: a new route is unreachable by API
+keys until someone adds `@Scope`, and it fails at a runtime 403, not at compile
+time. That is documented at the `Scope` decorator in `auth.guard.ts` and in the
+release note in `SELF-HOSTING.md`. It is a deliberate breaking change for any
+undocumented integration that hit a scope-less route (e.g. `GET /auth/me`,
+`GET /workspaces/current`) with a key — but by the contract those calls were
+never authorised. Check `lastUsedAt` on live keys before rollout if any are in
+third-party hands.
+
+**Revisit if** a route legitimately needs to be key-callable without belonging
+to any of the closed scope buckets — then the fix is to widen `API_SCOPES` with
+a new scope and decorate the route with it, not to relax the guard back to
+open-by-default. If that pressure recurs across many routes, reconsider whether
+scopes are the right granularity at all (e.g. a "read-only key" class), which
+would be its own ADR.
+
 ---
 
 ## Part 5 — Open questions for you
