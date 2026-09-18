@@ -236,6 +236,20 @@ CYCLE_BROKEN=0
 # minutes without opening a laptop. One comment a day on one issue gives a phone notification and
 # a permanent record, which editing a body in place would not.
 DIGEST_LABEL="${DIGEST_LABEL:-factory:digest}"
+# Everything above computes in UTC and always will: the host is UTC, GitHub's API returns UTC, and
+# Actions cron is UTC-only, so a local clock anywhere in the machinery would make correlating a
+# factory log line with a CI run an exercise in arithmetic. This is the one place a human reads, so
+# it is the one place that renders local time. Set DISPLAY_TZ=UTC to turn it off.
+DISPLAY_TZ="${DISPLAY_TZ:-Asia/Kolkata}"
+
+# "2026-09-18 18:56 IST (13:26Z)" — local first because that is the one being read, UTC in
+# parentheses so it can still be matched against a log line or a GitHub timestamp.
+local_stamp() {
+  local l z
+  l=$(TZ="$DISPLAY_TZ" date "+%F %H:%M %Z" 2>/dev/null)
+  z=$(date -u +%H:%MZ)
+  if [ -n "$l" ] && [ "$DISPLAY_TZ" != UTC ]; then echo "$l ($z)"; else date -u "+%F %H:%MZ"; fi
+}
 
 digest_issue() {
   local n
@@ -277,10 +291,11 @@ digest_now() { # reason
   blocked=$(gh issue list -R "$REPO" --state open --label agent:blocked --limit 10 \
     --json number,title -q '.[] | "- #\(.number) (blocked) \(.title)"' 2>/dev/null)
 
-  body="## Factory digest — $(date -u +%F\ %H:%MZ)
+  body="## Factory digest — $(local_stamp)
 _Trigger: $1._
 
 **Spend today:** $spent / ${CREDIT_CEILING_DAY} credits (Kiro-reported; Claude Code usage is not counted).
+The budget day runs 00:00Z–00:00Z, i.e. **05:30–05:30 IST**, and resets by itself.
 **Kill switch:** $([ -f "$PAUSE_FILE" ] && echo '**PAUSED** — clear it with `factory-pause off`' || echo 'running')
 
 ### Merged in the last 24h

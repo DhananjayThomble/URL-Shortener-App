@@ -461,6 +461,22 @@ digest_daily >/dev/null 2>&1
 digest_daily >/dev/null 2>&1
 is "$(grep -c 'issue comment' "$BIN/gh.calls")" 1 "digest_daily posts at most once per UTC day"
 
+# The factory computes in UTC because GitHub and Actions cron leave it no choice; the digest is the
+# one surface a human reads, so it is the one surface that renders local time.
+reset_stubs; load
+DISPLAY_TZ=Asia/Kolkata
+stamp=$(local_stamp)
+contains "$stamp" "IST" "the digest stamp renders the maintainer's timezone"
+contains "$stamp" "Z)" "the digest stamp keeps UTC alongside it, so it can still be matched to a log line"
+DISPLAY_TZ=UTC
+lacks "$(local_stamp)" "IST" "DISPLAY_TZ=UTC turns local rendering off"
+contains "$(local_stamp)" "Z" "with DISPLAY_TZ=UTC the stamp is still unambiguous"
+
+# Rendering must not leak into anything computed: filenames and the budget window stay UTC.
+reset_stubs; load
+DISPLAY_TZ=Asia/Kolkata
+is "$(credit_file)" "$STATE_DIR/credits-$(date -u +%Y%m%d)" "the credit file is keyed by UTC day regardless of DISPLAY_TZ"
+
 # ---------------------------------------------------------------------------------------------
 section "paused: the kill switch fails closed"
 # ---------------------------------------------------------------------------------------------

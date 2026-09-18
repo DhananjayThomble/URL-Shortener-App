@@ -117,6 +117,23 @@ Two circuit breakers then protect an unattended box:
 The broken-streak breaker pauses via the same kill switch a human uses, so recovery is always the
 one documented action. The budget deliberately does not — see above.
 
+## Timezones
+
+**The factory computes in UTC and the host stays on UTC.** Not a preference — GitHub's API returns
+UTC, Actions cron is UTC-only, and CloudWatch and Vercel report UTC, so a local clock in the
+machinery would mean converting timestamps by hand at the exact moment you are debugging. Run ids
+(`.qa-runs/20260918T…Z-desktop`), log directories and the credit file are all keyed by UTC day, so
+changing the host timezone would also split one day across two directories.
+
+**The digest renders local time, because it is the one surface a human reads.** `DISPLAY_TZ`
+(default `Asia/Kolkata`) controls it; the header reads
+`## Factory digest — 2026-09-18 18:57 IST (13:27Z)` — local first, UTC in parentheses so a line can
+still be matched against a log or a CI run. Set `DISPLAY_TZ=UTC` to turn it off. It affects rendering
+only; nothing computed depends on it.
+
+Useful conversions: the budget day and the digest boundary are 00:00Z = **05:30 IST**. The QA lab's
+`cron: "30 3 * * *"` is **09:00 IST**.
+
 ## Daily digest
 
 The factory comments once per UTC day on a single issue labelled `factory:digest`, creating it on
@@ -179,7 +196,7 @@ Knobs (environment variables): `HOURS`, `SLEEP_MIN`, `DEVS_PER_CYCLE`, `AGENT_TI
 `ENGINE_MODE`, `ENGINE_MANAGER|REVIEWER|DEVELOPER|QA` (preferred engine per role in auto mode),
 `COOLDOWN_MIN`, `CLAUDE_MODEL_REVIEWER|DEFAULT`, `KIRO_MODEL_REVIEWER|DEFAULT`,
 `KIRO_EFFORT_REVIEWER|DEFAULT`, `TAIL_LINES`, `BROKEN_CYCLES_MAX`, `CREDIT_CEILING_DAY`,
-`DIGEST_LABEL`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
+`DIGEST_LABEL`, `DISPLAY_TZ`, `STATE_DIR`, `OPS_DIR`, `ROTATION` (space-separated `role[:focus]` list run one at a
 time, default `cloud`) and `SLOT_EVERY` (run the next rotation role every N cycles, default 3).
 QA, UX and security belong in the QA lab, so the Factory's rotation leaves them out.
 Transcripts go to `.agent-logs/<date>/`.
