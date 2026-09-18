@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { JwtService } from "@nestjs/jwt";
-import { createDatabase, inArray, memberships, users, workspaces, type Database } from "@snapurl/database";
+import { createDatabase, domains, eq, inArray, memberships, users, workspaces, type Database } from "@snapurl/database";
 import { AuthService } from "./auth.service.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
@@ -35,11 +35,21 @@ class FakeMail {
   async sendPasswordReset() {}
 }
 
+const stamp = Date.now();
+
+/* `provisionWorkspace` inserts `env.DEFAULT_DOMAIN` as a *system* domain
+   (workspaceId: null, isSystem: true) — a row owned by nobody, shared across
+   every workspace. It is not reachable by cascading the workspaces this test
+   creates, so it must be unique per run and deleted explicitly in `afterAll`,
+   rather than reusing the real `snapurl.test` default and leaving it behind
+   for every other suite (incl. scripts/smoke.sh) to sort against. */
+const testDomain = `race-${stamp}.test`;
+
 const env = {
   JWT_ACCESS_SECRET: "test-access-secret",
   JWT_ACCESS_TTL: "15m",
   JWT_REFRESH_TTL_DAYS: 30,
-  DEFAULT_DOMAIN: "snapurl.test",
+  DEFAULT_DOMAIN: testDomain,
 } as unknown as Env;
 
 describeDb("AuthService workspace slug allocation under concurrency", () => {
@@ -49,7 +59,6 @@ describeDb("AuthService workspace slug allocation under concurrency", () => {
   const createdUserIds: string[] = [];
   const createdWorkspaceIds: string[] = [];
 
-  const stamp = Date.now();
   const displayName = `Race Tester ${stamp}`;
 
   beforeAll(() => {
@@ -72,6 +81,9 @@ describeDb("AuthService workspace slug allocation under concurrency", () => {
     if (createdWorkspaceIds.length > 0) {
       await db.delete(workspaces).where(inArray(workspaces.id, createdWorkspaceIds));
     }
+    // The system domain row is owned by nobody (workspaceId: null), so the
+    // workspaces cascade above cannot reach it — delete it explicitly.
+    await db.delete(domains).where(eq(domains.domain, testDomain));
     await handle.close?.();
   });
 
