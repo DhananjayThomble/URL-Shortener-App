@@ -105,15 +105,32 @@ export interface RealSession {
  * silently producing a half-authenticated page.
  */
 export async function registerRealUser(): Promise<RealSession> {
-  // Collision-resistant even under parallel workers: pid + a per-process
-  // monotonic counter + 8 random bytes, not just Date.now()+4B. A previously
-  // observed 409 ("That already exists") under fullyParallel came from two
-  // workers minting the same local-part in the same millisecond.
-  const email = `l1-cal-${Date.now().toString(36)}-${process.pid.toString(36)}-${(_regSeq++).toString(36)}-${randomBytes(8).toString("hex")}@example.com`;
+  // The 409 this previously hit ("That already exists") was NOT an email
+  // collision — 8 random bytes do not collide across dozens of registrations,
+  // and a duplicate email produces a different message
+  // (AuthService.register's own pre-check: "An account with that email
+  // already exists. Try signing in instead."). "That already exists" is the
+  // generic Postgres 23505 unique-violation mapping
+  // (apps/api/src/common/postgres-error.filter.ts), and the column that
+  // actually collided is the WORKSPACE SLUG: every registration previously
+  // sent a constant display name, so provisionWorkspace's
+  // `baseSlug = slugify(displayName)` was identical for every account, and
+  // uniqueWorkspaceSlug (auth.service.ts) is a check-then-act loop over
+  // `base`, `base-2` … `base-20` before falling back to a millisecond-only
+  // suffix with no randomness — a fallback two parallel workers can land on
+  // together. Making the email unique alone cannot fix a slug collision, so
+  // the suffix is now shared by both the email and the display name, which
+  // keeps `baseSlug` itself unique per registration and means
+  // uniqueWorkspaceSlug never has to walk the ladder. slugify() also
+  // truncates to 40 chars, so the display name uses a short "l1cal" prefix
+  // rather than "L1 Calibration" — otherwise the truncation would cut into
+  // the random part of the suffix and reopen the same collision.
+  const suffix = `${Date.now().toString(36)}-${process.pid.toString(36)}-${(_regSeq++).toString(36)}-${randomBytes(8).toString("hex")}`;
+  const email = `l1-cal-${suffix}@example.com`;
   const res = await fetch(`${API_URL}/auth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "L1 Calibration", email, password: PASSWORD }),
+    body: JSON.stringify({ name: `l1cal ${suffix}`, email, password: PASSWORD }),
   });
   const text = await res.text();
   if (!res.ok) {

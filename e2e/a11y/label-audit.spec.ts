@@ -36,6 +36,13 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
      matching the surface #438/#459 were filed against.
    · Modals/menus that only open on a specific row action (e.g. per-link
      dropdowns) beyond the create-link drawer are not exhaustively opened.
+   · Placeholder text satisfies axe's `label` rule (`non-empty-placeholder`),
+     so 0 violations here does NOT mean every control has a real accessible
+     name. #469 documents two controls in the create-link drawer scanned by
+     this very suite where `<label for>` resolves to a wrapper `<div>`
+     (Short link, create-link-drawer.tsx) or to nothing at all (Tags, which
+     wraps a `<Controller>` that never forwards `id`) — both pass this audit
+     today. A green run here is not proof #469 is closed.
 
    --- CI does NOT run this suite ---
    Nothing in .github/workflows/, the root package.json or e2e/package.json
