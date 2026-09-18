@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+# Tests for scripts/agents/autopilot.sh.
+#
+#   bash scripts/agents/autopilot.test.sh
+#
+# The autopilot decides when to spend money, when to trust a run and when to stop the factory.
+# Those decisions are only observable in production once, and the maintainer is usually away, so
+# they are pinned here instead. No network, no agent CLIs, no GitHub: `claude`, `kiro-cli` and `gh`
+# are stubs on PATH whose exit code and output each case chooses. Needs only bash, coreutils and awk.
+# Most variables here are globals consumed by functions in the sourced autopilot; shellcheck
+# cannot see across `source`, so its unused-variable warning is wrong for this file.
+# shellcheck disable=SC2034
+set -uo pipefail
+
+SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/autopilot.sh
+[ -f "$SRC" ] || { echo "cannot find autopilot.sh next to this test" >&2; exit 1; }
+
+pass=0; fail=0
+ok()   { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
+bad()  { fail=$((fail + 1)); printf '  FAIL %s\n'   "$1"; [ -n "${2:-}" ] && printf '         %s\n' "$2"; }
+is()   { # got want label
+  if [ "$1" = "$2" ]; then ok "$3"; else bad "$3" "got '$1', want '$2'"; fi
+}
+contains() { # haystack needle label
+  case "$1" in *"$2"*) ok "$3" ;; *) bad "$3" "'$2' not found in: $(printf '%s' "$1" | tr '\n' '|')" ;; esac
+}
+lacks() { # haystack needle label
+  case "$1" in *"$2"*) bad "$3" "'$2' should not appear" ;; *) ok "$3" ;; esac
+}
+
+# ---------------------------------------------------------------------------------------------
+# A throwaway git repo per case: autopilot.sh cds to the toplevel and writes state under it.
+# ---------------------------------------------------------------------------------------------
+BIN=$(mktemp -d); WORKROOT=$(mktemp -d)
+trap 'rm -rf "$BIN" "$WORKROOT"' EXIT
+PATH="$BIN:$PATH"
+
+# Stubs. Each reads its scripted behaviour from files under $BIN so a case can change it without
+# rewriting the stub: <engine>.rc is the exit code, <engine>.out the stdout, <engine>.calls the log.
+# Stubs. Each reads its scripted behaviour from files under $BIN so a case can change it without
+# rewriting the stub: <engine>.rc is the exit code, <engine>.out the stdout, <engine>.calls the log.
+# Regenerated between cases, because several cases replace a stub outright.
+make_stubs() {
+  local engine
+  for engine in claude kiro-cli; do
+    cat >"$BIN/$engine" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/$engine.calls"
+cat "$BIN/$engine.out" 2>/dev/null
+exit \$(cat "$BIN/$engine.rc" 2>/dev/null || echo 0)
+STUB
+    chmod +x "$BIN/$engine"
+  done
+
+  # gh is only asked things the tests care about; anything else is a silent success so that helper
+  # calls (labels, comments) cannot fail a case for the wrong reason.
+  cat >"$BIN/gh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/gh.calls"
+case "\$*" in
+  *"--label agents:paused"*) cat "$BIN/gh.paused" 2>/dev/null || echo 0 ;;
+  *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo "" ;;
+  *) echo "" ;;
+esac
+exit 0
+STUB
+  chmod +x "$BIN/gh"
+}
+
+reset_stubs() {
+  rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels
+  make_stubs
+  echo 0 > "$BIN/gh.paused"
+}
+
+# Loads the functions without running the loop, in a fresh repo.
+load() { # [env assignments...]
+  local dir; dir=$(mktemp -d "$WORKROOT/case.XXXXXX")
+  git -C "$dir" init -q 2>/dev/null
+  cd "$dir" || exit 1
+  export AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$dir/.state" \
+         PAUSE_FILE="$dir/.paused" OPS_DIR="$dir/nonexistent-ops"
+  # shellcheck disable=SC1090
+  source "$SRC"
+  MODE=auto
+}
+
+section() { printf '\n%s\n' "$1"; }
+
+# ---------------------------------------------------------------------------------------------
+section "classify_run: what a finished run actually means"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+
+printf 'all good\nreport written\n' > run.log
+is "$(classify_run 0 run.log)" ok "exit 0 with a clean log is ok"
+
+# The regression that cost a real cycle: the product's own click-quota bar and a sad-path 401 body
+# appeared in a successful UX run's log, and the old whole-log grep aborted the cycle.
+{
+  echo 'Clicks this month 82.6k / 1.0M  One quota, clicks only. Links, QR codes and edits are never metered.'
+  echo '{"message":"Sign in to continue.","error":"Unauthorized","statusCode":401}'
+  echo 'summary.md has per-route scores and the prioritised top-10.'
+  echo ' ▸ Credits: 13.11 • Time: 15m 57s'
+} > ux.log
+is "$(classify_run 0 ux.log)" ok "a successful run is ok even when its text says 'quota' and 'Unauthorized'"
+
+printf 'Claude usage limit reached. Your limit will reset at 3pm.\n' > limited.log
+is "$(classify_run 1 limited.log)" limited "a failed run reporting a usage limit is limited"
+
+printf 'You are out of credits for this month.\n' > credits.log
+is "$(classify_run 1 credits.log)" limited "out of credits is limited"
+
+printf 'TypeError: cannot read property of undefined\n' > crash.log
+is "$(classify_run 1 crash.log)" broken "a failed run with no quota message is broken"
+
+printf 'kiro-cli: command not found\n' > missing.log
+is "$(classify_run 127 missing.log)" broken "exit 127 (missing binary) is broken, not a limit"
+
+printf 'Model "nope" is not available\n' > badmodel.log
+is "$(classify_run 1 badmodel.log)" broken "a rejected model is broken"
+
+printf 'working\n' > slow.log
+is "$(classify_run 124 slow.log)" timeout "exit 124 is a timeout of its own class"
+
+# A limit message far above the tail is scrollback from the agent's own reading, not this run's fate.
+{ echo 'usage limit reached'; for i in $(seq 1 400); do echo "line $i"; done; } > old.log
+is "$(classify_run 1 old.log)" broken "a limit message older than TAIL_LINES does not count"
+
+# ---------------------------------------------------------------------------------------------
+section "run_credits: reading the engine's own spend meter"
+# ---------------------------------------------------------------------------------------------
+printf 'done\n\033[38;5;8m\n ▸ Credits: 13.11 • Time: 15m 57s\n\n\033[0m\n' > spend.log
+is "$(run_credits spend.log)" 13.11 "parses the ANSI-wrapped Kiro credits footer"
+printf 'no meter here\n' > nospend.log
+is "$(run_credits nospend.log)" "" "prints nothing when the engine reports no usage"
+
+# ---------------------------------------------------------------------------------------------
+section "the day budget is a hard stop"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+CREDIT_CEILING_DAY=100
+add_credits 40 >/dev/null; add_credits 35 >/dev/null
+is "$(cat "$(credit_file)")" 75.00 "credits accumulate across runs"
+if over_budget; then bad "under budget is not over budget"; else ok "under budget is not over budget"; fi
+add_credits 30 >/dev/null
+if over_budget; then ok "crossing the ceiling trips over_budget"; else bad "crossing the ceiling trips over_budget"; fi
+CREDIT_CEILING_DAY=0
+if over_budget; then bad "a ceiling of 0 disables the check"; else ok "a ceiling of 0 disables the check"; fi
+
+reset_stubs; load
+pause_factory "test reason" >/dev/null
+if [ -f "$PAUSE_FILE" ]; then ok "pause_factory writes the same kill switch a human uses"; else bad "pause_factory writes the kill switch"; fi
+contains "$(cat "$STATE_DIR/alerts.log")" "pausing the factory" "pausing records an alert for the digest"
+
+# ---------------------------------------------------------------------------------------------
+section "engine selection and cooldown"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+MODE=auto
+is "$(pick_engine claude)" claude "auto with both healthy uses the preferred engine"
+cool_down claude >/dev/null
+is "$(pick_engine claude)" kiro "auto falls back when the preferred engine is cooling"
+is "$(pick_engine kiro)" kiro "the healthy engine is still used for its own roles"
+cool_down kiro >/dev/null
+is "$(pick_engine claude)" "" "auto with both cooling has no engine"
+
+reset_stubs; load
+MODE=kiro
+is "$(pick_engine claude)" kiro "a forced engine overrides the role's preference"
+cool_down kiro >/dev/null
+is "$(pick_engine claude)" "" "a forced engine that is cooling runs nothing rather than falling back"
+
+# ---------------------------------------------------------------------------------------------
+section "reviewer independence"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+is "$(model_for kiro reviewer)" "$KIRO_MODEL_REVIEWER" "the reviewer gets its own model"
+is "$(model_for kiro developer)" "$KIRO_MODEL_DEFAULT" "other roles get the default model"
+[ "$(model_for kiro reviewer)" != "$(model_for kiro developer)" ] \
+  && ok "on kiro the reviewer is not the model that wrote the code" \
+  || bad "on kiro the reviewer is not the model that wrote the code"
+[ "$(model_for claude reviewer)" != "$(model_for claude developer)" ] \
+  && ok "on claude the reviewer is not the model that wrote the code" \
+  || bad "on claude the reviewer is not the model that wrote the code"
+is "$(model_family "$(model_for kiro reviewer)")" openai "the default Kiro reviewer is a different vendor"
+[ "$(model_family "$(model_for kiro reviewer)")" != "$(model_family "$(model_for kiro developer)")" ] \
+  && ok "on kiro reviewer and developer are different vendors, so their blind spots differ" \
+  || bad "on kiro reviewer and developer are different vendors"
+is "$(model_family claude-opus-5)" anthropic "model_family maps Claude models"
+is "$(model_family glm-5)" zai "model_family maps GLM"
+is "$(model_family qwen3-coder-next)" qwen "model_family maps Qwen"
+
+# The invariant, not the current value: overriding the reviewer to the developer's family warns.
+out=$(KIRO_MODEL_REVIEWER=claude-opus-5 KIRO_MODEL_DEFAULT=claude-sonnet-5 \
+      bash -c 'AUTOPILOT_LIB_ONLY=1 STATE_DIR=$PWD/.s PAUSE_FILE=$PWD/.p source '"$SRC"'; check_reviewer_independence kiro' 2>&1)
+contains "$out" "may correlate" "same-vendor reviewer and developer is called out"
+
+# ---------------------------------------------------------------------------------------------
+section "effort is passed to Kiro and not to Claude Code"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+is "$(effort_for kiro reviewer)" max "the reviewer runs at max effort"
+is "$(effort_for kiro developer)" xhigh "other roles run at xhigh effort"
+is "$(effort_for claude reviewer)" "" "Claude Code is given no effort flag"
+
+reset_stubs; load
+echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
+MODE=kiro
+run_agent reviewer kiro "review" >/dev/null 2>&1
+contains "$(cat "$BIN/kiro-cli.calls")" "--effort max" "the reviewer's Kiro invocation carries --effort max"
+contains "$(cat "$BIN/kiro-cli.calls")" "--model gpt-5.6-terra" "the reviewer's Kiro invocation carries the cross-vendor model"
+
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+MODE=claude
+run_agent reviewer claude "review" >/dev/null 2>&1
+lacks "$(cat "$BIN/claude.calls")" "--effort" "Claude Code is never passed --effort"
+
+# ---------------------------------------------------------------------------------------------
+section "run_agent: retries, escalation and the kill switch"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+echo 0 > "$BIN/kiro-cli.rc"; printf 'all done\n' > "$BIN/kiro-cli.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+is "$rc" 0 "a successful run returns 0"
+is "$CYCLE_WORKED" 1 "a successful run counts as work done"
+is "$CYCLE_BROKEN" 0 "a successful run is not counted as broken"
+is "$(wc -l < "$BIN/kiro-cli.calls")" 1 "a successful run is not retried"
+
+# Limited on the preferred engine: cool it down and retry once on the other one.
+reset_stubs; load
+echo 1 > "$BIN/kiro-cli.rc"; printf 'Error: out of credits\n' > "$BIN/kiro-cli.out"
+echo 0 > "$BIN/claude.rc";   printf 'done\n' > "$BIN/claude.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+is "$rc" 0 "a quota-limited run is retried on the other engine and succeeds"
+is "$(wc -l < "$BIN/kiro-cli.calls")" 1 "the limited engine is called only once"
+is "$(wc -l < "$BIN/claude.calls")" 1 "the fallback engine is called once"
+if cooling kiro; then ok "the limited engine is put in cooldown"; else bad "the limited engine is put in cooldown"; fi
+
+# Both engines limited: one call each, then give up. No spinning.
+reset_stubs; load
+echo 1 > "$BIN/kiro-cli.rc"; printf 'usage limit reached\n' > "$BIN/kiro-cli.out"
+echo 1 > "$BIN/claude.rc";   printf 'usage limit reached\n' > "$BIN/claude.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+is "$rc" 99 "with both engines limited the role is skipped"
+is "$(wc -l < "$BIN/kiro-cli.calls")" 1 "no repeat calls to a limited engine"
+is "$(wc -l < "$BIN/claude.calls")" 1 "no repeat calls to the other limited engine"
+
+# The bug this suite exists for: a hard failure must not be reported as success.
+reset_stubs; load
+echo 127 > "$BIN/kiro-cli.rc"; printf 'command not found\n' > "$BIN/kiro-cli.out"
+echo 127 > "$BIN/claude.rc";   printf 'command not found\n' > "$BIN/claude.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "a broken engine does not return success" || bad "a broken engine does not return success"
+is "$CYCLE_BROKEN" 2 "each broken attempt is counted for the circuit breaker"
+is "$CYCLE_WORKED" 0 "a broken run is never counted as work"
+contains "$(cat "$STATE_DIR/alerts.log")" "non-quota reason" "a broken run raises an alert the digest will carry"
+if cooling kiro; then bad "a broken engine is not mistaken for a throttled one"; else ok "a broken engine is not mistaken for a throttled one"; fi
+
+# A timeout burned the full budget once already; retrying would burn it again.
+reset_stubs; load
+echo 124 > "$BIN/kiro-cli.rc"; printf 'still working\n' > "$BIN/kiro-cli.out"
+MODE=kiro
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "a timeout does not return success" || bad "a timeout does not return success"
+is "$(wc -l < "$BIN/kiro-cli.calls")" 1 "a timeout is not retried"
+contains "$(cat "$STATE_DIR/alerts.log")" "timeout" "a timeout raises an alert"
+
+# The kill switch must be honoured between attempts, not only before the first one.
+reset_stubs; load
+echo 1 > "$BIN/kiro-cli.rc"; printf 'out of credits\n' > "$BIN/kiro-cli.out"
+echo 0 > "$BIN/claude.rc";   printf 'done\n' > "$BIN/claude.out"
+MODE=auto
+# The first attempt fails with a limit and, mid-run, the human pauses the factory.
+cat >"$BIN/kiro-cli" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/kiro-cli.calls"
+echo 'out of credits'
+touch "$PAUSE_FILE"
+exit 1
+STUB
+chmod +x "$BIN/kiro-cli"
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+is "$rc" 99 "a paused factory stops the retry"
+is "$(wc -l < "$BIN/kiro-cli.calls")" 1 "the first attempt ran"
+if [ -f "$BIN/claude.calls" ]; then
+  bad "no second session is started after the kill switch goes on"
+else
+  ok "no second session is started after the kill switch goes on"
+fi
+
+# Spend is metered even when the run is retried.
+reset_stubs; load
+printf 'done\n ▸ Credits: 7.50 • Time: 2m 1s\n' > "$BIN/kiro-cli.out"; echo 0 > "$BIN/kiro-cli.rc"
+MODE=kiro
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$(credit_file)")" 7.50 "a run's reported credits are added to the day's total"
+
+# The ceiling must stop the next session, not merely be noticed at the top of the next cycle:
+# an overshoot should cost one run at most.
+reset_stubs; load
+printf 'done\n' > "$BIN/kiro-cli.out"; echo 0 > "$BIN/kiro-cli.rc"
+CREDIT_CEILING_DAY=10
+add_credits 11 >/dev/null
+MODE=kiro
+run_agent developer kiro "work" >/dev/null 2>&1; rc=$?
+is "$rc" 99 "a role is skipped once the day's budget is spent"
+if [ -f "$BIN/kiro-cli.calls" ]; then
+  bad "no agent session is started over budget"
+else
+  ok "no agent session is started over budget"
+fi
+
+# ---------------------------------------------------------------------------------------------
+section "engine_mode: the phone-friendly switch"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+is "$(engine_mode)" auto "no label and no state file means auto"
+
+echo "engine:kiro" > "$BIN/gh.enginelabels"
+is "$(engine_mode)" kiro "an engine:kiro label forces kiro"
+echo "engine:claude" > "$BIN/gh.enginelabels"
+is "$(engine_mode)" claude "an engine:claude label forces claude"
+echo "engine:claude engine:kiro" > "$BIN/gh.enginelabels"
+is "$(engine_mode 2>/dev/null)" auto "contradictory labels are ignored rather than guessed"
+
+reset_stubs; load
+echo kiro > "$STATE_DIR/engine-mode"
+is "$(engine_mode)" kiro "the state file switches the engine when no label does"
+echo "engine:claude" > "$BIN/gh.enginelabels"
+is "$(engine_mode)" claude "a label beats the state file"
+
+# This runs every cycle for the life of the factory, so it must not narrate a missing file.
+reset_stubs; load
+noise=$(engine_mode 2>&1 >/dev/null)
+is "$noise" "" "reading a state file that does not exist is silent"
+
+# ---------------------------------------------------------------------------------------------
+section "digest: the maintainer's once-a-day interface"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+# gh.calls records every call; the digest must create its issue and comment on it.
+cat >"$BIN/gh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/gh.calls"
+case "\$*" in
+  *"issue list"*"$DIGEST_LABEL"*) cat "$BIN/gh.digestissue" 2>/dev/null ;;
+  *"issue create"*) echo "https://github.com/owner/repo/issues/77" ;;
+  *"--label agents:paused"*) echo 0 ;;
+  *) echo "" ;;
+esac
+exit 0
+STUB
+chmod +x "$BIN/gh"
+
+: > "$BIN/gh.digestissue"          # no existing digest issue
+add_credits 12.5 >/dev/null
+alert "something needed attention"
+digest_now "test" >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "issue create" "the digest creates its own issue when none exists"
+contains "$(cat "$BIN/gh.calls")" "issue comment 77" "the digest comments on that issue, which is what notifies a phone"
+contains "$(cat "$BIN/gh.calls")" "12.50" "the digest reports the day's spend"
+contains "$(cat "$BIN/gh.calls")" "something needed attention" "the digest carries the alerts raised since the last one"
+
+reset_stubs; load
+cat >"$BIN/gh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/gh.calls"
+case "\$*" in
+  *"issue list"*"$DIGEST_LABEL"*) echo 42 ;;
+  *"--label agents:paused"*) echo 0 ;;
+  *) echo "" ;;
+esac
+exit 0
+STUB
+chmod +x "$BIN/gh"
+digest_now "test" >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "issue create" "an existing digest issue is reused, not duplicated"
+contains "$(cat "$BIN/gh.calls")" "issue comment 42" "the digest comments on the existing issue"
+
+# One notification a day: a digest per cycle would be ignored within a week.
+reset_stubs; load
+cat >"$BIN/gh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/gh.calls"
+case "\$*" in
+  *"issue list"*"$DIGEST_LABEL"*) echo 42 ;;
+  *) echo "" ;;
+esac
+exit 0
+STUB
+chmod +x "$BIN/gh"
+digest_daily >/dev/null 2>&1
+digest_daily >/dev/null 2>&1
+digest_daily >/dev/null 2>&1
+is "$(grep -c 'issue comment' "$BIN/gh.calls")" 1 "digest_daily posts at most once per UTC day"
+
+# ---------------------------------------------------------------------------------------------
+section "paused: the kill switch fails closed"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+if paused; then bad "an unpaused factory is not paused"; else ok "an unpaused factory is not paused"; fi
+: > "$PAUSE_FILE"
+if paused; then ok "the pause file pauses the factory"; else bad "the pause file pauses the factory"; fi
+rm -f "$PAUSE_FILE"
+echo 1 > "$BIN/gh.paused"
+if paused; then ok "an agents:paused label pauses the factory"; else bad "an agents:paused label pauses the factory"; fi
+echo "" > "$BIN/gh.paused"
+if paused; then ok "an unreadable label state pauses rather than assumes it is safe"; else bad "an unreadable label state fails closed"; fi
+
+# ---------------------------------------------------------------------------------------------
+printf '\n%s\n' "-------------------------------------------"
+printf '%d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ] || exit 1
