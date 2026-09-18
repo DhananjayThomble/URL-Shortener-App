@@ -707,6 +707,12 @@ export async function fixtureRequest<T>(
     } satisfies TotpSetup;
   } else if (m(/^\/auth\/2fa\/enable$/)) {
     // Ten codes, shown once. Fixed strings so a reviewer can see the shape.
+    // Reflect the new state in the members list — the settings UI derives the
+    // current user's 2FA status from Member.twoFactor (matched by email, since
+    // Member.id is the membership id not the user id), so without this the
+    // fixtures lane would show the button doing nothing.
+    const self = memberStore.find((x) => x.email.toLowerCase() === SESSION.user.email.toLowerCase());
+    if (self) self.twoFactor = true;
     data = {
       recoveryCodes: Array.from({ length: 10 }, (_, i) => `${1000 + i * 137}-${7300 - i * 91}`),
     } satisfies TotpRecoveryCodes;
@@ -716,7 +722,11 @@ export async function fixtureRequest<T>(
     const code = (opts.body as { code?: string })?.code ?? "";
     if (code !== "123456") throw new Error("That code isn't right. Try again.");
     data = SESSION;
-  } else if (m(/^\/auth\/2fa\/disable$/)) data = undefined;
+  } else if (m(/^\/auth\/2fa\/disable$/)) {
+    const self = memberStore.find((x) => x.email.toLowerCase() === SESSION.user.email.toLowerCase());
+    if (self) self.twoFactor = false;
+    data = undefined;
+  }
   /* ---- workspace ---- */
   else if (m(/^\/workspaces\/current$/) && method === "PATCH") {
     Object.assign(WORKSPACE, opts.body as UpdateWorkspaceInput);

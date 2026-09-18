@@ -90,19 +90,51 @@ test.describe("Journey 10 — 2FA", () => {
     await page.getByRole("button", { name: /verify|submit|confirm/i }).click();
     await expect(page).toHaveURL(/\/links/, { timeout: 15_000 });
 
-    /* ---- 6. Check: does the settings page have a 2FA management surface? ---- */
+    /* ---- 6. The settings page can manage 2FA through the UI ---- */
+    // Issue #458: the hooks existed but had no settings surface. This step used
+    // to only console.log a finding; it now asserts the surface is real.
     await page.goto("/settings");
     await expect(page).toHaveURL(/\/settings/);
-    await page.waitForLoadState("networkidle");
 
-    const has2FASection = await page.getByText(/two.factor|2fa|authenticator/i).count() > 0;
-    if (!has2FASection) {
-      console.log(
-        `[FINDING] J10: /settings page has no 2FA setup/management surface. ` +
-        `useSetupTotp / useEnableTotp hooks exist in web/src/lib/api/hooks/auth.ts ` +
-        `but are not wired to any settings UI component. ` +
-        `Users can enable 2FA only via the API, not through the dashboard.`,
-      );
-    }
+    // The section reflects the current (enabled) state — status derived from
+    // Member.twoFactor via useMe + useMembers, not a new /auth/me field.
+    const section = page.locator("#two-factor");
+    await expect(section).toBeVisible({ timeout: 15_000 });
+    await expect(section.getByText(/two-factor authentication/i)).toBeVisible();
+    await expect(section.getByText(/^On$/)).toBeVisible({ timeout: 15_000 });
+
+    /* ---- 6a. Turn it off through the UI ---- */
+    await section.getByRole("button", { name: /turn off two-factor/i }).first().click();
+    await section.getByLabel(/password/i).fill(RUN_PASSWORD);
+    await section.getByRole("button", { name: /turn off two-factor/i }).last().click();
+    // Oracle: POST /auth/2fa/disable succeeded → login no longer challenges.
+    await expect(section.getByText(/^Off$/)).toBeVisible({ timeout: 15_000 });
+
+    // Confirm at the backend: a fresh login for this account now returns a
+    // session, not a TOTP challenge. This is the real-stack proof (fixtures
+    // cannot prove it — qa-oracles §5).
+    const loginRes = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: RUN_PASSWORD }),
+    });
+    expect(loginRes.ok, "login after disabling 2FA should succeed").toBe(true);
+    const loginBody = await loginRes.json() as { challenge?: string; accessToken?: string };
+    expect(loginBody.challenge, "login should NOT return a TOTP challenge after disable").toBeUndefined();
+    expect(typeof loginBody.accessToken, "login should return a session after disable").toBe("string");
+
+    /* ---- 6b. Re-enrol through the UI: setup → enter code → recovery codes ---- */
+    await section.getByRole("button", { name: /set up two-factor/i }).click();
+    // The secret is rendered so it can be entered by hand; read it back and
+    // compute a live code (never hardcode a generated value — helpers rule).
+    const secretInput = section.getByLabel(/^secret$/i);
+    await expect(secretInput).toBeVisible({ timeout: 15_000 });
+    const enrolSecret = await secretInput.inputValue();
+    expect(enrolSecret.length, "enrolment secret should be rendered for manual entry").toBeGreaterThan(0);
+
+    await section.getByLabel(/authentication code/i).fill(totpCode(enrolSecret));
+    await section.getByRole("button", { name: /turn on two-factor/i }).click();
+    // Oracle: TotpRecoveryCodes — ten codes are shown once after enable.
+    await expect(section.getByText(/save these ten recovery codes/i)).toBeVisible({ timeout: 15_000 });
   });
 });
