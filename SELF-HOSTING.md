@@ -260,6 +260,27 @@ To move to a new release:
 Take a backup first (see [Backup](#7-backup)). Pin `SNAPURL_TAG` to a specific
 release in production rather than tracking `latest`, so upgrades are deliberate.
 
+### Breaking change: API keys now fail closed on scope-less routes
+
+From this release, an **API key can only reach a route that declares a scope the
+key holds**. A route with no scope requirement is no longer reachable by an API
+key — it returns `403` instead of `200`. This closes a hole where a key granted,
+say, only `links:read` could still read routes it was never granted (for example
+the member roster, which exposes each member's email and 2FA status).
+
+Session logins in the dashboard are unaffected. This only changes programmatic
+callers using an API key (`Authorization: Bearer snap_…`). If you run an
+integration against your instance, before upgrading check which routes it calls:
+
+- Routes covered by the scope set (links, analytics, domains, conversions) keep
+  working as long as the key was granted the matching scope.
+- Calls to any other route with a key will now be rejected. Those calls were
+  never authorised by the key's scopes; if you depend on one, the fix is to add
+  the appropriate scope to the route, not to keep it open.
+
+You can see whether any live key has been used recently via its `lastUsedAt`
+timestamp before you roll the upgrade out.
+
 ## Profile 2: horizontally scaled (Kubernetes/Helm)
 
 Everything above is Profile 1: one host, one Postgres, an in-process cache, and

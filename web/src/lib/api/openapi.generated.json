@@ -107,6 +107,9 @@
     "DELETE",
     "PATCH"
   ],
+  "/public/bio-pages/{slug}": [
+    "GET"
+  ],
   "/public/forms/{slug}": [
     "GET",
     "POST"
