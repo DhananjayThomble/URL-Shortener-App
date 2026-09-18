@@ -7,6 +7,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skel
 import { useUpdateWorkspace, useWorkspace } from "@/lib/api/hooks";
 import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn, compact } from "@/lib/utils";
+import { TwoFactorCard } from "./two-factor-card";
 
 /* Retention is offered as three choices but stored as a number of years, so
    "Forever" has to land on something. 100 is the contract's maximum and is
@@ -251,6 +252,8 @@ export default function SettingsPage() {
               </div>
             </CardBody>
           </Card>
+
+          <TwoFactorCard />
         </div>
 
         <div className="flex flex-col gap-3.5">
