@@ -39,6 +39,16 @@ route({
 });
 
 route({
+  method: "get",
+  path: "/public/bio-pages/{slug}",
+  tag,
+  summary: "Get a published bio page (404 for draft/missing — existence is not public)",
+  public: true,
+  params: SlugParam,
+  responses: { 200: { description: "The public bio page: profile and blocks only", schema: refs.PublicBioPage } },
+});
+
+route({
   method: "post",
   path: "/public/forms/{slug}",
   tag,

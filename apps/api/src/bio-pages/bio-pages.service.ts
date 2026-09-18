@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, bioBlocks, bioPages, domains, eq, sql, type Database } from "@snapurl/database";
-import type { BioPage, UpsertBioPageInput } from "@snapurl/contract";
+import type { BioPage, PublicBioPage, UpsertBioPageInput } from "@snapurl/contract";
 import { isSlugAvailableShape } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";
@@ -135,6 +135,49 @@ export class BioPagesService {
     const page = all.find((p) => p.id === pageId);
     if (!page) throw new NotFoundException();
     return page;
+  }
+
+  /* ---------------- public ---------------- */
+
+  /**
+   * A signed-out visitor's view of a published bio page, by slug.
+   *
+   * A draft or missing page is 404'd rather than 403'd — whether a workspace
+   * has a page at this address is not a stranger's business, the same rule
+   * `FormsService.publicForm` follows. Workspace analytics (views,
+   * click-through, per-block clicks) never cross this boundary; only the
+   * profile and the blocks a visitor is meant to click do.
+   */
+  async publicPage(slug: string): Promise<PublicBioPage> {
+    const [page] = await this.db
+      .select()
+      .from(bioPages)
+      .where(and(sql`lower(${bioPages.slug}) = ${slug.toLowerCase()}`, eq(bioPages.status, "live")))
+      .orderBy(asc(bioPages.createdAt))
+      .limit(1);
+
+    if (!page) throw new NotFoundException("There's no page at that address.");
+
+    const blocks = await this.db
+      .select()
+      .from(bioBlocks)
+      .where(eq(bioBlocks.bioPageId, page.id))
+      .orderBy(asc(bioBlocks.position));
+
+    return {
+      slug: page.slug,
+      profile: {
+        name: page.profileName,
+        bio: page.profileBio,
+        initials: initialsOf(page.profileName),
+      },
+      blocks: blocks.map((b) => ({
+        kind: b.kind as PublicBioPage["blocks"][number]["kind"],
+        title: b.title,
+        subtitle: b.subtitle,
+        href: b.href,
+      })),
+    };
   }
 
   async remove(workspaceId: string, id: string): Promise<void> {
