@@ -33,9 +33,11 @@ test.describe("create a link", () => {
     const drawer = page.getByRole("dialog", { name: "Create a link" });
     await expect(drawer).toBeVisible();
 
-    // The destination and slug inputs are addressed by their placeholders
-    // (the drawer's Field labels are not programmatically associated).
-    await drawer.getByPlaceholder("https://acme.com/collections/spring-2026").fill(destination);
+    // The destination input is addressed by its programmatically associated
+    // label (issue #459 wired Field's <label htmlFor> ↔ input id). The slug
+    // input sits inside a domain+slug row whose Field label associates with the
+    // row container, so it is still addressed by placeholder.
+    await drawer.getByLabel("Destination URL").fill(destination);
     await drawer.getByPlaceholder("spring-sale").fill(slug);
 
     // Submit.
