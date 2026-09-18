@@ -54,23 +54,70 @@ STUB
 
   # gh is only asked things the tests care about; anything else is a silent success so that helper
   # calls (labels, comments) cannot fail a case for the wrong reason.
+  #
+  # `pr list`/`issue list` pipe a fixture through the REAL jq using the filter the script passed in
+  # `-q`. A stub that ignored `-q` is why an unrunnable jq filter shipped in the digest: the suite
+  # was green because it never compiled the filter. If a filter is malformed, jq now fails here.
   cat >"$BIN/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/gh.calls"
+
+# Pull the -q filter and the --body out of the argument list. The body is written to its own file
+# because it is multi-line: grepping it back out of the flat call log is not possible, and reading
+# assertions off the call log would match the jq filters' own source text and never fail.
+filter=''
+prev=''
+for a in "\$@"; do
+  [ "\$prev" = "-q" ] && filter="\$a"
+  [ "\$prev" = "--body" ] && printf '%s' "\$a" > "$BIN/gh.lastbody"
+  prev="\$a"
+done
+
+fixture=''
 case "\$*" in
-  *"--label agents:paused"*) cat "$BIN/gh.paused" 2>/dev/null || echo 0 ;;
-  *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo "" ;;
-  *) echo "" ;;
+  *"pr list"*"--state open"*)   fixture="$BIN/fixture-pr-open.json" ;;
+  *"pr list"*"--state merged"*) fixture="$BIN/fixture-pr-merged.json" ;;
+  *"issue list"*"label decision"*)     fixture="$BIN/fixture-issue-decision.json" ;;
+  *"issue list"*"label agent:blocked"*) fixture="$BIN/fixture-issue-blocked.json" ;;
 esac
+
+case "\$*" in
+  *"--label agents:paused"*) cat "$BIN/gh.paused" 2>/dev/null || echo 0; exit 0 ;;
+  *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo ""; exit 0 ;;
+  *"issue list"*"$DIGEST_LABEL"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
+  *"issue create"*) echo "https://github.com/owner/repo/issues/77"; exit 0 ;;
+esac
+
+if [ -n "\$fixture" ] && [ -f "\$fixture" ] && [ -n "\$filter" ]; then
+  jq -r "\$filter" < "\$fixture" || { echo "STUB_JQ_FAILED" >> "$BIN/gh.jqfail"; exit 1; }
+  exit 0
+fi
+echo ""
 exit 0
 STUB
   chmod +x "$BIN/gh"
 }
 
 reset_stubs() {
-  rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels
+  rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
+        "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json
   make_stubs
   echo 0 > "$BIN/gh.paused"
+  # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
+  # not firing on an empty string.
+  cat > "$BIN/fixture-pr-open.json" <<'JSON'
+[{"number":476,"title":"harden the autopilot","mergeStateStatus":"BEHIND","labels":[]},
+ {"number":468,"title":"form labels","mergeStateStatus":"CLEAN","labels":[{"name":"agent:pr-open"}]}]
+JSON
+  cat > "$BIN/fixture-pr-merged.json" <<'JSON'
+[{"number":467,"title":"wire the 2FA hooks"}]
+JSON
+  cat > "$BIN/fixture-issue-decision.json" <<'JSON'
+[{"number":423,"title":"routing chain evaluation order"}]
+JSON
+  cat > "$BIN/fixture-issue-blocked.json" <<'JSON'
+[]
+JSON
 }
 
 # Loads the functions without running the loop, in a fresh repo.
@@ -344,57 +391,48 @@ is "$noise" "" "reading a state file that does not exist is silent"
 section "digest: the maintainer's once-a-day interface"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
-# gh.calls records every call; the digest must create its issue and comment on it.
-cat >"$BIN/gh" <<STUB
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$BIN/gh.calls"
-case "\$*" in
-  *"issue list"*"$DIGEST_LABEL"*) cat "$BIN/gh.digestissue" 2>/dev/null ;;
-  *"issue create"*) echo "https://github.com/owner/repo/issues/77" ;;
-  *"--label agents:paused"*) echo 0 ;;
-  *) echo "" ;;
-esac
-exit 0
-STUB
-chmod +x "$BIN/gh"
-
 : > "$BIN/gh.digestissue"          # no existing digest issue
 add_credits 12.5 >/dev/null
 alert "something needed attention"
 digest_now "test" >/dev/null 2>&1
-contains "$(cat "$BIN/gh.calls")" "issue create" "the digest creates its own issue when none exists"
-contains "$(cat "$BIN/gh.calls")" "issue comment 77" "the digest comments on that issue, which is what notifies a phone"
-contains "$(cat "$BIN/gh.calls")" "12.50" "the digest reports the day's spend"
-contains "$(cat "$BIN/gh.calls")" "something needed attention" "the digest carries the alerts raised since the last one"
+calls=$(cat "$BIN/gh.calls")
+contains "$calls" "issue create" "the digest creates its own issue when none exists"
+contains "$calls" "issue comment 77" "the digest comments on that issue, which is what notifies a phone"
+
+# Assertions about digest *content* must read only the posted body. The stub logs every argument
+# list, which includes the jq filters themselves — matching against the whole log would pass on the
+# filter's own source text and never fail, which is exactly the kind of toothless assertion that let
+# a broken filter ship in the first place.
+body=$(cat "$BIN/gh.lastbody" 2>/dev/null)
+contains "$body" "12.50" "the digest reports the day's spend"
+contains "$body" "something needed attention" "the digest carries the alerts raised since the last one"
+
+# Every jq filter the digest uses is now compiled by the real jq. A malformed one — which is what
+# shipped in the first cut of this feature — leaves a marker instead of silently blanking a section.
+if [ -f "$BIN/gh.jqfail" ]; then
+  bad "every digest jq filter compiles" "$(cat "$BIN/gh.jqfail")"
+else
+  ok "every digest jq filter compiles"
+fi
+
+# The section an absent maintainer reads first must actually have rows in it.
+contains "$body" "#476" "the Open PRs section lists the open PRs"
+contains "$body" "#468" "the Open PRs section lists every open PR, not just the first"
+contains "$body" "[BEHIND]" "each open PR carries its mergeability"
+contains "$body" "agent:pr-open" "a labelled PR shows its labels"
+contains "$body" "no labels" "an unlabelled PR says so instead of trailing an empty dash"
+contains "$body" "#467" "the Merged section lists what landed"
+contains "$body" "#423" "the Waiting on you section lists decisions"
 
 reset_stubs; load
-cat >"$BIN/gh" <<STUB
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$BIN/gh.calls"
-case "\$*" in
-  *"issue list"*"$DIGEST_LABEL"*) echo 42 ;;
-  *"--label agents:paused"*) echo 0 ;;
-  *) echo "" ;;
-esac
-exit 0
-STUB
-chmod +x "$BIN/gh"
+echo 42 > "$BIN/gh.digestissue"
 digest_now "test" >/dev/null 2>&1
 lacks "$(cat "$BIN/gh.calls")" "issue create" "an existing digest issue is reused, not duplicated"
 contains "$(cat "$BIN/gh.calls")" "issue comment 42" "the digest comments on the existing issue"
 
 # One notification a day: a digest per cycle would be ignored within a week.
 reset_stubs; load
-cat >"$BIN/gh" <<STUB
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$BIN/gh.calls"
-case "\$*" in
-  *"issue list"*"$DIGEST_LABEL"*) echo 42 ;;
-  *) echo "" ;;
-esac
-exit 0
-STUB
-chmod +x "$BIN/gh"
+echo 42 > "$BIN/gh.digestissue"
 digest_daily >/dev/null 2>&1
 digest_daily >/dev/null 2>&1
 digest_daily >/dev/null 2>&1

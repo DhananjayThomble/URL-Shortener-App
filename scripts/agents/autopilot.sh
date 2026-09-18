@@ -168,9 +168,13 @@ classify_run() { # rc logfile
 
 # Kiro ends a run with "▸ Credits: 13.11 • Time: 15m 57s"; Claude Code reports no usage, so its
 # spend is invisible here and the ceiling only governs Kiro. Prints nothing when absent.
+#
+# Anchored on the whole footer, not on "credits: N" alone. Agents print arbitrary text — including
+# this repo's own documentation about credits — and a number lifted from an agent's prose would
+# corrupt the ceiling in whichever direction the text happened to say.
 run_credits() { # logfile
   tail -n 20 "$1" 2>/dev/null | strip_ansi \
-    | grep -oiE 'credits:[[:space:]]*[0-9]+(\.[0-9]+)?' | tail -n 1 \
+    | grep -oiE 'Credits:[[:space:]]*[0-9]+(\.[0-9]+)?[[:space:]]*•[[:space:]]*Time:' | tail -n 1 \
     | grep -oE '[0-9]+(\.[0-9]+)?'
 }
 
@@ -230,12 +234,30 @@ digest_issue() {
 }
 
 digest_now() { # reason
-  local n body since spent alerts
+  local n body since spent alerts merged open waiting blocked
   n=$(digest_issue) || return 0
   [ -n "$n" ] || { log "digest: no issue to post to"; return 0; }
-  since=$(date -u -d '24 hours ago' +%FT%TZ 2>/dev/null || echo "")
+  since=$(date -u -d '24 hours ago' +%F 2>/dev/null || echo "")
   spent=$(cat "$(credit_file)" 2>/dev/null || echo 0)
   alerts=$(tail -n 20 "$STATE_DIR/alerts.log" 2>/dev/null | sed 's/^/- /')
+
+  # Each section is built in its own variable with a single-quoted jq filter. Inlining these in the
+  # body string meant the filters sat inside a double-quoted "$( )" and had to be backslash-escaped;
+  # the backslashes reached jq literally, it refused the program, and because the call was
+  # `|| true` the section rendered blank instead of failing. Never nest a jq filter in a quoted body.
+  merged=$(gh pr list -R "$REPO" --state merged --search "merged:>=$since" --limit 20 \
+    --json number,title -q '.[] | "- #\(.number) \(.title)"' 2>/dev/null)
+  # `join` on an empty array is "", and jq's // only substitutes null/false, so an unlabelled PR
+  # needs an explicit emptiness test rather than `// "no labels"`.
+  open=$(gh pr list -R "$REPO" --state open --limit 20 \
+    --json number,title,mergeStateStatus,labels \
+    -q '.[] | ([.labels[].name] | join(", ")) as $l
+        | "- #\(.number) [\(.mergeStateStatus)] \(.title) — \(if $l == "" then "no labels" else $l end)"' \
+    2>/dev/null)
+  waiting=$(gh issue list -R "$REPO" --state open --label decision --limit 10 \
+    --json number,title -q '.[] | "- #\(.number) \(.title)"' 2>/dev/null)
+  blocked=$(gh issue list -R "$REPO" --state open --label agent:blocked --limit 10 \
+    --json number,title -q '.[] | "- #\(.number) (blocked) \(.title)"' 2>/dev/null)
 
   body="## Factory digest — $(date -u +%F\ %H:%MZ)
 _Trigger: $1._
@@ -244,19 +266,14 @@ _Trigger: $1._
 **Kill switch:** $([ -f "$PAUSE_FILE" ] && echo '**PAUSED** — clear it with `factory-pause off`' || echo 'running')
 
 ### Merged in the last 24h
-$(gh pr list -R "$REPO" --state merged --search "merged:>=${since%T*}" --limit 20 \
-  --json number,title -q '.[] | "- #\(.number) \(.title)"' 2>/dev/null | head -20 || true)
+${merged:-_none_}
 
 ### Open PRs
-$(gh pr list -R "$REPO" --state open --limit 20 \
-  --json number,title,mergeStateStatus,labels \
-  -q '.[] | "- #\(.number) [\(.mergeStateStatus)] \(.title) — \([.labels[].name] | join(\", \") // \"no labels\")"' 2>/dev/null || true)
+${open:-_none_}
 
 ### Waiting on you
-$(gh issue list -R "$REPO" --state open --label decision --limit 10 \
-  --json number,title -q '.[] | "- #\(.number) \(.title)"' 2>/dev/null || true)
-$(gh issue list -R "$REPO" --state open --label agent:blocked --limit 10 \
-  --json number,title -q '.[] | "- #\(.number) (blocked) \(.title)"' 2>/dev/null || true)
+${waiting:-_no decisions pending_}
+${blocked:-}
 
 ### Recent alerts
 ${alerts:-_none_}"

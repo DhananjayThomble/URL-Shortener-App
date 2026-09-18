@@ -63,6 +63,13 @@ Override with `KIRO_MODEL_REVIEWER`, `KIRO_MODEL_DEFAULT`, `KIRO_EFFORT_REVIEWER
 at shift start if an override leaves the reviewer in the developer's vendor family. Effort raises the
 credit cost of every run, which is what the day budget below is for.
 
+**A caveat on the default reviewer.** `kiro-cli chat --list-models` describes `gpt-5.6-terra` as an
+*"Experimental preview"*. The vendor-independence argument for it is deliberate — it is the component
+that makes an unattended merge trustworthy, so its mistakes should not be the author's mistakes — but
+it does mean the last line of defence runs on a preview model. If you would rather trade
+decorrelation for maturity, `KIRO_MODEL_REVIEWER=claude-opus-5` costs the same 2.2× and is GA; the
+shift-start warning will then tell you the reviewer and developer share a vendor.
+
 **Shared context.** Both tools load the same rules (`CLAUDE.md` imports `.kiro/steering/`, which
 Kiro reads natively) and the same role prompts. Durable memory lives in the private ops repo's
 `memory/` folder: every agent reads it at the start of a run and records what it learns there
@@ -110,12 +117,16 @@ issue to stop the digest.
 ## Tests
 
 `scripts/agents/autopilot.test.sh` covers the decisions above against stub `claude`, `kiro-cli` and
-`gh` commands — no network, no agent CLIs, no GitHub. It needs only bash, coreutils and awk, and runs
-in CI as the **Autopilot tests** job whenever `scripts/agents/**` changes.
+`gh` commands — no network, no agent CLIs, no GitHub. It needs only bash, coreutils and awk.
 
 ```bash
 bash scripts/agents/autopilot.test.sh
 ```
+
+It is **not yet wired into CI.** Adding the job requires a token with `workflow` scope, which the
+agent token deliberately lacks, so the `verify.yml` change (an `agents` path filter and an
+*Autopilot tests* job added to `ci-gate`'s `needs`) has to be applied by the maintainer. Until then
+the suite only runs when someone runs it. Run it by hand after any change to `scripts/agents/`.
 
 ## Board
 
