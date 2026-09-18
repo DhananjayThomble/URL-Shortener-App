@@ -50,6 +50,8 @@ logs/
 .agent-logs/
 .agents-paused
 .agent-state/
+# Shared agent memory from the private ops repo, symlinked in by its tools/link-shared-context.sh.
+.kiro/steering/shared-memory-*
 
 # Agent track-coordination markers (e.g. EXT-R3.done). Local handoff state.
 *.done
