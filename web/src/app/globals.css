@@ -57,15 +57,20 @@
   --ink: #0c1219;
   --ink-2: #4a5766;
   /* WCAG 2.2 AA (SC 1.4.3): #7b8899 gave only 3.07-3.61:1 on our surfaces.
-     #5c6875 clears 4.5:1 on white through surface-3. See #383. */
-  --ink-3: #5c6875;
+     #5c6875 clears 4.5:1 on white through surface-3 but only 4.48:1 on
+     surface-4 (the avatar-initials chip). #5b6673 clears 4.5:1 on every
+     surface token including surface-4 (4.61:1 worst case). See #383, #473. */
+  --ink-3: #5b6673;
   --accent: #1d59c7;
   --accent-2: #1a4fb0;
   --accent-ink: #ffffff;
   --accent-wash: rgb(29 89 199 / 0.1);
   --chart-2: #5a6b80;
   --teal: #0b6e80;
-  --amber: #98650a;
+  /* WCAG 2.2 AA (SC 1.4.3): #98650a on bg-wash-warn (blended over surface)
+     was 4.22:1, below the 4.5:1 floor. #82530a clears 4.5:1 against
+     surface/surface-2/surface-3 (4.58:1 worst case). See #473. */
+  --amber: #82530a;
   --green: #137a39;
   --red: #b21f26;
   --violet: #5b4bc4;
