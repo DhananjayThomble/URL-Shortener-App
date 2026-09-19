@@ -146,12 +146,24 @@ export function Field({
   // Generate a stable id so the <label htmlFor> ↔ input id association is
   // programmatically correct for assistive technologies (fixes axe `label` rule).
   const fieldId = React.useId();
-  const helpId = help || error ? `${fieldId}-hint` : undefined;
+  // Derived off controlId when present so a caller using controlId can still
+  // reference the hint/error via aria-describedby={`${controlId}-hint`} — see
+  // the `else` branch below for the caveat when the control is not the first
+  // element child.
+  const helpId = help || error ? `${controlId ?? fieldId}-hint` : undefined;
 
   let controlWithId = children;
   if (controlId) {
-    // Caller has already put `id={controlId}` (and ideally aria-describedby)
-    // on the real control itself; the label just needs to point at it.
+    // Caller has already put `id={controlId}` on the real control. The label
+    // points at it above. `helpId` is derived from `controlId`
+    // (`${controlId}-hint`), so the caller can wire it up with
+    // `aria-describedby={helpId}` on that same control — but only if the
+    // control is a plain element the caller renders directly. If it is
+    // wrapped by a render-prop component (e.g. react-hook-form's
+    // `Controller`, as with Tags below), the caller has no way to forward
+    // aria-describedby either, and the hint stays unassociated. Field cannot
+    // fix that from here; it requires forwarding support in the wrapping
+    // component.
   } else {
     // Fallback: inject the matching id (and aria-describedby) into the FIRST
     // element child so the label points at a real control. Every other child

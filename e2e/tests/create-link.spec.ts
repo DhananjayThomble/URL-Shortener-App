@@ -33,12 +33,12 @@ test.describe("create a link", () => {
     const drawer = page.getByRole("dialog", { name: "Create a link" });
     await expect(drawer).toBeVisible();
 
-    // The destination input is addressed by its programmatically associated
-    // label (issue #459 wired Field's <label htmlFor> ↔ input id). The slug
-    // input sits inside a domain+slug row whose Field label associates with the
-    // row container, so it is still addressed by placeholder.
+    // Both inputs are addressed by their programmatically associated labels
+    // (issue #459 wired Field's <label htmlFor> ↔ input id for the destination
+    // input; issue #469 fixed the slug input, which used to fall back to a
+    // wrapper <div> and was only reachable by placeholder).
     await drawer.getByLabel("Destination URL").fill(destination);
-    await drawer.getByPlaceholder("spring-sale").fill(slug);
+    await drawer.getByLabel("Short link").fill(slug);
 
     // Submit.
     await drawer.getByRole("button", { name: "Create link" }).click();

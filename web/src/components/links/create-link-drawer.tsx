@@ -217,6 +217,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                     <Input
                       {...register("slug")}
                       id="create-link-slug"
+                      aria-describedby="create-link-slug-hint"
                       placeholder="spring-sale"
                       className="rounded-l-none font-mono text-[12.5px]"
                       spellCheck={false}
