@@ -39,6 +39,28 @@ function extractRootBlock(source: string): string {
   return source.slice(braceStart, i + 1);
 }
 
+function extractDarkBlock(source: string): string {
+  // The explicit `:root[data-theme="dark"] { ... }` block. Deliberately not
+  // the `@media (prefers-color-scheme: dark)` block, which duplicates the
+  // same values — checking one is sufficient since a future edit to the
+  // token values would have to touch both to stay in sync, and if it
+  // doesn't, that is a separate finding from contrast.
+  const marker = ':root[data-theme="dark"] {';
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error(`marker not found: ${marker}`);
+  const braceStart = source.indexOf("{", start);
+  let depth = 0;
+  let i = braceStart;
+  for (; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  return source.slice(braceStart, i + 1);
+}
+
 function srgbToLinear(c: number): number {
   const v = c / 255;
   return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
@@ -113,6 +135,99 @@ describe("light-theme token contrast (WCAG 2.2 AA, SC 1.4.3)", () => {
   });
 });
 
+/* Regression test for #462: the workspace-switcher badge (desktop sidebar +
+   mobile nav drawer) and the account-menu avatar paired a literal
+   `text-white` with `bg-violet` / `bg-teal`. --violet and --teal are
+   *lightened* in dark theme for their primary use as text-on-surface (a
+   chip's `text-teal`, a chart line's `text-violet`), which makes them too
+   light to host white text on top — 2.76:1 and 2.23:1, both well under
+   4.5:1. Light theme was fine (6.46:1, 5.91:1) because there --violet/--teal
+   are still dark enough; that asymmetry is exactly why this surfaced as a
+   dark-theme-only defect. --accent-ink already exists as a themed
+   near-black/near-white pair for ink-on-saturated-bg (the accent-badge case
+   right next to these in app-shell) and clears 4.5:1 against both violet and
+   teal in both themes, so the fix reuses it instead of inventing a new
+   token. */
+describe("saturated-tone badges use --accent-ink, not a literal white, for their ink (#462)", () => {
+  const root = extractRootBlock(css);
+  const dark = extractDarkBlock(css);
+
+  it("text-accent-ink on bg-violet clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      const violet = readVar(block, "violet");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(violet, accentInk), `${label}: accent-ink (${accentInk}) on violet (${violet})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("text-accent-ink on bg-teal clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      const teal = readVar(block, "teal");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(teal, accentInk), `${label}: accent-ink (${accentInk}) on teal (${teal})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("app-shell no longer pairs a literal text-white with bg-violet or bg-teal", () => {
+    const appShellPath = fileURLToPath(new URL("../components/app-shell/index.tsx", import.meta.url));
+    const source = readFileSync(appShellPath, "utf8");
+    expect(source).not.toMatch(/bg-(violet|teal)\b[^"]*\btext-white\b/);
+    expect(source).not.toMatch(/\btext-white\b[^"]*bg-(violet|teal)\b/);
+  });
+
+  /* #462 review on PR #515: the original patch only fixed app-shell's two
+     badge instances. /team's member-avatar (AVATAR_TONES: bg-accent,
+     bg-teal, bg-violet, bg-amber, bg-good) reused the same literal
+     text-white-on-saturated-bg mistake and was missed — axe-core measured
+     five serious nodes there in dark theme (accent 2.41, teal 2.23, violet
+     2.76, amber 2.12, good 1.84), all under 4.5:1. --accent-ink clears
+     4.5:1 against every one of those five tones in both themes (proven for
+     violet/teal above; accent/amber/good proven below), so the fix is the
+     same token swap, not a new one. */
+  it("text-accent-ink on bg-accent clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      const accent = readVar(block, "accent");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(accent, accentInk), `${label}: accent-ink (${accentInk}) on accent (${accent})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("text-accent-ink on bg-amber clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      const amber = readVar(block, "amber");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(amber, accentInk), `${label}: accent-ink (${accentInk}) on amber (${amber})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("text-accent-ink on bg-good (--green) clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      // bg-good resolves to --color-good, which is var(--green) — see
+      // globals.css's @theme block.
+      const good = readVar(block, "green");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(good, accentInk), `${label}: accent-ink (${accentInk}) on good/green (${good})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("/team member-avatar no longer pairs a literal text-white with an AVATAR_TONES background", () => {
+    const teamPagePath = fileURLToPath(new URL("./(app)/team/page.tsx", import.meta.url));
+    const source = readFileSync(teamPagePath, "utf8");
+    expect(source).toMatch(/AVATAR_TONES\s*=\s*\[/);
+    expect(source).not.toMatch(/\btext-white\b/);
+  });
+});
+
 /* Regression test for #497 item 1: /bio's "Powered by SnapURL" caption combined
    text-ink-3 with opacity-70. --ink-3 alone clears 4.5:1 (proven above), but
    opacity-70 composited it down to an effective #87909a against --ground —
@@ -144,5 +259,74 @@ describe("bio page 'Powered by SnapURL' caption (#497)", () => {
     expect(classes).not.toMatch(/\bopacity-(\d+\b|\[[^\]]+\])/);
     // Colour-alpha modifier on the ink token itself (text-ink-3/70).
     expect(classes).not.toMatch(/\btext-ink-3\/\d+\b/);
+  });
+});
+
+/* Regression test for #462: the "What each role can do" permissions matrix on
+   /team paired text-ink-3 with opacity-50 on the "not allowed" glyph ("—").
+   --ink-3 alone clears 4.5:1 in both themes (proven above), but opacity-50
+   composites it down to ~2.0-2.5:1 against every surface token in both light
+   and dark — an axe-core `serious` color-contrast violation on real,
+   information-bearing text (it is how a viewer tells "denied" from "granted"
+   in the matrix), not decoration. This is the same defect class as #497's
+   bio caption: an opacity utility composited with an ink/wash token produces
+   a colour the token-level oracle above cannot see, because it never touches
+   globals.css.
+
+   Scoped as a repo-wide source scan (not just team/page.tsx) because #462's
+   premise is that this is systematic, not a single instance — the same
+   opacity+ink-token mistake could recur in any component. Extend the
+   `SAFE_OPACITY_CONTEXTS` allowlist below only for opacity utilities that are
+   provably not composited with an ink/wash/accent/status token as visible
+   text (e.g. a fully decorative icon glyph marked aria-hidden, or a hidden/
+   visible toggle between 0 and 100). */
+describe("no ink/status token is composited with a bare opacity utility (#462)", () => {
+  const webSrcDir = fileURLToPath(new URL(".", import.meta.url));
+  const appDir = path.join(webSrcDir); // web/src/app
+
+  function walk(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of require("node:fs").readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walk(full));
+      else if (entry.name.endsWith(".tsx")) out.push(full);
+    }
+    return out;
+  }
+
+  // text/status tokens whose contrast is only proven at full opacity (the
+  // globals-contrast.test.ts suite above never checks a partial-alpha
+  // composite, because Tailwind opacity utilities don't touch globals.css).
+  const TOKEN_CLASS = /\btext-(ink|ink-2|ink-3|amber|good|bad|teal|violet|accent|accent-2)\b/;
+  // A bare numeric or arbitrary-value opacity utility that is not a 0/100
+  // visibility toggle (those are fully transparent or fully opaque, never a
+  // partial composite) and not a `disabled:` / `hover:` / `focus-visible:`
+  // conditional low-opacity dim on an already-disabled or transient state.
+  const BARE_OPACITY_CLASS = /(?<!hover:|disabled:|focus-visible:|group-hover:)\bopacity-(?!0\b|100\b)(\d+|\[[^\]]+\])/;
+
+  const files = walk(appDir).concat(
+    walk(fileURLToPath(new URL("../components", import.meta.url))),
+  );
+
+  it("has no component pairing a text/status token with a partial, non-toggle opacity utility", () => {
+    const offenders: string[] = [];
+    // Scan every quoted string literal in the file, not just a literal
+    // `className="..."` attribute — Tailwind class lists routinely live
+    // inside a `cn(...)` call with conditional branches
+    // (`cn("text-center", allowed ? "text-good" : "text-ink-3 opacity-50")`),
+    // so the class string is one arm of a ternary, not the whole attribute
+    // value. Matching only `className="..."` misses exactly that shape,
+    // which is the shape the real #462 defect took.
+    const STRING_LITERAL = /["'`]([^"'`\n]*)["'`]/g;
+    for (const file of files) {
+      const src = readFileSync(file, "utf8");
+      for (const litMatch of src.matchAll(STRING_LITERAL)) {
+        const literal = litMatch[1];
+        if (TOKEN_CLASS.test(literal) && BARE_OPACITY_CLASS.test(literal)) {
+          offenders.push(`${path.relative(webSrcDir, file)}: "${literal}"`);
+        }
+      }
+    }
+    expect(offenders, offenders.join("\n")).toEqual([]);
   });
 });

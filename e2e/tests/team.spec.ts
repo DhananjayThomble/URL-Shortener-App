@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { seedSession } from "../support/session";
 
@@ -86,5 +87,33 @@ test.describe("team invite and member management", () => {
     await expect(page.getByText(/doesn't look like an email address/)).toBeVisible();
     await expect(emailInput).toBeVisible();
     await expect(page.getByRole("row", { name: /not-an-email/ })).toHaveCount(0);
+  });
+
+  /* Regression for #462, added per PR #515 review: the source-level and
+     token-level checks in globals-contrast.test.ts cannot see a rendered
+     page, and the original patch missed /team's member-avatar entirely (it
+     only fixed app-shell's two badges) — axe-core measured five serious
+     `color-contrast` nodes here in dark theme (member-avatar text-white on
+     each of the five AVATAR_TONES backgrounds). This asserts on the actual
+     rendered page under dark theme, the oracle the linked issue's acceptance
+     criteria calls for.
+
+     Dark is switched through Settings > Appearance, not by hand-setting the
+     `data-theme` attribute: ThemeProvider also applies inline `--accent` /
+     `--accent-ink` custom properties on mount (see settings.spec.ts), and
+     skipping that step produces a false reading — a harness pitfall called
+     out in PR #515's own description. */
+  test("member-avatar has no color-contrast violation in dark theme", async ({ page }) => {
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Dark" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+    await page.goto("/team");
+    await expect(page).toHaveURL(/\/team$/);
+    // Wait for the Members table (not the loading skeleton) before scanning.
+    await expect(page.getByRole("row", { name: /Arjun Kapoor/ })).toBeVisible();
+
+    const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
   });
 });
