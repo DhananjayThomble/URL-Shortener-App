@@ -167,7 +167,8 @@ for (const theme of THEMES) {
           .click();
         const drawer = page.getByRole("dialog", { name: "Create a link" });
         await expect(drawer).toBeVisible();
-        await drawer.getByRole("button", { name: "Destination" }).click();
+        // Issue #472 gave the tab strip proper `role="tab"` semantics.
+        await drawer.getByRole("tab", { name: "Destination" }).click();
 
         const resolveLabelTargets = () =>
           page.evaluate(() => {
