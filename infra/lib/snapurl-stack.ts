@@ -726,7 +726,26 @@ export class SnapUrlStack extends Stack {
         // near the end of that file pulls those files back out of an already
         // excluded directory. Repeating the exclusion here places it after
         // that negation, which is the ordering that actually holds.
-        exclude: ["cdk.out", "**/cdk.out/**"],
+        //
+        // Same reasoning applies to the local-only, gitignored agent/QA
+        // artifact directories `.dockerignore` also excludes (.qa-runs,
+        // .staging-qa, .mobile-audit, .agent-logs, .agent-state, .agents,
+        // .kiro): without repeating them here too, a file named `.env` or
+        // `.env.example` anywhere under one of them (e.g. a QA transcript
+        // that captured a copy of one) is pulled back into the staged asset
+        // by the same negation that legitimately re-includes the real
+        // `web/.env.example` etc.
+        exclude: [
+          "cdk.out",
+          "**/cdk.out/**",
+          ".qa-runs",
+          ".staging-qa",
+          ".mobile-audit",
+          ".agent-logs",
+          ".agent-state",
+          ".agents",
+          ".kiro",
+        ],
       });
 
 
