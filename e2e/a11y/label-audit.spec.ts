@@ -43,11 +43,17 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
      dropdowns) beyond the create-link drawer are not exhaustively opened.
    · Placeholder text satisfies axe's `label` rule (`non-empty-placeholder`),
      so 0 violations here does NOT mean every control has a real accessible
-     name. #469 documents two controls in the create-link drawer scanned by
-     this very suite where `<label for>` resolves to a wrapper `<div>`
-     (Short link, create-link-drawer.tsx) or to nothing at all (Tags, which
-     wraps a `<Controller>` that never forwards `id`) — both pass this audit
-     today. A green run here is not proof #469 is closed.
+     name. #469 documented two controls in the create-link drawer where
+     `<label for>` resolved to a wrapper `<div>` (Short link) or to nothing at
+     all (Tags, wrapped in a `<Controller>` that never forwarded `id`) — both
+     passed this axe-only audit while still failing WCAG 4.1.2. Fixed by
+     giving `Field` an explicit `controlId` prop so the caller can point the
+     label at the real control's id when the first child is a wrapper `<div>`
+     or a `<Controller>` render-prop (both callers now set `id`/`controlId`
+     to the same value instead of relying on Field's clone-first-child
+     fallback). The dedicated test below asserts the real oracle (label-target
+     resolution + accessible-name via the a11y tree), not axe's `label` rule,
+     since that rule is known not to catch this class of bug.
 
    --- CI does NOT run this suite ---
    Nothing in .github/workflows/, the root package.json or e2e/package.json
@@ -139,6 +145,66 @@ for (const theme of THEMES) {
           const found = summarise(violations);
           expect(found, `tab "${tabName}": ${JSON.stringify(found, null, 2)}`).toEqual([]);
         }
+      });
+
+      test("create-link drawer: Short link / Tags labels resolve to a real, named control (#469)", async ({ page }) => {
+        // Oracle: WCAG 2.1 SC 4.1.2 + Field's own stated contract ("<label htmlFor>
+        // <-> input id association is programmatically correct for assistive
+        // technologies", web/src/components/ui/index.tsx). axe's `label` rule is
+        // NOT the oracle here — it accepts a non-empty placeholder as a satisfying
+        // condition, so it stays green even when <label for> points at a <div> or at
+        // nothing (see the comment block above this describe). This check instead:
+        //   1. Resolves each <label for="..."> to its target DOM node and asserts
+        //      the target is an actual labelable form control (INPUT/SELECT/etc,
+        //      never DIV and never missing).
+        //   2. Independently resolves each control's accessible name via the
+        //      accessibility tree (getByRole), which is what a screen reader uses.
+        await page.goto("/links");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await page
+          .getByRole("button", { name: /New link|Create a link/ })
+          .first()
+          .click();
+        const drawer = page.getByRole("dialog", { name: "Create a link" });
+        await expect(drawer).toBeVisible();
+        // Issue #472 gave the tab strip proper `role="tab"` semantics.
+        await drawer.getByRole("tab", { name: "Destination" }).click();
+
+        const resolveLabelTargets = () =>
+          page.evaluate(() => {
+            const results: { text: string; for: string; targetTag: string }[] = [];
+            document.querySelectorAll("label[for]").forEach((label) => {
+              const htmlFor = label.getAttribute("for") ?? "";
+              const target = htmlFor ? document.getElementById(htmlFor) : null;
+              results.push({
+                text: label.textContent?.trim() ?? "",
+                for: htmlFor,
+                targetTag: target ? target.tagName : "MISSING",
+              });
+            });
+            return results;
+          });
+
+        const LABELABLE_TAGS = new Set(["INPUT", "SELECT", "TEXTAREA", "BUTTON"]);
+
+        const shortLinkLabel = (await resolveLabelTargets()).find((l) => l.text === "Short link");
+        expect(shortLinkLabel, "expected a <label> for \"Short link\"").toBeTruthy();
+        expect(
+          shortLinkLabel && LABELABLE_TAGS.has(shortLinkLabel.targetTag),
+          `"Short link" label target should be a labelable control, got: ${JSON.stringify(shortLinkLabel)}`,
+        ).toBe(true);
+
+        const tagsLabel = (await resolveLabelTargets()).find((l) => l.text === "Tags");
+        expect(tagsLabel, 'expected a <label> for "Tags"').toBeTruthy();
+        expect(
+          tagsLabel && LABELABLE_TAGS.has(tagsLabel.targetTag),
+          `"Tags" label target should be a labelable control, got: ${JSON.stringify(tagsLabel)}`,
+        ).toBe(true);
+
+        // Independently confirm the accessible name via the a11y tree — this is
+        // what actually matters to assistive technology, regardless of <label for>.
+        await expect(drawer.getByRole("textbox", { name: "Short link" })).toBeVisible();
+        await expect(drawer.getByRole("textbox", { name: "Tags" })).toBeVisible();
       });
 
       test("/links/[id] Edit destination Field has no label/select-name violations", async ({ page }) => {
