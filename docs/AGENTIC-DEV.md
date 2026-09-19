@@ -131,14 +131,21 @@ every teardown:
 
 ```bash
 docker builder prune -af --filter until=24h
-docker image prune -af --filter until=24h
 ```
 
 Bounded by age (`STAGING_PRUNE_UNTIL`, default `24h`) rather than a blanket `docker system prune -af`,
 so a build still warm from another session on the same host survives, and nothing a running container
-depends on is ever eligible regardless of age.
+depends on is ever eligible regardless of age. This is best-effort and cannot fail `staging:down`: a
+prune error (unreachable daemon, lock contention with a concurrent session) is swallowed so a
+transient failure here never turns an otherwise-passing QA/UX/security charter red.
 
-**What this does not cover.** This reclaims what a session's own teardown created; it is not a
+**Deliberately excludes `docker image prune`.** Its `until` filter is image *creation* time, not
+last-used time — for a pulled base image (e.g. `postgres:18-alpine`) that is when it was built
+upstream, so a 24h window would evict it the moment no container references it (exactly the state
+right after `down -v`), and the next `staging:up`/`db:up` would silently re-pull it. That is a real
+cost, not a safe no-op, so it stays out of this script.
+
+**What this does not cover.** This reclaims build cache from a session's own teardown; it is not a
 guarantee the host never fills. A periodic host-wide `docker system prune -af --filter until=24h`
 (e.g. a systemd timer) is a maintainer-only step — agents run under `ProtectSystem=full` and cannot
 install units — and is out of scope here. Also out of scope: deciding whether the `zaproxy` image
