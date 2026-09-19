@@ -112,7 +112,13 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
       </Link>
 
       <button className="flex items-center gap-[9px] px-[9px] py-[7px] border border-line rounded-[var(--radius-sm)] mb-[14px] hover:border-line-2 hover:bg-surface-2 transition-colors">
-        <span className="w-5 h-5 rounded-[5px] bg-violet text-white grid place-items-center text-[10px] font-bold shrink-0">
+        {/* text-accent-ink, not text-white: --violet is lightened in dark
+            theme for use as text-on-surface, which drops a literal white
+            overlay to 2.76:1 (WCAG AA fail). --accent-ink is the themed
+            near-black/near-white pair already used for ink-on-saturated-bg
+            elsewhere in this file; it clears 4.5:1 against --violet in both
+            themes (6.46:1 light, 6.62:1 dark). See #462. */}
+        <span className="w-5 h-5 rounded-[5px] bg-violet text-accent-ink grid place-items-center text-[10px] font-bold shrink-0">
           {ws?.initials ?? "··"}
         </span>
         <span className="flex-1 min-w-0 text-[13px] font-semibold truncate text-left">{ws?.name ?? "Loading…"}</span>
@@ -203,7 +209,9 @@ function MobileNav({ counts, onCreate }: { counts: Counts; onCreate: () => void 
             </div>
 
             <div className="flex items-center gap-[9px] px-[9px] py-[7px] border border-line rounded-[var(--radius-sm)] mb-[14px]">
-              <span className="w-5 h-5 rounded-[5px] bg-violet text-white grid place-items-center text-[10px] font-bold shrink-0">
+              {/* text-accent-ink, not text-white — see #462 (same fix as the
+                  desktop sidebar badge above). */}
+              <span className="w-5 h-5 rounded-[5px] bg-violet text-accent-ink grid place-items-center text-[10px] font-bold shrink-0">
                 {ws?.initials ?? "··"}
               </span>
               <span className="flex-1 min-w-0 text-[13px] font-semibold truncate text-left">{ws?.name ?? "Loading…"}</span>
@@ -500,8 +508,15 @@ function AccountMenu() {
       >
         <span
           aria-hidden
-          className="w-[29px] h-[29px] rounded-full bg-teal text-white grid place-items-center text-[11.5px] font-bold"
+          className="w-[29px] h-[29px] rounded-full bg-teal text-accent-ink grid place-items-center text-[11.5px] font-bold"
         >
+          {/* text-accent-ink, not text-white: --teal in dark theme drops a
+              literal white overlay to 2.23:1. --accent-ink clears 4.5:1
+              against --teal in both themes (5.91:1 light, 8.17:1 dark). Still
+              aria-hidden because the account-menu button already carries the
+              accessible name; this fixes visual contrast for low-vision
+              sighted users, who see the badge regardless of aria-hidden. See
+              #462. */}
           {initials}
         </span>
       </button>
