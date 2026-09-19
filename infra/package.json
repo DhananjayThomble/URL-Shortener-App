@@ -4,13 +4,13 @@
   "private": true,
   "description": "AWS CDK stack. Not part of the runtime — nothing in apps/ or packages/ imports this.",
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit",
-    "type-check": "tsc -p tsconfig.json --noEmit",
+    "build": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
+    "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
     "synth": "cdk synth",
     "diff": "cdk diff",
     "deploy": "cdk deploy",
     "destroy": "cdk destroy",
-    "test": "vitest run"
+    "test": "pnpm -w build:packages && vitest run"
   },
   "devDependencies": {
     "@snapurl/database": "workspace:*",

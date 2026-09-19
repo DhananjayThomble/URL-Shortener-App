@@ -5,6 +5,7 @@
     "moduleResolution": "Node",
     "outDir": "./dist",
     "rootDir": "./src",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "baseUrl": "./",
     "declaration": false,
     "declarationMap": false,

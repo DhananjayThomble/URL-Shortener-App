@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "node --env-file-if-exists=.env --watch dist/main.js",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -w build:packages && vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1121.0",
