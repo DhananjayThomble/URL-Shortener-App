@@ -196,7 +196,12 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                   <Input {...register("destination")} placeholder="https://acme.com/collections/spring-2026" className="font-mono text-[12.5px]" spellCheck={false} />
                 </Field>
 
-                <Field label="Short link" help="Leave blank for a random slug." error={formState.errors.slug?.message}>
+                <Field
+                  label="Short link"
+                  help="Leave blank for a random slug."
+                  error={formState.errors.slug?.message}
+                  controlId="create-link-slug"
+                >
                   <div className="flex items-stretch">
                     <select
                       {...register("domain")}
@@ -209,7 +214,13 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                         </option>
                       ))}
                     </select>
-                    <Input {...register("slug")} placeholder="spring-sale" className="rounded-l-none font-mono text-[12.5px]" spellCheck={false} />
+                    <Input
+                      {...register("slug")}
+                      id="create-link-slug"
+                      placeholder="spring-sale"
+                      className="rounded-l-none font-mono text-[12.5px]"
+                      spellCheck={false}
+                    />
                   </div>
                 </Field>
 
@@ -217,12 +228,13 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                   <Field label="Folder">
                     <Input {...register("folder")} placeholder="Campaigns / Spring 2026" />
                   </Field>
-                  <Field label="Tags">
+                  <Field label="Tags" controlId="create-link-tags">
                     <Controller
                       control={control}
                       name="tags"
                       render={({ field }) => (
                         <Input
+                          id="create-link-tags"
                           value={field.value?.join(", ") ?? ""}
                           onChange={(e) =>
                             field.onChange(

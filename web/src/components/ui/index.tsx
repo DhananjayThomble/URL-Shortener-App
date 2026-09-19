@@ -125,11 +125,22 @@ export function Field({
   label,
   help,
   error,
+  controlId,
   children,
 }: {
   label?: React.ReactNode;
   help?: React.ReactNode;
   error?: string;
+  /**
+   * Explicit id of the real form control this label should name. Required
+   * whenever `children`'s first element is not itself the labelable control —
+   * e.g. a wrapper `<div>` (a domain-select + slug-input pair) or a
+   * render-prop component like react-hook-form's `<Controller>`, which does
+   * not forward `id` to whatever it renders. Without this, `Field` falls back
+   * to cloning `id` onto the first element child, which silently mislabels
+   * (or fails to label at all) in exactly those two cases — see #469.
+   */
+  controlId?: string;
   children: React.ReactNode;
 }) {
   // Generate a stable id so the <label htmlFor> ↔ input id association is
@@ -137,25 +148,33 @@ export function Field({
   const fieldId = React.useId();
   const helpId = help || error ? `${fieldId}-hint` : undefined;
 
-  // Inject the matching id (and aria-describedby) into the FIRST element child so the
-  // label points at a real control. Every other child is passed through untouched —
-  // rendering only the cloned one would silently drop the rest of any Field that wraps
-  // more than a single element.
-  let cloned = false;
-  const controlWithId = React.Children.map(children, (child) => {
-    if (cloned || !React.isValidElement(child)) return child;
-    cloned = true;
-    const props = child.props as Record<string, unknown>;
-    return React.cloneElement(child as React.ReactElement<Record<string, unknown>>, {
-      id: props.id ?? fieldId,
-      ...(helpId && !props['aria-describedby'] ? { 'aria-describedby': helpId } : {}),
+  let controlWithId = children;
+  if (controlId) {
+    // Caller has already put `id={controlId}` (and ideally aria-describedby)
+    // on the real control itself; the label just needs to point at it.
+  } else {
+    // Fallback: inject the matching id (and aria-describedby) into the FIRST
+    // element child so the label points at a real control. Every other child
+    // is passed through untouched — rendering only the cloned one would
+    // silently drop the rest of any Field that wraps more than a single
+    // element. This only produces a correct association when that first
+    // child IS the labelable control; pass `controlId` when it is not.
+    let cloned = false;
+    controlWithId = React.Children.map(children, (child) => {
+      if (cloned || !React.isValidElement(child)) return child;
+      cloned = true;
+      const props = child.props as Record<string, unknown>;
+      return React.cloneElement(child as React.ReactElement<Record<string, unknown>>, {
+        id: props.id ?? fieldId,
+        ...(helpId && !props['aria-describedby'] ? { 'aria-describedby': helpId } : {}),
+      });
     });
-  });
+  }
 
   return (
     <div className="flex flex-col gap-[6px]">
       {label ? (
-        <label htmlFor={fieldId} className="text-[12.5px] font-semibold flex items-center gap-[7px]">
+        <label htmlFor={controlId ?? fieldId} className="text-[12.5px] font-semibold flex items-center gap-[7px]">
           {label}
         </label>
       ) : null}
