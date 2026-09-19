@@ -5,10 +5,15 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
 
 /* ============================================================
    Issue #459 — programmatic-label audit (axe `label` + `select-name`).
+   Issue #472 added `aria-allowed-attr` to this same suite (the create-link
+   drawer's tab strip used `aria-selected` on a plain `<button>`, which that
+   rule forbids — `aria-selected` is only valid on roles that support it).
 
-   Oracle: axe-core's own `label` and `select-name` rules (WCAG 2.1 SC 4.1.2 /
-   1.3.1). Not a judgement call — a form control either has a programmatically
-   associated accessible name or it does not.
+   Oracle: axe-core's own `label`, `select-name` and `aria-allowed-attr` rules
+   (WCAG 2.1 SC 4.1.2 / 1.3.1, ARIA 1.2 role/attribute allowlist). Not a
+   judgement call — a form control either has a programmatically associated
+   accessible name or it does not, and an ARIA attribute is either allowed on
+   its host role or it is not.
 
    Runs against the REAL staging stack (playwright.a11y.config.ts builds web with
    NEXT_PUBLIC_USE_FIXTURES=false, pointed at api :3001). qa-oracles §5 forbids
@@ -59,7 +64,7 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
    tracked separately.
    ============================================================ */
 
-const RULES = ["label", "select-name"];
+const RULES = ["label", "select-name", "aria-allowed-attr"];
 
 const ROUTES = [
   "/links",
@@ -132,9 +137,10 @@ for (const theme of THEMES) {
         const drawer = page.getByRole("dialog", { name: "Create a link" });
         await expect(drawer).toBeVisible();
         // Walk every tab so each panel's controls are mounted and scanned — the
-        // drawer renders one tab at a time.
+        // drawer renders one tab at a time. Issue #472 gave the tab strip proper
+        // `role="tab"` semantics, so the accessible role is "tab", not "button".
         for (const tabName of ["Destination", "Routing", "Access", "UTM", "Social preview", "QR"]) {
-          await drawer.getByRole("button", { name: tabName }).click();
+          await drawer.getByRole("tab", { name: tabName }).click();
           const { violations } = await runAxe(page);
           const found = summarise(violations);
           expect(found, `tab "${tabName}": ${JSON.stringify(found, null, 2)}`).toEqual([]);

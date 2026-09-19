@@ -142,7 +142,7 @@ export default function TeamPage() {
             <Skeleton className="h-[200px]" />
           </CardBody>
         ) : (
-          <TableWrap>
+          <TableWrap label="Members">
             <Table>
               <thead>
                 <tr>
@@ -229,7 +229,7 @@ export default function TeamPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 items-start">
         <Card>
           <CardHeader title="What each role can do" />
-          <TableWrap>
+          <TableWrap label="What each role can do">
             <Table className="min-w-[440px]">
               <thead>
                 <tr>

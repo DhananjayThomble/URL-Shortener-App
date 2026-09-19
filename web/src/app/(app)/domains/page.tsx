@@ -111,7 +111,7 @@ export default function DomainsPage() {
             <Skeleton className="h-[160px]" />
           </CardBody>
         ) : (
-          <TableWrap>
+          <TableWrap label="Domains">
             <Table>
               <thead>
                 <tr>
@@ -201,7 +201,7 @@ export default function DomainsPage() {
             <p className="m-0 mb-3.5 text-[13.5px] text-ink-2">
               Add this record at your DNS provider, then check again. DNS changes can take a few minutes to propagate.
             </p>
-            <TableWrap>
+            <TableWrap label={`DNS record for ${pending.domain}`}>
               <Table className="min-w-[420px]">
                 <thead>
                   <tr>

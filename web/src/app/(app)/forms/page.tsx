@@ -55,7 +55,7 @@ export default function FormsPage() {
       ) : (
         <div className="flex flex-col gap-3.5">
           <Card>
-            <TableWrap>
+            <TableWrap label="Forms">
               <Table>
                 <thead>
                   <tr>
@@ -139,7 +139,7 @@ function Responses({ formId }: { formId: string }) {
           <EmptyState icon="✉" title="Nothing yet" body="Responses will appear here as they come in." />
         </CardBody>
       ) : (
-        <TableWrap>
+        <TableWrap label="Form responses">
           <Table>
             <thead>
               <tr>

@@ -321,7 +321,16 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /* ---------------- Table ---------------- */
-export function TableWrap({ children, className }: { children: React.ReactNode; className?: string }) {
+export function TableWrap({
+  children,
+  className,
+  label,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  /** Accessible name for the scroll region (axe: scrollable-region-focusable / WCAG 2.2 SC 2.1.1). */
+  label: string;
+}) {
   // Wide tables scroll inside their own container so the page body never does.
   // On phones the table is wider than the viewport (min-w on <Table/>), so the
   // right-hand columns would otherwise be silently clipped with no hint that
@@ -329,6 +338,10 @@ export function TableWrap({ children, className }: { children: React.ReactNode; 
   // affordance: a right-edge fade + "Scroll →" hint, shown only while there is
   // still content to the right. Desktop (>= sm, where the table fits) is
   // untouched — the overlay is sm:hidden and only mounts when overflow exists.
+  //
+  // tabIndex + role="region" + aria-label make the scroller itself reachable
+  // and operable by keyboard, independent of whether the table happens to
+  // overflow on a given viewport (axe scrollable-region-focusable).
   const ref = React.useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = React.useState(false);
   const [atEnd, setAtEnd] = React.useState(false);
@@ -357,7 +370,7 @@ export function TableWrap({ children, className }: { children: React.ReactNode; 
 
   return (
     <div className="relative">
-      <div ref={ref} className={cn("overflow-x-auto", className)}>
+      <div ref={ref} tabIndex={0} role="region" aria-label={label} className={cn("overflow-x-auto", className)}>
         {children}
       </div>
       {showHint ? (
