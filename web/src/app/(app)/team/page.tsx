@@ -245,7 +245,7 @@ export default function TeamPage() {
                   <tr key={p.label}>
                     <Td className="text-ink font-medium">{p.label}</Td>
                     {p.roles.map((allowed, i) => (
-                      <Td key={i} className={cn("text-center", allowed ? "text-good font-semibold" : "text-ink-3 opacity-50")}>
+                      <Td key={i} className={cn("text-center", allowed ? "text-good font-semibold" : "text-ink-3")}>
                         {allowed ? "✓" : "—"}
                       </Td>
                     ))}
