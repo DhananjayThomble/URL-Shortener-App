@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { seedSession } from "../support/session";
 
@@ -87,5 +88,30 @@ test.describe("bio pages", () => {
       page.getByText("A page needs a domain, a back-half and a display name."),
     ).toBeVisible();
     expect(await page.getByRole("row").count()).toBe(rowsBefore);
+  });
+
+  /* Regression for #497 item 1, added per PR #500 review: the phone-preview
+     footer ("Powered by SnapURL") composited text-ink-3 with opacity-70 down
+     to an effective 2.85:1 — an axe-core `serious` color-contrast violation
+     (WCAG 2.2 AA SC 1.4.3). globals-contrast.test.ts's static source-regex
+     catches the literal `opacity-70` string but not equivalent evasions that
+     produce the identical composite (`opacity-[0.7]`, or the color-alpha
+     modifier `text-ink-3/70`) — both leave the class list looking fine to a
+     text match while still failing the property that actually matters:
+     rendered contrast. Asserting on axe's own color-contrast rule instead
+     catches the composite regardless of which Tailwind utility produced it,
+     and also covers a parent-element opacity, which a scan of this one div's
+     class list never could. Light theme only: dark still carries #462's two
+     unrelated white-on-saturated-tone nodes, so this scopes to the caption's
+     rule rather than the whole page. */
+  test("phone-preview 'Powered by SnapURL' caption has no color-contrast violation", async ({ page }) => {
+    await page.goto("/bio");
+    await expect(page.getByText("Powered by SnapURL")).toBeVisible();
+
+    const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+    const captionViolations = results.violations
+      .flatMap((v) => v.nodes)
+      .filter((n) => n.html.includes("Powered by SnapURL"));
+    expect(captionViolations, JSON.stringify(captionViolations, null, 2)).toEqual([]);
   });
 });
