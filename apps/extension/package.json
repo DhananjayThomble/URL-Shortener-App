@@ -10,8 +10,8 @@
   "scripts": {
     "build": "node build.mjs",
     "package": "node scripts/package.mjs",
-    "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -w build:packages && vitest run",
     "lint": "echo \"no lint configured\" && exit 0"
   },
   "dependencies": {

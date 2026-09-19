@@ -9,8 +9,8 @@
     "dev": "node --env-file-if-exists=.env --watch dist/main.js",
     "start": "node --env-file-if-exists=.env dist/main.js",
     "once": "node --env-file-if-exists=.env dist/main.js --once",
-    "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -w build:packages && vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1121.0",

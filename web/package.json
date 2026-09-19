@@ -4,13 +4,13 @@
   "private": true,
   "description": "SnapURL 2.0 frontend. Talks to the NestJS API over HTTP — no server-side API routes live here.",
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "pnpm -w build:packages && next dev --port 3000",
     "build": "next build",
     "vercel-build": "pnpm --filter @snapurl/contract build && pnpm --filter @snapurl/domain build && next build",
     "start": "next start --port 3000",
     "lint": "eslint .",
-    "type-check": "tsc --noEmit",
-    "test": "vitest run",
+    "type-check": "pnpm -w build:packages && tsc --noEmit",
+    "test": "pnpm -w build:packages && vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

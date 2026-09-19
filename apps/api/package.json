@@ -8,8 +8,8 @@
     "build": "nest build",
     "dev": "node --env-file-if-exists=.env --watch dist/main.js",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -w build:packages && vitest run",
     "emit:openapi": "pnpm build && node scripts/emit-openapi.mjs",
     "dev:nest": "nest start --watch"
   },
