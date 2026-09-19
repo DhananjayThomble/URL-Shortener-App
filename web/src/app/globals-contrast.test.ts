@@ -120,18 +120,29 @@ describe("light-theme token contrast (WCAG 2.2 AA, SC 1.4.3)", () => {
    utilities are invisible to the token-level oracle above (they don't touch
    globals.css), so this needs its own, independent check: an opacity utility
    class must never be paired with an ink/wash token in the source, because
-   the resulting composited colour cannot be predicted from the token alone. */
+   the resulting composited colour cannot be predicted from the token alone.
+
+   This source-scan cannot see every equivalent regression (an arbitrary-value
+   opacity-[0.7] and the colour-alpha modifier text-ink-3/70 both reproduce the
+   identical composite while dodging a naive `opacity-\d+` match or a plain
+   `.toContain("text-ink-3")` check) — see PR #500 review. The rendered-property
+   check that closes that gap lives in e2e/tests/bio.spec.ts (axe-core
+   color-contrast against the real fixtures build); this test stays as a fast,
+   source-level tripwire for the literal defect, not the sole guard. */
 describe("bio page 'Powered by SnapURL' caption (#497)", () => {
   const bioPagePath = fileURLToPath(
     new URL("./(app)/bio/page.tsx", import.meta.url),
   );
   const source = readFileSync(bioPagePath, "utf8");
 
-  it("does not pair an opacity utility with the ink-3 caption", () => {
+  it("does not pair an opacity utility or an alpha-modified ink token with the caption", () => {
     const match = source.match(/<div className="([^"]*)">Powered by SnapURL<\/div>/);
     expect(match, "expected to find the 'Powered by SnapURL' caption element").not.toBeNull();
     const classes = match![1];
     expect(classes).toContain("text-ink-3");
-    expect(classes).not.toMatch(/\bopacity-\d+\b/);
+    // Named-scale (opacity-70) and arbitrary-value (opacity-[0.7]) utilities.
+    expect(classes).not.toMatch(/\bopacity-(\d+\b|\[[^\]]+\])/);
+    // Colour-alpha modifier on the ink token itself (text-ink-3/70).
+    expect(classes).not.toMatch(/\btext-ink-3\/\d+\b/);
   });
 });
