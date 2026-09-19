@@ -136,12 +136,16 @@ echo
 echo "== team, domains, developers =="
 check "members lists the owner"  "$EMAIL" "$(curl -s "$API/members" -H "Authorization: Bearer $ACCESS")"
 check "2FA is off by default (G6)" '"twoFactor":false' "$(curl -s "$API/members" -H "Authorization: Bearer $ACCESS")"
-check "domains lists the default" 'localhost:3002' "$(curl -s "$API/domains" -H "Authorization: Bearer $ACCESS")"
+DEFAULT_DOMAIN='localhost:3002'
+check "domains lists the default" "$DEFAULT_DOMAIN" "$(curl -s "$API/domains" -H "Authorization: Bearer $ACCESS")"
 # Regression: a correlated subquery here silently counted zero.
-DLINKS=$(curl -s "$API/domains" -H "Authorization: Bearer $ACCESS" | node -pe 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); (d[0]&&d[0].links)||0')
-if [ "$DLINKS" -gt 0 ]; then ok "domain reports its link count ($DLINKS)"; else bad "domain link count" "got $DLINKS, expected > 0"; fi
+# Select by name, not by array position: GET /domains returns every system
+# domain to every caller, ordered by isSystem, createdAt — so d[0] is only
+# the default domain when no older system domain row exists.
+DLINKS=$(curl -s "$API/domains" -H "Authorization: Bearer $ACCESS" | DEFAULT_DOMAIN="$DEFAULT_DOMAIN" node -pe 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); (d.find(x=>x.domain===process.env.DEFAULT_DOMAIN)||{}).links||0')
+if [ "$DLINKS" -gt 0 ]; then ok "domain reports its link count ($DLINKS)"; else bad "domain link count" "got $DLINKS for $DEFAULT_DOMAIN, expected > 0"; fi
 # Regression: the shared system domain is not the caller's to delete.
-DID=$(curl -s "$API/domains" -H "Authorization: Bearer $ACCESS" | node -pe 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); (d[0]&&d[0].id)||""')
+DID=$(curl -s "$API/domains" -H "Authorization: Bearer $ACCESS" | DEFAULT_DOMAIN="$DEFAULT_DOMAIN" node -pe 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); (d.find(x=>x.domain===process.env.DEFAULT_DOMAIN)||{}).id||""')
 check "shared domain cannot be disconnected" "isn't yours" "$(curl -s -X DELETE "$API/domains/$DID" -H "Authorization: Bearer $ACCESS")"
 check "audit is readable" '\[' "$(curl -s "$API/audit" -H "Authorization: Bearer $ACCESS")"
 check "bio-pages is readable" '\[' "$(curl -s "$API/bio-pages" -H "Authorization: Bearer $ACCESS")"
