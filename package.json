@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
-    "dev:web": "pnpm --filter snapurl-web dev",
+    "dev": "pnpm build:packages && pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm build:packages && pnpm --filter snapurl-web dev",
     "dev:api": "pnpm --filter @snapurl/api dev",
     "dev:redirect": "pnpm --filter @snapurl/redirect dev",
     "dev:worker": "pnpm --filter @snapurl/worker dev",
