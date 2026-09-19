@@ -272,7 +272,7 @@ export default function DevelopersPage() {
                 <Skeleton className="h-[160px]" />
               </CardBody>
             ) : (
-              <TableWrap>
+              <TableWrap label="API keys">
                 <Table>
                   <thead>
                     <tr>
@@ -341,7 +341,7 @@ export default function DevelopersPage() {
                 </Button>
               }
             />
-            <TableWrap>
+            <TableWrap label="Webhooks">
               <Table>
                 <thead>
                   <tr>
@@ -418,7 +418,12 @@ export default function DevelopersPage() {
               />
             }
           />
-          <pre className="m-0 p-4 font-mono text-[12px] leading-[1.75] overflow-x-auto text-ink-2 whitespace-pre">
+          <pre
+            tabIndex={0}
+            role="region"
+            aria-label={`Create a link example request (${lang})`}
+            className="m-0 p-4 font-mono text-[12px] leading-[1.75] overflow-x-auto text-ink-2 whitespace-pre"
+          >
             {SNIPPETS[lang]}
           </pre>
           <div className="p-4 border-t border-line flex gap-[18px] text-[11.5px] text-ink-3 flex-wrap">

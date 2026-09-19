@@ -50,7 +50,7 @@ export default function ReportsPage() {
         </Card>
       ) : (
         <Card>
-          <TableWrap>
+          <TableWrap label="Reports">
             <Table>
               <thead>
                 <tr>

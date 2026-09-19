@@ -106,7 +106,12 @@ export default function ForDevelopersPage() {
             <div className="flex items-center gap-2 px-4 py-[10px] border-b border-line bg-surface-3">
               <span className="font-mono text-[10px] tracking-[0.11em] uppercase text-ink-3">POST /links</span>
             </div>
-            <pre className="m-0 p-4 overflow-x-auto text-[12px] leading-[1.6] font-mono text-ink-2">
+            <pre
+              tabIndex={0}
+              role="region"
+              aria-label="POST /links example request"
+              className="m-0 p-4 overflow-x-auto text-[12px] leading-[1.6] font-mono text-ink-2"
+            >
               <code>{CREATE_SNIPPET}</code>
             </pre>
           </div>
@@ -120,7 +125,12 @@ export default function ForDevelopersPage() {
             <div className="flex items-center gap-2 px-4 py-[10px] border-b border-line bg-surface-3">
               <span className="font-mono text-[10px] tracking-[0.11em] uppercase text-ink-3">Webhook delivery</span>
             </div>
-            <pre className="m-0 p-4 overflow-x-auto text-[12px] leading-[1.6] font-mono text-ink-2">
+            <pre
+              tabIndex={0}
+              role="region"
+              aria-label="Webhook delivery example payload"
+              className="m-0 p-4 overflow-x-auto text-[12px] leading-[1.6] font-mono text-ink-2"
+            >
               <code>{WEBHOOK_SNIPPET}</code>
             </pre>
           </div>

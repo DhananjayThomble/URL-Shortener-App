@@ -166,7 +166,7 @@ export default function BioPagesPage() {
                 <Skeleton className="h-[160px]" />
               </CardBody>
             ) : (
-              <TableWrap>
+              <TableWrap label="Your pages">
                 <Table>
                   <thead>
                     <tr>
