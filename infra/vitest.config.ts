@@ -4,10 +4,11 @@ import { coverage } from "../vitest.coverage.base";
 export default defineConfig({
   test: {
     environment: "node",
-    // Only the standalone CloudFront Function logic is unit-testable here (the
-    // CDK stack itself is validated by `cdk synth`, not vitest). Keep the glob
-    // scoped to functions/ so it never tries to import a construct file.
-    include: ["functions/**/*.test.ts"],
+    // The CDK stack itself is validated by `cdk synth`, not vitest, so this
+    // stays scoped away from lib/**. bin/resolve-env.ts is the one exception:
+    // it imports only a type from aws-cdk-lib (no construct), so it is safe
+    // to unit-test directly rather than only through a full synth (#481).
+    include: ["functions/**/*.test.ts", "bin/**/*.test.ts"],
     coverage,
   },
 });

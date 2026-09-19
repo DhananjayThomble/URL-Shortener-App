@@ -214,18 +214,6 @@ export class SnapUrlStack extends Stack {
       ec2.InstanceClass.BURSTABLE4_GRAVITON,
       ec2.InstanceSize.NANO,
     );
-    /* Pinned rather than left to `maxAzs`, which asks CDK to look up the
-       account's actual AZs via a live `ec2:DescribeAvailabilityZones` call
-       whenever the stack's env (account + region) is concrete — which it
-       normally is here, since bin/snapurl.ts resolves both from the ambient
-       CDK_DEFAULT_ACCOUNT/CDK_DEFAULT_REGION. That made plain `cdk synth`
-       fail outright on any host whose AWS identity lacks that one read
-       permission, even though nothing is being deployed (issue #481). Every
-       AWS region since AZ letter-naming began has at least 'a' and 'b'
-       (RDS's own two-AZ subnet-group minimum, which is why maxAzs was 2
-       everywhere below), so naming them explicitly is exact, not a guess,
-       and removes the lookup — and its live-AWS dependency — for good. */
-    const availabilityZones = [`${this.region}a`, `${this.region}b`];
     let vpcProps: ec2.VpcProps;
     /* Held outside the switch so the inbound rule the NAT instance needs can be
        added after the VPC exists (its CIDR isn't known until then). Undefined
@@ -234,7 +222,7 @@ export class SnapUrlStack extends Stack {
     switch (natStrategy) {
       case "none":
         vpcProps = {
-          availabilityZones, // RDS requires a subnet group spanning at least two.
+          maxAzs: 2, // RDS requires a subnet group spanning at least two.
           natGateways: 0,
           subnetConfiguration: [
             { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
@@ -265,7 +253,7 @@ export class SnapUrlStack extends Stack {
           defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
         });
         vpcProps = {
-          availabilityZones,
+          maxAzs: 2,
           natGateways: 1, // One instance, not one per AZ — the hobby-stack SPOF tradeoff.
           natGatewayProvider: natInstanceProvider,
           subnetConfiguration: [
@@ -277,7 +265,7 @@ export class SnapUrlStack extends Stack {
         break;
       case "gateway":
         vpcProps = {
-          availabilityZones,
+          maxAzs: 2,
           natGateways: 1, // One gateway, not one per AZ — cost over redundancy.
           // No natGatewayProvider: the default is a managed NAT gateway.
           subnetConfiguration: [
