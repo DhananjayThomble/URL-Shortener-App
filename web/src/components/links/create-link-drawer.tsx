@@ -69,6 +69,12 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     const el = drawerRef.current;
     if (!el) return;
 
+    // Whatever had focus when the drawer opened (the "New link" trigger in the
+    // sidebar/topbar) — restored on close so keyboard/AT users land back where
+    // they were, however the drawer closes (Escape, ✕, Cancel, or a successful
+    // submit all flow through the same `open` → false transition).
+    const trigger = document.activeElement as HTMLElement | null;
+
     // Selector for anything that can receive keyboard focus.
     const FOCUSABLE =
       'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -111,6 +117,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = prev;
+      // Restore focus to the trigger, but only if it is still attached and
+      // still focusable — a route change or re-render could have removed it.
+      if (trigger && document.contains(trigger)) {
+        trigger.focus();
+      }
     };
   }, [open, onClose]);
 
