@@ -13,6 +13,16 @@
 # below would otherwise pull those files back out of a directory excluded here.
 cdk.out
 **/cdk.out/**
+# Local-only, gitignored agent/QA artifact directories. Not build inputs —
+# same reasoning as the cdk.out block above: without this, cdk synth stages
+# every one of these into each Lambda image asset directory it copies.
+.qa-runs
+.staging-qa
+.mobile-audit
+.agent-logs
+.agent-state
+.agents
+.kiro
 **/dist
 **/.next
 **/.turbo
