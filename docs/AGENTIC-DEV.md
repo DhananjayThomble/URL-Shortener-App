@@ -118,6 +118,32 @@ Two circuit breakers then protect an unattended box:
 The broken-streak breaker pauses via the same kill switch a human uses, so recovery is always the
 one documented action. The budget deliberately does not — see above.
 
+## Factory disk hygiene
+
+`pnpm staging:up` runs `docker compose -f docker-compose.staging.yml up -d --build` on every QA and
+cloud session. Build cache and images accumulate across sessions — `docker compose down -v` removes
+containers and the staging volume but never touches either — and nothing else on the Factory
+reclaimed them, so the host disk filled (issue #485: 82% and climbing, `docker system df` showing
+0 of 254 build-cache records active).
+
+`pnpm staging:down` now also runs `scripts/staging-prune.sh`, which does a **bounded** reclaim after
+every teardown:
+
+```bash
+docker builder prune -af --filter until=24h
+docker image prune -af --filter until=24h
+```
+
+Bounded by age (`STAGING_PRUNE_UNTIL`, default `24h`) rather than a blanket `docker system prune -af`,
+so a build still warm from another session on the same host survives, and nothing a running container
+depends on is ever eligible regardless of age.
+
+**What this does not cover.** This reclaims what a session's own teardown created; it is not a
+guarantee the host never fills. A periodic host-wide `docker system prune -af --filter until=24h`
+(e.g. a systemd timer) is a maintainer-only step — agents run under `ProtectSystem=full` and cannot
+install units — and is out of scope here. Also out of scope: deciding whether the `zaproxy` image
+belongs on the Factory at all, since the security charter runs in the QA lab, not here.
+
 ## Timezones
 
 **The host stays on UTC and always will.** GitHub's API returns UTC, Actions cron is UTC-only, and
