@@ -167,13 +167,30 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
           </button>
         </div>
 
-        <div className="flex gap-px px-5 border-b border-line overflow-x-auto">
+        <div role="tablist" aria-label="Link settings" className="flex gap-px px-5 border-b border-line overflow-x-auto">
           {TABS.map((t) => (
             <button
               key={t.id}
+              id={`create-link-tab-${t.id}`}
               type="button"
+              role="tab"
               aria-selected={tab === t.id}
+              aria-controls={`create-link-tabpanel-${t.id}`}
+              tabIndex={tab === t.id ? 0 : -1}
               onClick={() => setTab(t.id)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") return;
+                e.preventDefault();
+                const currentIndex = TABS.findIndex((candidate) => candidate.id === tab);
+                let nextIndex = currentIndex;
+                if (e.key === "ArrowRight") nextIndex = (currentIndex + 1) % TABS.length;
+                if (e.key === "ArrowLeft") nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
+                if (e.key === "Home") nextIndex = 0;
+                if (e.key === "End") nextIndex = TABS.length - 1;
+                const nextId = TABS[nextIndex].id;
+                setTab(nextId);
+                document.getElementById(`create-link-tab-${nextId}`)?.focus();
+              }}
               className={cn(
                 "px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 -mb-px whitespace-nowrap transition-colors",
                 tab === t.id ? "text-accent border-accent font-semibold" : "text-ink-3 border-transparent hover:text-ink",
@@ -187,7 +204,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
         <form onSubmit={onSubmit} className="flex-1 flex flex-col min-h-0">
           <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-[18px]">
             {tab === "dest" && (
-              <>
+              <div role="tabpanel" id="create-link-tabpanel-dest" aria-labelledby="create-link-tab-dest" className="flex flex-col gap-[18px]">
                 <Field
                   label="Destination URL"
                   help="You can change this later without breaking the short link."
@@ -243,11 +260,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                   <Input {...register("comment")} placeholder="What is this link for? Your team will thank you." />
                 </Field>
 
-              </>
+              </div>
             )}
 
             {tab === "route" && (
-              <>
+              <div role="tabpanel" id="create-link-tabpanel-route" aria-labelledby="create-link-tab-route" className="flex flex-col gap-[18px]">
                 <Field
                   label="Routing rules"
                   help="Rules are checked top to bottom at the edge. The first match wins; anything that matches nothing falls through to the default destination."
@@ -310,11 +327,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                     />
                   )}
                 />
-              </>
+              </div>
             )}
 
             {tab === "access" && (
-              <>
+              <div role="tabpanel" id="create-link-tabpanel-access" aria-labelledby="create-link-tab-access" className="flex flex-col gap-[18px]">
                 <Controller
                   control={control}
                   name="activatesAt"
@@ -396,11 +413,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                     />
                   )}
                 />
-              </>
+              </div>
             )}
 
             {tab === "utm" && (
-              <>
+              <div role="tabpanel" id="create-link-tabpanel-utm" aria-labelledby="create-link-tab-utm" className="flex flex-col gap-[18px]">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="utm_source">
                     <Input {...register("utm.source")} placeholder="instagram" className="font-mono text-[12.5px]" />
@@ -420,11 +437,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                     {finalUrl || <span className="text-ink-3">Add a destination to see the final URL.</span>}
                   </div>
                 </Field>
-              </>
+              </div>
             )}
 
             {tab === "social" && (
-              <>
+              <div role="tabpanel" id="create-link-tabpanel-social" aria-labelledby="create-link-tab-social" className="flex flex-col gap-[18px]">
                 <Field
                   label="Custom social preview"
                   help="Overrides what WhatsApp, Slack, LinkedIn and X show when the link is pasted. Leave blank to use the destination's own tags."
@@ -457,11 +474,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                 <Field label="Description">
                   <Input {...register("social.description")} placeholder="Everything in the spring collection." />
                 </Field>
-              </>
+              </div>
             )}
 
             {tab === "qr" && (
-              <>
+              <div role="tabpanel" id="create-link-tabpanel-qr" aria-labelledby="create-link-tab-qr" className="flex flex-col gap-[18px]">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
                   <div className="bg-surface-2 border border-line rounded-[var(--radius)] p-5 grid place-items-center">
                     <QrPreview value={`https://${domain}/${slug || "your-slug"}`} size={160} />
@@ -482,7 +499,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                     Print it now and you can still change where it points later — the printed code never goes stale.
                   </span>
                 </div>
-              </>
+              </div>
             )}
           </div>
 
