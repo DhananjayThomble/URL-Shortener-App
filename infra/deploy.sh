@@ -37,7 +37,11 @@ CONFIG_PREFIX="${CONFIG_PREFIX:-/snapurl/prod}"
 # --- The full context flag set, passed on EVERY invocation. Optional flags are
 #     only added when their env var is set, but the critical ones above are
 #     always present.
-ctx=(-c "natStrategy=$NAT_STRATEGY" -c "configPrefix=$CONFIG_PREFIX")
+# `account`/`region`: bin/snapurl.ts no longer reads CDK_DEFAULT_ACCOUNT/
+# CDK_DEFAULT_REGION itself (issue #481 — that made plain `cdk synth` perform a
+# live AZ lookup on any host with an ambient AWS identity). A real deploy still
+# needs a concrete env, so this wrapper passes it explicitly instead.
+ctx=(-c "account=$CDK_DEFAULT_ACCOUNT" -c "region=$CDK_DEFAULT_REGION" -c "natStrategy=$NAT_STRATEGY" -c "configPrefix=$CONFIG_PREFIX")
 [ -n "${DOMAIN_NAME:-}" ]            && ctx+=(-c "domainName=$DOMAIN_NAME")
 [ -n "${WEB_ORIGIN:-}" ]             && ctx+=(-c "webOrigin=$WEB_ORIGIN")
 [ -n "${REDIRECT_ORIGIN:-}" ]        && ctx+=(-c "redirectOrigin=$REDIRECT_ORIGIN")
