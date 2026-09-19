@@ -110,7 +110,7 @@ export default function ConversionsPage() {
 
           <Card>
             <CardHeader title="Revenue by link" />
-            <TableWrap>
+            <TableWrap label="Revenue by link">
               <Table>
                 <thead>
                   <tr>
