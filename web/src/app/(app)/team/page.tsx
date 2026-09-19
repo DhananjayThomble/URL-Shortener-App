@@ -161,8 +161,18 @@ export default function TeamPage() {
                       <div className="flex items-center gap-[10px]">
                         <span
                           className={cn(
-                            "w-[29px] h-[29px] rounded-full grid place-items-center text-[11.5px] font-bold text-white shrink-0",
-                            m.status === "invited" ? "bg-surface-4 text-ink-3" : AVATAR_TONES[i % AVATAR_TONES.length],
+                            "w-[29px] h-[29px] rounded-full grid place-items-center text-[11.5px] font-bold shrink-0",
+                            /* text-accent-ink, not a literal white ink — see
+                               #462. Every AVATAR_TONES background is a
+                               saturated status/accent token that is
+                               deliberately lightened in dark theme for its
+                               primary text-on-surface use, which drops a
+                               literal white ink to 1.84-2.76:1 there (accent
+                               2.41, teal 2.23, violet 2.76, amber 2.12, good
+                               1.84 — axe-core `color-contrast`, /team dark).
+                               --accent-ink clears 4.5:1 against all five tones in
+                               both themes (worst case 5.43:1 light, 6.62:1 dark). */
+                            m.status === "invited" ? "bg-surface-4 text-ink-3" : `${AVATAR_TONES[i % AVATAR_TONES.length]} text-accent-ink`,
                           )}
                         >
                           {m.initials}

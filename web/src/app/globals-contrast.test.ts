@@ -178,6 +178,54 @@ describe("saturated-tone badges use --accent-ink, not a literal white, for their
     expect(source).not.toMatch(/bg-(violet|teal)\b[^"]*\btext-white\b/);
     expect(source).not.toMatch(/\btext-white\b[^"]*bg-(violet|teal)\b/);
   });
+
+  /* #462 review on PR #515: the original patch only fixed app-shell's two
+     badge instances. /team's member-avatar (AVATAR_TONES: bg-accent,
+     bg-teal, bg-violet, bg-amber, bg-good) reused the same literal
+     text-white-on-saturated-bg mistake and was missed — axe-core measured
+     five serious nodes there in dark theme (accent 2.41, teal 2.23, violet
+     2.76, amber 2.12, good 1.84), all under 4.5:1. --accent-ink clears
+     4.5:1 against every one of those five tones in both themes (proven for
+     violet/teal above; accent/amber/good proven below), so the fix is the
+     same token swap, not a new one. */
+  it("text-accent-ink on bg-accent clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      const accent = readVar(block, "accent");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(accent, accentInk), `${label}: accent-ink (${accentInk}) on accent (${accent})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("text-accent-ink on bg-amber clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      const amber = readVar(block, "amber");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(amber, accentInk), `${label}: accent-ink (${accentInk}) on amber (${amber})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("text-accent-ink on bg-good (--green) clears 4.5:1 in both themes", () => {
+    for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+      // bg-good resolves to --color-good, which is var(--green) — see
+      // globals.css's @theme block.
+      const good = readVar(block, "green");
+      const accentInk = readVar(block, "accent-ink");
+      expect(contrastRatio(good, accentInk), `${label}: accent-ink (${accentInk}) on good/green (${good})`).toBeGreaterThanOrEqual(
+        WCAG_AA_NORMAL_TEXT,
+      );
+    }
+  });
+
+  it("/team member-avatar no longer pairs a literal text-white with an AVATAR_TONES background", () => {
+    const teamPagePath = fileURLToPath(new URL("./(app)/team/page.tsx", import.meta.url));
+    const source = readFileSync(teamPagePath, "utf8");
+    expect(source).toMatch(/AVATAR_TONES\s*=\s*\[/);
+    expect(source).not.toMatch(/\btext-white\b/);
+  });
 });
 
 /* Regression test for #497 item 1: /bio's "Powered by SnapURL" caption combined
