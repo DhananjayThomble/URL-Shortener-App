@@ -233,8 +233,13 @@ function MobileNav({ counts, onCreate }: { counts: Counts; onCreate: () => void 
 }
 
 export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => void }) {
+  // A <header> here (rather than a plain <div>) is not a document banner — the
+  // page's real banner-equivalent chrome is the <aside> sidebar/logo — but it
+  // gives the topbar's own controls (search, create, account menu) a landmark
+  // to live in. Without one, axe's `region` rule flags this whole strip as
+  // page content outside any landmark on every (app) route (#499).
   return (
-    <div className="flex items-center gap-3 px-[14px] sm:px-[22px] h-14 border-b border-line bg-surface sticky top-0 z-20">
+    <header className="flex items-center gap-3 px-[14px] sm:px-[22px] h-14 border-b border-line bg-surface sticky top-0 z-20">
       <MobileNav counts={counts} onCreate={onCreate} />
       <button
         onClick={onCreate}
@@ -250,7 +255,7 @@ export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => v
         </Button>
         <AccountMenu />
       </div>
-    </div>
+    </header>
   );
 }
 
