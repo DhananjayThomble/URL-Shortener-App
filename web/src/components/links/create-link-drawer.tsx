@@ -75,12 +75,25 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     // submit all flow through the same `open` → false transition).
     const trigger = document.activeElement as HTMLElement | null;
 
-    // Selector for anything that can receive keyboard focus.
+    // Selector for anything that CAN receive keyboard focus in principle. Note
+    // this alone is not sufficient: a native control given `tabIndex={-1}` as a
+    // prop (e.g. the inactive tabs in the roving-tabindex tablist below) still
+    // matches `button:not([disabled])` here, because the `[tabindex]:not(...)`
+    // clause only excludes elements that rely on the tabindex *attribute* for
+    // focusability — it does not override a match already won by another
+    // comma-separated clause. Filtering on the live `.tabIndex` property below
+    // (which reflects the actual prop, unlike a stale attribute selector) is
+    // what keeps this list in sync with the browser's real Tab order.
     const FOCUSABLE =
       'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
+    const queryFocusable = () =>
+      Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (node) => !node.closest('[aria-hidden="true"]') && node.tabIndex !== -1,
+      );
+
     // Move initial focus to the first focusable element in the drawer.
-    const first = el.querySelector<HTMLElement>(FOCUSABLE);
+    const first = queryFocusable()[0];
     first?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -90,9 +103,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
       }
       if (e.key !== "Tab") return;
 
-      const focusable = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (node) => !node.closest('[aria-hidden="true"]'),
-      );
+      const focusable = queryFocusable();
       if (focusable.length === 0) return;
 
       const firstEl = focusable[0];
