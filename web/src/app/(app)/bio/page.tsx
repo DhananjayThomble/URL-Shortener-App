@@ -324,7 +324,11 @@ export default function BioPagesPage() {
                       <span>▶</span>
                     </div>
                   ) : null}
-                  <div className="text-[9px] text-ink-3 mt-1 opacity-70">Powered by SnapURL</div>
+                  {/* No opacity utility here: opacity-70 composited --ink-3 (5.16:1 on its
+                      own against --ground) down to an effective #87909a — 2.85:1, failing
+                      WCAG AA SC 1.4.3. --ink-3 at full opacity keeps it the dimmest ink
+                      token while staying compliant. See #497. */}
+                  <div className="text-[9px] text-ink-3 mt-1">Powered by SnapURL</div>
                 </div>
               </div>
             ) : (

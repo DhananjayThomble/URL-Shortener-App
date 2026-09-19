@@ -112,3 +112,26 @@ describe("light-theme token contrast (WCAG 2.2 AA, SC 1.4.3)", () => {
     }
   });
 });
+
+/* Regression test for #497 item 1: /bio's "Powered by SnapURL" caption combined
+   text-ink-3 with opacity-70. --ink-3 alone clears 4.5:1 (proven above), but
+   opacity-70 composited it down to an effective #87909a against --ground —
+   2.85:1, an axe-core `serious` color-contrast violation. Tailwind's opacity
+   utilities are invisible to the token-level oracle above (they don't touch
+   globals.css), so this needs its own, independent check: an opacity utility
+   class must never be paired with an ink/wash token in the source, because
+   the resulting composited colour cannot be predicted from the token alone. */
+describe("bio page 'Powered by SnapURL' caption (#497)", () => {
+  const bioPagePath = fileURLToPath(
+    new URL("./(app)/bio/page.tsx", import.meta.url),
+  );
+  const source = readFileSync(bioPagePath, "utf8");
+
+  it("does not pair an opacity utility with the ink-3 caption", () => {
+    const match = source.match(/<div className="([^"]*)">Powered by SnapURL<\/div>/);
+    expect(match, "expected to find the 'Powered by SnapURL' caption element").not.toBeNull();
+    const classes = match![1];
+    expect(classes).toContain("text-ink-3");
+    expect(classes).not.toMatch(/\bopacity-\d+\b/);
+  });
+});
