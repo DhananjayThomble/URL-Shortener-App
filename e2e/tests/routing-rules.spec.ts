@@ -18,8 +18,8 @@ test.describe("routing rules editor", () => {
     const drawer = page.getByRole("dialog", { name: "Create a link" });
     await expect(drawer).toBeVisible();
 
-    // Switch to the Routing tab (a button with aria-selected, not a role=tab).
-    await drawer.getByRole("button", { name: "Routing" }).click();
+    // Switch to the Routing tab (proper role=tab semantics since #472).
+    await drawer.getByRole("tab", { name: "Routing" }).click();
 
     // No rules yet — add the first, make it a country rule, give it a destination.
     await drawer.getByRole("button", { name: "＋ Add rule" }).click();
