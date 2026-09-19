@@ -154,6 +154,28 @@ export interface SnapUrlStackProps extends StackProps {
   googleOAuthClientId?: string;
 }
 
+/**
+ * Repeated on the Lambda image asset in `imageFor()` below, on top of what
+ * `.dockerignore` already excludes, because CDK reads `.dockerignore` first
+ * and applies these `exclude` entries after it — the ordering that has to
+ * hold for the terminal `!**\/.env.example` re-include in `.dockerignore` not
+ * to pull a same-named file back out of an already-excluded directory. See
+ * the comment on `imageFor()` and `infra/lib/snapurl-stack.dockerignore.test.ts`,
+ * which exercises this exact list against the real `.dockerignore` content
+ * with CDK's own `IgnoreStrategy`.
+ */
+export const LAMBDA_IMAGE_ASSET_EXCLUDES = [
+  "cdk.out",
+  "**/cdk.out/**",
+  ".qa-runs",
+  ".staging-qa",
+  ".mobile-audit",
+  ".agent-logs",
+  ".agent-state",
+  ".agents",
+  ".kiro",
+];
+
 export class SnapUrlStack extends Stack {
   constructor(scope: Construct, id: string, props: SnapUrlStackProps) {
     super(scope, id, props);
@@ -735,17 +757,7 @@ export class SnapUrlStack extends Stack {
         // that captured a copy of one) is pulled back into the staged asset
         // by the same negation that legitimately re-includes the real
         // `web/.env.example` etc.
-        exclude: [
-          "cdk.out",
-          "**/cdk.out/**",
-          ".qa-runs",
-          ".staging-qa",
-          ".mobile-audit",
-          ".agent-logs",
-          ".agent-state",
-          ".agents",
-          ".kiro",
-        ],
+        exclude: LAMBDA_IMAGE_ASSET_EXCLUDES,
       });
 
 

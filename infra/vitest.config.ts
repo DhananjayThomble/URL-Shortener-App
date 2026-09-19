@@ -4,10 +4,11 @@ import { coverage } from "../vitest.coverage.base";
 export default defineConfig({
   test: {
     environment: "node",
-    // Only the standalone CloudFront Function logic is unit-testable here (the
-    // CDK stack itself is validated by `cdk synth`, not vitest). Keep the glob
-    // scoped to functions/ so it never tries to import a construct file.
-    include: ["functions/**/*.test.ts"],
+    // The CDK stack's constructs are still validated by `cdk synth`, not
+    // vitest — but lib/snapurl-stack.dockerignore.test.ts only imports a
+    // plain exported string[] constant (LAMBDA_IMAGE_ASSET_EXCLUDES), not a
+    // construct, so it is safe to include alongside functions/.
+    include: ["functions/**/*.test.ts", "lib/**/*.test.ts"],
     coverage,
   },
 });
