@@ -75,6 +75,7 @@ done
 
 fixture=''
 case "\$*" in
+  *"pr list"*"--label agent:approved"*) fixture="$BIN/fixture-pr-approved.json" ;;
   *"pr list"*"--state open"*)   fixture="$BIN/fixture-pr-open.json" ;;
   *"pr list"*"--state merged"*) fixture="$BIN/fixture-pr-merged.json" ;;
   *"issue list"*"label decision"*)     fixture="$BIN/fixture-issue-decision.json" ;;
@@ -86,6 +87,28 @@ case "\$*" in
   *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo ""; exit 0 ;;
   *"issue list"*"$DIGEST_LABEL"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
   *"issue create"*) echo "https://github.com/owner/repo/issues/77"; exit 0 ;;
+esac
+
+# pr view <n> ... : one fixture file per PR number, $BIN/fixture-pr-view-<n>.json, written by the
+# case. merge_approved reads this with -q '.' (whole object), not a sub-filter, so it is served
+# directly rather than through the generic fixture+filter path below.
+case "\$*" in
+  *"pr view "[0-9]*)
+    n=''
+    for a in "\$@"; do case "\$a" in [0-9]*) n="\$a"; break ;; esac; done
+    if [ -f "$BIN/fixture-pr-view-\$n.json" ]; then
+      cat "$BIN/fixture-pr-view-\$n.json"
+    else
+      echo '{}'
+    fi
+    exit 0
+    ;;
+  *"pr merge "*|*"pr update-branch "*)
+    n=''
+    for a in "\$@"; do case "\$a" in [0-9]*) n="\$a"; break ;; esac; done
+    rc=\$(cat "$BIN/gh.prmerge-\$n.rc" 2>/dev/null || echo 0)
+    exit "\$rc"
+    ;;
 esac
 
 if [ -n "\$fixture" ] && [ -f "\$fixture" ] && [ -n "\$filter" ]; then
@@ -100,7 +123,8 @@ STUB
 
 reset_stubs() {
   rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
-        "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json
+        "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
+        "$BIN"/gh.prmerge-*.rc
   make_stubs
   echo 0 > "$BIN/gh.paused"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
@@ -225,6 +249,146 @@ add_credits 11 >/dev/null
 if over_budget; then ok "over budget before the ceiling is raised"; else bad "over budget before the ceiling is raised"; fi
 CREDIT_CEILING_DAY=1000
 if over_budget; then bad "raising the ceiling clears the over-budget state"; else ok "raising the ceiling clears the over-budget state"; fi
+
+# ---------------------------------------------------------------------------------------------
+section "approval_holds: does an approval survive what happened to the branch since"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+is "$(approval_holds 1 "" "abc123"; echo $?)" 1 "no agent-approved-sha comment means the approval never held"
+
+reset_stubs; load
+is "$(approval_holds 1 "abc123" "abc123"; echo $?)" 0 "approved sha equal to head still holds"
+
+# ---------------------------------------------------------------------------------------------
+section "merge_approved: the function that decides what reaches main unattended"
+# ---------------------------------------------------------------------------------------------
+# git plumbing is exercised directly (approval_holds calls git fetch/merge-base/patch-id), so these
+# cases run inside a real git repo with real commits rather than stubbing git.
+approved_sha_comment() { printf '%s' "agent-approved-sha: $1"; }
+
+# One commit approved, then a second pushed after approval: the real regression `approval_holds`
+# exists to catch, exercised through merge_approved end to end.
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+approved_head=$(git -C . rev-parse HEAD)
+git -C . commit --allow-empty -q -m "new work after approval"
+new_head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":501}]
+JSON
+cat > "$BIN/fixture-pr-view-501.json" <<JSON
+{"headRefOid":"$new_head","mergeStateStatus":"CLEAN","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$approved_head")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr merge 501" "a PR pushed to after approval is not merged on the strength of the old approval"
+contains "$(cat "$BIN/gh.calls")" "pr edit 501 -R owner/repo --remove-label agent:approved" "it is sent back for re-review instead"
+
+# state=CLEAN, gate=SUCCESS, approval still holds (head unchanged since approval): merges.
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":502}]
+JSON
+cat > "$BIN/fixture-pr-view-502.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"CLEAN","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$head")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr merge 502" "an approved, green, unchanged PR is merged"
+
+# state=UNKNOWN is the bug this issue is about: GitHub has not finished recomputing mergeability,
+# typically right after another PR in the same pass just merged. It is not "mergeable" and must
+# not be attempted — it must be retried next cycle instead.
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":503}]
+JSON
+cat > "$BIN/fixture-pr-view-503.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"UNKNOWN","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$head")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr merge 503" "mergeStateStatus=UNKNOWN is never attempted as a merge"
+lacks "$(cat "$BIN/gh.calls")" "pr edit 503" "an UNKNOWN PR keeps its agent:approved label rather than being bounced"
+lacks "$(cat "$BIN/gh.calls")" "pr update-branch 503" "UNKNOWN is not treated as BEHIND either"
+
+# A second approved PR in the same pass, still UNKNOWN, must not stop the pass from merging others.
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+head_a=$(git -C . rev-parse HEAD)
+git -C . commit --allow-empty -q -m second
+head_b=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":504},{"number":505}]
+JSON
+cat > "$BIN/fixture-pr-view-504.json" <<JSON
+{"headRefOid":"$head_a","mergeStateStatus":"CLEAN","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$head_a")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+cat > "$BIN/fixture-pr-view-505.json" <<JSON
+{"headRefOid":"$head_b","mergeStateStatus":"UNKNOWN","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$head_b")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr merge 504" "an earlier CLEAN PR in the same pass still merges"
+lacks "$(cat "$BIN/gh.calls")" "pr merge 505" "a later UNKNOWN PR in the same pass is still not attempted"
+
+# BEHIND still updates the branch (unchanged behaviour — this suite is new, the branch is not).
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":506}]
+JSON
+cat > "$BIN/fixture-pr-view-506.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"BEHIND","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$head")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr update-branch 506" "BEHIND still triggers update-branch"
+lacks "$(cat "$BIN/gh.calls")" "pr merge 506" "a BEHIND PR is not merged in the same pass that updates it"
+
+# DIRTY still bounces to changes-requested (unchanged behaviour, pinned alongside the new UNKNOWN case).
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":507}]
+JSON
+cat > "$BIN/fixture-pr-view-507.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"DIRTY","files":[],
+ "comments":[{"body":"$(approved_sha_comment "$head")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr edit 507 -R owner/repo --remove-label agent:approved --add-label agent:changes-requested" "DIRTY sends the PR back to the developer"
+contains "$(cat "$BIN/gh.calls")" "pr comment 507" "DIRTY leaves a comment explaining the conflict"
+
+# A PR touching .github/workflows/ is left for the maintainer, never merged, UNKNOWN or not.
+reset_stubs; load
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":508}]
+JSON
+cat > "$BIN/fixture-pr-view-508.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"UNKNOWN","files":[{"path":".github/workflows/verify.yml"}],
+ "comments":[{"body":"$(approved_sha_comment "$head")"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+merge_approved >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr merge 508" "a workflow-touching PR is never merged by the autopilot"
+contains "$(cat "$BIN/gh.calls")" "pr edit 508 -R owner/repo --add-label needs-human" "a workflow-touching PR is labelled needs-human instead"
 
 # ---------------------------------------------------------------------------------------------
 section "engine selection and cooldown"

@@ -466,6 +466,12 @@ merge_approved() {
         gh pr edit "$n" -R "$REPO" --remove-label agent:approved --add-label agent:changes-requested >/dev/null
         gh pr comment "$n" -R "$REPO" --body "Autopilot: this PR conflicts with \`main\`. Merge \`main\` into the branch (do not rebase or force-push) and resolve the conflict." >/dev/null
         ;;
+      UNKNOWN)
+        # GitHub has not finished recomputing mergeability yet — guaranteed right after any merge
+        # in this same pass moved main. Not "mergeable", just not yet known: try again next cycle
+        # rather than attempting a merge GitHub cannot yet confirm.
+        log "PR #$n: mergeability not computed yet (state UNKNOWN); retrying next cycle"
+        ;;
       *)
         if [ "$gate" = "SUCCESS" ]; then
           log "PR #$n: approved change, CI gate green at $head; merging"
