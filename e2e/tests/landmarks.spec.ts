@@ -6,11 +6,16 @@ import { seedSession } from "../support/session";
    Issue #499 — page content must live inside a landmark, and every route must
    expose exactly one <main>.
 
-   Oracle: axe-core's own `region`, `landmark-one-main`, `landmark-no-duplicate-banner`
-   and `landmark-unique` rules (WCAG 2.1 — the "Info and Relationships" / landmark
-   navigation guidance these rules encode), run with the full default ruleset
-   (no withRules filter) so a regression in any landmark rule is caught, not just
-   the four named here.
+   Oracle: axe-core's own landmark-family rules — `region` plus every rule whose id
+   starts with `landmark` (`landmark-one-main`, `landmark-no-duplicate-banner`,
+   `landmark-unique`, `landmark-banner-is-top-level`, `landmark-main-is-top-level`,
+   `landmark-complementary-is-top-level`, `landmark-no-duplicate-contentinfo`,
+   `landmark-no-duplicate-main`, `landmark-contentinfo-is-top-level`, etc.) — WCAG
+   2.1's "Info and Relationships" / landmark navigation guidance these rules encode.
+   Run with the full default ruleset (no withRules filter) AND asserted against the
+   whole landmark family (not a fixed subset), so a regression in any landmark rule
+   is caught. `bypass` (skip-link/heading coverage) is deliberately excluded — it is
+   not a landmark-structure rule.
 
    This is pure client-side markup — a route's DOM structure is identical whether
    the data behind it comes from fixtures or the real API — so, per qa-oracles.md
@@ -44,20 +49,22 @@ import { seedSession } from "../support/session";
 
 function runAxe(page: import("@playwright/test").Page) {
   // No withRules: the full default ruleset, per the issue's explicit ask that a
-  // landmark regression anywhere is caught, not only in the four named rules.
+  // landmark regression anywhere is caught, not only in a fixed subset of rules.
   return new AxeBuilder({ page }).analyze();
 }
 
-const LANDMARK_RULES = new Set([
-  "region",
-  "landmark-one-main",
-  "landmark-no-duplicate-banner",
-  "landmark-unique",
-]);
+// The whole landmark-family rule set, not a fixed list of ids: any axe rule id
+// that starts with "landmark" (landmark-one-main, landmark-no-duplicate-banner,
+// landmark-unique, landmark-banner-is-top-level, landmark-main-is-top-level,
+// landmark-complementary-is-top-level, landmark-no-duplicate-contentinfo,
+// landmark-no-duplicate-main, landmark-contentinfo-is-top-level, and any future
+// landmark-* rule axe adds) plus "region". `bypass` is deliberately excluded —
+// it is skip-link/heading coverage, not landmark structure.
+const isLandmarkRule = (id: string) => id.startsWith("landmark") || id === "region";
 
 function landmarkViolations(violations: Awaited<ReturnType<typeof runAxe>>["violations"]) {
   return violations
-    .filter((v) => LANDMARK_RULES.has(v.id))
+    .filter((v) => isLandmarkRule(v.id))
     .flatMap((v) => v.nodes.map((n) => ({ rule: v.id, target: n.target.join(" "), html: n.html.slice(0, 200) })));
 }
 
