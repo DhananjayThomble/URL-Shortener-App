@@ -229,8 +229,14 @@ npx cdk bootstrap                    # once per account/region
 # Once per stage: write this stage's configuration to Parameter Store.
 ../infra/bin/put-parameters.sh /snapurl/prod https://your-app.vercel.app https://snap.to
 
-npx cdk synth                        # writes the template
-npx cdk deploy                       # builds and pushes the images, then deploys
+# account/region are explicit context flags rather than the ambient
+# CDK_DEFAULT_ACCOUNT/CDK_DEFAULT_REGION the cdk CLI would otherwise inject —
+# that made plain `cdk synth` perform a live AZ lookup and fail on any host
+# whose identity lacked the permission, even though nothing was being
+# deployed (issue #481). Omit both and `cdk synth` runs fully offline.
+ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+npx cdk synth -c account="$ACCOUNT" -c region=ap-south-1   # writes the template
+npx cdk deploy -c account="$ACCOUNT" -c region=ap-south-1 # builds and pushes the images, then deploys
 ```
 
 There is no secret in that command. The database password and both JWT signing
