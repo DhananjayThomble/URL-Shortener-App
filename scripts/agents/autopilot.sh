@@ -507,22 +507,20 @@ merge_approved() {
 read -r -a ROTATION <<<"${ROTATION:-cloud}"
 SLOT_EVERY="${SLOT_EVERY:-3}"
 
-# Sourced by scripts/agents/autopilot.test.sh, which exercises the functions above against stub
-# engines. Everything below this line is the loop itself and must not run during a test.
-[ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
-
-END=$(( $(date +%s) + HOURS * 3600 ))
 cycle=0
 slot_n=0
 broken_streak=0
 
-log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
-check_reviewer_independence claude
-check_reviewer_independence kiro
-
-while [ "$(date +%s)" -lt "$END" ]; do
-  if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
-  if over_budget; then wait_out_budget || break; fi
+# One pass of the main loop's body, extracted so autopilot.test.sh can call the *actual*
+# scheduling path — including check_checkout_clean's call site — instead of re-implementing it or
+# testing the helper in isolation. A call site dropped from here is a call site dropped from the
+# real loop below, which is the whole point: the test suite failed to catch exactly that class of
+# regression when this was inline. Returns 1 when the shift should stop (paused, budget wait told
+# us to give up, or the circuit breaker tripped); the caller (the real loop, or a test) decides
+# what stopping means.
+run_cycle() {
+  if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
   cycle=$((cycle + 1))
   MODE=$(engine_mode)
   log "=== cycle $cycle (engine mode: $MODE) ==="
@@ -564,14 +562,29 @@ while [ "$(date +%s)" -lt "$END" ]; do
     log "no role succeeded this cycle ($broken_streak in a row, limit $BROKEN_CYCLES_MAX)"
     if [ "$broken_streak" -ge "$BROKEN_CYCLES_MAX" ]; then
       pause_factory "$broken_streak cycles with no successful run; the engines look broken, not throttled"
-      break
+      return 1
     fi
   else
     broken_streak=0
   fi
 
   digest_daily
+  return 0
+}
 
+# Sourced by scripts/agents/autopilot.test.sh, which exercises the functions above (including
+# run_cycle itself) against stub engines. Everything below this line is the loop's own driver —
+# the real timer and sleep — and must not run during a test.
+[ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
+
+END=$(( $(date +%s) + HOURS * 3600 ))
+
+log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
+check_reviewer_independence claude
+check_reviewer_independence kiro
+
+while [ "$(date +%s)" -lt "$END" ]; do
+  run_cycle || break
   log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
   sleep $((SLEEP_MIN * 60))
 done

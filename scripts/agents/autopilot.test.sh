@@ -149,6 +149,17 @@ load() { # [env assignments...]
   local dir; dir=$(mktemp -d "$WORKROOT/case.XXXXXX")
   git -C "$dir" init -q 2>/dev/null
   cd "$dir" || exit 1
+  # The real pinned checkout ignores its own runtime droppings (.agent-logs/, .agent-state/,
+  # .agents-paused — see .gitignore); without this, log()'s own mkdir would make check_checkout_clean
+  # see "dirty" on every cycle just from autopilot having run, which is not what check_checkout_clean
+  # exists to catch.
+  cat > .gitignore <<'GITIGNORE'
+.agent-logs/
+.agents-paused
+.agent-state/
+GITIGNORE
+  git add .gitignore >/dev/null 2>&1
+  git commit -q -m "seed .gitignore" >/dev/null 2>&1
   export AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$dir/.state" \
          PAUSE_FILE="$dir/.paused" OPS_DIR="$dir/nonexistent-ops"
   # shellcheck disable=SC1090
@@ -738,6 +749,56 @@ digest_now "test" >/dev/null 2>&1
 body=$(cat "$BIN/gh.lastbody" 2>/dev/null)
 contains "$body" "pinned checkout is dirty" "a dirty checkout's alert reaches the daily digest"
 contains "$body" "digest-dirty.txt" "the digest names the specific dirty file"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: the real scheduling path, not just the helper"
+# ---------------------------------------------------------------------------------------------
+# check_checkout_clean being correct in isolation (above) says nothing about whether the main loop
+# still calls it. These cases drive run_cycle() itself — the exact function the while-loop below
+# it calls once per iteration — so a call site dropped from run_cycle is a call site dropped from
+# production, not from a copy of it re-implemented for the test.
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+echo "dirty during a real cycle" > dirty-during-cycle.txt
+run_cycle >/dev/null 2>&1
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "pinned checkout is dirty" \
+  "run_cycle (the real per-iteration call) detects a dirty checkout"
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "dirty-during-cycle.txt" \
+  "run_cycle's alert names the dirty file"
+
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+run_cycle >/dev/null 2>&1
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "run_cycle raises no dirty-checkout alert when the checkout is clean"
+
+# The mutation the maintainer reproduced against the previous submission: delete only the
+# check_checkout_clean call site from the real cycle body, leaving the standalone-call tests above
+# green. Apply that exact mutation to a scratch copy of autopilot.sh and show run_cycle stops
+# alerting — i.e. this suite goes red without the manual "did it turn red" step, because the
+# assertion above already requires the call site to be present and wired.
+reset_stubs; load
+mutant="$WORKROOT/autopilot.no-callsite.sh"
+sed '/# Catches the state that makes the \*next\* restart fail before it does: see check_checkout_clean\./{n;d}' \
+  "$SRC" > "$mutant"
+if grep -q '^  check_checkout_clean$' "$mutant"; then
+  bad "sanity: the mutant actually removes the check_checkout_clean call site" \
+    "call site still present in $mutant"
+else
+  ok "sanity: the mutant actually removes the check_checkout_clean call site"
+fi
+(
+  cd "$PWD" || exit 1
+  echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+  echo "dirty under the mutant" > dirty-under-mutant.txt
+  AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$STATE_DIR" PAUSE_FILE="$PAUSE_FILE" \
+    OPS_DIR="$OPS_DIR" MODE=auto bash -c '
+      # shellcheck disable=SC1090
+      source "'"$mutant"'"
+      run_cycle
+    ' >/dev/null 2>&1
+)
+lacks "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "pinned checkout is dirty" \
+  "removing the call site from the real cycle body (the maintainer's exact mutation) makes this suite go red: a dirty checkout is silently missed"
 
 # ---------------------------------------------------------------------------------------------
 section "paused: the kill switch fails closed"
