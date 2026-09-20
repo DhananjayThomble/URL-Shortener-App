@@ -26,6 +26,21 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   const create = useCreateLink();
   const drawerRef = useRef<HTMLElement>(null);
 
+  // `onClose` is passed as a fresh inline closure by the parent on every one
+  // of its own re-renders (e.g. a background refetch of links/domains/members
+  // while the drawer is open). Reading it through a ref, rather than putting
+  // it in the trap effect's dependency array below, means that effect's setup
+  // — which seizes initial focus and captures `trigger` for restore-on-close —
+  // runs exactly once per open/close, not on every unrelated parent re-render.
+  // Previously it depended on `[open, onClose]`: any re-render with a new
+  // `onClose` identity tore the trap down and re-ran it while the drawer was
+  // still open, silently yanking focus back to the drawer's first field out
+  // from under whatever the user was doing (mid Tab/Shift+Tab traversal, or
+  // mid-typing) and re-capturing "trigger" from whatever had focus at that
+  // moment instead of the element that actually opened the drawer.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   const form = useForm<CreateLinkFormValues, unknown, CreateLinkInput>({
     resolver: zodResolver(CreateLinkInput),
     defaultValues: {
@@ -98,7 +113,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -134,7 +149,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
         trigger.focus();
       }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   useEffect(() => {
     if (open) {

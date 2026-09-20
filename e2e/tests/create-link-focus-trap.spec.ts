@@ -71,6 +71,30 @@ async function focusFirstInDrawer(drawer: import("@playwright/test").Locator): P
   }, FOCUSABLE_SELECTOR);
 }
 
+/** Presses Tab (or Shift+Tab) and waits for `document.activeElement` to actually
+ *  change before returning. Plain `page.keyboard.press` only waits for the CDP
+ *  round-trip of dispatching the key event, not for the browser to finish
+ *  processing focus movement — under CPU contention (e.g. the full fixtures
+ *  suite running with parallel workers) consecutive presses can be dispatched
+ *  faster than the previous one's focus change lands, which desyncs a
+ *  fixed-iteration-count loop from the real number of focus moves that have
+ *  actually happened. Polling for a change closes that race without weakening
+ *  what is asserted — every press still has to move focus, exactly as a real
+ *  keyboard-driven wrap requires. */
+async function pressTabAndWaitForFocusChange(page: Page, key: "Tab" | "Shift+Tab"): Promise<void> {
+  const before = await focusedIndexInDrawer(page);
+  await page.keyboard.press(key);
+  await expect
+    .poll(async () => focusedIndexInDrawer(page), {
+      message: `activeElement did not change after pressing ${key}`,
+    })
+    .not.toBe(before);
+  if (process.env.DEBUG_FOCUS_TRAP) {
+    const after = await focusedIndexInDrawer(page);
+    console.log(`[focus-trap] ${key}: ${before} -> ${after}`);
+  }
+}
+
 function runFocusTrapChecks() {
   test.beforeEach(async ({ page }) => {
     await seedSession(page);
@@ -99,7 +123,7 @@ function runFocusTrapChecks() {
     expect(focusableCount).toBeGreaterThan(1);
 
     for (let i = 0; i < focusableCount; i++) {
-      await page.keyboard.press("Tab");
+      await pressTabAndWaitForFocusChange(page, "Tab");
     }
     expect(await focusedIndexInDrawer(page)).toBe(0);
 
@@ -107,7 +131,8 @@ function runFocusTrapChecks() {
     // *last* element exactly, never escape backwards out of the drawer and
     // never land on some other interior element.
     await focusFirstInDrawer(drawer);
-    await page.keyboard.press("Shift+Tab");
+    await expect.poll(async () => focusedIndexInDrawer(page)).toBe(0);
+    await pressTabAndWaitForFocusChange(page, "Shift+Tab");
     expect(await focusedIndexInDrawer(page)).toBe(focusableCount - 1);
   });
 
