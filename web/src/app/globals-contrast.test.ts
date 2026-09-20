@@ -135,6 +135,53 @@ describe("light-theme token contrast (WCAG 2.2 AA, SC 1.4.3)", () => {
   });
 });
 
+/* Regression test for #497 item 2: the #496/#473 guard above only checked
+   wash-amber (3 surfaces) and the ink-3/surface-4 pair. Measuring the full
+   matrix -- every wash token paired with its text token, composited over
+   every one of the five surface tokens, in both themes -- found it is wider
+   than reported: wash-green (worst 3.72:1 on surface-4, light), wash-teal
+   (4.08:1, surface-4, light), accent-wash (4.37:1, surface-4, light; and
+   4.44:1 on surface-4 in DARK theme too -- the only dark-theme miss), and
+   wash-amber itself was still short on surface-4 specifically (4.44:1) even
+   though the 3-surface check above passes. wash-red cleared 4.5:1
+   everywhere already. These are "latent" in the sense that axe-core does
+   not flag them on any route today (the affected chips currently render on
+   `surface`, where each pair happens to pass) -- but they are exactly the
+   token-level guarantee this file exists to make, so the matrix is checked
+   directly rather than waiting for a chip to be nested on surface-3/
+   surface-4 in a future layout change. See #497. */
+describe("wash-tokens paired with their text tokens clear 4.5:1 on every surface, both themes (#497)", () => {
+  const root = extractRootBlock(css);
+  const dark = extractDarkBlock(css);
+
+  const pairs: Array<[string, string]> = [
+    ["green", "wash-green"],
+    ["teal", "wash-teal"],
+    ["accent", "accent-wash"],
+    ["amber", "wash-amber"],
+    ["red", "wash-red"],
+  ];
+  const surfaceVars = ["ground", "surface", "surface-2", "surface-3", "surface-4"];
+
+  for (const [label, block] of [["light", root], ["dark", dark]] as const) {
+    for (const [textVar, washVar] of pairs) {
+      it(`${label}: text-${textVar} on bg-${washVar} clears 4.5:1 over every surface`, () => {
+        const text = readVar(block, textVar);
+        const wash = readVar(block, washVar);
+        for (const surfaceVar of surfaceVars) {
+          const surfaceHex = readVar(block, surfaceVar);
+          const blended = flattenOverBackground(wash, surfaceHex);
+          const ratio = contrastRatio(blended, text);
+          expect(
+            ratio,
+            `${label}: ${textVar} (${text}) on ${washVar} over ${surfaceVar} (blended ${blended})`,
+          ).toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        }
+      });
+    }
+  }
+});
+
 /* Regression test for #462: the workspace-switcher badge (desktop sidebar +
    mobile nav drawer) and the account-menu avatar paired a literal
    `text-white` with `bg-violet` / `bg-teal`. --violet and --teal are
