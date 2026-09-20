@@ -117,6 +117,9 @@ jobs:
       - name: Start staging stack
         run: pnpm staging:up
 
+      - name: Build packages
+        run: pnpm build:packages
+
       - name: Build web against staging
         env:
           NEXT_PUBLIC_USE_FIXTURES: "false"
