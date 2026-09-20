@@ -54,7 +54,22 @@ lifecycle has hung.
    a session killed at the timeout leaves a hand-started server as an orphan
    (`PPID 1`), still holding its port for whoever runs next, whereas
    `pnpm staging:down` / Docker teardown does not leave that behind.
-5. If you hit a hang after backgrounding a process — with or without extra
+5. **Stop by recorded PID only — never `pkill -f` / `killall` with a pattern
+   that also appears in your own prompt or command line.** Record the PID when
+   you start the process (e.g. write it to `web.pid`) and `kill` exactly that
+   PID. `pkill -f PATTERN` matches the full command line of *every* process on
+   the box, including the harness process running your own session — if
+   `PATTERN` is a substring of the command you were invoked with (it will be,
+   whenever the pattern is the same server-start command your prompt told you
+   to run), you SIGTERM yourself. This happened for real: a QA-lab session ran
+   `pkill -f "next start --port 3000"` as cleanup, matched its own `kiro-cli`
+   invocation (the prompt text embeds that exact command), and exit-143'd a
+   session whose report had already been written (issue #532). Verify a server
+   is down with `curl` against its port (as the QA-lab role prompts already do
+   elsewhere) instead of pattern-killing. If a pattern-based kill is ever truly
+   unavoidable, `pgrep -f PATTERN` first, inspect the matched PIDs, and exclude
+   your own PID/PPID chain before sending any signal.
+6. If you hit a hang after backgrounding a process — with or without extra
    detachment — do not silently retry a different flag combination on the
    same call. Note the exact command and outcome in your final report so the
    tally in issue #484 stays current; that data point is worth more than

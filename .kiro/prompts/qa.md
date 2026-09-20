@@ -26,3 +26,11 @@ Android viewport, touch enabled).
    per finding to `.qa-runs/$RUN/findings.jsonl` in the steering §3 format.
 7. Write `.qa-runs/$RUN/summary.md` including the coverage-gaps section.
 8. `pnpm staging:down`. Print the run id.
+9. If you started the web app yourself (e.g. in CI mode, where the staging stack and build are
+   already done but nothing serves the built app), record its PID (`echo $! > "$RUN_DIR/web.pid"`
+   or similar) when you start it, and stop it **by that PID only** at the end of the run — never
+   `pkill -f` / `killall` with a pattern, even one that looks unique. Your own prompt/command line
+   contains the same server-start command you'd use as a kill pattern, so a pattern match can hit
+   your own session and SIGTERM it before the run finishes (see
+   `.kiro/steering/session-hygiene.md` and issue #532). Confirm it's down with `curl` against the
+   port, not by re-running the pattern search.
