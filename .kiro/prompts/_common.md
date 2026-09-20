@@ -34,6 +34,10 @@ agents never take the same issue.
 - Never weaken a test, a security invariant, or a CI check to make something pass.
 - Stop and label `agent:blocked` rather than guess when the repo gives no answer.
 - Keep changes minimal and on-topic. No drive-by refactors.
+- If you hand-start a long-lived process (a server, a watch task), fully detach it
+  — see `.kiro/steering/session-hygiene.md`. An incompletely detached background
+  process has hung whole sessions to the timeout (issue #484); prefer `pnpm
+  staging:up`/`pnpm db:up` instead where they cover what you need.
 
 ## CI mode (QA lab workflow)
 
