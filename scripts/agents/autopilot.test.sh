@@ -209,6 +209,96 @@ printf 'A typical reviewer shift reports Credits: 900 across the cycle, well und
 is "$(run_credits prose.log)" "" "credit-shaped prose without the real footer is not read as spend"
 
 # ---------------------------------------------------------------------------------------------
+section "refresh_gh_token: keeping GH_TOKEN alive across a 60-minute expiry"
+# ---------------------------------------------------------------------------------------------
+# A PATH stub for the mint command, never the real one: MINT_TOKEN_CMD is overridden per case.
+mint_ok() {
+  cat >"$BIN/mint-ok" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/mint-ok.calls"
+echo "$1"
+STUB
+  chmod +x "$BIN/mint-ok"
+}
+mint_fail() {
+  cat >"$BIN/mint-fail" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+  chmod +x "$BIN/mint-fail"
+}
+mint_empty() {
+  cat >"$BIN/mint-empty" <<'STUB'
+#!/usr/bin/env bash
+echo -n ""
+STUB
+  chmod +x "$BIN/mint-empty"
+}
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_fail
+MINT_TOKEN_CMD="$BIN/mint-fail"
+out=$(refresh_gh_token 2>&1); rc=$?
+is "$rc" 1 "a failing mint command reports failure"
+contains "$out" "token refresh failed, keeping current token" "a failed mint logs exactly one warning line"
+is "$(echo "$out" | grep -c 'token refresh failed')" 1 "the warning is not a flood"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN
+GH_TOKEN=stale-token-value
+mint_fail
+MINT_TOKEN_CMD="$BIN/mint-fail"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" stale-token-value "on failure the current token is kept, not cleared"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN
+GH_TOKEN=stale-token-value
+mint_empty
+MINT_TOKEN_CMD="$BIN/mint-empty"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" stale-token-value "an empty mint result is treated as a failure, keeping the current token"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-one
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" fresh-token-one "a successful mint exports the new token"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-one
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+mint_ok fresh-token-two
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" fresh-token-two "the next role launch sees the newly minted token"
+
+reset_stubs; load
+AGENT_GH_TOKEN=operator-supplied-token
+export AGENT_GH_TOKEN
+GH_TOKEN="$AGENT_GH_TOKEN"
+mint_ok should-never-be-used
+MINT_TOKEN_CMD="$BIN/mint-ok"
+out=$(refresh_gh_token 2>&1); rc=$?
+is "$rc" 0 "AGENT_GH_TOKEN present is treated as success, no warning"
+is "$GH_TOKEN" operator-supplied-token "an explicit AGENT_GH_TOKEN override wins over a minted token"
+is "$([ -f "$BIN/mint-ok.calls" ] && echo called || echo not-called)" not-called \
+  "the mint command is never invoked while AGENT_GH_TOKEN is set"
+unset AGENT_GH_TOKEN
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok never-logged-token-xyz
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+lacks "$(cat "$LOG_DIR"/*.log 2>/dev/null)" "never-logged-token-xyz" "the minted token value never lands in the log file"
+lacks "$out" "never-logged-token-xyz" "the minted token value never appears on refresh_gh_token's own stdout/stderr"
+
+# ---------------------------------------------------------------------------------------------
 section "the day budget is a hard stop"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
