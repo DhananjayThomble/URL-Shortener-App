@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post } from "@nestjs/common";
 import { CreateApiKeyInput, CreateWebhookInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, type RequestActor } from "../auth/auth.guard.js";
@@ -20,10 +20,14 @@ export class DevelopersController {
     return this.developers.createKey(actor.workspaceId, actor.userId, input);
   }
 
+  /* :id parsed as a UUID at the edge, same as LinksController — a malformed
+     id is a client mistake, not a lookup that happens to miss. Without this,
+     Postgres raises `invalid input syntax for type uuid` (22P02), which
+     PostgresErrorFilter does not map, surfacing as a 500 (issue #533). */
   @Delete("api-keys/:id")
   @Roles("admin")
   @HttpCode(204)
-  async revokeKey(@Actor() actor: RequestActor, @Param("id") id: string) {
+  async revokeKey(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     await this.developers.revokeKey(actor.workspaceId, id);
   }
 
@@ -42,7 +46,7 @@ export class DevelopersController {
   @Delete("webhooks/:id")
   @Roles("admin")
   @HttpCode(204)
-  async removeWebhook(@Actor() actor: RequestActor, @Param("id") id: string) {
+  async removeWebhook(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     await this.developers.removeWebhook(actor.workspaceId, id);
   }
 }

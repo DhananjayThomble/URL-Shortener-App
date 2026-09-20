@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Patch, Res } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Patch, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { CreateFormInput, UpdateFormInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
@@ -16,15 +16,22 @@ export class FormsController {
     return this.forms.list(actor.workspaceId);
   }
 
+  /* :id is parsed as a UUID at the edge on every route below, same as
+     LinksController. Form ids are uuidv7 columns, so a malformed id (e.g.
+     "not-a-uuid") is a client mistake, not a lookup that happens to miss.
+     ParseUUIDPipe turns it into a clean 400 BEFORE the value reaches a
+     Drizzle `where id = $1` query, where Postgres would otherwise raise
+     `invalid input syntax for type uuid` (22P02) — a code PostgresErrorFilter
+     does not map, so it surfaced as a 500 (issue #533). */
   @Get(":id")
   @Scope("links:read")
-  get(@Actor() actor: RequestActor, @Param("id") id: string) {
+  get(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     return this.forms.get(actor.workspaceId, id);
   }
 
   @Get(":id/responses")
   @Scope("links:read")
-  responses(@Actor() actor: RequestActor, @Param("id") id: string) {
+  responses(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     return this.forms.responses(actor.workspaceId, id);
   }
 
@@ -41,7 +48,11 @@ export class FormsController {
      the throw happens while the response is still uncommitted. */
   @Get(":id/responses.csv")
   @Scope("links:read")
-  async exportResponses(@Actor() actor: RequestActor, @Param("id") id: string, @Res() reply: FastifyReply) {
+  async exportResponses(
+    @Actor() actor: RequestActor,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Res() reply: FastifyReply,
+  ) {
     await this.forms.get(actor.workspaceId, id);
     reply.raw.writeHead(200, {
       "Content-Type": "text/csv; charset=utf-8",
@@ -63,7 +74,7 @@ export class FormsController {
   @Scope("links:write")
   update(
     @Actor() actor: RequestActor,
-    @Param("id") id: string,
+    @Param("id", ParseUUIDPipe) id: string,
     @Body(zodBody(UpdateFormInput)) input: UpdateFormInput,
   ) {
     return this.forms.update(actor.workspaceId, id, toActor(actor), input);
@@ -73,7 +84,7 @@ export class FormsController {
   @Roles("editor")
   @Scope("links:write")
   @HttpCode(204)
-  async remove(@Actor() actor: RequestActor, @Param("id") id: string) {
+  async remove(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     await this.forms.remove(actor.workspaceId, id, toActor(actor));
   }
 }
