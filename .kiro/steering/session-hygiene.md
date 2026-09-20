@@ -1,68 +1,61 @@
 # SnapURL — Session hygiene: backgrounding long-lived processes (steering)
 
-This exists because three agent sessions on 2026-09-18 hand-started a server with
-`node apps/api/dist/main.js &` (or `nohup ... &`), the command's own output showed
-it finished successfully, and the session then hung silently until the timeout
-killed it — costing ~4.5 agent-hours total (issue #484).
+This exists because five agent sessions on 2026-09-18 hand-started a server —
+`node apps/api/dist/main.js &`, `nohup ... &`, and (on the fifth attempt)
+`setsid ... > file 2>&1 < /dev/null &` — and every one hung silently until the
+timeout killed it, costing roughly 4.5+ agent-hours total (issue #484).
 
-## Investigation status (read before assuming the mechanism)
+## The mechanism is unresolved — do not trust a fix for it
 
-The leading hypothesis is that the tool harness reads a session's output through a
-pipe or PTY until it sees EOF, and EOF only happens once **every** process holding
-the write end of that fd has closed it — not just the shell that ran the command.
-A backgrounded child that does not fully detach can still hold that fd open after
-the parent shell exits, so the harness's read blocks forever even though the shell
-itself returned.
+The leading hypothesis was that a backgrounded child inherits a descriptor
+(most likely stdin) or stays in the tool's process group, keeping the
+harness's read from reaching EOF. **That hypothesis is disproven.** The fifth
+hang used the exact detachment the earlier hypothesis called sufficient —
+`setsid`, stdout and stderr redirected to files, and stdin redirected from
+`/dev/null` — and the call still sat for ~40 minutes until the timeout killed
+it. `setsid` had put the child in its own session (`PGID == SID == PID`) with
+no descriptor belonging to the tool, and it still hung.
 
-This was confirmed experimentally in one shell model (a script whose own stdout is
-a pipe, with a backgrounded child that does **not** redirect its own stdout,
-inherits the pipe fd, and the reader then blocks past the parent's exit — see
-`gh issue view 484` for the reproduction transcript). It was **not** reproduced
-against this session's own tool (`execute_bash`): repeated attempts to hang it the
-same way — bare `&`, redirected stdout/stderr only, a FIFO standing in for a PTY
-slave, and an actual PTY via `pty.fork()` — all returned immediately in this
-environment. The three original hangs were on a different runner ("Factory" /
-`kiro` engine) than this session, so the harness-level detail (plain pipe vs. PTY,
-per-command vs. persistent shell) may differ in a way that changes whether a given
-form of detachment is sufficient. Treat the rule below as the safe default
-regardless of which harness you are on, not as proof of the exact mechanism on
-every harness.
+So there is currently **no known command form that reliably avoids the hang**
+when a long-lived server is started directly from the agent's own shell. Do
+not add `setsid`, further fd redirection, or any other variant to this list on
+the theory that it fixes the hang — that has already been tried and failed.
+The remaining suspects are inside the CLI/harness boundary itself (e.g. a
+`waitpid`-on-any-descendant loop, or the shell call returning normally and the
+CLI stalling on the following model round-trip), not in the shell command's
+form. If you are investigating this, start there, not with another
+detachment flag.
 
-## The rule
+## The workaround: don't hand-start it
 
-1. **Prefer the scripted paths.** `pnpm staging:up` (Docker Compose `-d --wait`)
-   and `pnpm db:up` return properly on their own and cannot hang this way. Both
-   sessions that hung had bypassed these and run `node dist/main.js` by hand
-   against the dev database instead. Use the scripted path unless you have a
-   specific reason not to, and say what that reason is.
-2. **If you must hand-start a long-lived process**, fully detach it — new
-   session, and all three standard fds redirected, stdin included:
-   ```bash
-   setsid node apps/api/dist/main.js > /tmp/api.log 2>&1 < /dev/null &
-   ```
-   Redirecting only stdout/stderr (`> file 2>&1`) is what both hung sessions
-   already did and is **not sufficient by itself** — always also redirect stdin
-   (`< /dev/null`) and start it in its own session (`setsid`) so it cannot be
-   left holding a controlling terminal or an inherited fd open after your shell
-   command returns.
-3. **Verify readiness without an open-ended wait.** A bounded poll loop (fixed
-   iteration count, each iteration sleeping) is fine — that is not what hung.
-   Do not pipe a long-lived process's output into something that blocks for
-   more input, e.g. `| tail -f`, `| less`, or an unbounded `wait` on its PID.
-4. **Always stop what you start before the session ends.** `kill` every PID you
-   background by hand. A leaked server does not just risk a hang this session —
-   it can also squat the port for the next one.
-5. If you hit an unexplained hang after backgrounding a process, do not silently
-   retry the same form. Note the exact command in your final report so the
-   pattern can be added here.
+Every hang so far shares one trait: the long-lived process was started
+directly from the agent's own shell. No session that used the Docker-managed
+lifecycle has hung.
 
-## Cheap way to sanity-check a harness
-
-Background `sleep 300` three ways and confirm each returns immediately:
-```bash
-sleep 300 &                                    echo bare
-sleep 300 > /tmp/a.log 2>&1 &                  echo "redirected out/err only"
-setsid sleep 300 > /tmp/a.log 2>&1 < /dev/null & echo "fully detached"
-```
-If the first or second hangs the session but the third does not, that confirms
-the fd-inheritance mechanism above for your specific harness.
+1. **Use `pnpm staging:up` / `pnpm staging:down`** (and `pnpm db:up` for just
+   the database) instead of hand-starting `node dist/main.js` or
+   `apps/redirect/dist/main.js`. These hand the process to the Docker daemon,
+   so nothing long-lived is ever a descendant of the agent's shell — there is
+   nothing for the harness to wait on, and nothing left running if the session
+   is killed. This is adopted **because of that correlation**, not because the
+   mechanism above is understood or fixed.
+2. **If the scripted path genuinely does not cover what you need**, hand-starting
+   remains possible but has hung real sessions — including with full
+   detachment (`setsid ... < /dev/null &`). Expect it to hang, budget for it,
+   and prefer to restructure the task to avoid needing a hand-started
+   long-lived process at all.
+3. **Verify readiness without an open-ended wait** regardless of which path you
+   use. A bounded poll loop (fixed iteration count, each iteration sleeping)
+   is fine. Do not pipe a long-lived process's output into something that
+   blocks for more input, e.g. `| tail -f`, `| less`, or an unbounded `wait`
+   on its PID.
+4. **Always stop what you start before the session ends** — `kill` every PID
+   you background by hand. This matters even more given the mechanism above:
+   a session killed at the timeout leaves a hand-started server as an orphan
+   (`PPID 1`), still holding its port for whoever runs next, whereas
+   `pnpm staging:down` / Docker teardown does not leave that behind.
+5. If you hit a hang after backgrounding a process — with or without extra
+   detachment — do not silently retry a different flag combination on the
+   same call. Note the exact command and outcome in your final report so the
+   tally in issue #484 stays current; that data point is worth more than
+   another guess at a fix.
