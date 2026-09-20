@@ -70,8 +70,32 @@ DISPLAY_TZ="${DISPLAY_TZ:-Asia/Kolkata}"
 # Local hour (0-23) at or after which the daily digest is posted. Deliberately not midnight: a
 # summary that arrives at 05:30 was written for the machine's convenience, not the reader's.
 DIGEST_HOUR="${DIGEST_HOUR:-9}"
+# Prints a fresh GitHub App installation token on stdout, or fails. The real minter is root-owned
+# (`agent` may run only this one command via sudo); overridable so tests never call the real thing.
+MINT_TOKEN_CMD="${MINT_TOKEN_CMD:-sudo -n /opt/snapurl/bin/mint-gh-token}"
 
+# AGENT_GH_TOKEN is an explicit override for local runs and CI (a PAT, or a token a human minted
+# by hand); it wins for the life of the process and refresh_gh_token leaves it alone. Without it,
+# GH_TOKEN starts unset and the first refresh_gh_token call (top of the main loop, before any
+# role) mints the first real token — there is no long-lived PAT fallback baked in here.
 [ -n "${AGENT_GH_TOKEN:-}" ] && export GH_TOKEN="$AGENT_GH_TOKEN"
+
+# Tokens are valid 60 min; a role may run up to AGENT_TIMEOUT and the manager/reviewer run before
+# the developer, so refreshing once per cycle can hand the developer an already-old token. Call
+# this before every role launch and before merge_approved, not just once per cycle.
+#
+# Fallback is mandatory: if AGENT_GH_TOKEN is set, or the mint command is missing/fails/prints
+# nothing, keep whatever GH_TOKEN already has and log one warning line — never a flood, and never
+# the token itself (not even under `set -x`, so this never echoes $MINT_TOKEN_CMD's output).
+refresh_gh_token() {
+  if [ -n "${AGENT_GH_TOKEN:-}" ]; then return 0; fi
+  local minted
+  if ! minted=$($MINT_TOKEN_CMD 2>/dev/null) || [ -z "$minted" ]; then
+    log "token refresh failed, keeping current token"
+    return 1
+  fi
+  export GH_TOKEN="$minted"
+}
 
 LOG_DIR=".agent-logs/$(date -u +%Y%m%d)"
 mkdir -p "$LOG_DIR" "$STATE_DIR"
@@ -366,6 +390,9 @@ run_agent() { # role preferred-engine task
     effort=$(effort_for "$engine" "$role")
     out="$LOG_DIR/$(date -u +%H%M%S)-$role-$engine.log"
     [ "$attempt" -gt 1 ] && log "retry $attempt for $role"
+    # Right before launch, not once per cycle: a token is valid 60m, a role may run up to
+    # AGENT_TIMEOUT, and the manager/reviewer run before the developer.
+    refresh_gh_token
     log "→ $role ($engine, $model${effort:+, effort $effort})"
     if [ "$engine" = claude ]; then
       timeout "$AGENT_TIMEOUT" claude -p "$task" --agent "snapurl-$role" --model "$model" \
@@ -485,27 +512,31 @@ merge_approved() {
   done
 }
 
+# The token is refreshed immediately before merge_approved rather than only once per cycle,
+# because manager/reviewer already ran and a token is valid only 60 minutes (see refresh_gh_token).
+# A named function, rather than the two calls inlined in the main loop, so a test can invoke this
+# exact pairing directly and catch either call disappearing on its own.
+refresh_and_merge() {
+  refresh_gh_token
+  merge_approved
+}
+
 # Extra role run every SLOT_EVERY cycles, as role[:focus]. QA, UX and security run in the QA lab
 # workflow on GitHub Actions, not here; put them back only on a host that does QA.
 read -r -a ROTATION <<<"${ROTATION:-cloud}"
 SLOT_EVERY="${SLOT_EVERY:-3}"
 
-# Sourced by scripts/agents/autopilot.test.sh, which exercises the functions above against stub
-# engines. Everything below this line is the loop itself and must not run during a test.
-[ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
-
-END=$(( $(date +%s) + HOURS * 3600 ))
-cycle=0
-slot_n=0
-broken_streak=0
-
-log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
-check_reviewer_independence claude
-check_reviewer_independence kiro
-
-while [ "$(date +%s)" -lt "$END" ]; do
-  if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; break; fi
-  if over_budget; then wait_out_budget || break; fi
+# One full cycle's body, as a named function rather than inlined in the `while` loop below, for
+# the same reason refresh_and_merge is named: a test can call this exact sequence — including the
+# top-of-cycle refresh_gh_token, right before `git fetch` — and catch any one call disappearing
+# from it. Everything the loop needs across cycles (cycle/slot_n/broken_streak) is a global set
+# before the first call, same as before this was extracted.
+#
+# Returns 1 to tell the caller to stop the shift (paused, budget exhausted-and-unrecoverable, or
+# the broken-cycle circuit breaker tripped); 0 to keep going.
+run_cycle() {
+  if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
   cycle=$((cycle + 1))
   MODE=$(engine_mode)
   log "=== cycle $cycle (engine mode: $MODE) ==="
@@ -513,6 +544,7 @@ while [ "$(date +%s)" -lt "$END" ]; do
   # "something is broken and no amount of waiting fixes it".
   CYCLE_WORKED=0
   CYCLE_BROKEN=0
+  refresh_gh_token
   git fetch -q origin
   # Shared memory lives in the ops repo; pull before any agent reads it, push after they write.
   ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
@@ -522,7 +554,7 @@ while [ "$(date +%s)" -lt "$END" ]; do
   run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
   run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
   ops_push
-  merge_approved   # merges only what is already approved and green, so it is safe after a failed review
+  refresh_and_merge   # merges only what is already approved and green, so it is safe after a failed review
 
   for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
     paused && break
@@ -545,14 +577,31 @@ while [ "$(date +%s)" -lt "$END" ]; do
     log "no role succeeded this cycle ($broken_streak in a row, limit $BROKEN_CYCLES_MAX)"
     if [ "$broken_streak" -ge "$BROKEN_CYCLES_MAX" ]; then
       pause_factory "$broken_streak cycles with no successful run; the engines look broken, not throttled"
-      break
+      return 1
     fi
   else
     broken_streak=0
   fi
 
   digest_daily
+  return 0
+}
 
+# Sourced by scripts/agents/autopilot.test.sh, which exercises the functions above against stub
+# engines. Everything below this line is the loop itself and must not run during a test.
+[ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
+
+END=$(( $(date +%s) + HOURS * 3600 ))
+cycle=0
+slot_n=0
+broken_streak=0
+
+log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
+check_reviewer_independence claude
+check_reviewer_independence kiro
+
+while [ "$(date +%s)" -lt "$END" ]; do
+  run_cycle || break
   log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
   sleep $((SLEEP_MIN * 60))
 done
