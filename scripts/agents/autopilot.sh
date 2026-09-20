@@ -130,20 +130,31 @@ log() {
 # the path that hit the 60-minute expiry in production. refresh_gh_token is cheap when the token is
 # still good: if AGENT_GH_TOKEN is set (tests, CI) it returns immediately without minting anything,
 # and otherwise the mint command itself is what actually bounds the cost, not this call site
-# skipping it. If the query still fails after that refresh, the failure is logged once and treated
-# as NOT paused — a stuck-open `gh`/network problem must never masquerade as the human kill switch.
+# skipping it.
+#
+# A query can still fail after that first refresh — the mint that just ran could itself have
+# failed (refresh_gh_token logs and keeps the old, already-expired token rather than blocking), or
+# the query could hit a transient 5xx/rate limit unrelated to the token. #541's acceptance
+# criteria is explicit that a failed query must be retried after a refresh, not given up on after
+# one attempt — otherwise a mint that fails on its first try during the exact minute the token
+# expires reproduces the original bug. So on a failed query, refresh once more and retry the
+# query exactly once. Only if the retried query ALSO fails is the failure logged and treated as
+# NOT paused — a stuck-open `gh`/network problem must never masquerade as the human kill switch.
 # The only thing that can actually pause the factory via label is a *successful* query that finds
 # one.
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
-  refresh_gh_token
-  local out
-  if ! out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
-      || [ -z "$out" ]; then
-    log "agents:paused label query failed; not treating this as a pause"
-    return 1
-  fi
-  [ "$out" != "0" ]
+  local out attempt
+  for attempt in 1 2; do
+    refresh_gh_token
+    if out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
+        && [ -n "$out" ]; then
+      [ "$out" != "0" ]
+      return
+    fi
+  done
+  log "agents:paused label query failed; not treating this as a pause"
+  return 1
 }
 
 

@@ -1239,6 +1239,48 @@ echo 0 > "$BIN/gh.paused"
 if paused; then bad "a 401-until-refreshed query is not read as a pause"; else ok "a 401-until-refreshed query is not read as a pause, once refresh_gh_token recovers it"; fi
 is "$GH_TOKEN" "the-fixed-token" "paused()'s own refresh left GH_TOKEN holding the token that fixed the 401"
 
+# #541's acceptance criteria requires more than "refresh once up front": a query that STILL fails
+# after that first refresh (e.g. the mint racing the exact minute of expiry, or a transient 5xx
+# unrelated to the token) must be retried after a SECOND refresh, not given up on immediately.
+# This stub's mint fails on its first call and only succeeds on the second, so the first
+# refresh_gh_token inside paused() leaves the stale/expired token in place, the first query 401s
+# again, and only the retry's refresh (second mint call, second query attempt) can recover it.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+GH_TOKEN=stale-expired-token
+echo "the-fixed-token" > "$BIN/gh.paused.fail_until_token"
+cat >"$BIN/mint-fails-once-then-fixes-401" <<STUB
+#!/usr/bin/env bash
+n=\$(( \$(cat "$BIN/mint-fails-once-then-fixes-401.n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BIN/mint-fails-once-then-fixes-401.n"
+if [ "\$n" -eq 1 ]; then exit 1; fi
+echo "the-fixed-token"
+STUB
+chmod +x "$BIN/mint-fails-once-then-fixes-401"
+MINT_TOKEN_CMD="$BIN/mint-fails-once-then-fixes-401"
+echo 0 > "$BIN/gh.paused"
+if paused; then bad "a query that still fails after the first refresh is retried, not treated as paused"; else ok "a query that still fails after the first refresh is retried after a second refresh, and not treated as a pause"; fi
+is "$(cat "$BIN/mint-fails-once-then-fixes-401.n")" 2 \
+  "refresh_gh_token was called twice: once up front, once more to retry the failed query"
+is "$GH_TOKEN" "the-fixed-token" "the retry's refresh is the one that ends up in GH_TOKEN"
+
+# The other side of the same case: if the retry's query ALSO fails (the second refresh didn't
+# help either — a genuine outage, not just a slow mint), paused() must still give up cleanly
+# after exactly one retry, not loop forever or misreport a pause.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat >"$BIN/mint-always-ok" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >> "$BIN/mint-always-ok.calls"
+echo "some-token"
+STUB
+chmod +x "$BIN/mint-always-ok"
+MINT_TOKEN_CMD="$BIN/mint-always-ok"
+echo 1 > "$BIN/gh.paused.rc"   # the query fails unconditionally, refresh or not
+if paused; then bad "a query that fails even after retrying is still not read as a pause"; else ok "a query that fails even after retrying is still not read as a pause"; fi
+is "$(wc -l < "$BIN/mint-always-ok.calls" | tr -d ' ')" 2 \
+  "exactly one retry: refresh_gh_token is called twice total, not an unbounded loop"
+
 # ---------------------------------------------------------------------------------------------
 section "wait_out_budget: a stuck-open gh 401 must not be read as a pause, and must not stop the shift"
 # ---------------------------------------------------------------------------------------------
