@@ -118,10 +118,36 @@ log() {
   echo "[$(TZ="$DISPLAY_TZ" date '+%H:%M:%S %Z')] $*" | tee -a "$LOG_DIR/autopilot.log" >&2
 }
 
+# The file-based kill switch is checked first and is unconditional: it needs no token and no
+# network call, so it stops the loop even while GH_TOKEN is completely broken.
+#
+# The label check is different on purpose: a real GH_TOKEN expiry (60 min) makes `gh` fail with a
+# 401, which prints nothing on stdout. The old code read that empty output as "length is not 0" and
+# treated a token expiry as if a human had asked for a pause — that is the bug this function exists
+# to fix (see #541). The query is tried once as-is (the common case: the token is still good, so
+# this costs nothing extra), and only on failure does it refresh and retry once — refreshing on
+# every call regardless would mint a token on every single paused() check (run_agent, the developer
+# loop, the rotation slot, wait_out_budget's poll — several times a cycle), which is not "cheap" in
+# aggregate and is not what a token that is still valid needs. If the query still fails after the
+# retry, the failure is logged once and treated as NOT paused — a stuck-open `gh`/network problem
+# must never masquerade as the human kill switch. The only thing that can actually pause the
+# factory via label is a *successful* query that finds one.
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
-  [ "$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length')" != "0" ]
+  local out
+  if out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
+      && [ -n "$out" ]; then
+    [ "$out" != "0" ]; return
+  fi
+  refresh_gh_token
+  if ! out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
+      || [ -z "$out" ]; then
+    log "agents:paused label query failed; not treating this as a pause"
+    return 1
+  fi
+  [ "$out" != "0" ]
 }
+
 
 # The pinned checkout (this toplevel) is what the host's systemd unit `git checkout --detach
 # origin/main`s on every restart. A tracked file left modified here — an agent editing it directly
@@ -593,6 +619,9 @@ run_cycle() {
     paused && break
     run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
   done
+  # The developer role may have run for the full AGENT_TIMEOUT; refresh before the ops-repo push
+  # that follows it rather than handing that push whatever token the last run_agent call minted.
+  refresh_gh_token
   ops_push
 
   if [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
@@ -600,6 +629,8 @@ run_cycle() {
     slot_n=$((slot_n + 1))
     role=${slot%%:*}; focus=${slot#*:}
     paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+    # Same reasoning as above: the rotation role can also run the full timeout.
+    refresh_gh_token
     ops_push
   fi
 
