@@ -34,6 +34,11 @@ agents never take the same issue.
 - Never weaken a test, a security invariant, or a CI check to make something pass.
 - Stop and label `agent:blocked` rather than guess when the repo gives no answer.
 - Keep changes minimal and on-topic. No drive-by refactors.
+- Prefer `pnpm staging:up`/`pnpm db:up` over hand-starting a long-lived process
+  (a server, a watch task) from your own shell — see
+  `.kiro/steering/session-hygiene.md`. Hand-starting one, even fully detached
+  with `setsid ... < /dev/null &`, has hung whole sessions to the timeout
+  (issue #484); there is no known command form that reliably avoids it.
 
 ## CI mode (QA lab workflow)
 
