@@ -71,8 +71,32 @@ DISPLAY_TZ="${DISPLAY_TZ:-Asia/Kolkata}"
 # Local hour (0-23) at or after which the daily digest is posted. Deliberately not midnight: a
 # summary that arrives at 05:30 was written for the machine's convenience, not the reader's.
 DIGEST_HOUR="${DIGEST_HOUR:-9}"
+# Prints a fresh GitHub App installation token on stdout, or fails. The real minter is root-owned
+# (`agent` may run only this one command via sudo); overridable so tests never call the real thing.
+MINT_TOKEN_CMD="${MINT_TOKEN_CMD:-sudo -n /opt/snapurl/bin/mint-gh-token}"
 
+# AGENT_GH_TOKEN is an explicit override for local runs and CI (a PAT, or a token a human minted
+# by hand); it wins for the life of the process and refresh_gh_token leaves it alone. Without it,
+# GH_TOKEN starts unset and the first refresh_gh_token call (top of the main loop, before any
+# role) mints the first real token — there is no long-lived PAT fallback baked in here.
 [ -n "${AGENT_GH_TOKEN:-}" ] && export GH_TOKEN="$AGENT_GH_TOKEN"
+
+# Tokens are valid 60 min; a role may run up to AGENT_TIMEOUT and the manager/reviewer run before
+# the developer, so refreshing once per cycle can hand the developer an already-old token. Call
+# this before every role launch and before merge_approved, not just once per cycle.
+#
+# Fallback is mandatory: if AGENT_GH_TOKEN is set, or the mint command is missing/fails/prints
+# nothing, keep whatever GH_TOKEN already has and log one warning line — never a flood, and never
+# the token itself (not even under `set -x`, so this never echoes $MINT_TOKEN_CMD's output).
+refresh_gh_token() {
+  if [ -n "${AGENT_GH_TOKEN:-}" ]; then return 0; fi
+  local minted
+  if ! minted=$($MINT_TOKEN_CMD 2>/dev/null) || [ -z "$minted" ]; then
+    log "token refresh failed, keeping current token"
+    return 1
+  fi
+  export GH_TOKEN="$minted"
+}
 
 LOG_DIR=".agent-logs/$(date -u +%Y%m%d)"
 mkdir -p "$LOG_DIR" "$STATE_DIR"
@@ -383,6 +407,9 @@ run_agent() { # role preferred-engine task
     effort=$(effort_for "$engine" "$role")
     out="$LOG_DIR/$(date -u +%H%M%S)-$role-$engine.log"
     [ "$attempt" -gt 1 ] && log "retry $attempt for $role"
+    # Right before launch, not once per cycle: a token is valid 60m, a role may run up to
+    # AGENT_TIMEOUT, and the manager/reviewer run before the developer.
+    refresh_gh_token
     log "→ $role ($engine, $model${effort:+, effort $effort})"
     if [ "$engine" = claude ]; then
       timeout "$AGENT_TIMEOUT" claude -p "$task" --agent "snapurl-$role" --model "$model" \
@@ -502,22 +529,31 @@ merge_approved() {
   done
 }
 
+# The token is refreshed immediately before merge_approved rather than only once per cycle,
+# because manager/reviewer already ran and a token is valid only 60 minutes (see refresh_gh_token).
+# A named function, rather than the two calls inlined in the main loop, so a test can invoke this
+# exact pairing directly and catch either call disappearing on its own.
+refresh_and_merge() {
+  refresh_gh_token
+  merge_approved
+}
+
 # Extra role run every SLOT_EVERY cycles, as role[:focus]. QA, UX and security run in the QA lab
 # workflow on GitHub Actions, not here; put them back only on a host that does QA.
 read -r -a ROTATION <<<"${ROTATION:-cloud}"
 SLOT_EVERY="${SLOT_EVERY:-3}"
 
-cycle=0
-slot_n=0
-broken_streak=0
-
 # One pass of the main loop's body, extracted so autopilot.test.sh can call the *actual*
-# scheduling path — including check_checkout_clean's call site — instead of re-implementing it or
-# testing the helper in isolation. A call site dropped from here is a call site dropped from the
-# real loop below, which is the whole point: the test suite failed to catch exactly that class of
-# regression when this was inline. Returns 1 when the shift should stop (paused, budget wait told
-# us to give up, or the circuit breaker tripped); the caller (the real loop, or a test) decides
-# what stopping means.
+# scheduling path — including check_checkout_clean's call site and the top-of-cycle
+# refresh_gh_token, right before `git fetch` — instead of re-implementing it or testing the
+# helpers in isolation. A call site dropped from here is a call site dropped from the real loop
+# below, which is the whole point: the test suite failed to catch exactly that class of
+# regression when this was inline. Everything the loop needs across cycles
+# (cycle/slot_n/broken_streak) is a global set before the first call, same as before this was
+# extracted; a test sets its own copies before calling run_cycle directly.
+#
+# Returns 1 to tell the caller to stop the shift (paused, budget exhausted-and-unrecoverable, or
+# the broken-cycle circuit breaker tripped); 0 to keep going.
 run_cycle() {
   if paused; then log "paused (agents:paused label or $PAUSE_FILE)"; return 1; fi
   if over_budget; then wait_out_budget || return 1; fi
@@ -528,6 +564,7 @@ run_cycle() {
   # "something is broken and no amount of waiting fixes it".
   CYCLE_WORKED=0
   CYCLE_BROKEN=0
+  refresh_gh_token
   git fetch -q origin
   # Catches the state that makes the *next* restart fail before it does: see check_checkout_clean.
   check_checkout_clean
@@ -539,7 +576,7 @@ run_cycle() {
   run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
   run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
   ops_push
-  merge_approved   # merges only what is already approved and green, so it is safe after a failed review
+  refresh_and_merge   # merges only what is already approved and green, so it is safe after a failed review
 
   for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
     paused && break
@@ -578,6 +615,9 @@ run_cycle() {
 [ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
 
 END=$(( $(date +%s) + HOURS * 3600 ))
+cycle=0
+slot_n=0
+broken_streak=0
 
 log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
 check_reviewer_independence claude

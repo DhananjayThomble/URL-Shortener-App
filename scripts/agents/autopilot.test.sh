@@ -8,8 +8,10 @@
 # they are pinned here instead. No network, no agent CLIs, no GitHub: `claude`, `kiro-cli` and `gh`
 # are stubs on PATH whose exit code and output each case chooses. Needs only bash, coreutils and awk.
 # Most variables here are globals consumed by functions in the sourced autopilot; shellcheck
-# cannot see across `source`, so its unused-variable warning is wrong for this file.
-# shellcheck disable=SC2034
+# cannot see across `source`, so its unused-variable warning is wrong for this file. The same
+# blindness makes it think run_cycle (defined in the sourced autopilot.sh) is used before
+# definition.
+# shellcheck disable=SC2034,SC2218
 set -uo pipefail
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/autopilot.sh
@@ -46,6 +48,9 @@ make_stubs() {
     cat >"$BIN/$engine" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/$engine.calls"
+# Records the GH_TOKEN this launch actually saw, so a test can tell a fresh refresh_gh_token
+# call site apart from one that only updates the variable without it reaching the launch.
+printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/$engine.gh_token_seen"
 cat "$BIN/$engine.out" 2>/dev/null
 exit \$(cat "$BIN/$engine.rc" 2>/dev/null || echo 0)
 STUB
@@ -61,6 +66,14 @@ STUB
   cat >"$BIN/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/gh.calls"
+# Records the GH_TOKEN a merge attempt actually saw, so a test can tell a fresh
+# refresh_gh_token call site apart from one that only updates the variable without it
+# reaching the gh invocation that pushes the merge.
+case "\$*" in *"pr merge "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.merge_gh_token_seen" ;; esac
+# Records the GH_TOKEN an ops-repo clone actually saw. ops_pull calls this before any run_agent
+# launch in a cycle, so it is the one call site whose token comes ONLY from the top-of-cycle
+# refresh_gh_token — run_agent's own per-launch refresh happens later and cannot backfill it.
+case "\$*" in *"repo clone "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.clone_gh_token_seen" ;; esac
 
 # Pull the -q filter and the --body out of the argument list. The body is written to its own file
 # because it is multi-line: grepping it back out of the flat call log is not possible, and reading
@@ -124,7 +137,8 @@ STUB
 reset_stubs() {
   rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
         "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
-        "$BIN"/gh.prmerge-*.rc
+        "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen \
+        "$BIN"/gh.clone_gh_token_seen
   make_stubs
   echo 0 > "$BIN/gh.paused"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
@@ -218,6 +232,233 @@ printf 'no meter here\n' > nospend.log
 is "$(run_credits nospend.log)" "" "prints nothing when the engine reports no usage"
 printf 'A typical reviewer shift reports Credits: 900 across the cycle, well under the ceiling.\n ▸ (no footer in this run)\n' > prose.log
 is "$(run_credits prose.log)" "" "credit-shaped prose without the real footer is not read as spend"
+
+# ---------------------------------------------------------------------------------------------
+section "refresh_gh_token: keeping GH_TOKEN alive across a 60-minute expiry"
+# ---------------------------------------------------------------------------------------------
+# A PATH stub for the mint command, never the real one: MINT_TOKEN_CMD is overridden per case.
+mint_ok() {
+  cat >"$BIN/mint-ok" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/mint-ok.calls"
+echo "$1"
+STUB
+  chmod +x "$BIN/mint-ok"
+}
+mint_fail() {
+  cat >"$BIN/mint-fail" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+  chmod +x "$BIN/mint-fail"
+}
+mint_empty() {
+  cat >"$BIN/mint-empty" <<'STUB'
+#!/usr/bin/env bash
+echo -n ""
+STUB
+  chmod +x "$BIN/mint-empty"
+}
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_fail
+MINT_TOKEN_CMD="$BIN/mint-fail"
+out=$(refresh_gh_token 2>&1); rc=$?
+is "$rc" 1 "a failing mint command reports failure"
+contains "$out" "token refresh failed, keeping current token" "a failed mint logs exactly one warning line"
+is "$(echo "$out" | grep -c 'token refresh failed')" 1 "the warning is not a flood"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN
+GH_TOKEN=stale-token-value
+mint_fail
+MINT_TOKEN_CMD="$BIN/mint-fail"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" stale-token-value "on failure the current token is kept, not cleared"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN
+GH_TOKEN=stale-token-value
+mint_empty
+MINT_TOKEN_CMD="$BIN/mint-empty"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" stale-token-value "an empty mint result is treated as a failure, keeping the current token"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-one
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" fresh-token-one "a successful mint exports the new token"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-one
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+mint_ok fresh-token-two
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" fresh-token-two "the next role launch sees the newly minted token"
+
+reset_stubs; load
+AGENT_GH_TOKEN=operator-supplied-token
+export AGENT_GH_TOKEN
+GH_TOKEN="$AGENT_GH_TOKEN"
+mint_ok should-never-be-used
+MINT_TOKEN_CMD="$BIN/mint-ok"
+out=$(refresh_gh_token 2>&1); rc=$?
+is "$rc" 0 "AGENT_GH_TOKEN present is treated as success, no warning"
+is "$GH_TOKEN" operator-supplied-token "an explicit AGENT_GH_TOKEN override wins over a minted token"
+is "$([ -f "$BIN/mint-ok.calls" ] && echo called || echo not-called)" not-called \
+  "the mint command is never invoked while AGENT_GH_TOKEN is set"
+unset AGENT_GH_TOKEN
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok never-logged-token-xyz
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+lacks "$(cat "$LOG_DIR"/*.log 2>/dev/null)" "never-logged-token-xyz" "the minted token value never lands in the log file"
+lacks "$out" "never-logged-token-xyz" "the minted token value never appears on refresh_gh_token's own stdout/stderr"
+
+# ---------------------------------------------------------------------------------------------
+section "refresh_gh_token's call sites: run_agent and merge_approved must actually call it"
+# ---------------------------------------------------------------------------------------------
+# The gap a prior review caught: refresh_gh_token's own unit tests all passed even after the three
+# production call sites (main loop, run_agent, pre-merge) were deleted outright, because nothing
+# exercised run_agent/merge_approved with a mint stub and checked what token the launch actually
+# saw. These cases mint a *different* token per call and read it back off the engine/gh stub's own
+# recorded environment — not off refresh_gh_token in isolation — so deleting a call site turns
+# them red.
+mint_sequence() { # cmd-name token1 token2 ...
+  local cmd=$1; shift
+  printf '%s\n' "$@" > "$BIN/$cmd.tokens"
+  cat >"$BIN/$cmd" <<STUB
+#!/usr/bin/env bash
+f="$BIN/$cmd.tokens"
+n=\$(( \$(cat "$BIN/$cmd.n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BIN/$cmd.n"
+sed -n "\${n}p" "\$f"
+STUB
+  chmod +x "$BIN/$cmd"
+  rm -f "$BIN/$cmd.n"
+}
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-seq token-for-launch-one token-for-launch-two
+MINT_TOKEN_CMD="$BIN/mint-seq"
+echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
+MODE=kiro
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-for-launch-one \
+  "run_agent refreshes the token before the FIRST launch the mint stub sees"
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(tail -n 1 "$BIN/kiro-cli.gh_token_seen")" token-for-launch-two \
+  "a second run_agent call mints again and the SECOND launch sees the new token, not a cached one"
+is "$(cat "$BIN/mint-seq.n")" 2 "the mint command ran once per run_agent call, not once total"
+
+# The retry path inside run_agent must also refresh: a retry on the fallback engine is a second
+# launch, up to AGENT_TIMEOUT after the first, so it must not carry the first attempt's token.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-retry token-before-retry token-after-retry
+MINT_TOKEN_CMD="$BIN/mint-retry"
+echo 1 > "$BIN/kiro-cli.rc"; printf 'usage limit reached\n' > "$BIN/kiro-cli.out"
+echo 0 > "$BIN/claude.rc";   printf 'done\n' > "$BIN/claude.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-before-retry "the first, limited attempt gets a fresh token"
+is "$(cat "$BIN/claude.gh_token_seen")" token-after-retry \
+  "the retry on the fallback engine mints again rather than reusing the first attempt's token"
+
+# merge_approved is the other call site named in the issue: a merge push must carry a token minted
+# for this pass, not one left over from whichever role ran before it. Goes through
+# refresh_and_merge — the exact pairing the main loop calls — rather than calling refresh_gh_token
+# and merge_approved separately, so removing either call inside it turns this red.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-merge token-for-merge-push
+MINT_TOKEN_CMD="$BIN/mint-merge"
+GH_TOKEN=stale-role-token   # simulates the token a role minted earlier in the same cycle
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":599}]
+JSON
+cat > "$BIN/fixture-pr-view-599.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"CLEAN","files":[],
+ "comments":[{"body":"agent-approved-sha: $head"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+refresh_and_merge >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr merge 599" "sanity: the merge in this case actually ran"
+is "$(cat "$BIN/gh.merge_gh_token_seen")" token-for-merge-push \
+  "refresh_and_merge mints before merging, so gh pr merge sees the fresh token, not the stale one"
+is "$(cat "$BIN/mint-merge.n")" 1 "the mint command ran exactly once for this pairing"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: the top-of-cycle refresh_gh_token call, exercised through the real scheduling path"
+# ---------------------------------------------------------------------------------------------
+# The gap the previous fix still had: refresh_gh_token's call sites inside run_agent and
+# refresh_and_merge were pinned, but the THIRD call site named in the issue — once per cycle,
+# immediately before `git fetch`, so GH_TOKEN is never unset when the cycle starts — lived only in
+# the `while` loop below the `AUTOPILOT_LIB_ONLY` guard, which a test never sources or runs.
+# Deleting that one call left the suite green. run_cycle (autopilot.sh) is the named extraction of
+# that exact loop body, called here directly rather than re-implemented, so removing the call from
+# the real production function is what turns this red.
+#
+# The observation point has to be one run_agent's OWN per-launch refresh cannot backfill: run_agent
+# refreshes again before manager launches, so manager always sees a fresh token regardless of the
+# top-of-cycle call. ops_pull's `gh repo clone` runs before any run_agent call in the cycle, so its
+# token comes only from the top-of-cycle refresh.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-cycle token-at-top-of-cycle token-for-manager-launch
+MINT_TOKEN_CMD="$BIN/mint-cycle"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/gh.clone_gh_token_seen")" token-at-top-of-cycle \
+  "run_cycle refreshes the token before git fetch/ops_pull, so the ops-repo clone sees the freshly minted one, not an empty/stale GH_TOKEN"
+
+# Reproduce the reviewer's exact mutation to confirm this case is the one that catches it: the
+# same run_cycle body with only the top-of-cycle refresh_gh_token line removed (matching the
+# review's own repro, which deleted that one call at head ff8641d and left the suite green).
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-mutant should-never-be-seen
+MINT_TOKEN_CMD="$BIN/mint-mutant"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+GH_TOKEN=stale-token-from-a-previous-cycle
+export GH_TOKEN
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+run_cycle() {
+  if paused; then log "paused"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  CYCLE_WORKED=0; CYCLE_BROKEN=0
+  # top-of-cycle refresh_gh_token deliberately omitted here, matching the reviewer's mutation
+  git fetch -q origin 2>/dev/null
+  ops_pull || true
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
+  return 0
+}
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/gh.clone_gh_token_seen")" stale-token-from-a-previous-cycle \
+  "mutant sanity check: with the top-of-cycle call removed, ops_pull's clone carries the stale token, confirming this case would have caught the reviewer's exact mutation"
+is "$([ -f "$BIN/mint-mutant.n" ] && cat "$BIN/mint-mutant.n" || echo 0)" 1 \
+  "mutant sanity check: the mint command still ran once, from run_agent's own call site, but too late for the clone that already happened"
 
 # ---------------------------------------------------------------------------------------------
 section "the day budget is a hard stop"
