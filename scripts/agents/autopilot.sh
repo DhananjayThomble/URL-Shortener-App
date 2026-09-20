@@ -3,8 +3,9 @@
 #
 #   HOURS=6 bash scripts/agents/autopilot.sh
 #
-# Each cycle: kill-switch check → engine mode → manager → reviewer → merge approved PRs →
-# developer(s) → every SLOT_EVERY cycles, one ROTATION role (default: cloud) → sleep.
+# Each cycle: kill-switch check → engine mode → dirty-checkout check → manager → reviewer →
+# merge approved PRs → developer(s) → every SLOT_EVERY cycles, one ROTATION role (default: cloud)
+# → sleep.
 # Any role runs on Claude Code or Kiro CLI; see "Engines" below and docs/AGENTIC-DEV.md.
 set -uo pipefail
 # Without the guard a failed rev-parse would leave the loop running in whatever directory it
@@ -85,6 +86,22 @@ log() {
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
   [ "$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length')" != "0" ]
+}
+
+# The pinned checkout (this toplevel) is what the host's systemd unit `git checkout --detach
+# origin/main`s on every restart. A tracked file left modified here — an agent editing it directly
+# instead of in a worktree — makes that checkout fail and, under `set -e`, the whole factory exits
+# before the autopilot even starts. Restart=always with a long RestartSec turns that into a silent
+# multi-minute gap rather than a visible failure, so this is the only place that can catch it: the
+# loop that is still running. Never deletes, stashes or resets anything — a dirty checkout is
+# evidence an agent broke the worktree rule, and destroying that evidence is not this function's
+# job. `alert` both logs the line and appends to alerts.log, which the digest already surfaces
+# under "Recent alerts", so nothing else has to read this file's output.
+check_checkout_clean() {
+  local dirty
+  dirty=$(git status --porcelain 2>/dev/null)
+  [ -z "$dirty" ] && return 0
+  alert "pinned checkout is dirty: $(printf '%s' "$dirty" | awk '{print $2}' | paste -sd ' ' -)"
 }
 
 # Prints auto, claude or kiro. Labels beat the state file, which beats the environment.
@@ -514,6 +531,8 @@ while [ "$(date +%s)" -lt "$END" ]; do
   CYCLE_WORKED=0
   CYCLE_BROKEN=0
   git fetch -q origin
+  # Catches the state that makes the *next* restart fail before it does: see check_checkout_clean.
+  check_checkout_clean
   # Shared memory lives in the ops repo; pull before any agent reads it, push after they write.
   ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
 

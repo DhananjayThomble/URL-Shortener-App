@@ -39,6 +39,15 @@ agents never take the same issue.
   `.kiro/steering/session-hygiene.md`. Hand-starting one, even fully detached
   with `setsid ... < /dev/null &`, has hung whole sessions to the timeout
   (issue #484); there is no known command form that reliably avoids it.
+- **The pinned checkout you started in is read-only.** The factory's systemd unit
+  re-`checkout`s it to `origin/main` on every restart, including the planned
+  ones (credential rotation, host maintenance). If any tracked file in it is
+  modified, that `git checkout` fails and, under the unit's `set -e`, the whole
+  autopilot exits before it even starts — silently, since nothing is running to
+  log or alert. All edits happen in `../wt-<issue>` (created in its own step
+  below), never in this directory. If you created a new file directly here by
+  mistake, `git status --porcelain` and remove or relocate it before you finish
+  — do not leave it for the next restart to trip over.
 
 ## CI mode (QA lab workflow)
 

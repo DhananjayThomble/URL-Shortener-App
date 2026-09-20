@@ -682,6 +682,64 @@ DISPLAY_TZ=Pacific/Kiritimati
 is "$LOG_DIR" ".agent-logs/$(date -u +%Y%m%d)" "log directories stay on the UTC day, to match CI and GitHub"
 
 # ---------------------------------------------------------------------------------------------
+section "check_checkout_clean: a dirty pinned checkout breaks the next restart"
+# ---------------------------------------------------------------------------------------------
+# `load` already did `git init` in a throwaway repo and cd'd into it, matching the real pinned
+# checkout autopilot.sh runs from (it cd's to `git rev-parse --show-toplevel`).
+reset_stubs; load
+check_checkout_clean
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "a freshly-initialised, untouched repo is clean"
+
+reset_stubs; load
+echo "changed" > tracked-and-dirty.txt
+git add tracked-and-dirty.txt
+git commit -q -m "seed a tracked file"
+echo "modified after commit" > tracked-and-dirty.txt
+check_checkout_clean
+contains "$(cat "$STATE_DIR/alerts.log")" "pinned checkout is dirty" "a modified tracked file is caught and alerted"
+contains "$(cat "$STATE_DIR/alerts.log")" "tracked-and-dirty.txt" "the alert names the dirty file"
+
+reset_stubs; load
+echo "never committed" > untracked-file.txt
+check_checkout_clean
+contains "$(cat "$STATE_DIR/alerts.log")" "pinned checkout is dirty" "an untracked file is caught too (this is how origin/main later adding that path bites)"
+contains "$(cat "$STATE_DIR/alerts.log")" "untracked-file.txt" "the alert names the untracked file"
+
+# The acceptance criteria are explicit: nothing here may delete, stash or reset anything, however
+# tempting a "helpful" cleanup would be — a dirty checkout is evidence an agent broke the worktree
+# rule, and that evidence must survive for a human to look at.
+reset_stubs; load
+echo "must survive" > must-survive.txt
+check_checkout_clean >/dev/null
+if [ -f must-survive.txt ]; then
+  ok "check_checkout_clean does not delete the offending file"
+else
+  bad "check_checkout_clean does not delete the offending file" "file is gone"
+fi
+is "$(cat must-survive.txt)" "must survive" "check_checkout_clean does not touch the file's contents"
+
+# One alert line per call, not one per dirty file, so a whole broken checkout is still readable in
+# the digest's "Recent alerts" tail instead of drowning it.
+reset_stubs; load
+echo a > one.txt; echo b > two.txt
+check_checkout_clean
+is "$(grep -c 'pinned checkout is dirty' "$STATE_DIR/alerts.log")" 1 "multiple dirty files still produce a single alert line"
+contains "$(cat "$STATE_DIR/alerts.log")" "one.txt" "the single alert line names every dirty file (1 of 2)"
+contains "$(cat "$STATE_DIR/alerts.log")" "two.txt" "the single alert line names every dirty file (2 of 2)"
+
+# check_checkout_clean is called once per cycle, and alert() already writes both the log and
+# alerts.log, which digest_now already tails into "Recent alerts" — so a dirty checkout reaches
+# the digest for free. Pin that wiring rather than trusting it stayed true.
+reset_stubs; load
+echo 42 > "$BIN/gh.digestissue"
+echo "dirty for digest" > digest-dirty.txt
+check_checkout_clean
+digest_now "test" >/dev/null 2>&1
+body=$(cat "$BIN/gh.lastbody" 2>/dev/null)
+contains "$body" "pinned checkout is dirty" "a dirty checkout's alert reaches the daily digest"
+contains "$body" "digest-dirty.txt" "the digest names the specific dirty file"
+
+# ---------------------------------------------------------------------------------------------
 section "paused: the kill switch fails closed"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
