@@ -512,6 +512,15 @@ merge_approved() {
   done
 }
 
+# The token is refreshed immediately before merge_approved rather than only once per cycle,
+# because manager/reviewer already ran and a token is valid only 60 minutes (see refresh_gh_token).
+# A named function, rather than the two calls inlined in the main loop, so a test can invoke this
+# exact pairing directly and catch either call disappearing on its own.
+refresh_and_merge() {
+  refresh_gh_token
+  merge_approved
+}
+
 # Extra role run every SLOT_EVERY cycles, as role[:focus]. QA, UX and security run in the QA lab
 # workflow on GitHub Actions, not here; put them back only on a host that does QA.
 read -r -a ROTATION <<<"${ROTATION:-cloud}"
@@ -550,8 +559,7 @@ while [ "$(date +%s)" -lt "$END" ]; do
   run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
   run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
   ops_push
-  refresh_gh_token
-  merge_approved   # merges only what is already approved and green, so it is safe after a failed review
+  refresh_and_merge   # merges only what is already approved and green, so it is safe after a failed review
 
   for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
     paused && break

@@ -46,6 +46,9 @@ make_stubs() {
     cat >"$BIN/$engine" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/$engine.calls"
+# Records the GH_TOKEN this launch actually saw, so a test can tell a fresh refresh_gh_token
+# call site apart from one that only updates the variable without it reaching the launch.
+printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/$engine.gh_token_seen"
 cat "$BIN/$engine.out" 2>/dev/null
 exit \$(cat "$BIN/$engine.rc" 2>/dev/null || echo 0)
 STUB
@@ -61,6 +64,10 @@ STUB
   cat >"$BIN/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/gh.calls"
+# Records the GH_TOKEN a merge attempt actually saw, so a test can tell a fresh
+# refresh_gh_token call site apart from one that only updates the variable without it
+# reaching the gh invocation that pushes the merge.
+case "\$*" in *"pr merge "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.merge_gh_token_seen" ;; esac
 
 # Pull the -q filter and the --body out of the argument list. The body is written to its own file
 # because it is multi-line: grepping it back out of the flat call log is not possible, and reading
@@ -124,7 +131,7 @@ STUB
 reset_stubs() {
   rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
         "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
-        "$BIN"/gh.prmerge-*.rc
+        "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen
   make_stubs
   echo 0 > "$BIN/gh.paused"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
@@ -297,6 +304,82 @@ MINT_TOKEN_CMD="$BIN/mint-ok"
 refresh_gh_token >/dev/null 2>&1
 lacks "$(cat "$LOG_DIR"/*.log 2>/dev/null)" "never-logged-token-xyz" "the minted token value never lands in the log file"
 lacks "$out" "never-logged-token-xyz" "the minted token value never appears on refresh_gh_token's own stdout/stderr"
+
+# ---------------------------------------------------------------------------------------------
+section "refresh_gh_token's call sites: run_agent and merge_approved must actually call it"
+# ---------------------------------------------------------------------------------------------
+# The gap a prior review caught: refresh_gh_token's own unit tests all passed even after the three
+# production call sites (main loop, run_agent, pre-merge) were deleted outright, because nothing
+# exercised run_agent/merge_approved with a mint stub and checked what token the launch actually
+# saw. These cases mint a *different* token per call and read it back off the engine/gh stub's own
+# recorded environment — not off refresh_gh_token in isolation — so deleting a call site turns
+# them red.
+mint_sequence() { # cmd-name token1 token2 ...
+  local cmd=$1; shift
+  printf '%s\n' "$@" > "$BIN/$cmd.tokens"
+  cat >"$BIN/$cmd" <<STUB
+#!/usr/bin/env bash
+f="$BIN/$cmd.tokens"
+n=\$(( \$(cat "$BIN/$cmd.n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BIN/$cmd.n"
+sed -n "\${n}p" "\$f"
+STUB
+  chmod +x "$BIN/$cmd"
+  rm -f "$BIN/$cmd.n"
+}
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-seq token-for-launch-one token-for-launch-two
+MINT_TOKEN_CMD="$BIN/mint-seq"
+echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
+MODE=kiro
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-for-launch-one \
+  "run_agent refreshes the token before the FIRST launch the mint stub sees"
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(tail -n 1 "$BIN/kiro-cli.gh_token_seen")" token-for-launch-two \
+  "a second run_agent call mints again and the SECOND launch sees the new token, not a cached one"
+is "$(cat "$BIN/mint-seq.n")" 2 "the mint command ran once per run_agent call, not once total"
+
+# The retry path inside run_agent must also refresh: a retry on the fallback engine is a second
+# launch, up to AGENT_TIMEOUT after the first, so it must not carry the first attempt's token.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-retry token-before-retry token-after-retry
+MINT_TOKEN_CMD="$BIN/mint-retry"
+echo 1 > "$BIN/kiro-cli.rc"; printf 'usage limit reached\n' > "$BIN/kiro-cli.out"
+echo 0 > "$BIN/claude.rc";   printf 'done\n' > "$BIN/claude.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-before-retry "the first, limited attempt gets a fresh token"
+is "$(cat "$BIN/claude.gh_token_seen")" token-after-retry \
+  "the retry on the fallback engine mints again rather than reusing the first attempt's token"
+
+# merge_approved is the other call site named in the issue: a merge push must carry a token minted
+# for this pass, not one left over from whichever role ran before it. Goes through
+# refresh_and_merge — the exact pairing the main loop calls — rather than calling refresh_gh_token
+# and merge_approved separately, so removing either call inside it turns this red.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-merge token-for-merge-push
+MINT_TOKEN_CMD="$BIN/mint-merge"
+GH_TOKEN=stale-role-token   # simulates the token a role minted earlier in the same cycle
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":599}]
+JSON
+cat > "$BIN/fixture-pr-view-599.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"CLEAN","files":[],
+ "comments":[{"body":"agent-approved-sha: $head"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+refresh_and_merge >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr merge 599" "sanity: the merge in this case actually ran"
+is "$(cat "$BIN/gh.merge_gh_token_seen")" token-for-merge-push \
+  "refresh_and_merge mints before merging, so gh pr merge sees the fresh token, not the stale one"
+is "$(cat "$BIN/mint-merge.n")" 1 "the mint command ran exactly once for this pairing"
 
 # ---------------------------------------------------------------------------------------------
 section "the day budget is a hard stop"
