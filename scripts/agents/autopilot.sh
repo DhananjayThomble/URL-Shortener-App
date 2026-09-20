@@ -124,22 +124,20 @@ log() {
 # The label check is different on purpose: a real GH_TOKEN expiry (60 min) makes `gh` fail with a
 # 401, which prints nothing on stdout. The old code read that empty output as "length is not 0" and
 # treated a token expiry as if a human had asked for a pause — that is the bug this function exists
-# to fix (see #541). The query is tried once as-is (the common case: the token is still good, so
-# this costs nothing extra), and only on failure does it refresh and retry once — refreshing on
-# every call regardless would mint a token on every single paused() check (run_agent, the developer
-# loop, the rotation slot, wait_out_budget's poll — several times a cycle), which is not "cheap" in
-# aggregate and is not what a token that is still valid needs. If the query still fails after the
-# retry, the failure is logged once and treated as NOT paused — a stuck-open `gh`/network problem
-# must never masquerade as the human kill switch. The only thing that can actually pause the
-# factory via label is a *successful* query that finds one.
+# to fix (see #541). Per #541's explicit build requirement, refresh_gh_token is called
+# unconditionally BEFORE the query — not only after an observed failure — because paused() is the
+# thing wait_out_budget polls every iteration while idling on a spent budget, and that is exactly
+# the path that hit the 60-minute expiry in production. refresh_gh_token is cheap when the token is
+# still good: if AGENT_GH_TOKEN is set (tests, CI) it returns immediately without minting anything,
+# and otherwise the mint command itself is what actually bounds the cost, not this call site
+# skipping it. If the query still fails after that refresh, the failure is logged once and treated
+# as NOT paused — a stuck-open `gh`/network problem must never masquerade as the human kill switch.
+# The only thing that can actually pause the factory via label is a *successful* query that finds
+# one.
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
-  local out
-  if out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
-      && [ -n "$out" ]; then
-    [ "$out" != "0" ]; return
-  fi
   refresh_gh_token
+  local out
   if ! out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
       || [ -z "$out" ]; then
     log "agents:paused label query failed; not treating this as a pause"
@@ -601,7 +599,9 @@ run_cycle() {
   # "something is broken and no amount of waiting fixes it".
   CYCLE_WORKED=0
   CYCLE_BROKEN=0
-  refresh_gh_token
+  # No standalone refresh_gh_token here: paused() (the line above) now refreshes unconditionally
+  # itself (#541), so by the time this point is reached the token is already as fresh as a second
+  # call here could make it — a second mint back to back would just be wasted cost.
   git fetch -q origin
   # Catches the state that makes the *next* restart fail before it does: see check_checkout_clean.
   check_checkout_clean

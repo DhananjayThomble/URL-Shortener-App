@@ -115,7 +115,11 @@ case "\$*" in
     if [ "\$rc" != 0 ]; then exit "\$rc"; fi
     cat "$BIN/gh.paused" 2>/dev/null || echo 0; exit 0 ;;
   *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo ""; exit 0 ;;
-  *"issue list"*"$DIGEST_LABEL"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
+  # Matches the literal default of DIGEST_LABEL (factory:digest — see autopilot.sh), not the
+  # variable itself: make_stubs runs from reset_stubs, before `load` sources autopilot.sh, so
+  # $DIGEST_LABEL is not yet set in this shell (same reason $REPO's default is hardcoded as
+  # owner/repo above rather than referenced). No case in this file overrides DIGEST_LABEL.
+  *"issue list"*"factory:digest"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
   *"issue create"*) echo "https://github.com/owner/repo/issues/77"; exit 0 ;;
 esac
 
@@ -402,9 +406,14 @@ STUB
   rm -f "$BIN/$cmd.n"
 }
 
+# Since #541, paused() also refreshes on every call (it is polled by wait_out_budget every
+# iteration while idling on a spent budget, which is exactly the path that hit the production
+# expiry), and run_agent's attempt loop calls paused() once before its own pre-launch refresh — so
+# one successful attempt now mints twice, not once: the launch itself still sees the LAST token
+# minted before it fires, which is what actually matters for the token reaching the process.
 reset_stubs; load
 unset AGENT_GH_TOKEN GH_TOKEN
-mint_sequence mint-seq token-for-launch-one token-for-launch-two
+mint_sequence mint-seq token-for-paused-check-1 token-for-launch-one token-for-paused-check-2 token-for-launch-two
 MINT_TOKEN_CMD="$BIN/mint-seq"
 echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
 MODE=kiro
@@ -414,13 +423,14 @@ is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-for-launch-one \
 run_agent developer kiro "work" >/dev/null 2>&1
 is "$(tail -n 1 "$BIN/kiro-cli.gh_token_seen")" token-for-launch-two \
   "a second run_agent call mints again and the SECOND launch sees the new token, not a cached one"
-is "$(cat "$BIN/mint-seq.n")" 2 "the mint command ran once per run_agent call, not once total"
+is "$(cat "$BIN/mint-seq.n")" 4 \
+  "the mint command ran twice per run_agent call (paused()'s own refresh, then the pre-launch refresh), not once and not carried over between calls"
 
 # The retry path inside run_agent must also refresh: a retry on the fallback engine is a second
 # launch, up to AGENT_TIMEOUT after the first, so it must not carry the first attempt's token.
 reset_stubs; load
 unset AGENT_GH_TOKEN GH_TOKEN
-mint_sequence mint-retry token-before-retry token-after-retry
+mint_sequence mint-retry token-paused-1 token-before-retry token-paused-2 token-after-retry
 MINT_TOKEN_CMD="$BIN/mint-retry"
 echo 1 > "$BIN/kiro-cli.rc"; printf 'usage limit reached\n' > "$BIN/kiro-cli.out"
 echo 0 > "$BIN/claude.rc";   printf 'done\n' > "$BIN/claude.out"
@@ -456,23 +466,18 @@ is "$(cat "$BIN/gh.merge_gh_token_seen")" token-for-merge-push \
 is "$(cat "$BIN/mint-merge.n")" 1 "the mint command ran exactly once for this pairing"
 
 # ---------------------------------------------------------------------------------------------
-section "run_cycle: the top-of-cycle refresh_gh_token call, exercised through the real scheduling path"
+section "run_cycle: the token is fresh before git fetch/ops_pull, via paused()'s own refresh"
 # ---------------------------------------------------------------------------------------------
-# The gap the previous fix still had: refresh_gh_token's call sites inside run_agent and
-# refresh_and_merge were pinned, but the THIRD call site named in the issue — once per cycle,
-# immediately before `git fetch`, so GH_TOKEN is never unset when the cycle starts — lived only in
-# the `while` loop below the `AUTOPILOT_LIB_ONLY` guard, which a test never sources or runs.
-# Deleting that one call left the suite green. run_cycle (autopilot.sh) is the named extraction of
-# that exact loop body, called here directly rather than re-implemented, so removing the call from
-# the real production function is what turns this red.
-#
-# The observation point has to be one run_agent's OWN per-launch refresh cannot backfill: run_agent
-# refreshes again before manager launches, so manager always sees a fresh token regardless of the
-# top-of-cycle call. ops_pull's `gh repo clone` runs before any run_agent call in the cycle, so its
-# token comes only from the top-of-cycle refresh.
+# Originally (#524) this was a standalone refresh_gh_token call at the top of run_cycle, placed
+# after `paused` and before `git fetch`. Since #541 made paused() itself refresh unconditionally
+# before its label query, that standalone call became pure redundancy — paused() (run_cycle's very
+# first line) already guarantees GH_TOKEN is fresh by the time ops_pull's clone runs, so the extra
+# call was removed rather than kept as a second, wasted mint back to back. This section now pins
+# THAT guarantee directly: ops_pull's clone sees whatever paused() minted, and removing paused()'s
+# own refresh (not a separate call site) is what turns it red.
 reset_stubs; load
 unset AGENT_GH_TOKEN GH_TOKEN
-mint_sequence mint-cycle token-at-top-of-cycle token-for-manager-launch
+mint_sequence mint-cycle token-for-paused-check token-for-manager-launch
 MINT_TOKEN_CMD="$BIN/mint-cycle"
 echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
 DEVS_PER_CYCLE=0
@@ -480,12 +485,11 @@ ROTATION=()
 cycle=0; slot_n=0; broken_streak=0
 MODE=auto
 run_cycle >/dev/null 2>&1
-is "$(cat "$BIN/gh.clone_gh_token_seen")" token-at-top-of-cycle \
-  "run_cycle refreshes the token before git fetch/ops_pull, so the ops-repo clone sees the freshly minted one, not an empty/stale GH_TOKEN"
+is "$(cat "$BIN/gh.clone_gh_token_seen")" token-for-paused-check \
+  "run_cycle's own paused() call refreshes the token before git fetch/ops_pull, so the ops-repo clone sees the freshly minted one, not an empty/stale GH_TOKEN"
 
-# Reproduce the reviewer's exact mutation to confirm this case is the one that catches it: the
-# same run_cycle body with only the top-of-cycle refresh_gh_token line removed (matching the
-# review's own repro, which deleted that one call at head ff8641d and left the suite green).
+# Reproduce the reviewer's mutation in its current form: paused()'s own refresh_gh_token call
+# removed (the #541 fix reverted for this one line), everything else unchanged.
 reset_stubs; load
 unset AGENT_GH_TOKEN GH_TOKEN
 mint_sequence mint-mutant should-never-be-seen
@@ -498,23 +502,21 @@ MODE=auto
 GH_TOKEN=stale-token-from-a-previous-cycle
 export GH_TOKEN
 # shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
-run_cycle() {
-  if paused; then log "paused"; return 1; fi
-  if over_budget; then wait_out_budget || return 1; fi
-  cycle=$((cycle + 1))
-  MODE=$(engine_mode)
-  CYCLE_WORKED=0; CYCLE_BROKEN=0
-  # top-of-cycle refresh_gh_token deliberately omitted here, matching the reviewer's mutation
-  git fetch -q origin 2>/dev/null
-  ops_pull || true
-  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
-  return 0
+paused() {
+  [ -f "$PAUSE_FILE" ] && return 0
+  # paused()'s own refresh_gh_token call deliberately omitted here, matching the mutation
+  local out
+  if ! out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
+      || [ -z "$out" ]; then
+    return 1
+  fi
+  [ "$out" != "0" ]
 }
 run_cycle >/dev/null 2>&1
 is "$(cat "$BIN/gh.clone_gh_token_seen")" stale-token-from-a-previous-cycle \
-  "mutant sanity check: with the top-of-cycle call removed, ops_pull's clone carries the stale token, confirming this case would have caught the reviewer's exact mutation"
-is "$([ -f "$BIN/mint-mutant.n" ] && cat "$BIN/mint-mutant.n" || echo 0)" 1 \
-  "mutant sanity check: the mint command still ran once, from run_agent's own call site, but too late for the clone that already happened"
+  "mutant sanity check: with paused()'s own refresh removed, ops_pull's clone carries the stale token, confirming this case would have caught its absence"
+is "$([ -f "$BIN/mint-mutant.n" ] && cat "$BIN/mint-mutant.n" || echo 0)" 4 \
+  "mutant sanity check: the mint command still ran from manager's and reviewer's pre-launch refreshes, refresh_and_merge, and the unconditional post-developer refresh (DEVS_PER_CYCLE=0 skips the loop body, not that line) — none of them backfill the clone that already happened"
 
 # ---------------------------------------------------------------------------------------------
 section "run_cycle: refreshes again after each role, before the ops_push that follows it (#541 pt.3)"
@@ -522,10 +524,13 @@ section "run_cycle: refreshes again after each role, before the ops_push that fo
 # A role may run for the full AGENT_TIMEOUT (90m by default), well past the token's 60-minute
 # life. run_agent already refreshes before ITS OWN launch, so that alone cannot prove the
 # post-role refresh exists — the count has to be higher than "one mint per run_agent call" for
-# that to be visible. This cycle makes one developer call and one rotation-slot call, so with the
-# top-of-cycle refresh (1) + manager (1) + reviewer (1) + refresh_and_merge (1) + developer (1) +
-# rotation role (1) = 6 mints if nothing extra runs; the two new call sites before ops_push add 2
-# more, for 8.
+# that to be visible. Since #541, paused() itself also refreshes on every call, and this cycle
+# calls it at: the top of run_cycle, inside each of the three run_agent calls' attempt loops
+# (manager, reviewer, developer), the developer loop's own `paused &&` guard, and the rotation
+# slot's `paused ||` guard — six paused()-driven mints — plus one pre-launch refresh per
+# run_agent call (manager, reviewer, developer, rotation = 4), refresh_and_merge's mint, and the
+# two new post-role refreshes (after developer, after rotation): 6 + 4 + 1 + 2 = 13, plus
+# reviewer's `paused` (already counted above) — total 14.
 reset_stubs; load
 unset AGENT_GH_TOKEN GH_TOKEN
 counting_mint() {
@@ -548,8 +553,8 @@ SLOT_EVERY=1
 cycle=0; slot_n=0; broken_streak=0
 MODE=auto
 run_cycle >/dev/null 2>&1
-is "$(cat "$BIN/mint-count.n")" 8 \
-  "run_cycle mints once more after the developer loop and once more after the rotation slot, on top of the per-role and top-of-cycle refreshes"
+is "$(cat "$BIN/mint-count.n")" 14 \
+  "run_cycle mints once more after the developer loop and once more after the rotation slot, on top of paused()'s own refreshes and the per-role pre-launch refreshes"
 
 # Reproduce the reviewer's mutation: the two post-role refresh_gh_token lines removed, everything
 # else unchanged, to prove this exact case is the one that would catch their absence.
@@ -571,7 +576,6 @@ run_cycle() {
   cycle=$((cycle + 1))
   MODE=$(engine_mode)
   CYCLE_WORKED=0; CYCLE_BROKEN=0
-  refresh_gh_token
   git fetch -q origin 2>/dev/null
   ops_pull || true
   run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
@@ -595,8 +599,8 @@ run_cycle() {
   return 0
 }
 run_cycle >/dev/null 2>&1
-is "$(cat "$BIN/mint-count.n")" 6 \
-  "mutant sanity check: with both post-role refreshes removed, only 6 mints happen, confirming this case would catch either line's absence"
+is "$(cat "$BIN/mint-count.n")" 12 \
+  "mutant sanity check: with both post-role refreshes removed, only 12 mints happen (14 minus the two removed lines), confirming this case would catch either line's absence"
 
 
 reset_stubs; load
