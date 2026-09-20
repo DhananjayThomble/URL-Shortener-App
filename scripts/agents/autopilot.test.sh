@@ -8,8 +8,10 @@
 # they are pinned here instead. No network, no agent CLIs, no GitHub: `claude`, `kiro-cli` and `gh`
 # are stubs on PATH whose exit code and output each case chooses. Needs only bash, coreutils and awk.
 # Most variables here are globals consumed by functions in the sourced autopilot; shellcheck
-# cannot see across `source`, so its unused-variable warning is wrong for this file.
-# shellcheck disable=SC2034
+# cannot see across `source`, so its unused-variable warning is wrong for this file. The same
+# blindness makes it think run_cycle (defined in the sourced autopilot.sh) is used before
+# definition.
+# shellcheck disable=SC2034,SC2218
 set -uo pipefail
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/autopilot.sh
@@ -68,6 +70,10 @@ printf '%s\n' "\$*" >> "$BIN/gh.calls"
 # refresh_gh_token call site apart from one that only updates the variable without it
 # reaching the gh invocation that pushes the merge.
 case "\$*" in *"pr merge "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.merge_gh_token_seen" ;; esac
+# Records the GH_TOKEN an ops-repo clone actually saw. ops_pull calls this before any run_agent
+# launch in a cycle, so it is the one call site whose token comes ONLY from the top-of-cycle
+# refresh_gh_token — run_agent's own per-launch refresh happens later and cannot backfill it.
+case "\$*" in *"repo clone "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.clone_gh_token_seen" ;; esac
 
 # Pull the -q filter and the --body out of the argument list. The body is written to its own file
 # because it is multi-line: grepping it back out of the flat call log is not possible, and reading
@@ -131,7 +137,8 @@ STUB
 reset_stubs() {
   rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
         "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
-        "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen
+        "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen \
+        "$BIN"/gh.clone_gh_token_seen
   make_stubs
   echo 0 > "$BIN/gh.paused"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
@@ -380,6 +387,67 @@ contains "$(cat "$BIN/gh.calls")" "pr merge 599" "sanity: the merge in this case
 is "$(cat "$BIN/gh.merge_gh_token_seen")" token-for-merge-push \
   "refresh_and_merge mints before merging, so gh pr merge sees the fresh token, not the stale one"
 is "$(cat "$BIN/mint-merge.n")" 1 "the mint command ran exactly once for this pairing"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: the top-of-cycle refresh_gh_token call, exercised through the real scheduling path"
+# ---------------------------------------------------------------------------------------------
+# The gap the previous fix still had: refresh_gh_token's call sites inside run_agent and
+# refresh_and_merge were pinned, but the THIRD call site named in the issue — once per cycle,
+# immediately before `git fetch`, so GH_TOKEN is never unset when the cycle starts — lived only in
+# the `while` loop below the `AUTOPILOT_LIB_ONLY` guard, which a test never sources or runs.
+# Deleting that one call left the suite green. run_cycle (autopilot.sh) is the named extraction of
+# that exact loop body, called here directly rather than re-implemented, so removing the call from
+# the real production function is what turns this red.
+#
+# The observation point has to be one run_agent's OWN per-launch refresh cannot backfill: run_agent
+# refreshes again before manager launches, so manager always sees a fresh token regardless of the
+# top-of-cycle call. ops_pull's `gh repo clone` runs before any run_agent call in the cycle, so its
+# token comes only from the top-of-cycle refresh.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-cycle token-at-top-of-cycle token-for-manager-launch
+MINT_TOKEN_CMD="$BIN/mint-cycle"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/gh.clone_gh_token_seen")" token-at-top-of-cycle \
+  "run_cycle refreshes the token before git fetch/ops_pull, so the ops-repo clone sees the freshly minted one, not an empty/stale GH_TOKEN"
+
+# Reproduce the reviewer's exact mutation to confirm this case is the one that catches it: the
+# same run_cycle body with only the top-of-cycle refresh_gh_token line removed (matching the
+# review's own repro, which deleted that one call at head ff8641d and left the suite green).
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-mutant should-never-be-seen
+MINT_TOKEN_CMD="$BIN/mint-mutant"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+GH_TOKEN=stale-token-from-a-previous-cycle
+export GH_TOKEN
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+run_cycle() {
+  if paused; then log "paused"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  CYCLE_WORKED=0; CYCLE_BROKEN=0
+  # top-of-cycle refresh_gh_token deliberately omitted here, matching the reviewer's mutation
+  git fetch -q origin 2>/dev/null
+  ops_pull || true
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
+  return 0
+}
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/gh.clone_gh_token_seen")" stale-token-from-a-previous-cycle \
+  "mutant sanity check: with the top-of-cycle call removed, ops_pull's clone carries the stale token, confirming this case would have caught the reviewer's exact mutation"
+is "$([ -f "$BIN/mint-mutant.n" ] && cat "$BIN/mint-mutant.n" || echo 0)" 1 \
+  "mutant sanity check: the mint command still ran once, from run_agent's own call site, but too late for the clone that already happened"
 
 # ---------------------------------------------------------------------------------------------
 section "the day budget is a hard stop"
