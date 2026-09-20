@@ -87,15 +87,26 @@ MINT_TOKEN_CMD="${MINT_TOKEN_CMD:-sudo -n /opt/snapurl/bin/mint-gh-token}"
 #
 # Fallback is mandatory: if AGENT_GH_TOKEN is set, or the mint command is missing/fails/prints
 # nothing, keep whatever GH_TOKEN already has and log one warning line — never a flood, and never
-# the token itself (not even under `set -x`, so this never echoes $MINT_TOKEN_CMD's output).
+# the token itself. `set -x` traces every simple command including the assignment and the export,
+# so both are wrapped in a `set +x`/restore pair — without it, a traced run (`bash -x
+# autopilot.sh`, or a caller that already has `set -x` on) would write the live token to stderr,
+# journald and any captured transcript. The restore only re-enables tracing if the caller actually
+# had it on, and never trips `set -e` — `case` itself never returns non-zero, and the guarded
+# `{ set +x/-x; } 2>/dev/null` form succeeds even where `-x` is unsupported.
 refresh_gh_token() {
   if [ -n "${AGENT_GH_TOKEN:-}" ]; then return 0; fi
-  local minted
+  local minted was_tracing=0
+  case "$-" in
+    *x*) was_tracing=1 ;;
+  esac
+  { set +x; } 2>/dev/null
   if ! minted=$($MINT_TOKEN_CMD 2>/dev/null) || [ -z "$minted" ]; then
+    [ "$was_tracing" = 1 ] && { set -x; } 2>/dev/null
     log "token refresh failed, keeping current token"
     return 1
   fi
   export GH_TOKEN="$minted"
+  [ "$was_tracing" = 1 ] && { set -x; } 2>/dev/null
 }
 
 LOG_DIR=".agent-logs/$(date -u +%Y%m%d)"
