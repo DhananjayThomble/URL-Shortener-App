@@ -61,17 +61,32 @@
      surface-4 (the avatar-initials chip). #5b6673 clears 4.5:1 on every
      surface token including surface-4 (4.61:1 worst case). See #383, #473. */
   --ink-3: #5b6673;
-  --accent: #1d59c7;
+  /* WCAG 2.2 AA (SC 1.4.3): #1d59c7 on --accent-wash blended over
+     --surface-4 measured 4.37:1, below the 4.5:1 floor (#497 item 2).
+     #1c55bd clears 4.5:1 against every wash-over-surface combination,
+     light theme (4.69:1 worst case, surface-4). See #497. */
+  --accent: #1c55bd;
   --accent-2: #1a4fb0;
   --accent-ink: #ffffff;
   --accent-wash: rgb(29 89 199 / 0.1);
   --chart-2: #5a6b80;
-  --teal: #0b6e80;
+  /* WCAG 2.2 AA (SC 1.4.3): #0b6e80 on --wash-teal blended over
+     --surface-3/--surface-4 measured 4.38:1/4.08:1, below the 4.5:1
+     floor (#497 item 2). #0a6577 clears 4.5:1 on every surface (4.62:1
+     worst case, surface-4). See #497. */
+  --teal: #0a6577;
   /* WCAG 2.2 AA (SC 1.4.3): #98650a on bg-wash-warn (blended over surface)
      was 4.22:1, below the 4.5:1 floor. #82530a clears 4.5:1 against
-     surface/surface-2/surface-3 (4.58:1 worst case). See #473. */
-  --amber: #82530a;
-  --green: #137a39;
+     surface/surface-2/surface-3 (4.58:1 worst case). See #473. #497 item 2
+     widened the check to include surface-4, where #82530a measured
+     4.44:1; #81520a clears 4.5:1 there too (4.51:1 worst case). See #497. */
+  --amber: #81520a;
+  /* WCAG 2.2 AA (SC 1.4.3): #137a39 on --wash-green blended over
+     --ground/--surface-2/--surface-3/--surface-4 measured 4.14/4.43/
+     3.99/3.72:1, all below the 4.5:1 floor (#497 item 2) — the widest
+     miss in the matrix. #0f6b30 clears 4.5:1 on every surface (4.55:1
+     worst case, surface-4). See #497. */
+  --green: #0f6b30;
   --red: #b21f26;
   --violet: #5b4bc4;
   --wash-green: rgb(19 122 57 / 0.11);
@@ -98,7 +113,11 @@
     --ink: #e9eef4;
     --ink-2: #a3b1c0;
     --ink-3: #8b98aa;
-    --accent: #6fa8ff;
+    /* WCAG 2.2 AA (SC 1.4.3): #6fa8ff on --accent-wash blended over
+       --surface-4 measured 4.44:1, below the 4.5:1 floor (#497 item 2,
+       the only dark-theme miss in the wash matrix). #73abff clears
+       4.5:1 there (4.53:1 worst case). See #497. */
+    --accent: #73abff;
     --accent-2: #8fbdff;
     --accent-ink: #06152b;
     --accent-wash: rgb(111 168 255 / 0.14);
@@ -129,7 +148,7 @@
   --ink: #e9eef4;
   --ink-2: #a3b1c0;
   --ink-3: #8b98aa;
-  --accent: #6fa8ff;
+  --accent: #73abff;
   --accent-2: #8fbdff;
   --accent-ink: #06152b;
   --accent-wash: rgb(111 168 255 / 0.14);
