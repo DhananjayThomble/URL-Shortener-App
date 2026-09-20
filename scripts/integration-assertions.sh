@@ -13,7 +13,10 @@
 #
 #   usage: bash scripts/integration-assertions.sh
 #
-# Reads only the two service URLs and the database. Prints no secrets or env.
+# Reads the two service URLs, DATABASE_URL, and (when psql is not on PATH)
+# DB_CONTAINER — the Postgres container to `docker exec` into; default
+# `snapurl-postgres`, override to `snapurl-staging-postgres` for the compose
+# STAGING stack (see package.json's `staging:smoke`). Prints no secrets or env.
 set -uo pipefail
 
 API="${API:-http://localhost:3001/api/v1}"
@@ -42,11 +45,20 @@ bad() { FAILS=$((FAILS+1));  echo "  FAIL  $1"; echo "        $2"; }
 
 # Reach the database whichever way this environment allows: psql directly when
 # the client is installed (CI), or through the Compose container (local dev).
+#
+# DB_CONTAINER names the Postgres container to `docker exec` into when psql is
+# not on PATH. Defaults to the dev container name (`snapurl-postgres`); override
+# to `snapurl-staging-postgres` when running against the compose STAGING stack
+# (docker-compose.staging.yml) — see package.json's `staging:smoke`. Getting
+# this wrong does not fail loudly: a `docker exec` into the wrong (but existing)
+# Postgres container still returns valid results, just against an empty or
+# unrelated database, so the assertions below silently see zero rows (#529).
 DB_URL="${DATABASE_URL:-postgres://snapurl:snapurl@localhost:5433/snapurl}"
+DB_CONTAINER="${DB_CONTAINER:-snapurl-postgres}"
 if command -v psql >/dev/null 2>&1; then
   dbq() { psql "$DB_URL" -tAc "$1" 2>/dev/null; }
 else
-  dbq() { docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
+  dbq() { docker exec "$DB_CONTAINER" psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
 fi
 
 # loc <path> [extra curl args...] -> prints "STATUS|LOCATION"

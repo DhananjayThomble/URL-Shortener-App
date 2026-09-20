@@ -17,6 +17,16 @@
 #   API   API base URL. Default http://localhost:3001/api/v1.
 #   RD    Redirect service base URL. Default http://localhost:3002.
 #
+#   DB_CONTAINER  Name of the Postgres container to `docker exec` into for the
+#         direct-DB assertions, used ONLY when `psql` is not on PATH. Default
+#         `snapurl-postgres` (the root docker-compose.yml dev container). Set
+#         to `snapurl-staging-postgres` when pointing this script at the
+#         compose STAGING stack (docker-compose.staging.yml) — see
+#         package.json's `staging:smoke`. A wrong container name does not
+#         error; `docker exec` into an unrelated Postgres still returns valid
+#         (empty) results, so every direct-DB assertion below silently reports
+#         zero rows instead of failing loudly (issue #529).
+#
 #   LINK_DOMAIN  The domain new links are created on. Default derived from RD by
 #         stripping the scheme and any path (http://localhost:3002 ->
 #         localhost:3002, https://snap.example.com/x -> snap.example.com).
@@ -108,23 +118,35 @@ cleanup() {
 # Reach the database whichever way this environment allows: psql directly when
 # the client is installed (CI, where Postgres is a service container), or
 # through the Compose container (local development).
+#
+# DB_CONTAINER names the Postgres container to `docker exec` into when psql is
+# not on PATH. It defaults to the root docker-compose.yml's dev container name
+# (`snapurl-postgres`) so plain local dev is unchanged. It MUST be overridden to
+# `snapurl-staging-postgres` when this script is pointed at the compose STAGING
+# stack (docker-compose.staging.yml uses a different container name to avoid
+# colliding with dev) — see package.json's `staging:smoke`. Getting this wrong
+# does not fail loudly: `docker exec` against a container name that exists but
+# is the WRONG stack still returns real query results, just against an empty or
+# unrelated database, so every direct-DB assertion below silently reports 0
+# instead of erroring (issue #529).
 DB_URL="${DATABASE_URL:-postgres://snapurl:snapurl@localhost:5433/snapurl}"
+DB_CONTAINER="${DB_CONTAINER:-snapurl-postgres}"
 if command -v psql >/dev/null 2>&1; then
   dbq() { psql "$DB_URL" -tAc "$1" 2>/dev/null; }
 else
-  dbq() { docker exec snapurl-postgres psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
+  dbq() { docker exec "$DB_CONTAINER" psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
 fi
 
 # Direct-DB assertions only make sense where the database is actually reachable
 # (local dev and CI/compose), where DATABASE_URL is set and either psql is
-# on PATH or the snapurl-postgres container is up. Against a deployed CDN the DB
+# on PATH or the $DB_CONTAINER container is up. Against a deployed CDN the DB
 # is not exposed, so those checks are SKIPPED (not failed) and the always-run
 # API-based equivalents below carry the load. Detect it once here.
 DB_AVAILABLE=0
 if [ -n "${DATABASE_URL:-}" ]; then
   if command -v psql >/dev/null 2>&1; then
     if dbq "select 1" | grep -q 1; then DB_AVAILABLE=1; fi
-  elif docker exec snapurl-postgres true >/dev/null 2>&1; then
+  elif docker exec "$DB_CONTAINER" true >/dev/null 2>&1; then
     DB_AVAILABLE=1
   fi
 fi
