@@ -323,6 +323,45 @@ refresh_gh_token >/dev/null 2>&1
 lacks "$(cat "$LOG_DIR"/*.log 2>/dev/null)" "never-logged-token-xyz" "the minted token value never lands in the log file"
 lacks "$out" "never-logged-token-xyz" "the minted token value never appears on refresh_gh_token's own stdout/stderr"
 
+# `set -x` traces every simple command, including a plain assignment and an `export`. A prior
+# version's comment claimed the token is safe "not even under set -x", which was false: neither
+# the `minted=$(...)` assignment nor the `export GH_TOKEN=...` line was ever guarded, so a traced
+# run (`bash -x autopilot.sh`, or a caller that already had tracing on) wrote the live token to
+# stderr — and from there to journald and any captured transcript. Traced in-process (not a
+# sub-bash) so the export this case checks actually lands in this shell's GH_TOKEN.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok set-x-fake-token-should-not-leak-abc123
+MINT_TOKEN_CMD="$BIN/mint-ok"
+trace_file="$BIN/set-x.trace"
+set -x
+refresh_gh_token 2>"$trace_file"
+set +x
+trace=$(cat "$trace_file")
+lacks "$trace" "set-x-fake-token-should-not-leak-abc123" \
+  "refresh_gh_token does not leak the minted token into a set -x trace"
+is "$GH_TOKEN" set-x-fake-token-should-not-leak-abc123 \
+  "the token is still exported correctly when called under set -x"
+
+# The guard must not itself disable a caller's tracing permanently: if -x was on before the call,
+# it must still be on after, so later commands in a traced run stay traced.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-under-trace
+MINT_TOKEN_CMD="$BIN/mint-ok"
+trace_file="$BIN/set-x-restore.trace"
+{
+  set -x
+  refresh_gh_token
+  echo still-tracing-marker >/dev/null
+  set +x
+} 2>"$trace_file"
+trace=$(cat "$trace_file")
+contains "$trace" "+ echo still-tracing-marker" \
+  "tracing is restored after refresh_gh_token when the caller had -x on"
+contains "$trace" "+ echo still-tracing-marker" \
+  "tracing is restored after refresh_gh_token when the caller had -x on"
+
 # ---------------------------------------------------------------------------------------------
 section "refresh_gh_token's call sites: run_agent and merge_approved must actually call it"
 # ---------------------------------------------------------------------------------------------
