@@ -163,6 +163,17 @@ load() { # [env assignments...]
   local dir; dir=$(mktemp -d "$WORKROOT/case.XXXXXX")
   git -C "$dir" init -q 2>/dev/null
   cd "$dir" || exit 1
+  # The real pinned checkout ignores its own runtime droppings (.agent-logs/, .agent-state/,
+  # .agents-paused — see .gitignore); without this, log()'s own mkdir would make check_checkout_clean
+  # see "dirty" on every cycle just from autopilot having run, which is not what check_checkout_clean
+  # exists to catch.
+  cat > .gitignore <<'GITIGNORE'
+.agent-logs/
+.agents-paused
+.agent-state/
+GITIGNORE
+  git add .gitignore >/dev/null 2>&1
+  git commit -q -m "seed .gitignore" >/dev/null 2>&1
   export AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$dir/.state" \
          PAUSE_FILE="$dir/.paused" OPS_DIR="$dir/nonexistent-ops"
   # shellcheck disable=SC1090
@@ -921,6 +932,114 @@ contains "$(log "hi" 2>&1)" "UTC" "with DISPLAY_TZ=UTC the log says UTC"
 reset_stubs; load
 DISPLAY_TZ=Pacific/Kiritimati
 is "$LOG_DIR" ".agent-logs/$(date -u +%Y%m%d)" "log directories stay on the UTC day, to match CI and GitHub"
+
+# ---------------------------------------------------------------------------------------------
+section "check_checkout_clean: a dirty pinned checkout breaks the next restart"
+# ---------------------------------------------------------------------------------------------
+# `load` already did `git init` in a throwaway repo and cd'd into it, matching the real pinned
+# checkout autopilot.sh runs from (it cd's to `git rev-parse --show-toplevel`).
+reset_stubs; load
+check_checkout_clean
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "a freshly-initialised, untouched repo is clean"
+
+reset_stubs; load
+echo "changed" > tracked-and-dirty.txt
+git add tracked-and-dirty.txt
+git commit -q -m "seed a tracked file"
+echo "modified after commit" > tracked-and-dirty.txt
+check_checkout_clean
+contains "$(cat "$STATE_DIR/alerts.log")" "pinned checkout is dirty" "a modified tracked file is caught and alerted"
+contains "$(cat "$STATE_DIR/alerts.log")" "tracked-and-dirty.txt" "the alert names the dirty file"
+
+reset_stubs; load
+echo "never committed" > untracked-file.txt
+check_checkout_clean
+contains "$(cat "$STATE_DIR/alerts.log")" "pinned checkout is dirty" "an untracked file is caught too (this is how origin/main later adding that path bites)"
+contains "$(cat "$STATE_DIR/alerts.log")" "untracked-file.txt" "the alert names the untracked file"
+
+# The acceptance criteria are explicit: nothing here may delete, stash or reset anything, however
+# tempting a "helpful" cleanup would be — a dirty checkout is evidence an agent broke the worktree
+# rule, and that evidence must survive for a human to look at.
+reset_stubs; load
+echo "must survive" > must-survive.txt
+check_checkout_clean >/dev/null
+if [ -f must-survive.txt ]; then
+  ok "check_checkout_clean does not delete the offending file"
+else
+  bad "check_checkout_clean does not delete the offending file" "file is gone"
+fi
+is "$(cat must-survive.txt)" "must survive" "check_checkout_clean does not touch the file's contents"
+
+# One alert line per call, not one per dirty file, so a whole broken checkout is still readable in
+# the digest's "Recent alerts" tail instead of drowning it.
+reset_stubs; load
+echo a > one.txt; echo b > two.txt
+check_checkout_clean
+is "$(grep -c 'pinned checkout is dirty' "$STATE_DIR/alerts.log")" 1 "multiple dirty files still produce a single alert line"
+contains "$(cat "$STATE_DIR/alerts.log")" "one.txt" "the single alert line names every dirty file (1 of 2)"
+contains "$(cat "$STATE_DIR/alerts.log")" "two.txt" "the single alert line names every dirty file (2 of 2)"
+
+# check_checkout_clean is called once per cycle, and alert() already writes both the log and
+# alerts.log, which digest_now already tails into "Recent alerts" — so a dirty checkout reaches
+# the digest for free. Pin that wiring rather than trusting it stayed true.
+reset_stubs; load
+echo 42 > "$BIN/gh.digestissue"
+echo "dirty for digest" > digest-dirty.txt
+check_checkout_clean
+digest_now "test" >/dev/null 2>&1
+body=$(cat "$BIN/gh.lastbody" 2>/dev/null)
+contains "$body" "pinned checkout is dirty" "a dirty checkout's alert reaches the daily digest"
+contains "$body" "digest-dirty.txt" "the digest names the specific dirty file"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: the real scheduling path, not just the helper"
+# ---------------------------------------------------------------------------------------------
+# check_checkout_clean being correct in isolation (above) says nothing about whether the main loop
+# still calls it. These cases drive run_cycle() itself — the exact function the while-loop below
+# it calls once per iteration — so a call site dropped from run_cycle is a call site dropped from
+# production, not from a copy of it re-implemented for the test.
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+echo "dirty during a real cycle" > dirty-during-cycle.txt
+run_cycle >/dev/null 2>&1
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "pinned checkout is dirty" \
+  "run_cycle (the real per-iteration call) detects a dirty checkout"
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "dirty-during-cycle.txt" \
+  "run_cycle's alert names the dirty file"
+
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+run_cycle >/dev/null 2>&1
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "run_cycle raises no dirty-checkout alert when the checkout is clean"
+
+# The mutation the maintainer reproduced against the previous submission: delete only the
+# check_checkout_clean call site from the real cycle body, leaving the standalone-call tests above
+# green. Apply that exact mutation to a scratch copy of autopilot.sh and show run_cycle stops
+# alerting — i.e. this suite goes red without the manual "did it turn red" step, because the
+# assertion above already requires the call site to be present and wired.
+reset_stubs; load
+mutant="$WORKROOT/autopilot.no-callsite.sh"
+sed '/# Catches the state that makes the \*next\* restart fail before it does: see check_checkout_clean\./{n;d}' \
+  "$SRC" > "$mutant"
+if grep -q '^  check_checkout_clean$' "$mutant"; then
+  bad "sanity: the mutant actually removes the check_checkout_clean call site" \
+    "call site still present in $mutant"
+else
+  ok "sanity: the mutant actually removes the check_checkout_clean call site"
+fi
+(
+  cd "$PWD" || exit 1
+  echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+  echo "dirty under the mutant" > dirty-under-mutant.txt
+  AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$STATE_DIR" PAUSE_FILE="$PAUSE_FILE" \
+    OPS_DIR="$OPS_DIR" MODE=auto bash -c '
+      # shellcheck disable=SC1090
+      source "'"$mutant"'"
+      run_cycle
+    ' >/dev/null 2>&1
+)
+lacks "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "pinned checkout is dirty" \
+  "removing the call site from the real cycle body (the maintainer's exact mutation) makes this suite go red: a dirty checkout is silently missed"
 
 # ---------------------------------------------------------------------------------------------
 section "paused: the kill switch fails closed"

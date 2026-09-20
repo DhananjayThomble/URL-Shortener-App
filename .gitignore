@@ -52,6 +52,10 @@ logs/
 .agent-state/
 # Shared agent memory from the private ops repo, symlinked in by its tools/link-shared-context.sh.
 .kiro/steering/shared-memory-*
+# Local IDE/LSP state some tool configs generate on demand; not part of the repo's own config.
+# Left untracked here would otherwise sit in the pinned checkout as a perpetually dirty/untracked
+# path (issue #523) — gitignoring it means a fresh clone or restart never has to care.
+.kiro/settings/lsp.json
 
 # Agent track-coordination markers (e.g. EXT-R3.done). Local handoff state.
 *.done
