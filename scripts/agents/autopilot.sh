@@ -703,5 +703,4 @@ main() {
   log "autopilot stopped"
 }
 
-main "$@"
-exit $?
+main "$@"; exit $?
