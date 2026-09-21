@@ -11,10 +11,10 @@ import { seedSession } from "../support/session";
    in-memory fake.
 
    Fixtures mode (no API/DB). Accessible-name selectors only (getByRole /
-   getByPlaceholder) — the Field/Input component does not associate its label, so
-   inputs are addressed by placeholder. Semantic Table/Th/Td render a real table,
-   so a page's row is located by its accessible name (concatenated cell text).
-   One flow per file. */
+   getByLabel) — Field associates its <label> with the real control (see #469),
+   so inputs are addressed by label text. Semantic Table/Th/Td render a real
+   table, so a page's row is located by its accessible name (concatenated cell
+   text). One flow per file. */
 
 test.describe("bio pages", () => {
   test.beforeEach(async ({ page }) => {
@@ -36,10 +36,9 @@ test.describe("bio pages", () => {
     await page.getByRole("button", { name: "＋ New page" }).click();
 
     // Fill the draft. Domain has a sensible default (first workspace domain), so
-    // only the back-half and display name need values. Both are addressed by
-    // placeholder because the Field label is not programmatically associated.
-    await page.getByPlaceholder("yourname").fill(slug);
-    await page.getByPlaceholder("Acme Growth").fill(name);
+    // only the back-half and display name need values.
+    await page.getByLabel("Back-half").fill(slug);
+    await page.getByLabel("Display name").fill(name);
 
     // Create as a draft. Fixtures unshift the new page to the top of the store.
     await page.getByRole("button", { name: "Create as draft" }).click();
@@ -80,7 +79,7 @@ test.describe("bio pages", () => {
 
     // Fill only the display name, leaving the back-half empty. The page's own
     // guard rejects this client-side before any API call.
-    await page.getByPlaceholder("Acme Growth").fill("No Slug");
+    await page.getByLabel("Display name").fill("No Slug");
     await page.getByRole("button", { name: "Create as draft" }).click();
 
     // The validation message is shown and no page was added.
