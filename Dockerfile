@@ -79,17 +79,21 @@ RUN pnpm deploy --legacy --filter "@snapurl/${APP}" --prod /out
 FROM node:${NODE_VERSION} AS runtime
 ENV NODE_ENV=production
 
-# The base image bundles npm's own CLI and its transitive dependencies under
-# /usr/local/lib/node_modules/npm. Nothing in these three apps invokes npm,
-# npx or corepack at runtime (pnpm did the install/build, and `prune` already
-# left only /out behind), so that tree is dead weight that exists purely to
-# trip vulnerability scanners on CVEs the app can never reach. Removing it
-# here, before USER drops root, cuts every HIGH/CRITICAL trivy finding this
-# image otherwise carries as of 2026-09-19 (brace-expansion, ip-address,
-# pacote, picomatch, sigstore, tar — all under npm/node_modules/*).
-RUN rm -rf /usr/local/lib/node_modules/npm \
+# The base image bundles npm's own CLI and corepack, and their transitive
+# dependencies, under /usr/local/lib/node_modules/{npm,corepack}. Nothing in
+# these three apps invokes npm, npx or corepack at runtime (pnpm did the
+# install/build, and `prune` already left only /out behind), so that tree is
+# dead weight that exists purely to trip vulnerability scanners on CVEs the
+# app can never reach, or — for corepack specifically — to leave a directly
+# invocable package manager (`node .../corepack/dist/corepack.js`) inside a
+# "no pnpm, no build tools" image even after its bin symlink is gone. Removing
+# both here, before USER drops root, cuts every HIGH/CRITICAL trivy finding
+# this image otherwise carries as of 2026-09-19 (brace-expansion, ip-address,
+# pacote, picomatch, sigstore, tar — all under npm/node_modules/*). Mirrors the
+# equivalent strip on the lambda-job stage below.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
            /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
-           /opt/yarn* 2>/dev/null || true
+           /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn* 2>/dev/null || true
 
 # `node` (uid 1000) ships with the official image. Running as root inside a
 # container is a needless escalation if anything else goes wrong.
