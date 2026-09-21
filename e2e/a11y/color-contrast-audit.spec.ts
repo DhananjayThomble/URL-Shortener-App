@@ -27,14 +27,15 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
    playwright.a11y.config.ts. Only the axe rule set and the assertion differ.
 
    --- What this scans ---
-   11 static (app) routes × 2 viewports × 2 themes = 44 checks (dark is the
-   regression target; light is carried along as a regression guard per the
-   issue's third acceptance-criteria bullet: "light theme is not regressed").
-   Plus per (viewport × theme): the create-link drawer's 6 tabs, and the
-   /links/[id] Edit-destination Field — the same two extra surfaces
-   label-audit.spec.ts covers, closing the gap the prior pass explicitly
-   flagged as untested for this rule.
-   Total = 44 + (6 + 1) × 4 = 72 checks.
+   Per (viewport × theme) combination (4 combinations: {desktop,mobile} ×
+   {light,dark}): 11 static (app) route tests, plus one create-link-drawer
+   test that walks all 6 tabs within a single Playwright test, plus one
+   dynamic /links/[id] Edit-destination Field test — 13 Playwright tests per
+   combination. Dark is the regression target; light is carried along as a
+   regression guard per the issue's third acceptance-criteria bullet ("light
+   theme is not regressed").
+   Total = 13 × 4 = 52 Playwright tests (each drawer test additionally asserts
+   6 times internally, once per tab, but that is not a separate test).
 
    --- Coverage gaps (qa-oracles §3 requires stating these) ---
    · Auth routes (/login, /register, /2fa, /forgot) are outside (app) and are
