@@ -667,19 +667,35 @@ run_cycle() {
 # the real timer and sleep — and must not run during a test.
 [ -n "${AUTOPILOT_LIB_ONLY:-}" ] && return 0
 
-END=$(( $(date +%s) + HOURS * 3600 ))
-cycle=0
-slot_n=0
-broken_streak=0
+# Everything the shift actually runs, in one function. Bash parses a function's whole body —
+# up to its closing brace — before it executes any of it, and once `main` is running, the parsed
+# body already sits in memory: bytes changed on disk afterwards (an agent editing this file in
+# place, a `git pull` or `git checkout` over it, a fresh `origin/main` landing under a running
+# process) cannot reach code already read into a compound command. Top-level code left outside a
+# function has no such protection — bash re-reads the file incrementally as it goes, so a write
+# to the file *while the loop is running* corrupts whatever the interpreter reads next. That is
+# exactly what happened in #545: an in-place edit followed by `git checkout --` left the open file
+# descriptor pointing at bytes bash had not parsed yet, and six hours later it read a syntax error
+# instead of the next loop iteration and the process exited 2. Putting the loop inside `main` does
+# not fix the file being edited — it makes the running process immune to it once `main` has begun.
+main() {
+  END=$(( $(date +%s) + HOURS * 3600 ))
+  cycle=0
+  slot_n=0
+  broken_streak=0
 
-log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
-check_reviewer_independence claude
-check_reviewer_independence kiro
+  log "shift start: ${HOURS}h, engines ${ENGINE_MODE}, day budget ${CREDIT_CEILING_DAY} credits, spent $(cat "$(credit_file)" 2>/dev/null || echo 0)"
+  check_reviewer_independence claude
+  check_reviewer_independence kiro
 
-while [ "$(date +%s)" -lt "$END" ]; do
-  run_cycle || break
-  log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
-  sleep $((SLEEP_MIN * 60))
-done
-digest_now "shift ended"
-log "autopilot stopped"
+  while [ "$(date +%s)" -lt "$END" ]; do
+    run_cycle || break
+    log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
+    sleep $((SLEEP_MIN * 60))
+  done
+  digest_now "shift ended"
+  log "autopilot stopped"
+}
+
+main "$@"
+exit $?

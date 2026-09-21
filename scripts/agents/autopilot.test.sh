@@ -1314,6 +1314,91 @@ lacks "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "paused (agents:paused label"
   "the cycle's own log does not claim a real pause happened"
 
 # ---------------------------------------------------------------------------------------------
+section "main(): the running loop survives the script file changing on disk (#545)"
+# ---------------------------------------------------------------------------------------------
+# The real regression: an agent edited scripts/agents/autopilot.sh in place while the autopilot
+# was running it, then `git checkout --` reverted the path. Bash reads a running script
+# incrementally through its open file descriptor, so the in-place write corrupted bytes the
+# interpreter had not parsed yet, and six hours later — when the loop finally reached that part
+# of the file again — it hit a syntax error and exited 2 instead of stopping cleanly. This test
+# reproduces the mechanism directly: run the real script (not sourced, not AUTOPILOT_LIB_ONLY) as
+# a subprocess, overwrite its own file in place partway through the first cycle, and require it
+# to still finish the cycle, log the normal shutdown line and exit 0.
+reset_stubs; load
+dir=$PWD
+
+# The manager role is the first thing run_cycle does. Have that first invocation, and only that
+# one, write PAUSE_FILE — so cycle 1 does one full pass of real work and cycle 2's own paused()
+# check ends the loop through main()'s normal `break`, rather than the test racing the clock via
+# HOURS/SLEEP_MIN.
+cat > "$BIN/claude" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/claude.calls"
+: > "$PAUSE_FILE"
+exit 0
+STUB
+chmod +x "$BIN/claude"
+cat > "$BIN/kiro-cli" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/kiro-cli.calls"
+: > "$PAUSE_FILE"
+exit 0
+STUB
+chmod +x "$BIN/kiro-cli"
+
+# A private copy of the real script, so the corrupting overwrite never touches the repo's own
+# scripts/agents/autopilot.sh on disk. AUTOPILOT_LIB_ONLY is not set here on purpose: that guard
+# is exactly what must NOT fire, since this test needs the real driver loop (main) to run.
+run_copy="$dir/autopilot-run.sh"
+cp "$SRC" "$run_copy"
+
+log_out="$dir/run.out"
+AUTOPILOT_LIB_ONLY= HOURS=1 SLEEP_MIN=0 REPO=owner/repo STATE_DIR="$dir/.state" \
+  PAUSE_FILE="$dir/.paused" OPS_DIR="$dir/nonexistent-ops" \
+  AGENT_GH_TOKEN=test-token PATH="$BIN:$PATH" \
+  bash "$run_copy" >"$log_out" 2>&1 &
+run_pid=$!
+
+# Bounded poll for the process to have actually started executing (its first log line), not an
+# unbounded wait — see .kiro/steering/session-hygiene.md. 10s at 100ms is generous for a stubbed,
+# no-network cycle on a loopback filesystem.
+started=0
+for _ in $(seq 1 100); do
+  if [ -s "$log_out" ] && grep -q "shift start" "$log_out" 2>/dev/null; then started=1; break; fi
+  kill -0 "$run_pid" 2>/dev/null || break
+  sleep 0.1
+done
+if [ "$started" = 1 ]; then ok "the subprocess got past setup and logged shift start"
+else bad "the subprocess got past setup and logged shift start" "log so far: $(cat "$log_out" 2>/dev/null)"; fi
+
+# The corrupting write itself: overwrite the running script's own path in place, byte-for-byte
+# different content, while main()'s while-loop (already parsed and executing) is mid-shift. This
+# is the in-place edit half of #545's mechanism; the git-checkout half is irrelevant to bash's
+# read-through-fd behaviour, which is what main() has to be immune to.
+printf '#!/usr/bin/env bash\necho "corrupted: this replaced the running script on disk" >&2\nexit 1\n' > "$run_copy"
+
+# Bounded wait for the subprocess to exit on its own (cycle 1 finishes, cycle 2's paused() check
+# trips on the file cycle 1's stub wrote, main() breaks and falls through to shutdown) — never an
+# unbounded `wait`. 15s at 100ms is generous; a clean run finishes in well under 1s once cycle 1's
+# single stub call returns.
+exited=0
+for _ in $(seq 1 150); do
+  if ! kill -0 "$run_pid" 2>/dev/null; then exited=1; break; fi
+  sleep 0.1
+done
+if [ "$exited" = 1 ]; then
+  wait "$run_pid"; rc=$?
+else
+  kill "$run_pid" 2>/dev/null; wait "$run_pid" 2>/dev/null; rc=124
+fi
+
+is "$rc" 0 "the loop, already running when its own script file was overwritten, still exits 0"
+contains "$(cat "$log_out" 2>/dev/null)" "autopilot stopped" \
+  "the normal shutdown log line still appears — the corrupted file was never re-read mid-run"
+lacks "$(cat "$log_out" 2>/dev/null)" "corrupted: this replaced" \
+  "the replacement file's own content was never executed by the running process"
+
+# ---------------------------------------------------------------------------------------------
 printf '\n%s\n' "-------------------------------------------"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1
