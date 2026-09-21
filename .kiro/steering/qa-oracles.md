@@ -79,6 +79,29 @@ checks attempted/failed/errored, and what you could NOT cover and why. Coverage
 gaps are a required section — an honest "I could not test X" is valuable; silence
 is not.
 
+### Write incrementally, not at the end
+
+A run that does all its analysis and only writes `findings.jsonl` and
+`summary.md` as a last step loses everything if it crashes or times out one
+step early — this has already happened twice (issue #561) and cost a complete
+39-minute session with zero recorded output. Nothing about the record below
+may depend on a final step succeeding:
+
+1. **Create `.qa-runs/<run-id>/summary.md` before running any check** — plan,
+   the areas/tools you intend to cover, and an empty (or "pending") result
+   section per area. Update that section the moment each check or phase
+   finishes (result, counts, coverage gaps for that phase), not after every
+   phase is done.
+2. **Append each finding to `findings.jsonl` the instant it is confirmed** —
+   one JSON line per finding, immediately, never buffered in memory to write
+   as a batch later.
+3. **Keep `.qa-runs/<run-id>/progress.md`**, one line appended per completed
+   phase (timestamp + phase name + one-line result). If the run dies, this
+   file alone shows how far it got.
+4. Raw tool output still stays only in files under the run directory — never
+   print secrets, tokens or response bodies to stdout (steering §7, and the
+   CI-mode rule in `_common.md`).
+
 ## 4. A suite is not trusted until it has been proven to fail
 
 Before any new suite is trusted, run the **bug-injection gate**: introduce known
