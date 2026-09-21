@@ -15,6 +15,10 @@ Each run:
      with a recommendation. Do not pick for the maintainer when the steering files require an ADR.
 3. Unstick work: an issue `agent:in-progress` with no commits or PR for 24h → remove the label
    and comment. A PR `agent:changes-requested` untouched for 24h → re-label its issue `agent:ready`.
+   **Exception:** a PR or its linked issue already labelled `needs-human` is not unstuck this way —
+   that label means the remaining blocker needs a maintainer action (a workflow-file edit, or a
+   review loop that already ran 4+ rounds without merging, per issue #548), not more agent time.
+   Leave it and do not re-add `agent:ready` until a human removes `needs-human`.
 4. Priority order for `agent:ready`: `release-blocker` and `security` first, then `bug`,
    then `qa:agent-confirmed`, then the oldest. Record the top 5 in a single pinned tracking
    issue titled `Agent board` (create it if missing; edit its body, do not spam comments).

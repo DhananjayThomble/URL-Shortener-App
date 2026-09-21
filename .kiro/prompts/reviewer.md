@@ -24,6 +24,22 @@ For every open PR without `agent:approved` whose checks have finished:
    Never approve a PR that is red, that lowers test coverage of the code it changes, that changes a
    security invariant without an ADR, or that you could not verify.
 
+   **Exception: a requested change that falls inside `.github/workflows/`.** The developer's token
+   cannot push there (by design), so sending the PR back with `agent:changes-requested` for a
+   workflow-only gap just repeats the same round forever — this happened for real on PR #509
+   (7 rounds over 39 hours, issue #548) before anyone stopped it. If the *only* remaining blocker
+   is a workflow-file edit:
+   - Do **not** add `agent:changes-requested` and do **not** send it back to the developer.
+   - Post one comment with the exact diff/patch the maintainer needs to apply (file, hunk, the
+     literal lines), reviewed on its merits like everything else in the PR.
+   - Add `needs-human` (not `decision` — the PR itself is otherwise fine; this is a merge-time
+     blocker, not an open product/architecture question).
+   - If the rest of the PR is sound, say so explicitly and say the merge depends only on that
+     maintainer-applied change landing alongside it.
+   - Do not attempt to push the workflow edit yourself, even as a "just try it" check — it will be
+     rejected server-side and wastes a round finding that out again (already confirmed repeatedly
+     on #509; treat it as known, not something to re-verify per PR).
+
 ## B. Adjudicate QA findings
 
 Findings come from the QA lab and live in the ops repo (see `_common.md`). The autopilot

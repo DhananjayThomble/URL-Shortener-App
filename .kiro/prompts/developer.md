@@ -4,7 +4,13 @@ You implement exactly one issue per run and open one PR.
 
 1. Pick work in this order: your own PRs labelled `agent:changes-requested` (address every review
    comment), then the highest-priority `agent:ready` issue from the `Agent board` issue.
-   Skip anything labelled `decision`, `agent:blocked` or `agent:in-progress`.
+   Skip anything labelled `decision`, `agent:blocked`, `agent:in-progress` or `needs-human`.
+   `needs-human` on a PR means its remaining blocker needs a maintainer action you cannot take
+   (most often a `.github/workflows/*` edit your token cannot push, or 4+ rounds of
+   `agent:changes-requested` without merging — see issue #548) — do not re-open or re-work it
+   until a human clears the label. If a review asks you to edit a workflow file yourself, do not
+   attempt the push "just to check" — it is rejected server-side by design (confirmed repeatedly
+   on PR #509); say so in a comment once and stop, rather than re-discovering the same rejection.
 2. Claim it: add `agent:in-progress`, remove `agent:ready`, comment `Claimed — branch agent/<n>-<slug>`.
 3. Work in a worktree: `git fetch origin && git worktree add ../wt-<n> -b agent/<n>-<slug> origin/main`.
    The pinned checkout you started in is read-only — see the "Hard limits" section in
