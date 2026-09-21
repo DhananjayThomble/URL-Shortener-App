@@ -218,7 +218,8 @@ jobs:
           set -o pipefail
           # Mirror deploy.sh's flag set exactly. If these two ever drift the
           # diff stops describing the deploy, which is worse than no diff.
-          ctx=(-c "natStrategy=${NAT_STRATEGY}" -c "configPrefix=${CONFIG_PREFIX}")
+          ctx=(-c "natStrategy=${NAT_STRATEGY}" -c "configPrefix=${CONFIG_PREFIX}" \
+               -c "account=${CDK_DEFAULT_ACCOUNT}" -c "region=${CDK_DEFAULT_REGION}")
           [ -n "${DOMAIN_NAME}" ]            && ctx+=(-c "domainName=${DOMAIN_NAME}")
           [ -n "${BUDGET_EMAIL}" ]           && ctx+=(-c "budgetEmail=${BUDGET_EMAIL}")
           [ -n "${GOOGLE_OAUTH_CLIENT_ID}" ] && ctx+=(-c "googleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}")
