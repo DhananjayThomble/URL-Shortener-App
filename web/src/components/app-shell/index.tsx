@@ -122,7 +122,7 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
           {ws?.initials ?? "··"}
         </span>
         <span className="flex-1 min-w-0 text-[13px] font-semibold truncate text-left">{ws?.name ?? "Loading…"}</span>
-        <span className="text-ink-3 text-[10px]">▾</span>
+        <span aria-hidden="true" className="text-ink-3 text-[10px]">▾</span>
       </button>
 
       <Button variant="primary" className="w-full justify-center mb-[6px]" onClick={onCreate}>
