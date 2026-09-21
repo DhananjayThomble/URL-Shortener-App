@@ -8,8 +8,10 @@
 # they are pinned here instead. No network, no agent CLIs, no GitHub: `claude`, `kiro-cli` and `gh`
 # are stubs on PATH whose exit code and output each case chooses. Needs only bash, coreutils and awk.
 # Most variables here are globals consumed by functions in the sourced autopilot; shellcheck
-# cannot see across `source`, so its unused-variable warning is wrong for this file.
-# shellcheck disable=SC2034
+# cannot see across `source`, so its unused-variable warning is wrong for this file. The same
+# blindness makes it think run_cycle (defined in the sourced autopilot.sh) is used before
+# definition.
+# shellcheck disable=SC2034,SC2218
 set -uo pipefail
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/autopilot.sh
@@ -46,6 +48,9 @@ make_stubs() {
     cat >"$BIN/$engine" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/$engine.calls"
+# Records the GH_TOKEN this launch actually saw, so a test can tell a fresh refresh_gh_token
+# call site apart from one that only updates the variable without it reaching the launch.
+printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/$engine.gh_token_seen"
 cat "$BIN/$engine.out" 2>/dev/null
 exit \$(cat "$BIN/$engine.rc" 2>/dev/null || echo 0)
 STUB
@@ -61,6 +66,14 @@ STUB
   cat >"$BIN/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BIN/gh.calls"
+# Records the GH_TOKEN a merge attempt actually saw, so a test can tell a fresh
+# refresh_gh_token call site apart from one that only updates the variable without it
+# reaching the gh invocation that pushes the merge.
+case "\$*" in *"pr merge "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.merge_gh_token_seen" ;; esac
+# Records the GH_TOKEN an ops-repo clone actually saw. ops_pull calls this before any run_agent
+# launch in a cycle, so it is the one call site whose token comes ONLY from the top-of-cycle
+# refresh_gh_token — run_agent's own per-launch refresh happens later and cannot backfill it.
+case "\$*" in *"repo clone "*) printf '%s\n' "\${GH_TOKEN:-}" >> "$BIN/gh.clone_gh_token_seen" ;; esac
 
 # Pull the -q filter and the --body out of the argument list. The body is written to its own file
 # because it is multi-line: grepping it back out of the flat call log is not possible, and reading
@@ -83,9 +96,30 @@ case "\$*" in
 esac
 
 case "\$*" in
-  *"--label agents:paused"*) cat "$BIN/gh.paused" 2>/dev/null || echo 0; exit 0 ;;
+  *"--label agents:paused"*)
+    # gh.paused.rc lets a case simulate the query itself failing (a 401 from an expired token,
+    # a 5xx, a rate limit) unconditionally, rather than only choosing what a *successful* call
+    # prints. Real gh prints nothing on stdout when it fails, so this stub does the same.
+    #
+    # gh.paused.fail_until_token, if present, makes the failure conditional instead: the call
+    # fails unless GH_TOKEN already equals the token named in that file, so a case can prove
+    # paused() calling refresh_gh_token itself is what turns a 401 into a working query, rather
+    # than some refresh elsewhere in the test process.
+    if [ -f "$BIN/gh.paused.fail_until_token" ]; then
+      if [ "\${GH_TOKEN:-}" = "\$(cat "$BIN/gh.paused.fail_until_token")" ]; then
+        cat "$BIN/gh.paused" 2>/dev/null || echo 0; exit 0
+      fi
+      exit 1
+    fi
+    rc=\$(cat "$BIN/gh.paused.rc" 2>/dev/null || echo 0)
+    if [ "\$rc" != 0 ]; then exit "\$rc"; fi
+    cat "$BIN/gh.paused" 2>/dev/null || echo 0; exit 0 ;;
   *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo ""; exit 0 ;;
-  *"issue list"*"$DIGEST_LABEL"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
+  # Matches the literal default of DIGEST_LABEL (factory:digest — see autopilot.sh), not the
+  # variable itself: make_stubs runs from reset_stubs, before `load` sources autopilot.sh, so
+  # \$DIGEST_LABEL is not yet set in this shell (same reason \$REPO's default is hardcoded as
+  # owner/repo above rather than referenced). No case in this file overrides DIGEST_LABEL.
+  *"issue list"*"factory:digest"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
   *"issue create"*) echo "https://github.com/owner/repo/issues/77"; exit 0 ;;
 esac
 
@@ -124,7 +158,8 @@ STUB
 reset_stubs() {
   rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
         "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
-        "$BIN"/gh.prmerge-*.rc
+        "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen \
+        "$BIN"/gh.clone_gh_token_seen "$BIN"/gh.paused.fail_until_token
   make_stubs
   echo 0 > "$BIN/gh.paused"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
@@ -149,6 +184,17 @@ load() { # [env assignments...]
   local dir; dir=$(mktemp -d "$WORKROOT/case.XXXXXX")
   git -C "$dir" init -q 2>/dev/null
   cd "$dir" || exit 1
+  # The real pinned checkout ignores its own runtime droppings (.agent-logs/, .agent-state/,
+  # .agents-paused — see .gitignore); without this, log()'s own mkdir would make check_checkout_clean
+  # see "dirty" on every cycle just from autopilot having run, which is not what check_checkout_clean
+  # exists to catch.
+  cat > .gitignore <<'GITIGNORE'
+.agent-logs/
+.agents-paused
+.agent-state/
+GITIGNORE
+  git add .gitignore >/dev/null 2>&1
+  git commit -q -m "seed .gitignore" >/dev/null 2>&1
   export AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$dir/.state" \
          PAUSE_FILE="$dir/.paused" OPS_DIR="$dir/nonexistent-ops"
   # shellcheck disable=SC1090
@@ -209,8 +255,354 @@ printf 'A typical reviewer shift reports Credits: 900 across the cycle, well und
 is "$(run_credits prose.log)" "" "credit-shaped prose without the real footer is not read as spend"
 
 # ---------------------------------------------------------------------------------------------
-section "the day budget is a hard stop"
+section "refresh_gh_token: keeping GH_TOKEN alive across a 60-minute expiry"
 # ---------------------------------------------------------------------------------------------
+# A PATH stub for the mint command, never the real one: MINT_TOKEN_CMD is overridden per case.
+mint_ok() {
+  cat >"$BIN/mint-ok" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/mint-ok.calls"
+echo "$1"
+STUB
+  chmod +x "$BIN/mint-ok"
+}
+mint_fail() {
+  cat >"$BIN/mint-fail" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+  chmod +x "$BIN/mint-fail"
+}
+mint_empty() {
+  cat >"$BIN/mint-empty" <<'STUB'
+#!/usr/bin/env bash
+echo -n ""
+STUB
+  chmod +x "$BIN/mint-empty"
+}
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_fail
+MINT_TOKEN_CMD="$BIN/mint-fail"
+out=$(refresh_gh_token 2>&1); rc=$?
+is "$rc" 1 "a failing mint command reports failure"
+contains "$out" "token refresh failed, keeping current token" "a failed mint logs exactly one warning line"
+is "$(echo "$out" | grep -c 'token refresh failed')" 1 "the warning is not a flood"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN
+GH_TOKEN=stale-token-value
+mint_fail
+MINT_TOKEN_CMD="$BIN/mint-fail"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" stale-token-value "on failure the current token is kept, not cleared"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN
+GH_TOKEN=stale-token-value
+mint_empty
+MINT_TOKEN_CMD="$BIN/mint-empty"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" stale-token-value "an empty mint result is treated as a failure, keeping the current token"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-one
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" fresh-token-one "a successful mint exports the new token"
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-one
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+mint_ok fresh-token-two
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+is "$GH_TOKEN" fresh-token-two "the next role launch sees the newly minted token"
+
+reset_stubs; load
+AGENT_GH_TOKEN=operator-supplied-token
+export AGENT_GH_TOKEN
+GH_TOKEN="$AGENT_GH_TOKEN"
+mint_ok should-never-be-used
+MINT_TOKEN_CMD="$BIN/mint-ok"
+out=$(refresh_gh_token 2>&1); rc=$?
+is "$rc" 0 "AGENT_GH_TOKEN present is treated as success, no warning"
+is "$GH_TOKEN" operator-supplied-token "an explicit AGENT_GH_TOKEN override wins over a minted token"
+is "$([ -f "$BIN/mint-ok.calls" ] && echo called || echo not-called)" not-called \
+  "the mint command is never invoked while AGENT_GH_TOKEN is set"
+unset AGENT_GH_TOKEN
+
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok never-logged-token-xyz
+MINT_TOKEN_CMD="$BIN/mint-ok"
+refresh_gh_token >/dev/null 2>&1
+lacks "$(cat "$LOG_DIR"/*.log 2>/dev/null)" "never-logged-token-xyz" "the minted token value never lands in the log file"
+lacks "$out" "never-logged-token-xyz" "the minted token value never appears on refresh_gh_token's own stdout/stderr"
+
+# `set -x` traces every simple command, including a plain assignment and an `export`. A prior
+# version's comment claimed the token is safe "not even under set -x", which was false: neither
+# the `minted=$(...)` assignment nor the `export GH_TOKEN=...` line was ever guarded, so a traced
+# run (`bash -x autopilot.sh`, or a caller that already had tracing on) wrote the live token to
+# stderr — and from there to journald and any captured transcript. Traced in-process (not a
+# sub-bash) so the export this case checks actually lands in this shell's GH_TOKEN.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok set-x-fake-token-should-not-leak-abc123
+MINT_TOKEN_CMD="$BIN/mint-ok"
+trace_file="$BIN/set-x.trace"
+set -x
+refresh_gh_token 2>"$trace_file"
+set +x
+trace=$(cat "$trace_file")
+lacks "$trace" "set-x-fake-token-should-not-leak-abc123" \
+  "refresh_gh_token does not leak the minted token into a set -x trace"
+is "$GH_TOKEN" set-x-fake-token-should-not-leak-abc123 \
+  "the token is still exported correctly when called under set -x"
+
+# The guard must not itself disable a caller's tracing permanently: if -x was on before the call,
+# it must still be on after, so later commands in a traced run stay traced.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_ok fresh-token-under-trace
+MINT_TOKEN_CMD="$BIN/mint-ok"
+trace_file="$BIN/set-x-restore.trace"
+{
+  set -x
+  refresh_gh_token
+  echo still-tracing-marker >/dev/null
+  set +x
+} 2>"$trace_file"
+trace=$(cat "$trace_file")
+contains "$trace" "+ echo still-tracing-marker" \
+  "tracing is restored after refresh_gh_token when the caller had -x on"
+contains "$trace" "+ echo still-tracing-marker" \
+  "tracing is restored after refresh_gh_token when the caller had -x on"
+
+# ---------------------------------------------------------------------------------------------
+section "refresh_gh_token's call sites: run_agent and merge_approved must actually call it"
+# ---------------------------------------------------------------------------------------------
+# The gap a prior review caught: refresh_gh_token's own unit tests all passed even after the three
+# production call sites (main loop, run_agent, pre-merge) were deleted outright, because nothing
+# exercised run_agent/merge_approved with a mint stub and checked what token the launch actually
+# saw. These cases mint a *different* token per call and read it back off the engine/gh stub's own
+# recorded environment — not off refresh_gh_token in isolation — so deleting a call site turns
+# them red.
+mint_sequence() { # cmd-name token1 token2 ...
+  local cmd=$1; shift
+  printf '%s\n' "$@" > "$BIN/$cmd.tokens"
+  cat >"$BIN/$cmd" <<STUB
+#!/usr/bin/env bash
+f="$BIN/$cmd.tokens"
+n=\$(( \$(cat "$BIN/$cmd.n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BIN/$cmd.n"
+sed -n "\${n}p" "\$f"
+STUB
+  chmod +x "$BIN/$cmd"
+  rm -f "$BIN/$cmd.n"
+}
+
+# Since #541, paused() also refreshes on every call (it is polled by wait_out_budget every
+# iteration while idling on a spent budget, which is exactly the path that hit the production
+# expiry), and run_agent's attempt loop calls paused() once before its own pre-launch refresh — so
+# one successful attempt now mints twice, not once: the launch itself still sees the LAST token
+# minted before it fires, which is what actually matters for the token reaching the process.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-seq token-for-paused-check-1 token-for-launch-one token-for-paused-check-2 token-for-launch-two
+MINT_TOKEN_CMD="$BIN/mint-seq"
+echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
+MODE=kiro
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-for-launch-one \
+  "run_agent refreshes the token before the FIRST launch the mint stub sees"
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(tail -n 1 "$BIN/kiro-cli.gh_token_seen")" token-for-launch-two \
+  "a second run_agent call mints again and the SECOND launch sees the new token, not a cached one"
+is "$(cat "$BIN/mint-seq.n")" 4 \
+  "the mint command ran twice per run_agent call (paused()'s own refresh, then the pre-launch refresh), not once and not carried over between calls"
+
+# The retry path inside run_agent must also refresh: a retry on the fallback engine is a second
+# launch, up to AGENT_TIMEOUT after the first, so it must not carry the first attempt's token.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-retry token-paused-1 token-before-retry token-paused-2 token-after-retry
+MINT_TOKEN_CMD="$BIN/mint-retry"
+echo 1 > "$BIN/kiro-cli.rc"; printf 'usage limit reached\n' > "$BIN/kiro-cli.out"
+echo 0 > "$BIN/claude.rc";   printf 'done\n' > "$BIN/claude.out"
+MODE=auto
+run_agent developer kiro "work" >/dev/null 2>&1
+is "$(cat "$BIN/kiro-cli.gh_token_seen")" token-before-retry "the first, limited attempt gets a fresh token"
+is "$(cat "$BIN/claude.gh_token_seen")" token-after-retry \
+  "the retry on the fallback engine mints again rather than reusing the first attempt's token"
+
+# merge_approved is the other call site named in the issue: a merge push must carry a token minted
+# for this pass, not one left over from whichever role ran before it. Goes through
+# refresh_and_merge — the exact pairing the main loop calls — rather than calling refresh_gh_token
+# and merge_approved separately, so removing either call inside it turns this red.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-merge token-for-merge-push
+MINT_TOKEN_CMD="$BIN/mint-merge"
+GH_TOKEN=stale-role-token   # simulates the token a role minted earlier in the same cycle
+git -C . commit --allow-empty -q -m base
+head=$(git -C . rev-parse HEAD)
+cat > "$BIN/fixture-pr-approved.json" <<JSON
+[{"number":599}]
+JSON
+cat > "$BIN/fixture-pr-view-599.json" <<JSON
+{"headRefOid":"$head","mergeStateStatus":"CLEAN","files":[],
+ "comments":[{"body":"agent-approved-sha: $head"}],
+ "statusCheckRollup":[{"name":"CI gate","conclusion":"SUCCESS"}],"labels":[]}
+JSON
+refresh_and_merge >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr merge 599" "sanity: the merge in this case actually ran"
+is "$(cat "$BIN/gh.merge_gh_token_seen")" token-for-merge-push \
+  "refresh_and_merge mints before merging, so gh pr merge sees the fresh token, not the stale one"
+is "$(cat "$BIN/mint-merge.n")" 1 "the mint command ran exactly once for this pairing"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: the token is fresh before git fetch/ops_pull, via paused()'s own refresh"
+# ---------------------------------------------------------------------------------------------
+# Originally (#524) this was a standalone refresh_gh_token call at the top of run_cycle, placed
+# after `paused` and before `git fetch`. Since #541 made paused() itself refresh unconditionally
+# before its label query, that standalone call became pure redundancy — paused() (run_cycle's very
+# first line) already guarantees GH_TOKEN is fresh by the time ops_pull's clone runs, so the extra
+# call was removed rather than kept as a second, wasted mint back to back. This section now pins
+# THAT guarantee directly: ops_pull's clone sees whatever paused() minted, and removing paused()'s
+# own refresh (not a separate call site) is what turns it red.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-cycle token-for-paused-check token-for-manager-launch
+MINT_TOKEN_CMD="$BIN/mint-cycle"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/gh.clone_gh_token_seen")" token-for-paused-check \
+  "run_cycle's own paused() call refreshes the token before git fetch/ops_pull, so the ops-repo clone sees the freshly minted one, not an empty/stale GH_TOKEN"
+
+# Reproduce the reviewer's mutation in its current form: paused()'s own refresh_gh_token call
+# removed (the #541 fix reverted for this one line), everything else unchanged.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+mint_sequence mint-mutant should-never-be-seen
+MINT_TOKEN_CMD="$BIN/mint-mutant"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+GH_TOKEN=stale-token-from-a-previous-cycle
+export GH_TOKEN
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+paused() {
+  [ -f "$PAUSE_FILE" ] && return 0
+  # paused()'s own refresh_gh_token call deliberately omitted here, matching the mutation
+  local out
+  if ! out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
+      || [ -z "$out" ]; then
+    return 1
+  fi
+  [ "$out" != "0" ]
+}
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/gh.clone_gh_token_seen")" stale-token-from-a-previous-cycle \
+  "mutant sanity check: with paused()'s own refresh removed, ops_pull's clone carries the stale token, confirming this case would have caught its absence"
+is "$([ -f "$BIN/mint-mutant.n" ] && cat "$BIN/mint-mutant.n" || echo 0)" 4 \
+  "mutant sanity check: the mint command still ran from manager's and reviewer's pre-launch refreshes, refresh_and_merge, and the unconditional post-developer refresh (DEVS_PER_CYCLE=0 skips the loop body, not that line) — none of them backfill the clone that already happened"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: refreshes again after each role, before the ops_push that follows it (#541 pt.3)"
+# ---------------------------------------------------------------------------------------------
+# A role may run for the full AGENT_TIMEOUT (90m by default), well past the token's 60-minute
+# life. run_agent already refreshes before ITS OWN launch, so that alone cannot prove the
+# post-role refresh exists — the count has to be higher than "one mint per run_agent call" for
+# that to be visible. Since #541, paused() itself also refreshes on every call, and this cycle
+# calls it at: the top of run_cycle, inside each of the three run_agent calls' attempt loops
+# (manager, reviewer, developer), the developer loop's own `paused &&` guard, and the rotation
+# slot's `paused ||` guard — six paused()-driven mints — plus one pre-launch refresh per
+# run_agent call (manager, reviewer, developer, rotation = 4), refresh_and_merge's mint, and the
+# two new post-role refreshes (after developer, after rotation): 6 + 4 + 1 + 2 = 13, plus
+# reviewer's `paused` (already counted above) — total 14.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+counting_mint() {
+  rm -f "$BIN/mint-count.n"
+  cat >"$BIN/mint-count" <<STUB
+#!/usr/bin/env bash
+n=\$(( \$(cat "$BIN/mint-count.n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BIN/mint-count.n"
+echo "token-\$n"
+STUB
+  chmod +x "$BIN/mint-count"
+}
+counting_mint
+MINT_TOKEN_CMD="$BIN/mint-count"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
+DEVS_PER_CYCLE=1
+ROTATION=(cloud)
+SLOT_EVERY=1
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/mint-count.n")" 14 \
+  "run_cycle mints once more after the developer loop and once more after the rotation slot, on top of paused()'s own refreshes and the per-role pre-launch refreshes"
+
+# Reproduce the reviewer's mutation: the two post-role refresh_gh_token lines removed, everything
+# else unchanged, to prove this exact case is the one that would catch their absence.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+counting_mint
+MINT_TOKEN_CMD="$BIN/mint-count"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+echo 0 > "$BIN/kiro-cli.rc"; printf 'done\n' > "$BIN/kiro-cli.out"
+DEVS_PER_CYCLE=1
+ROTATION=(cloud)
+SLOT_EVERY=1
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+run_cycle() {
+  if paused; then log "paused"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  CYCLE_WORKED=0; CYCLE_BROKEN=0
+  git fetch -q origin 2>/dev/null
+  ops_pull || true
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
+  run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
+  ops_push
+  refresh_and_merge
+  for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
+    paused && break
+    run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
+  done
+  # post-developer refresh_gh_token deliberately omitted here, matching the reviewer's mutation
+  ops_push
+  if [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
+    slot=${ROTATION[$(( slot_n % ${#ROTATION[@]} ))]}
+    slot_n=$((slot_n + 1))
+    role=${slot%%:*}; focus=${slot#*:}
+    paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+    # post-rotation refresh_gh_token deliberately omitted here, matching the reviewer's mutation
+    ops_push
+  fi
+  return 0
+}
+run_cycle >/dev/null 2>&1
+is "$(cat "$BIN/mint-count.n")" 12 \
+  "mutant sanity check: with both post-role refreshes removed, only 12 mints happen (14 minus the two removed lines), confirming this case would catch either line's absence"
+
+
 reset_stubs; load
 CREDIT_CEILING_DAY=100
 add_credits 40 >/dev/null; add_credits 35 >/dev/null
@@ -682,7 +1074,115 @@ DISPLAY_TZ=Pacific/Kiritimati
 is "$LOG_DIR" ".agent-logs/$(date -u +%Y%m%d)" "log directories stay on the UTC day, to match CI and GitHub"
 
 # ---------------------------------------------------------------------------------------------
-section "paused: the kill switch fails closed"
+section "check_checkout_clean: a dirty pinned checkout breaks the next restart"
+# ---------------------------------------------------------------------------------------------
+# `load` already did `git init` in a throwaway repo and cd'd into it, matching the real pinned
+# checkout autopilot.sh runs from (it cd's to `git rev-parse --show-toplevel`).
+reset_stubs; load
+check_checkout_clean
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "a freshly-initialised, untouched repo is clean"
+
+reset_stubs; load
+echo "changed" > tracked-and-dirty.txt
+git add tracked-and-dirty.txt
+git commit -q -m "seed a tracked file"
+echo "modified after commit" > tracked-and-dirty.txt
+check_checkout_clean
+contains "$(cat "$STATE_DIR/alerts.log")" "pinned checkout is dirty" "a modified tracked file is caught and alerted"
+contains "$(cat "$STATE_DIR/alerts.log")" "tracked-and-dirty.txt" "the alert names the dirty file"
+
+reset_stubs; load
+echo "never committed" > untracked-file.txt
+check_checkout_clean
+contains "$(cat "$STATE_DIR/alerts.log")" "pinned checkout is dirty" "an untracked file is caught too (this is how origin/main later adding that path bites)"
+contains "$(cat "$STATE_DIR/alerts.log")" "untracked-file.txt" "the alert names the untracked file"
+
+# The acceptance criteria are explicit: nothing here may delete, stash or reset anything, however
+# tempting a "helpful" cleanup would be — a dirty checkout is evidence an agent broke the worktree
+# rule, and that evidence must survive for a human to look at.
+reset_stubs; load
+echo "must survive" > must-survive.txt
+check_checkout_clean >/dev/null
+if [ -f must-survive.txt ]; then
+  ok "check_checkout_clean does not delete the offending file"
+else
+  bad "check_checkout_clean does not delete the offending file" "file is gone"
+fi
+is "$(cat must-survive.txt)" "must survive" "check_checkout_clean does not touch the file's contents"
+
+# One alert line per call, not one per dirty file, so a whole broken checkout is still readable in
+# the digest's "Recent alerts" tail instead of drowning it.
+reset_stubs; load
+echo a > one.txt; echo b > two.txt
+check_checkout_clean
+is "$(grep -c 'pinned checkout is dirty' "$STATE_DIR/alerts.log")" 1 "multiple dirty files still produce a single alert line"
+contains "$(cat "$STATE_DIR/alerts.log")" "one.txt" "the single alert line names every dirty file (1 of 2)"
+contains "$(cat "$STATE_DIR/alerts.log")" "two.txt" "the single alert line names every dirty file (2 of 2)"
+
+# check_checkout_clean is called once per cycle, and alert() already writes both the log and
+# alerts.log, which digest_now already tails into "Recent alerts" — so a dirty checkout reaches
+# the digest for free. Pin that wiring rather than trusting it stayed true.
+reset_stubs; load
+echo 42 > "$BIN/gh.digestissue"
+echo "dirty for digest" > digest-dirty.txt
+check_checkout_clean
+digest_now "test" >/dev/null 2>&1
+body=$(cat "$BIN/gh.lastbody" 2>/dev/null)
+contains "$body" "pinned checkout is dirty" "a dirty checkout's alert reaches the daily digest"
+contains "$body" "digest-dirty.txt" "the digest names the specific dirty file"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: the real scheduling path, not just the helper"
+# ---------------------------------------------------------------------------------------------
+# check_checkout_clean being correct in isolation (above) says nothing about whether the main loop
+# still calls it. These cases drive run_cycle() itself — the exact function the while-loop below
+# it calls once per iteration — so a call site dropped from run_cycle is a call site dropped from
+# production, not from a copy of it re-implemented for the test.
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+echo "dirty during a real cycle" > dirty-during-cycle.txt
+run_cycle >/dev/null 2>&1
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "pinned checkout is dirty" \
+  "run_cycle (the real per-iteration call) detects a dirty checkout"
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "dirty-during-cycle.txt" \
+  "run_cycle's alert names the dirty file"
+
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+run_cycle >/dev/null 2>&1
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "run_cycle raises no dirty-checkout alert when the checkout is clean"
+
+# The mutation the maintainer reproduced against the previous submission: delete only the
+# check_checkout_clean call site from the real cycle body, leaving the standalone-call tests above
+# green. Apply that exact mutation to a scratch copy of autopilot.sh and show run_cycle stops
+# alerting — i.e. this suite goes red without the manual "did it turn red" step, because the
+# assertion above already requires the call site to be present and wired.
+reset_stubs; load
+mutant="$WORKROOT/autopilot.no-callsite.sh"
+sed '/# Catches the state that makes the \*next\* restart fail before it does: see check_checkout_clean\./{n;d}' \
+  "$SRC" > "$mutant"
+if grep -q '^  check_checkout_clean$' "$mutant"; then
+  bad "sanity: the mutant actually removes the check_checkout_clean call site" \
+    "call site still present in $mutant"
+else
+  ok "sanity: the mutant actually removes the check_checkout_clean call site"
+fi
+(
+  cd "$PWD" || exit 1
+  echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+  echo "dirty under the mutant" > dirty-under-mutant.txt
+  AUTOPILOT_LIB_ONLY=1 REPO=owner/repo STATE_DIR="$STATE_DIR" PAUSE_FILE="$PAUSE_FILE" \
+    OPS_DIR="$OPS_DIR" MODE=auto bash -c '
+      # shellcheck disable=SC1090
+      source "'"$mutant"'"
+      run_cycle
+    ' >/dev/null 2>&1
+)
+lacks "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "pinned checkout is dirty" \
+  "removing the call site from the real cycle body (the maintainer's exact mutation) makes this suite go red: a dirty checkout is silently missed"
+
+# ---------------------------------------------------------------------------------------------
+section "paused: the file kill switch, and a real label pause, both still work"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
 if paused; then bad "an unpaused factory is not paused"; else ok "an unpaused factory is not paused"; fi
@@ -691,8 +1191,212 @@ if paused; then ok "the pause file pauses the factory"; else bad "the pause file
 rm -f "$PAUSE_FILE"
 echo 1 > "$BIN/gh.paused"
 if paused; then ok "an agents:paused label pauses the factory"; else bad "an agents:paused label pauses the factory"; fi
-echo "" > "$BIN/gh.paused"
-if paused; then ok "an unreadable label state pauses rather than assumes it is safe"; else bad "an unreadable label state fails closed"; fi
+echo 0 > "$BIN/gh.paused"
+if paused; then bad "a genuine zero-length result is not paused"; else ok "a genuine zero-length result is not paused"; fi
+
+# ---------------------------------------------------------------------------------------------
+section "paused: a failed label query (#541 — an expired token misread as a pause)"
+# ---------------------------------------------------------------------------------------------
+# This is the actual regression: a real `gh` call failing (expired token, 401, rate limit, 5xx)
+# prints nothing on stdout and exits non-zero. The old `[ "$(...)" != "0" ]` could not tell that
+# apart from "the query really found zero issues" once its output was coerced to a string, and
+# read the failure as "paused". A failed query must never be treated as a pause.
+reset_stubs; load
+echo 1 > "$BIN/gh.paused.rc"    # the query itself fails (like a 401), not "0 results"
+if paused; then bad "a failed label query is not read as a pause"; else ok "a failed label query is not read as a pause"; fi
+contains "$(cat "$LOG_DIR"/*.log 2>/dev/null)" "agents:paused label query failed" \
+  "a failed label query logs a warning rather than failing silently"
+
+# refresh_gh_token must actually be called from inside paused(), not just be cheap to call: a
+# stub `gh` that fails until the token is refreshed proves paused() calling it is what recovers,
+# not an unrelated refresh elsewhere in the same test process.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat >"$BIN/mint-for-paused" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >> "$BIN/mint-for-paused.calls"
+echo "token-that-fixes-the-401"
+STUB
+chmod +x "$BIN/mint-for-paused"
+MINT_TOKEN_CMD="$BIN/mint-for-paused"
+echo 1 > "$BIN/gh.paused.rc"
+paused >/dev/null 2>&1
+is "$([ -f "$BIN/mint-for-paused.calls" ] && echo called || echo not-called)" called \
+  "paused() calls refresh_gh_token itself before giving up on the label query"
+
+# The literal acceptance scenario in #541: a stub gh that returns 401 UNTIL the token is
+# refreshed, then succeeds. paused() must not report a pause in that case.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+echo "the-fixed-token" > "$BIN/gh.paused.fail_until_token"
+cat >"$BIN/mint-fixes-401" <<STUB
+#!/usr/bin/env bash
+echo "the-fixed-token"
+STUB
+chmod +x "$BIN/mint-fixes-401"
+MINT_TOKEN_CMD="$BIN/mint-fixes-401"
+echo 0 > "$BIN/gh.paused"
+if paused; then bad "a 401-until-refreshed query is not read as a pause"; else ok "a 401-until-refreshed query is not read as a pause, once refresh_gh_token recovers it"; fi
+is "$GH_TOKEN" "the-fixed-token" "paused()'s own refresh left GH_TOKEN holding the token that fixed the 401"
+
+# #541's acceptance criteria requires more than "refresh once up front": a query that STILL fails
+# after that first refresh (e.g. the mint racing the exact minute of expiry, or a transient 5xx
+# unrelated to the token) must be retried after a SECOND refresh, not given up on immediately.
+# This stub's mint fails on its first call and only succeeds on the second, so the first
+# refresh_gh_token inside paused() leaves the stale/expired token in place, the first query 401s
+# again, and only the retry's refresh (second mint call, second query attempt) can recover it.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+GH_TOKEN=stale-expired-token
+echo "the-fixed-token" > "$BIN/gh.paused.fail_until_token"
+cat >"$BIN/mint-fails-once-then-fixes-401" <<STUB
+#!/usr/bin/env bash
+n=\$(( \$(cat "$BIN/mint-fails-once-then-fixes-401.n" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$BIN/mint-fails-once-then-fixes-401.n"
+if [ "\$n" -eq 1 ]; then exit 1; fi
+echo "the-fixed-token"
+STUB
+chmod +x "$BIN/mint-fails-once-then-fixes-401"
+MINT_TOKEN_CMD="$BIN/mint-fails-once-then-fixes-401"
+echo 0 > "$BIN/gh.paused"
+if paused; then bad "a query that still fails after the first refresh is retried, not treated as paused"; else ok "a query that still fails after the first refresh is retried after a second refresh, and not treated as a pause"; fi
+is "$(cat "$BIN/mint-fails-once-then-fixes-401.n")" 2 \
+  "refresh_gh_token was called twice: once up front, once more to retry the failed query"
+is "$GH_TOKEN" "the-fixed-token" "the retry's refresh is the one that ends up in GH_TOKEN"
+
+# The other side of the same case: if the retry's query ALSO fails (the second refresh didn't
+# help either — a genuine outage, not just a slow mint), paused() must still give up cleanly
+# after exactly one retry, not loop forever or misreport a pause.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat >"$BIN/mint-always-ok" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >> "$BIN/mint-always-ok.calls"
+echo "some-token"
+STUB
+chmod +x "$BIN/mint-always-ok"
+MINT_TOKEN_CMD="$BIN/mint-always-ok"
+echo 1 > "$BIN/gh.paused.rc"   # the query fails unconditionally, refresh or not
+if paused; then bad "a query that fails even after retrying is still not read as a pause"; else ok "a query that fails even after retrying is still not read as a pause"; fi
+is "$(wc -l < "$BIN/mint-always-ok.calls" | tr -d ' ')" 2 \
+  "exactly one retry: refresh_gh_token is called twice total, not an unbounded loop"
+
+# ---------------------------------------------------------------------------------------------
+section "wait_out_budget: a stuck-open gh 401 must not be read as a pause, and must not stop the shift"
+# ---------------------------------------------------------------------------------------------
+# The acceptance test named in #541: a stub gh that returns 401 until the token is refreshed.
+# wait_out_budget must keep polling through that failure rather than returning 1 (which is what
+# ends the shift and cost the ~4h23m of spurious restarts the issue describes).
+reset_stubs; load
+CREDIT_CEILING_DAY=10
+add_credits 11 >/dev/null
+echo 1 > "$BIN/gh.paused.rc"                      # every "is it paused" query 401s
+END=$(( $(date +%s) + 2 ))                        # shift ends very soon so the loop returns quickly
+( wait_out_budget >/dev/null 2>&1 ) ; rc=$?
+is "$rc" 1 "the shift still ends when its own clock runs out, not because of the failed query"
+lacks "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "paused while over budget" \
+  "a failed label query never appears as 'paused while over budget' — it is not conflated with a real pause"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: a failed label query does not end the shift (the #541 spurious stop)"
+# ---------------------------------------------------------------------------------------------
+# This is the exact failure mode from the issue: run_cycle's first line calls paused() before its
+# own refresh at the top of the cycle. With the token already expired, the old code's paused()
+# read the 401 as a real pause and run_cycle returned 1, stopping the whole shift.
+reset_stubs; load
+echo 0 > "$BIN/claude.rc"; echo 0 > "$BIN/kiro-cli.rc"
+echo 1 > "$BIN/gh.paused.rc"
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1; rc=$?
+is "$rc" 0 "run_cycle does not stop the shift just because the paused-label query failed"
+lacks "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "paused (agents:paused label" \
+  "the cycle's own log does not claim a real pause happened"
+
+# ---------------------------------------------------------------------------------------------
+section "main(): the running loop survives the script file changing on disk (#545)"
+# ---------------------------------------------------------------------------------------------
+# The real regression: an agent edited scripts/agents/autopilot.sh in place while the autopilot
+# was running it, then `git checkout --` reverted the path. Bash reads a running script
+# incrementally through its open file descriptor, so the in-place write corrupted bytes the
+# interpreter had not parsed yet, and six hours later — when the loop finally reached that part
+# of the file again — it hit a syntax error and exited 2 instead of stopping cleanly. This test
+# reproduces the mechanism directly: run the real script (not sourced, not AUTOPILOT_LIB_ONLY) as
+# a subprocess, overwrite its own file in place partway through the first cycle, and require it
+# to still finish the cycle, log the normal shutdown line and exit 0.
+reset_stubs; load
+dir=$PWD
+
+# The manager role is the first thing run_cycle does. Have that first invocation, and only that
+# one, write PAUSE_FILE — so cycle 1 does one full pass of real work and cycle 2's own paused()
+# check ends the loop through main()'s normal `break`, rather than the test racing the clock via
+# HOURS/SLEEP_MIN.
+cat > "$BIN/claude" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/claude.calls"
+: > "$PAUSE_FILE"
+exit 0
+STUB
+chmod +x "$BIN/claude"
+cat > "$BIN/kiro-cli" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/kiro-cli.calls"
+: > "$PAUSE_FILE"
+exit 0
+STUB
+chmod +x "$BIN/kiro-cli"
+
+# A private copy of the real script, so the corrupting overwrite never touches the repo's own
+# scripts/agents/autopilot.sh on disk. AUTOPILOT_LIB_ONLY is not set here on purpose: that guard
+# is exactly what must NOT fire, since this test needs the real driver loop (main) to run.
+run_copy="$dir/autopilot-run.sh"
+cp "$SRC" "$run_copy"
+
+log_out="$dir/run.out"
+AUTOPILOT_LIB_ONLY= HOURS=1 SLEEP_MIN=0 REPO=owner/repo STATE_DIR="$dir/.state" \
+  PAUSE_FILE="$dir/.paused" OPS_DIR="$dir/nonexistent-ops" \
+  AGENT_GH_TOKEN=test-token PATH="$BIN:$PATH" \
+  bash "$run_copy" >"$log_out" 2>&1 &
+run_pid=$!
+
+# Bounded poll for the process to have actually started executing (its first log line), not an
+# unbounded wait — see .kiro/steering/session-hygiene.md. 10s at 100ms is generous for a stubbed,
+# no-network cycle on a loopback filesystem.
+started=0
+for _ in $(seq 1 100); do
+  if [ -s "$log_out" ] && grep -q "shift start" "$log_out" 2>/dev/null; then started=1; break; fi
+  kill -0 "$run_pid" 2>/dev/null || break
+  sleep 0.1
+done
+if [ "$started" = 1 ]; then ok "the subprocess got past setup and logged shift start"
+else bad "the subprocess got past setup and logged shift start" "log so far: $(cat "$log_out" 2>/dev/null)"; fi
+
+# The corrupting write itself: overwrite the running script's own path in place, byte-for-byte
+# different content, while main()'s while-loop (already parsed and executing) is mid-shift. This
+# is the in-place edit half of #545's mechanism; the git-checkout half is irrelevant to bash's
+# read-through-fd behaviour, which is what main() has to be immune to.
+printf '#!/usr/bin/env bash\necho "corrupted: this replaced the running script on disk" >&2\nexit 1\n' > "$run_copy"
+
+# Bounded wait for the subprocess to exit on its own (cycle 1 finishes, cycle 2's paused() check
+# trips on the file cycle 1's stub wrote, main() breaks and falls through to shutdown) — never an
+# unbounded `wait`. 15s at 100ms is generous; a clean run finishes in well under 1s once cycle 1's
+# single stub call returns.
+exited=0
+for _ in $(seq 1 150); do
+  if ! kill -0 "$run_pid" 2>/dev/null; then exited=1; break; fi
+  sleep 0.1
+done
+if [ "$exited" = 1 ]; then
+  wait "$run_pid"; rc=$?
+else
+  kill "$run_pid" 2>/dev/null; wait "$run_pid" 2>/dev/null; rc=124
+fi
+
+is "$rc" 0 "the loop, already running when its own script file was overwritten, still exits 0"
+contains "$(cat "$log_out" 2>/dev/null)" "autopilot stopped" \
+  "the normal shutdown log line still appears — the corrupted file was never re-read mid-run"
+lacks "$(cat "$log_out" 2>/dev/null)" "corrupted: this replaced" \
+  "the replacement file's own content was never executed by the running process"
 
 # ---------------------------------------------------------------------------------------------
 printf '\n%s\n' "-------------------------------------------"

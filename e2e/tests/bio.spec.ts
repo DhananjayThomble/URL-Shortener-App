@@ -114,4 +114,22 @@ test.describe("bio pages", () => {
       .filter((n) => n.html.includes("Powered by SnapURL"));
     expect(captionViolations, JSON.stringify(captionViolations, null, 2)).toEqual([]);
   });
+
+  /* Regression for #497 item 2 (acceptance criterion: "Full-ruleset axe-core
+     pass on light theme /bio shows 0 color-contrast violations"). Unlike the
+     test above, this runs the full color-contrast rule with no per-node
+     filter, so it also catches the wash-token/text-token pairs measured in
+     the issue (wash-green, wash-teal, accent-wash, wash-amber all fell
+     below 4.5:1 on at least one surface before the globals.css token fix)
+     if any of them render on this route. Light theme only -- dark theme's
+     now-fixed #462 family (bg-violet/bg-teal/bg-accent/bg-amber/bg-good
+     with a literal text-white) is covered by globals-contrast.test.ts's own
+     dark-theme assertions, not here. */
+  test("light theme /bio has zero color-contrast violations under the full axe ruleset", async ({ page }) => {
+    await page.goto("/bio");
+    await expect(page.getByText("Powered by SnapURL")).toBeVisible();
+
+    const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+  });
 });

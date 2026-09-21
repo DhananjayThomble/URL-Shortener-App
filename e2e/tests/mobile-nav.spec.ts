@@ -12,11 +12,12 @@ import { seedSession } from "../support/session";
    accessible-name only (getByRole/getByLabel) per repo convention — the hamburger
    is aria-label "Open navigation menu", the drawer is role="dialog", and each
    destination is a role="link" scoped inside that dialog to avoid colliding with
-   the (hidden) sidebar's identical links. Each nav link's accessible name is
-   "<icon> <label> [<count>]" (e.g. "⛓ Links 7"), so link names are matched as a
-   SUBSTRING on the label (no `exact`) — the label words are all unique. The
-   default e2e project is Desktop Chrome, so the mobile describe sets a phone
-   viewport via test.use(). */
+   the (hidden) sidebar's identical links. Each nav link's icon glyph is
+   aria-hidden (#451, confirmed by #461's nav-accessible-names.spec.ts), so the
+   computed accessible name is "<label> [<count>]" (e.g. "Links 7") with no
+   glyph; link names are matched as a SUBSTRING on the label (no `exact`) — the
+   label words are all unique. The default e2e project is Desktop Chrome, so
+   the mobile describe sets a phone viewport via test.use(). */
 
 const MOBILE = { viewport: { width: 390, height: 852 }, isMobile: true, hasTouch: true } as const;
 

@@ -21,3 +21,11 @@ and you never publish exploit details beyond what a fix needs.
    - Auth: refresh-token reuse detection, logout invalidation, access-token TTL, 2FA bypass attempts,
      rate limiting on the API (and its deliberate absence on redirect).
 4. `summary.md` with counts per tool and the coverage gaps. `pnpm staging:down`.
+5. If you started the web app yourself (e.g. in CI mode, where the staging stack and build are
+   already done but nothing serves the built app), record its PID (`echo $! > "$RUN_DIR/web.pid"`
+   or similar) when you start it, and stop it **by that PID only** at the end of the run — never
+   `pkill -f` / `killall` with a pattern, even one that looks unique. Your own prompt/command line
+   contains the same server-start command you'd use as a kill pattern, so a pattern match can hit
+   your own session and SIGTERM it before the run finishes (see
+   `.kiro/steering/session-hygiene.md` and issue #532). Confirm it's down with `curl` against the
+   port, not by re-running the pattern search.

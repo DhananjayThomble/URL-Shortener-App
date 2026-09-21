@@ -26,6 +26,21 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   const create = useCreateLink();
   const drawerRef = useRef<HTMLElement>(null);
 
+  // `onClose` is passed as a fresh inline closure by the parent on every one
+  // of its own re-renders (e.g. a background refetch of links/domains/members
+  // while the drawer is open). Reading it through a ref, rather than putting
+  // it in the trap effect's dependency array below, means that effect's setup
+  // — which seizes initial focus and captures `trigger` for restore-on-close —
+  // runs exactly once per open/close, not on every unrelated parent re-render.
+  // Previously it depended on `[open, onClose]`: any re-render with a new
+  // `onClose` identity tore the trap down and re-ran it while the drawer was
+  // still open, silently yanking focus back to the drawer's first field out
+  // from under whatever the user was doing (mid Tab/Shift+Tab traversal, or
+  // mid-typing) and re-capturing "trigger" from whatever had focus at that
+  // moment instead of the element that actually opened the drawer.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   const form = useForm<CreateLinkFormValues, unknown, CreateLinkInput>({
     resolver: zodResolver(CreateLinkInput),
     defaultValues: {
@@ -69,24 +84,41 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     const el = drawerRef.current;
     if (!el) return;
 
-    // Selector for anything that can receive keyboard focus.
+    // Whatever had focus when the drawer opened (the "New link" trigger in the
+    // sidebar/topbar) — restored on close so keyboard/AT users land back where
+    // they were, however the drawer closes (Escape, ✕, Cancel, or a successful
+    // submit all flow through the same `open` → false transition).
+    const trigger = document.activeElement as HTMLElement | null;
+
+    // Selector for anything that CAN receive keyboard focus in principle. Note
+    // this alone is not sufficient: a native control given `tabIndex={-1}` as a
+    // prop (e.g. the inactive tabs in the roving-tabindex tablist below) still
+    // matches `button:not([disabled])` here, because the `[tabindex]:not(...)`
+    // clause only excludes elements that rely on the tabindex *attribute* for
+    // focusability — it does not override a match already won by another
+    // comma-separated clause. Filtering on the live `.tabIndex` property below
+    // (which reflects the actual prop, unlike a stale attribute selector) is
+    // what keeps this list in sync with the browser's real Tab order.
     const FOCUSABLE =
       'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
+    const queryFocusable = () =>
+      Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (node) => !node.closest('[aria-hidden="true"]') && node.tabIndex !== -1,
+      );
+
     // Move initial focus to the first focusable element in the drawer.
-    const first = el.querySelector<HTMLElement>(FOCUSABLE);
+    const first = queryFocusable()[0];
     first?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
 
-      const focusable = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (node) => !node.closest('[aria-hidden="true"]'),
-      );
+      const focusable = queryFocusable();
       if (focusable.length === 0) return;
 
       const firstEl = focusable[0];
@@ -111,8 +143,13 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = prev;
+      // Restore focus to the trigger, but only if it is still attached and
+      // still focusable — a route change or re-render could have removed it.
+      if (trigger && document.contains(trigger)) {
+        trigger.focus();
+      }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   useEffect(() => {
     if (open) {

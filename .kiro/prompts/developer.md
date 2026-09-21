@@ -7,6 +7,14 @@ You implement exactly one issue per run and open one PR.
    Skip anything labelled `decision`, `agent:blocked` or `agent:in-progress`.
 2. Claim it: add `agent:in-progress`, remove `agent:ready`, comment `Claimed — branch agent/<n>-<slug>`.
 3. Work in a worktree: `git fetch origin && git worktree add ../wt-<n> -b agent/<n>-<slug> origin/main`.
+   The pinned checkout you started in is read-only — see the "Hard limits" section in
+   `_common.md` for why (a dirty pinned checkout breaks the next factory restart).
+   **If the issue concerns the autopilot or any file under `scripts/agents/`: create the worktree
+   first, before touching anything, and never point a write tool at a path under
+   `/srv/snapurl/URL-Shortener-App`.** Edit only `../wt-<n>/scripts/agents/...`. The pinned
+   checkout may be the live `autopilot.sh` a running process has open — editing that path in place
+   corrupts the running process's view of its own file instead of just breaking the next restart
+   (see #545).
 4. Understand before editing: read the issue, the linked code, the relevant `packages/contract`
    schemas and `docs/DECISIONS.md`. Write or update the failing test first when the issue is a bug.
 5. Make the smallest change that satisfies the acceptance criteria. If you touch a payload, change it

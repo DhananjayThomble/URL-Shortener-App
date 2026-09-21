@@ -117,7 +117,6 @@ detection. Neither can change anything.
       "Action": [
         "cloudformation:DetectStackDrift",
         "cloudformation:DetectStackResourceDrift",
-        "cloudformation:DescribeStackDriftDetectionStatus",
         "cloudformation:DescribeStackResourceDrifts",
         "cloudformation:DescribeStacks",
         "cloudformation:DescribeStackEvents"
@@ -125,16 +124,33 @@ detection. Neither can change anything.
       "Resource": [
         "arn:aws:cloudformation:ap-south-1:646799484931:stack/SnapUrl/*"
       ]
+    },
+    {
+      "Sid": "DriftStatusLookup",
+      "Effect": "Allow",
+      "Action": "cloudformation:DescribeStackDriftDetectionStatus",
+      "Resource": "*"
     }
   ]
 }
 ```
 
+> `cloudformation:DescribeStackDriftDetectionStatus` is called with a
+> **drift-detection id** (returned by `DetectStackDrift`), not a stack, and does
+> not support resource-level permissions — so it cannot be scoped to the stack
+> ARN and needs its own `"Resource": "*"` statement, separate from
+> `DriftDetection` above.
+>
 > `DetectStackDrift` inspects the stack's resources, so the lookup role's own
-> read access is what makes the per-resource comparison possible. If drift
-> detection returns `DETECTION_FAILED` for specific resources, that is usually a
-> missing read permission on the resource's own service rather than a
-> CloudFormation problem.
+> read access is what makes the per-resource comparison possible. In practice,
+> with only the permissions above, drift detection completed successfully for
+> the `SnapUrl` stack (`DETECTION_COMPLETE`, "In sync with the template") — no
+> other permission was needed. If detection returns `DETECTION_FAILED` for
+> specific resources, check for a missing read permission on the resource's own
+> service rather than assuming a CloudFormation problem. Never grant this role
+> secret-reading actions (`secretsmanager:GetSecretValue`, `ssm:GetParameter*`,
+> `kms:Decrypt`, or any other data read) to work around a failure — it runs on
+> `main`.
 
 ### 2b. Deploy role trust policy
 
