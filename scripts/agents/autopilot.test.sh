@@ -117,7 +117,7 @@ case "\$*" in
   *"label:engine:claude,engine:kiro"*) cat "$BIN/gh.enginelabels" 2>/dev/null || echo ""; exit 0 ;;
   # Matches the literal default of DIGEST_LABEL (factory:digest — see autopilot.sh), not the
   # variable itself: make_stubs runs from reset_stubs, before `load` sources autopilot.sh, so
-  # $DIGEST_LABEL is not yet set in this shell (same reason $REPO's default is hardcoded as
+  # \$DIGEST_LABEL is not yet set in this shell (same reason \$REPO's default is hardcoded as
   # owner/repo above rather than referenced). No case in this file overrides DIGEST_LABEL.
   *"issue list"*"factory:digest"*) cat "$BIN/gh.digestissue" 2>/dev/null; exit 0 ;;
   *"issue create"*) echo "https://github.com/owner/repo/issues/77"; exit 0 ;;
