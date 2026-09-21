@@ -118,10 +118,45 @@ log() {
   echo "[$(TZ="$DISPLAY_TZ" date '+%H:%M:%S %Z')] $*" | tee -a "$LOG_DIR/autopilot.log" >&2
 }
 
+# The file-based kill switch is checked first and is unconditional: it needs no token and no
+# network call, so it stops the loop even while GH_TOKEN is completely broken.
+#
+# The label check is different on purpose: a real GH_TOKEN expiry (60 min) makes `gh` fail with a
+# 401, which prints nothing on stdout. The old code read that empty output as "length is not 0" and
+# treated a token expiry as if a human had asked for a pause — that is the bug this function exists
+# to fix (see #541). Per #541's explicit build requirement, refresh_gh_token is called
+# unconditionally BEFORE the query — not only after an observed failure — because paused() is the
+# thing wait_out_budget polls every iteration while idling on a spent budget, and that is exactly
+# the path that hit the 60-minute expiry in production. refresh_gh_token is cheap when the token is
+# still good: if AGENT_GH_TOKEN is set (tests, CI) it returns immediately without minting anything,
+# and otherwise the mint command itself is what actually bounds the cost, not this call site
+# skipping it.
+#
+# A query can still fail after that first refresh — the mint that just ran could itself have
+# failed (refresh_gh_token logs and keeps the old, already-expired token rather than blocking), or
+# the query could hit a transient 5xx/rate limit unrelated to the token. #541's acceptance
+# criteria is explicit that a failed query must be retried after a refresh, not given up on after
+# one attempt — otherwise a mint that fails on its first try during the exact minute the token
+# expires reproduces the original bug. So on a failed query, refresh once more and retry the
+# query exactly once. Only if the retried query ALSO fails is the failure logged and treated as
+# NOT paused — a stuck-open `gh`/network problem must never masquerade as the human kill switch.
+# The only thing that can actually pause the factory via label is a *successful* query that finds
+# one.
 paused() {
   [ -f "$PAUSE_FILE" ] && return 0
-  [ "$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length')" != "0" ]
+  local out attempt
+  for attempt in 1 2; do
+    refresh_gh_token
+    if out=$(gh issue list -R "$REPO" --state open --label agents:paused --json number -q 'length' 2>/dev/null) \
+        && [ -n "$out" ]; then
+      [ "$out" != "0" ]
+      return
+    fi
+  done
+  log "agents:paused label query failed; not treating this as a pause"
+  return 1
 }
+
 
 # The pinned checkout (this toplevel) is what the host's systemd unit `git checkout --detach
 # origin/main`s on every restart. A tracked file left modified here — an agent editing it directly
@@ -575,7 +610,9 @@ run_cycle() {
   # "something is broken and no amount of waiting fixes it".
   CYCLE_WORKED=0
   CYCLE_BROKEN=0
-  refresh_gh_token
+  # No standalone refresh_gh_token here: paused() (the line above) now refreshes unconditionally
+  # itself (#541), so by the time this point is reached the token is already as fresh as a second
+  # call here could make it — a second mint back to back would just be wasted cost.
   git fetch -q origin
   # Catches the state that makes the *next* restart fail before it does: see check_checkout_clean.
   check_checkout_clean
@@ -593,6 +630,9 @@ run_cycle() {
     paused && break
     run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
   done
+  # The developer role may have run for the full AGENT_TIMEOUT; refresh before the ops-repo push
+  # that follows it rather than handing that push whatever token the last run_agent call minted.
+  refresh_gh_token
   ops_push
 
   if [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
@@ -600,6 +640,8 @@ run_cycle() {
     slot_n=$((slot_n + 1))
     role=${slot%%:*}; focus=${slot#*:}
     paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+    # Same reasoning as above: the rotation role can also run the full timeout.
+    refresh_gh_token
     ops_push
   fi
 
