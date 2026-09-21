@@ -1399,6 +1399,86 @@ lacks "$(cat "$log_out" 2>/dev/null)" "corrupted: this replaced" \
   "the replacement file's own content was never executed by the running process"
 
 # ---------------------------------------------------------------------------------------------
+section "main \"\$@\" / exit \$? boundary: a length-changing in-place edit after main returns (#553)"
+# ---------------------------------------------------------------------------------------------
+# The gap the previous test does not cover: that test's overwrite lands WHILE main()'s while-loop
+# is running, and bash never comes back to re-read the file once the loop body was parsed — so it
+# cannot exercise the read that happens right after main returns. Bash reads "main \"\$@\"" and
+# "exit \$?" as two separate top-level statements when they are on two lines; if the file is
+# rewritten with different length in the gap between main() returning and bash reading the next
+# statement, that read is misaligned. The fix is keeping them on one line ("main \"\$@\"; exit \$?"),
+# so bash parses the whole compound command before running main and nothing is read from the file
+# afterwards. This reproduces the mechanism directly, self-contained (no dependency on the real
+# script's own timing): two minimal driver scripts differing only in whether the final two
+# statements are one line or two, each rewritten in place — insert several lines in the middle and
+# append a trailer at the end, both changing the file's length — timed to land while main() is
+# still inside its own sleep, i.e. after main() started but before it returns.
+reset_stubs
+one_line="$dir/boundary-one.sh"
+two_line="$dir/boundary-two.sh"
+cat > "$one_line" <<'DRIVER'
+#!/usr/bin/env bash
+main() {
+  sleep 1
+  echo "main finished"
+}
+main "$@"; exit $?
+DRIVER
+cat > "$two_line" <<'DRIVER'
+#!/usr/bin/env bash
+main() {
+  sleep 1
+  echo "main finished"
+}
+main "$@"
+exit $?
+DRIVER
+chmod +x "$one_line" "$two_line"
+
+corrupt() { # path — length-changing in-place rewrite: insert lines mid-file, append a trailer
+  printf '#!/usr/bin/env bash\n# injected line one\n# injected line two\nmain() {\n  sleep 1\n  echo "main finished"\n}\nmain "$@"\nexit $?\n# appended trailer, never reached if the read already happened\n' > "$1"
+}
+
+for variant in two_line one_line; do
+  path_var="${variant}"
+  script_path=$(eval "printf '%s' \"\$$path_var\"")
+  out_file="$dir/boundary-$variant.out"
+  bash "$script_path" >"$out_file" 2>&1 &
+  vpid=$!
+  # main() is mid-sleep for ~1s; corrupt the file partway through that window, well after main
+  # has started (so the corruption cannot race the initial parse) and well before it returns.
+  sleep 0.4
+  corrupt "$script_path"
+  wait "$vpid"; vrc=$?
+  case "$variant" in
+    two_line)
+      is "$vrc" 2 "current two-line form: a length-changing edit after main returns misreads exit \$? (reproduces #553)"
+      contains "$(cat "$out_file" 2>/dev/null)" "syntax error" \
+        "current two-line form: the misread surfaces as the same syntax-error signature as the incident"
+      ;;
+    one_line)
+      is "$vrc" 0 "fixed one-line form: the same length-changing edit no longer misreads the exit statement"
+      contains "$(cat "$out_file" 2>/dev/null)" "main finished" \
+        "fixed one-line form: main still completes and logs normally"
+      lacks "$(cat "$out_file" 2>/dev/null)" "injected line" \
+        "fixed one-line form: the injected content is never executed"
+      ;;
+  esac
+done
+
+# The real script itself must use the fixed form — belt-and-braces alongside the behavioural
+# check above, and it is what actually caught #553 before the boundary tests existed.
+last_line=$(tail -n 1 "$SRC")
+is "$last_line" 'main "$@"; exit $?' \
+  "scripts/agents/autopilot.sh keeps main \"\$@\" and exit \$? on one line"
+
+# Guard against a future edit re-introducing a top-level statement after that line (blank lines
+# and comments are fine; a new statement is not — it would sit outside main()'s protection again).
+after_main_call=$(awk '/^main "\$@"; exit \$\?$/{found=1; next} found' "$SRC" | grep -v '^\s*$' | grep -v '^\s*#')
+is "$after_main_call" "" \
+  "nothing besides main \"\$@\"; exit \$? follows main()'s definition at the top level"
+
+# ---------------------------------------------------------------------------------------------
 printf '\n%s\n' "-------------------------------------------"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1
