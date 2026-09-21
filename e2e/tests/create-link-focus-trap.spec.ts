@@ -1,12 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import { seedSession } from "../support/session";
 
-/* Regression for #460: while the create-link drawer is open, Tab/Shift+Tab must
-   cycle only through its own focusable elements (WCAG 2.1 SC 2.4.3 / APG "Dialog
-   (Modal)"). Escape-to-close-and-return-focus-to-trigger is fixed by this same
-   PR (#518): the issue body's claim that it was "already correct" was wrong —
-   nothing previously captured or restored the pre-open activeElement, so this
-   spec's second test is a real regression test, not a pre-existing guarantee.
+/* Regression for #460 and #556 (the latter re-filed the same finding from the
+   #438 audit against a commit that predated the #451/#518 fixes — by the time
+   #556 was filed, both were already merged and this spec already covered its
+   acceptance criteria end to end): while the create-link drawer is open,
+   Tab/Shift+Tab must cycle only through its own focusable elements (WCAG 2.1
+   SC 2.4.3 / APG "Dialog (Modal)"). Escape-to-close-and-return-focus-to-trigger
+   is fixed by this same PR (#518): the issue body's claim that it was "already
+   correct" was wrong — nothing previously captured or restored the pre-open
+   activeElement, so this spec's second test is a real regression test, not a
+   pre-existing guarantee.
 
    Oracle: the standard modal-dialog focus-trap pattern — tabbing past the last
    focusable element inside an open dialog must land back on the dialog's own
@@ -122,6 +126,17 @@ function runFocusTrapChecks() {
     const focusableCount = await focusableCountInDrawer(drawer);
     expect(focusableCount).toBeGreaterThan(1);
 
+    for (let i = 0; i < focusableCount; i++) {
+      await pressTabAndWaitForFocusChange(page, "Tab");
+    }
+    expect(await focusedIndexInDrawer(page)).toBe(0);
+
+    // One full cycle back to index 0 is necessary but not sufficient: a trap
+    // that only rewraps on its first pass (e.g. a one-shot guard instead of a
+    // check that re-evaluates on every keydown) would already pass the loop
+    // above. Continue for a second full cycle (N > focusableCount, as #556's
+    // acceptance criteria specifies) to confirm the wrap holds repeatably,
+    // not just once.
     for (let i = 0; i < focusableCount; i++) {
       await pressTabAndWaitForFocusChange(page, "Tab");
     }
