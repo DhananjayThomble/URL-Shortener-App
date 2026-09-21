@@ -172,6 +172,23 @@ esac
 # case. merge_approved reads this with -q '.' (whole object), not a sub-filter, so it is served
 # directly rather than through the generic fixture+filter path below.
 case "\$*" in
+  *"issue view "[0-9]*)
+    # reap_one_worktree's issue_still_in_progress: one fixture file per issue number,
+    # $BIN/fixture-issue-view-<n>.json, written by the case. No fixture means "issue has no
+    # labels at all" (an empty labels array), not "issue not found" — issue_still_in_progress
+    # only ever asks whether agent:in-progress is present, so both look the same to it, and a
+    # missing fixture must never be mistaken for a gh failure that silently keeps the worktree.
+    n=''
+    for a in "\$@"; do case "\$a" in [0-9]*) n="\$a"; break ;; esac; done
+    fx="$BIN/fixture-issue-view-\$n.json"
+    [ -f "\$fx" ] || fx="$BIN/fixture-issue-view-empty.json"
+    if [ -n "\$filter" ]; then
+      jq -r "\$filter" < "\$fx" || { echo "STUB_JQ_FAILED" >> "$BIN/gh.jqfail"; exit 1; }
+    else
+      cat "\$fx"
+    fi
+    exit 0
+    ;;
   *"pr view "[0-9]*)
     n=''
     for a in "\$@"; do case "\$a" in [0-9]*) n="\$a"; break ;; esac; done
@@ -215,11 +232,13 @@ reset_stubs() {
         "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
         "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen \
         "$BIN"/gh.clone_gh_token_seen "$BIN"/gh.paused.fail_until_token \
-        "$BIN"/fixture-graphql-*.state "$BIN"/docker.calls "$BIN"/docker.rc "$BIN"/docker.dfout
+        "$BIN"/fixture-graphql-*.state "$BIN"/docker.calls "$BIN"/docker.rc "$BIN"/docker.dfout \
+        "$BIN"/fixture-issue-view-*.json
   make_stubs
   echo 0 > "$BIN/gh.paused"
   echo '[]' > "$BIN/fixture-events-empty.json"
   echo '[]' > "$BIN/fixture-pr-stuck.json"
+  echo '{"labels":[]}' > "$BIN/fixture-issue-view-empty.json"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
   # not firing on an empty string.
   cat > "$BIN/fixture-pr-open.json" <<'JSON'
@@ -1772,10 +1791,43 @@ make_origin_and_repo
 git branch -f agent/903-orphaned origin/main
 wtdir="$WORKROOT/wt-903"
 git worktree add -q "$wtdir" agent/903-orphaned
-# Deliberately never pushed to origin, and no PR fixture: an abandoned branch that never became a PR.
+# Deliberately never pushed to origin, and no PR fixture: an abandoned branch that never became
+# a PR. Issue 903 itself carries no agent:in-progress label (fixture-issue-view-empty.json, the
+# reset_stubs default) — nothing claims this run is still active, so it is orphaned for real.
 reap_worktrees >/dev/null 2>&1
-[ -d "$wtdir" ] && bad "a worktree whose branch never reached origin is removed" "still present at $wtdir" \
-  || ok "a worktree whose branch never reached origin is removed"
+[ -d "$wtdir" ] && bad "a worktree whose branch never reached origin, and whose issue is not agent:in-progress, is removed" "still present at $wtdir" \
+  || ok "a worktree whose branch never reached origin, and whose issue is not agent:in-progress, is removed"
+
+reset_stubs; load
+make_origin_and_repo
+# Issue #567's review finding: a branch/worktree that looks orphaned by every git/PR signal (never
+# pushed, no PR) must still be kept if the issue it was claimed for is still agent:in-progress —
+# that label is the one signal not derivable from git or PR state, since an unpushed worktree for
+# a live run and an abandoned one are otherwise indistinguishable.
+git branch -f agent/909-still-claimed origin/main
+wtdir="$WORKROOT/wt-909"
+git worktree add -q "$wtdir" agent/909-still-claimed
+cat > "$BIN/fixture-issue-view-909.json" <<'JSON'
+{"labels":[{"name":"agent:in-progress"}]}
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "an unpushed worktree with no PR yet is kept if its issue is still agent:in-progress" \
+  || bad "an unpushed worktree with no PR yet is kept if its issue is still agent:in-progress" "removed"
+
+reset_stubs; load
+make_origin_and_repo
+# The unclaimed counterpart of the case above: same shape (unpushed, no PR), but the issue's
+# labels do NOT include agent:in-progress (e.g. it was released back to agent:ready, or never
+# claimed under this number at all) — this orphan must still be reaped.
+git branch -f agent/910-released origin/main
+wtdir="$WORKROOT/wt-910"
+git worktree add -q "$wtdir" agent/910-released
+cat > "$BIN/fixture-issue-view-910.json" <<'JSON'
+{"labels":[{"name":"agent:ready"}]}
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && bad "an unpushed worktree with no PR yet, whose issue was released (not agent:in-progress), is removed" "still present at $wtdir" \
+  || ok "an unpushed worktree with no PR yet, whose issue was released (not agent:in-progress), is removed"
 
 reset_stubs; load
 make_origin_and_repo

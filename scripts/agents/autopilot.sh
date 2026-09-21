@@ -214,11 +214,17 @@ DISK_ALERT_PCENT="${DISK_ALERT_PCENT:-85}"
 # Removal conditions, either one:
 #   - a branch exists, and `gh pr list --head <branch>` finds a PR that is MERGED or CLOSED; or
 #   - a branch exists, but it no longer exists on `origin` at all (force-deleted, or an
-#     autopilot/PR merge already deleted it and this is just the leftover local worktree); or
+#     autopilot/PR merge already deleted it and this is just the leftover local worktree) —
+#     *and* the issue the branch names (`agent/<n>-...`) is not itself still `agent:in-progress`;
+#     or
 #   - HEAD is detached, and GitHub's commit->PR association finds a PR that is MERGED or CLOSED.
-# Anything else — no branch and no PR found, an OPEN PR, or a branch still present on `origin`
-# with no merged/closed PR — is left alone: that is the "never touch in-progress or open-PR"
-# guarantee, and it falls out of the matching rule rather than needing a separate label check.
+# Anything else — no branch and no PR found, an OPEN PR, a branch still present on `origin` with
+# no merged/closed PR, or a branch-gone-from-origin worktree whose issue is still
+# `agent:in-progress` — is left alone. Most of that is "never touch in-progress or open-PR"
+# falling out of the PR/branch matching rule with no extra check needed, but the last case is a
+# genuine exception: an unpushed worktree with no PR yet is, by git and PR state alone,
+# indistinguishable from an abandoned one, so that one case does need the issue's own label
+# checked explicitly (issue_still_in_progress) rather than being inferable from git/PR state.
 reap_worktrees() {
   local entries i path head branch removed=0
   entries=$(git worktree list --porcelain 2>/dev/null)
@@ -252,6 +258,33 @@ reap_worktrees() {
   fi
 }
 
+# Derives the issue number a managed branch was created for, from its name — developer and
+# reviewer worktrees are always branched as `agent/<n>-<slug>` (see the developer role prompt's
+# step 2, `git worktree add ../wt-<n> -b agent/<n>-<slug> ...`). Prints nothing (not an error) if
+# the branch does not match that shape, so callers can treat "no issue number" as "nothing to
+# check" rather than a failure.
+branch_issue_number() { # branch
+  case "$1" in
+    agent/[0-9]*)
+      local rest=${1#agent/}
+      rest=${rest%%-*}
+      case "$rest" in ''|*[!0-9]*) ;; *) printf '%s\n' "$rest" ;; esac
+      ;;
+  esac
+}
+
+# True (0) if issue $1's own labels still include agent:in-progress — the claim a developer or
+# reviewer run takes before it has anything to show for it (see the developer role prompt's step
+# 2). This is the one case reap_one_worktree cannot infer from PR/branch state alone: an unpushed
+# worktree with no PR yet is indistinguishable, by git or by `gh pr list`, from one whose run
+# simply died — the issue's own label is the only place that claim is still recorded.
+issue_still_in_progress() { # issue_number
+  local n="$1" labels
+  [ -n "$n" ] || return 1
+  labels=$(gh issue view "$n" -R "$REPO" --json labels -q '[.labels[].name] | join(" ")' 2>/dev/null)
+  case " $labels " in *" agent:in-progress "*) return 0 ;; *) return 1 ;; esac
+}
+
 # One worktree entry from reap_worktrees's parse: path, HEAD sha, branch name (empty if detached).
 # Never called for entry 0 (the toplevel/pinned checkout — reap_worktrees's own loop index guards
 # that). Only acts on paths that look like a developer or reviewer scratch worktree; anything else
@@ -279,6 +312,17 @@ reap_one_worktree() { # path head branch
         # origin (deleted by hand, or a squash-merge whose PR lookup above raced the delete) — a
         # branch that exists nowhere is not "in progress" by any definition.
         if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+          return 1
+        fi
+        # The branch is gone from origin too, so the usual signals say "orphaned, remove it" —
+        # except issue #567's review found that an unpushed worktree for a still-claimed issue
+        # (agent:in-progress) reaches this exact path: no PR yet because nothing has been pushed,
+        # no remote branch because it was never pushed, and yet the run behind it may simply still
+        # be in flight. The issue's own label is the one signal that is not derived from git/PR
+        # state at all, so it is checked last and wins over everything above: never remove a
+        # worktree whose issue is still claimed, no matter how orphaned it looks by git alone.
+        if issue_still_in_progress "$(branch_issue_number "$branch")"; then
+          log "reap_worktrees: $path — branch $branch has no PR and no remote branch, but issue is still agent:in-progress; keeping"
           return 1
         fi
         log "reap_worktrees: $path — branch $branch no longer exists on origin; removing"
