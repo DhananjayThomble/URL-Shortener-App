@@ -3,9 +3,9 @@
 #
 #   HOURS=6 bash scripts/agents/autopilot.sh
 #
-# Each cycle: kill-switch check → engine mode → dirty-checkout check → manager → reviewer →
-# merge approved PRs → developer(s) → every SLOT_EVERY cycles, one ROTATION role (default: cloud)
-# → sleep.
+# Each cycle: kill-switch check → engine mode → dirty-checkout check → stuck-PR guard → manager →
+# reviewer → merge approved PRs → developer(s) → every SLOT_EVERY cycles, one ROTATION role
+# (default: cloud) → sleep.
 # Any role runs on Claude Code or Kiro CLI; see "Engines" below and docs/AGENTIC-DEV.md.
 set -uo pipefail
 # Without the guard a failed rev-parse would leave the loop running in whatever directory it
@@ -523,6 +523,45 @@ approval_holds() { # pr approved-sha head-sha
   [ "$(patch_id "$2")" = "$(patch_id "$3")" ]
 }
 
+# A PR can bounce between the developer and the reviewer forever if the reviewer's remaining
+# request is something the developer's token cannot push (a `.github/workflows/*` edit — see
+# issue #548). Nothing else ends that loop: the developer re-reads the same review, cannot act on
+# the workflow part, and re-opens; the reviewer re-finds the same gap next round. PR #509 did this
+# 7 times over 39 hours before a human intervened.
+#
+# This is a backstop independent of *why* a PR is stuck — the workflow case is the one observed
+# in production, but the guard is cause-agnostic by design: any PR that has been sent back
+# `agent:changes-requested` this many times without merging is no longer profitably automatable
+# and should wait for a human rather than spend another round. STUCK_ROUNDS_MAX is the threshold;
+# 4 matches issue #548's "4 or more rounds" acceptance criterion.
+STUCK_ROUNDS_MAX="${STUCK_ROUNDS_MAX:-4}"
+
+# Labels every open PR that has accumulated STUCK_ROUNDS_MAX+ rounds of agent:changes-requested
+# with needs-human instead, once, with one explanatory comment. Runs before the reviewer each
+# cycle so a stuck PR is pulled off the board before it burns another round.
+# Labels every open PR that has accumulated STUCK_ROUNDS_MAX+ rounds of agent:changes-requested
+# with needs-human instead, once, with one explanatory comment. Runs before the reviewer each
+# cycle so a stuck PR is pulled off the board before it burns another round.
+guard_stuck_prs() {
+  local prs
+  prs=$(gh pr list -R "$REPO" --state open --label agent:changes-requested --json number -q '.[].number')
+  for n in $prs; do
+    local info labels rounds
+    info=$(gh pr view "$n" -R "$REPO" --json labels)
+    labels=$(jq -r '[.labels[].name] | join(",")' <<<"$info")
+    case ",$labels," in *,needs-human,*) continue ;; esac
+
+    rounds=$(gh api "repos/$REPO/issues/$n/events" --paginate \
+      -q '[.[] | select(.event=="labeled" and .label.name=="agent:changes-requested")] | length' \
+      2>/dev/null) || rounds=0
+    [ "$rounds" -ge "$STUCK_ROUNDS_MAX" ] 2>/dev/null || continue
+
+    log "PR #$n: $rounds rounds of agent:changes-requested (>= $STUCK_ROUNDS_MAX); routing to a human instead of retrying"
+    gh pr edit "$n" -R "$REPO" --remove-label agent:changes-requested --add-label needs-human >/dev/null
+    gh pr comment "$n" -R "$REPO" --body "Autopilot: this PR has been sent back \`agent:changes-requested\` $rounds times without merging (limit $STUCK_ROUNDS_MAX). Labelling \`needs-human\` instead of assigning it back to a developer — a loop this long usually means the remaining blocker needs a human, not another round (see #548). If the blocker is later cleared, remove \`needs-human\` and re-add \`agent:ready\`/\`agent:changes-requested\` as appropriate to put it back in rotation." >/dev/null
+  done
+}
+
 merge_approved() {
   local prs
   prs=$(gh pr list -R "$REPO" --state open --label agent:approved --json number -q '.[].number')
@@ -618,6 +657,10 @@ run_cycle() {
   check_checkout_clean
   # Shared memory lives in the ops repo; pull before any agent reads it, push after they write.
   ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
+
+  # Runs before the reviewer so a PR that has already bounced STUCK_ROUNDS_MAX times is pulled
+  # off the board before another round is spent re-reviewing it (issue #548).
+  guard_stuck_prs
 
   # Each role runs regardless of how the one before it fared: a limit on one engine, or one
   # agent failing, must not stop the work the other engine can still do.
