@@ -318,13 +318,19 @@ pause_factory() { # reason
 # allowance on Tuesday would still be stopped on Friday, waiting for a human who is away. Idle
 # instead, and resume by itself. Re-checked every 5 minutes so raising the ceiling also resumes it.
 wait_out_budget() {
-  local nap
+  local nap remaining
   alert "day budget of $CREDIT_CEILING_DAY credits reached ($(cat "$(credit_file)" 2>/dev/null) spent); idling until midnight $(TZ="$DISPLAY_TZ" date +%Z)"
   while over_budget; do
-    [ "$(date +%s)" -lt "$END" ] || { log "shift ended while over budget"; return 1; }
+    remaining=$(( END - $(date +%s) ))
+    [ "$remaining" -gt 0 ] || { log "shift ended while over budget"; return 1; }
     paused && { log "paused while over budget"; return 1; }
     nap=$(( $(TZ="$DISPLAY_TZ" date -d 'tomorrow 00:00' +%s 2>/dev/null || echo 0) - $(date +%s) ))
     { [ "$nap" -gt 300 ] || [ "$nap" -le 0 ]; } && nap=300
+    # Never sleep past the shift's own end: a nap that overshoots END means the loop only notices
+    # the shift ended on the iteration *after* the one that should have caught it — up to 300s
+    # late, and the reason the #542 test raced against its own 2-second budget instead of
+    # observing the check that was supposed to end it.
+    [ "$nap" -gt "$remaining" ] && nap="$remaining"
     sleep "$nap"
   done
   log "budget window rolled over; resuming"
