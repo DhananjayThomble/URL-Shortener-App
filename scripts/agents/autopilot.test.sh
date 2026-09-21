@@ -875,6 +875,96 @@ guard_stuck_prs >/dev/null 2>&1
 contains "$(cat "$BIN/gh.calls")" "pr edit 512 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" "a lower STUCK_ROUNDS_MAX fires at 2 rounds"
 
 # ---------------------------------------------------------------------------------------------
+section "run_cycle: guard_stuck_prs actually runs as part of the real cycle, not just standalone"
+# ---------------------------------------------------------------------------------------------
+# The four cases above call guard_stuck_prs() directly, which proves the helper works but not
+# that run_cycle's own body still calls it — a call site can be deleted from run_cycle while
+# every case above stays green, exactly the class of regression the token-refresh call sites
+# already guard against elsewhere in this file. This drives run_cycle itself (DEVS_PER_CYCLE=0,
+# empty ROTATION, so nothing else in the cycle can touch PR #513's labels) with a PR fixture at
+# the stuck threshold, and checks for guard_stuck_prs's real side effect: the gh pr edit that
+# swaps agent:changes-requested for needs-human.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":513}]
+JSON
+cat > "$BIN/fixture-pr-view-513.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"}]}
+JSON
+cat > "$BIN/fixture-events-513.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr edit 513 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" \
+  "run_cycle's real scheduling path routes a stuck PR to needs-human, i.e. it still calls guard_stuck_prs"
+
+# Reproduce the reviewer's mutation: guard_stuck_prs's call site removed from run_cycle's body,
+# everything else unchanged, to prove this exact case is the one that would catch its absence.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":513}]
+JSON
+cat > "$BIN/fixture-pr-view-513.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"}]}
+JSON
+cat > "$BIN/fixture-events-513.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+run_cycle() {
+  if paused; then log "paused"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  CYCLE_WORKED=0; CYCLE_BROKEN=0
+  git fetch -q origin 2>/dev/null
+  check_checkout_clean
+  ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
+  # guard_stuck_prs call deliberately omitted here, matching the reviewer's mutation
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
+  run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
+  ops_push
+  refresh_and_merge
+  for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
+    paused && break
+    run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
+  done
+  refresh_gh_token
+  ops_push
+  if [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
+    slot=${ROTATION[$(( slot_n % ${#ROTATION[@]} ))]}
+    slot_n=$((slot_n + 1))
+    role=${slot%%:*}; focus=${slot#*:}
+    paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+    refresh_gh_token
+    ops_push
+  fi
+  digest_daily
+  return 0
+}
+run_cycle >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr edit 513 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" \
+  "mutant sanity check: with guard_stuck_prs's call site removed from run_cycle, PR #513 is never routed to needs-human, confirming this case would catch the call site's absence"
+
+# ---------------------------------------------------------------------------------------------
 section "engine selection and cooldown"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
