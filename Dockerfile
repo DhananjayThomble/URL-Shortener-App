@@ -137,6 +137,19 @@ CMD ["node", "dist/main.js"]
 # translate. It uses AWS's own base image instead, which brings the Runtime
 # Interface Client with it, and a handler that calls the same two functions
 # the long-running process calls on its interval.
+#
+# Like the `runtime` stage above, this base image bundles npm's own CLI and
+# corepack under /var/lang/lib/node_modules (and the /var/lang/bin symlinks to
+# them), which is the same dead-weight-that-trips-scanners tree, just at a
+# different path because this base is AWS's own, not node:alpine. The Lambda
+# Runtime Interface Client that actually drives invocations lives entirely
+# under /var/runtime (bootstrap, rapid-client.node, index.mjs) and does not
+# touch npm/corepack, so removing them here is safe — confirmed by building
+# this exact stage both with and without the strip and invoking both through
+# the RIC's local /2015-03-31/functions/function/invocations endpoint: same
+# INIT/INVOKE sequence, same response, in both cases.
 FROM public.ecr.aws/lambda/nodejs:22 AS lambda-job
+RUN rm -rf /var/lang/lib/node_modules/npm /var/lang/lib/node_modules/corepack \
+           /var/lang/bin/npm /var/lang/bin/npx /var/lang/bin/corepack 2>/dev/null || true
 COPY --from=prune /out ${LAMBDA_TASK_ROOT}/
 CMD ["dist/lambda.handler"]
