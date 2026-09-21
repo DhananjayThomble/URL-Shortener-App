@@ -226,29 +226,36 @@ DISK_ALERT_PCENT="${DISK_ALERT_PCENT:-85}"
 # indistinguishable from an abandoned one, so that one case does need the issue's own label
 # checked explicitly (issue_still_in_progress) rather than being inferable from git/PR state.
 reap_worktrees() {
-  local entries i path head branch removed=0
+  # cur_i is the index of the entry currently held in path/head/branch — i.e. the entry that will
+  # be flushed next. next_i is the index the *following* "worktree " line will claim. They must be
+  # tracked separately: incrementing a single counter at "see a new worktree line" time (as an
+  # earlier version of this function did) makes it read as the index of the entry about to be
+  # *started*, not the one about to be *flushed*, so by the time entry 0 (the pinned checkout) is
+  # flushed on the second "worktree " line, the counter has already moved to 1 and the `-gt 0`
+  # guard no longer excludes it. Issue #567's third review round caught this: only git's own
+  # refusal to remove the worktree containing the current directory was masking it.
+  local entries cur_i next_i path head branch removed=0
   entries=$(git worktree list --porcelain 2>/dev/null)
   [ -n "$entries" ] || return 0
 
   path=""; head=""; branch=""
-  i=0
+  cur_i=""; next_i=0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "worktree "*)
-        # Flush the previous entry (if any) before starting the next.
-        if [ -n "$path" ] && [ "$i" -gt 0 ]; then
+        if [ -n "$path" ] && [ -n "$cur_i" ] && [ "$cur_i" -gt 0 ]; then
           reap_one_worktree "$path" "$head" "$branch" && removed=$((removed + 1))
         fi
         path=${line#worktree }
         head=""; branch=""
-        i=$((i + 1))
+        cur_i=$next_i
+        next_i=$((next_i + 1))
         ;;
       "HEAD "*) head=${line#HEAD } ;;
       "branch "*) branch=${line#branch refs/heads/} ;;
     esac
   done <<<"$entries"
-  # Flush the last entry the loop above collected but had no next "worktree" line to trigger on.
-  if [ -n "$path" ] && [ "$i" -gt 0 ]; then
+  if [ -n "$path" ] && [ -n "$cur_i" ] && [ "$cur_i" -gt 0 ]; then
     reap_one_worktree "$path" "$head" "$branch" && removed=$((removed + 1))
   fi
 
@@ -289,14 +296,25 @@ issue_still_in_progress() { # issue_number
 # Never called for entry 0 (the toplevel/pinned checkout — reap_worktrees's own loop index guards
 # that). Only acts on paths that look like a developer or reviewer scratch worktree; anything else
 # on the host is left alone even if this function is somehow reached for it.
+#
+# issue #567's second review round: the agent:in-progress guard must hold for EVERY removal path,
+# not only the no-PR/branch-gone-from-origin one it was first added to. A MERGED/CLOSED PR or a
+# merged/closed detached-HEAD commit is a strong signal on its own, but a mislabelled issue (the
+# label never cleared, or a race between a merge and the label update) is still possible, and #564
+# says "never remove a worktree whose issue has agent:in-progress" without carving out an exception
+# for the other signals being strong. So the label check now runs once, as the last gate immediately
+# before the actual `git worktree remove` call below, for every path that can name an issue at all
+# (both branch shapes, and a detached HEAD whose PR number `gh` can report) — never only for the
+# orphaned-branch path.
 reap_one_worktree() { # path head branch
-  local path="$1" head="$2" branch="$3" state=""
+  local path="$1" head="$2" branch="$3" state="" issue=""
   case "$(basename "$path")" in
     wt-[0-9]*|wt-review-[0-9]*) ;;
     *) return 1 ;;
   esac
 
   if [ -n "$branch" ]; then
+    issue=$(branch_issue_number "$branch")
     state=$(gh pr list -R "$REPO" --head "$branch" --state all --json state -q '.[0].state // ""' 2>/dev/null)
     case "$state" in
       MERGED|CLOSED)
@@ -314,17 +332,6 @@ reap_one_worktree() { # path head branch
         if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
           return 1
         fi
-        # The branch is gone from origin too, so the usual signals say "orphaned, remove it" —
-        # except issue #567's review found that an unpushed worktree for a still-claimed issue
-        # (agent:in-progress) reaches this exact path: no PR yet because nothing has been pushed,
-        # no remote branch because it was never pushed, and yet the run behind it may simply still
-        # be in flight. The issue's own label is the one signal that is not derived from git/PR
-        # state at all, so it is checked last and wins over everything above: never remove a
-        # worktree whose issue is still claimed, no matter how orphaned it looks by git alone.
-        if issue_still_in_progress "$(branch_issue_number "$branch")"; then
-          log "reap_worktrees: $path — branch $branch has no PR and no remote branch, but issue is still agent:in-progress; keeping"
-          return 1
-        fi
         log "reap_worktrees: $path — branch $branch no longer exists on origin; removing"
         ;;
     esac
@@ -334,12 +341,24 @@ reap_one_worktree() { # path head branch
     # trees are always checked out at an already-existing commit from a PR under review, never a
     # fresh commit of their own the way a developer worktree's first cycle would be.
     [ -n "$head" ] || return 1
-    state=$(gh api graphql -f query="{ repository(owner:\"${REPO%%/*}\", name:\"${REPO#*/}\") { object(expression: \"$head\") { ... on Commit { associatedPullRequests(first: 1) { nodes { state } } } } } }" \
-      -q '.data.repository.object.associatedPullRequests.nodes[0].state // ""' 2>/dev/null)
+    local pr_json
+    pr_json=$(gh api graphql -f query="{ repository(owner:\"${REPO%%/*}\", name:\"${REPO#*/}\") { object(expression: \"$head\") { ... on Commit { associatedPullRequests(first: 1) { nodes { state number } } } } } }" 2>/dev/null)
+    state=$(printf '%s' "$pr_json" | jq -r '.data.repository.object.associatedPullRequests.nodes[0].state // ""' 2>/dev/null)
+    issue=$(printf '%s' "$pr_json" | jq -r '.data.repository.object.associatedPullRequests.nodes[0].number // ""' 2>/dev/null)
     if [ "$state" != "MERGED" ] && [ "$state" != "CLOSED" ]; then
       return 1
     fi
     log "reap_worktrees: $path — detached at $head, associated PR is $state; removing"
+  fi
+
+  # The one check that applies to every path above, right before the actual removal: issue #567's
+  # review found this reachable only from the orphaned-branch case; a MERGED/CLOSED PR or detached
+  # commit skipped it entirely. The label is the one signal not derived from git/PR state at all
+  # (see issue_still_in_progress's own comment), so it wins over every other signal above,
+  # regardless of how strongly that signal says "done".
+  if issue_still_in_progress "$issue"; then
+    log "reap_worktrees: $path — otherwise reapable, but issue #$issue is still agent:in-progress; keeping"
+    return 1
   fi
 
   git worktree remove --force "$path" 2>/dev/null || { log "reap_worktrees: failed to remove $path"; return 1; }

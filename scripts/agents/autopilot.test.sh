@@ -123,8 +123,13 @@ case "\$*" in
     # escaped '"' inside a double-quoted string, not a literal backslash-quote pair on the wire).
     sha=\$(printf '%s\\n' "\$*" | sed -n 's/.*expression: *"\\([^"]*\\)".*/\\1/p')
     state=\$(cat "$BIN/fixture-graphql-\$sha.state" 2>/dev/null || echo "")
+    # Optional companion fixture: the PR number reap_one_worktree now reads alongside state, to
+    # look up issue_still_in_progress for a detached-HEAD worktree. Absent means "no number" —
+    # issue_still_in_progress on an empty string is just "not in progress", same as any other
+    # unclaimed/unknown case.
+    num=\$(cat "$BIN/fixture-graphql-\$sha.number" 2>/dev/null || echo "")
     if [ -n "\$state" ]; then
-      json=\$(printf '{"data":{"repository":{"object":{"associatedPullRequests":{"nodes":[{"state":"%s"}]}}}}}\n' "\$state")
+      json=\$(printf '{"data":{"repository":{"object":{"associatedPullRequests":{"nodes":[{"state":"%s","number":%s}]}}}}}\n' "\$state" "\${num:-null}")
     else
       json='{"data":{"repository":{"object":{"associatedPullRequests":{"nodes":[]}}}}}'
     fi
@@ -1758,6 +1763,25 @@ if [ -d "$wtdir" ]; then bad "a worktree whose branch's PR is MERGED is removed"
 
 reset_stubs; load
 make_origin_and_repo
+# Issue #567's third review round: the agent:in-progress guard must hold on the MERGED path too,
+# not only the no-PR/branch-gone-from-origin path it was first added to. A merged PR is a strong
+# signal, but a mislabelled issue (label never cleared, or a race between the merge and the label
+# update) is still possible, and #564 carves out no exception for that.
+git branch -f agent/912-merged-but-claimed origin/main
+wtdir="$WORKROOT/wt-912"
+git worktree add -q "$wtdir" agent/912-merged-but-claimed
+cat > "$BIN/fixture-pr-head-agent_912-merged-but-claimed.json" <<'JSON'
+[{"state":"MERGED"}]
+JSON
+cat > "$BIN/fixture-issue-view-912.json" <<'JSON'
+{"labels":[{"name":"agent:in-progress"}]}
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a worktree whose branch's PR is MERGED is still kept if its issue is still agent:in-progress" \
+  || bad "a worktree whose branch's PR is MERGED is still kept if its issue is still agent:in-progress" "removed"
+
+reset_stubs; load
+make_origin_and_repo
 git branch -f agent/901-open-pr origin/main
 wtdir="$WORKROOT/wt-901"
 git worktree add -q "$wtdir" agent/901-open-pr
@@ -1860,6 +1884,24 @@ if [ -d "$wtdir" ]; then bad "a detached reviewer scratch worktree at a merged P
 
 reset_stubs; load
 make_origin_and_repo
+# Issue #567's third review round, detached-HEAD counterpart of wt-912 above: the
+# agent:in-progress guard must also hold when the removal signal comes from the detached-HEAD
+# commit->PR association, not only the branch-name path.
+git checkout -q --detach HEAD
+wtdir="$WORKROOT/wt-review-913"
+git worktree add -q --detach "$wtdir" HEAD
+head_sha=$(git -C "$wtdir" rev-parse HEAD)
+echo "MERGED" > "$BIN/fixture-graphql-$head_sha.state"
+echo "913" > "$BIN/fixture-graphql-$head_sha.number"
+cat > "$BIN/fixture-issue-view-913.json" <<'JSON'
+{"labels":[{"name":"agent:in-progress"}]}
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a detached reviewer scratch worktree at a merged PR's commit is still kept if its issue is still agent:in-progress" \
+  || bad "a detached reviewer scratch worktree at a merged PR's commit is still kept if its issue is still agent:in-progress" "removed"
+
+reset_stubs; load
+make_origin_and_repo
 git checkout -q --detach HEAD
 wtdir="$WORKROOT/wt-review-906"
 git worktree add -q --detach "$wtdir" HEAD
@@ -1890,6 +1932,12 @@ reset_stubs; load
 # branch's PR is merged — entry 0 is skipped unconditionally by loop position, never by name.
 # `load()` already cd'd into the throwaway repo; renaming it to look like a managed worktree
 # proves the exclusion is positional, not name-based.
+#
+# Issue #567's third review round: this case originally had only ONE worktree entry (the pinned
+# checkout itself), so the guard's own off-by-one never had a second "worktree" line to trigger
+# the flush on — `git worktree remove` on the current directory failed and masked the bug instead
+# of the positional guard catching it. A second, genuinely reapable worktree is added below
+# specifically to exercise that flush path: entry 0 must survive AND entry 1 must still be removed.
 make_origin_and_repo
 git checkout -q -b agent/908-pinned
 pinned_dir=$(pwd)
@@ -1899,20 +1947,62 @@ cd "$renamed_dir" || exit 1
 cat > "$BIN/fixture-pr-head-agent_908-pinned.json" <<'JSON'
 [{"state":"MERGED"}]
 JSON
+git branch -f agent/911-second-entry origin/main
+second_wtdir="$WORKROOT/wt-911"
+git worktree add -q "$second_wtdir" agent/911-second-entry
+cat > "$BIN/fixture-pr-head-agent_911-second-entry.json" <<'JSON'
+[{"state":"MERGED"}]
+JSON
 reap_worktrees >/dev/null 2>&1
 [ -d "$renamed_dir/.git" ] && ok "the pinned/main checkout is never removed even if its own directory name and branch's PR look reapable" \
   || bad "the pinned/main checkout is never removed even if its own directory name and branch's PR look reapable" "gone"
+[ -d "$second_wtdir" ] && bad "a second, genuinely reapable worktree after the pinned entry is still removed (exercises the flush path)" "still present at $second_wtdir" \
+  || ok "a second, genuinely reapable worktree after the pinned entry is still removed (exercises the flush path)"
+
+reset_stubs; load
+# Same shape as the case above, but proving the invariant directly instead of through git's
+# behavior. Investigating the "current-directory removal" refusal the third review round
+# described turned up that `git worktree remove` actually refuses to remove the *main* working
+# tree (git worktree list's entry 0) unconditionally — regardless of which directory is current —
+# not specifically a CWD-based refusal; a plain reproduction confirmed a second, non-main worktree
+# removes cleanly even when CWD is a third, unrelated worktree. So the existing pinned-checkout
+# case above was already exercising a real bug (entry 0 does reach reap_one_worktree on the
+# buggy single-counter version) and already passes on the fix, but it can only ever observe that
+# via a git-level refusal it doesn't control — it can't observe the actual documented invariant
+# ("never called for entry 0") failing to hold. This case overrides reap_one_worktree with a spy
+# so the assertion is directly about what reap_worktrees calls it with, independent of git's own,
+# separate protection of the main working tree.
+make_origin_and_repo
+git checkout -q -b agent/914-pinned-elsewhere
+pinned_dir2=$(pwd)
+renamed_dir2="$(dirname "$pinned_dir2")/wt-914"
+mv "$pinned_dir2" "$renamed_dir2"
+cd "$renamed_dir2" || exit 1
+git branch -f agent/915-second-elsewhere origin/main
+third_wtdir="$WORKROOT/wt-915"
+git worktree add -q "$third_wtdir" agent/915-second-elsewhere
+calls_file="$STATE_DIR/reap-one-calls.txt"
+mkdir -p "$STATE_DIR"
+# shellcheck disable=SC2317  # invoked indirectly, via reap_worktrees below
+reap_one_worktree() { printf '%s\n' "$1" >> "$calls_file"; [ "$1" = "$third_wtdir" ]; }
+reap_worktrees >/dev/null 2>&1
+unset -f reap_one_worktree
+calls=$(cat "$calls_file" 2>/dev/null || echo "")
+lacks "$calls" "$renamed_dir2" "the pinned checkout (entry 0) is never passed to reap_one_worktree, even when a later entry triggers the flush"
+contains "$calls" "$third_wtdir" "the second, genuinely reapable worktree (entry 1) is still passed to reap_one_worktree"
 
 # ---------------------------------------------------------------------------------------------
 section "prune_images_if_low_disk: only prunes images, and only under real disk pressure"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 disk_pcent() { echo 42; }   # overrides the real df-based function for this case
 prune_images_if_low_disk >/dev/null 2>&1
 lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune" "below DISK_PRUNE_PCENT, docker is never invoked at all"
 unset -f disk_pcent
 
 reset_stubs; load
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 disk_pcent() { echo 92; }
 echo 0 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
@@ -1923,6 +2013,7 @@ lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "builder prune" "this function do
 unset -f disk_pcent
 
 reset_stubs; load
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 disk_pcent() { echo 92; }
 echo 1 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
@@ -1931,6 +2022,7 @@ unset -f disk_pcent
 
 reset_stubs; load
 # Still above DISK_ALERT_PCENT after pruning: a human needs to know before the disk actually fills.
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 disk_pcent() { echo 90; }
 echo 0 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
@@ -1938,6 +2030,7 @@ contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "disk still at 90%" "still
 unset -f disk_pcent
 
 reset_stubs; load
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 disk_pcent() { echo 82; }  # above prune threshold (80) but below alert threshold (85)
 echo 0 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
@@ -1950,8 +2043,11 @@ section "run_cycle: reap_worktrees and prune_images_if_low_disk run every cycle,
 reset_stubs; load
 called_file="$STATE_DIR/reap-and-prune-order.txt"
 mkdir -p "$STATE_DIR"
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 reap_worktrees() { echo reap >> "$called_file"; }
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 prune_images_if_low_disk() { echo prune >> "$called_file"; }
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 check_checkout_clean() { echo checkout >> "$called_file"; }
 echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
 DEVS_PER_CYCLE=0; ROTATION=(); cycle=0; slot_n=0; broken_streak=0; MODE=auto
@@ -1966,7 +2062,9 @@ unset -f reap_worktrees prune_images_if_low_disk check_checkout_clean
 reset_stubs; load
 called_file="$STATE_DIR/reap-and-prune-mutant.txt"
 mkdir -p "$STATE_DIR"
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 reap_worktrees() { echo reap >> "$called_file"; }
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 prune_images_if_low_disk() { echo prune >> "$called_file"; }
 echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
 DEVS_PER_CYCLE=0; ROTATION=(); cycle=0; slot_n=0; broken_streak=0; MODE=auto
