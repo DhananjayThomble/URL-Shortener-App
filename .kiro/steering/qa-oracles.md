@@ -153,3 +153,28 @@ the oracle the expectation came from. One issue per defect. A finding that lives
 only in a markdown file evaporates — but **only adjudicated findings get filed**,
 and adjudication is not yours to do (§2). Issues filed by the reviewer agent carry
 the `qa:agent-confirmed` label so the maintainer can audit them.
+
+**Exception — adversarial (L5) findings with a live exploit never go to the
+public issue tracker.** A working proof-of-concept for an open redirect, stored
+XSS, auth bypass, or workspace-isolation break is immediately usable against
+every running instance, including self-hosted ones that have not patched yet.
+Publishing one in a public issue before a fix exists puts those operators at
+risk — this is why #565 exists. For that class of finding:
+
+1. Do not file a public GitHub issue, even in draft or with redaction planned
+   for later. Draft it privately first.
+2. Report through the private channel in [`SECURITY.md`](../../SECURITY.md) —
+   GitHub Security Advisories ("Report a vulnerability" on the Security tab).
+   That thread is visible only to the reporter and the maintainers.
+3. Still write the finding to `.qa-runs/<run-id>/findings.jsonl` per §3 — the
+   evidence contract does not change, only the disclosure surface does. Note
+   in the finding's `notes` field that it was additionally reported via the
+   private channel, and when.
+4. Adjudication (§2) still is not yours to do. The private advisory thread is
+   where the maintainer confirms and coordinates a fix; it does not bypass the
+   rule that you don't self-adjudicate.
+
+Findings that are not exploitable in their current form (e.g. a suspicious
+pattern with no working PoC, or a hardening gap with no demonstrated impact)
+are not L5 live-exploit findings for the purpose of this exception and follow
+the normal public-issue path above.
