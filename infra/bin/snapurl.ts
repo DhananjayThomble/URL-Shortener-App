@@ -2,14 +2,45 @@
 import { App, Stack } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { SnapUrlStack } from "../lib/snapurl-stack.js";
+import { resolveEnv } from "./resolve-env.js";
 
 /* Region and account come from the CLI environment, not from this file, so
    the same stack can be synthesised by anyone without editing it. */
 const app = new App();
 
-const account = process.env.CDK_DEFAULT_ACCOUNT;
-// ap-south-1 (Mumbai) matches the project's timezone and its users.
-const region = process.env.CDK_DEFAULT_REGION ?? "ap-south-1";
+/* `-c account=...`/`-c region=...` are the ONLY way to give this stack a
+   concrete account. Reading `CDK_DEFAULT_ACCOUNT`/`CDK_DEFAULT_REGION` does
+   not work as a hermetic default: the `cdk` CLI injects both into the app's
+   process env on EVERY invocation, populated from whatever ambient AWS
+   credentials it can find (an instance role, a CI runner's OIDC-assumed
+   role, anything) — unconditionally, regardless of whether the invoking
+   shell exported them itself. That made every stack account-specific the
+   moment a host had *any* AWS identity, which is exactly what makes
+   `ec2.Vpc` (`lib/snapurl-stack.ts`) validate `maxAzs` against
+   `Stack.availabilityZones`, triggering a live `ec2:DescribeAvailabilityZones`
+   context lookup during plain `cdk synth` — and failing outright if that
+   identity lacks the permission, on a system that is not supposed to need
+   any AWS access to synth at all (issue #481). deploy.sh passes
+   `-c account=`/`-c region=` explicitly (still sourced from the same
+   CDK_DEFAULT_ACCOUNT/CDK_DEFAULT_REGION env vars an operator already sets)
+   for a real deploy. Left unset — the default for a bare `cdk synth`, an
+   agent's or a contributor's case, and the one issue #481 is about —
+   `account` stays undefined so CDK fills in deterministic dummy AZs instead
+   of asking AWS, while `region` stays concrete (defaulting to ap-south-1):
+   a partially-agnostic env (account absent, region present) is what CDK
+   needs to skip the AZ lookup, and it is also what the SnapUrlCert stack
+   below needs to keep resolving to a fixed us-east-1/ap-south-1 pair on the
+   offline synth path — see resolve-env.ts for exactly which combinations
+   trigger the lookup and why account-only-undefined does not.
+
+   NOTE: `.github/workflows/deploy-aws.yml`'s `plan` job invokes `cdk diff`
+   directly (not via deploy.sh) and currently relies on the ambient
+   CDK_DEFAULT_ACCOUNT/CDK_DEFAULT_REGION injection this change removes — it
+   needs a matching `-c account=`/`-c region=` update to keep working. Left
+   unchanged here because the agent making this fix does not have the
+   `workflow` OAuth scope needed to push a `.github/workflows/*` change (same
+   constraint as issue #480); flagged in the PR for the maintainer. */
+const { account, region } = resolveEnv(app);
 
 /* Custom domain on the CloudFront distribution (the redirect/short-link
    edge). Optional — unset means the raw *.cloudfront.net hostname, exactly
