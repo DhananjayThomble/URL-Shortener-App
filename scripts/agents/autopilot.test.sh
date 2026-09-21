@@ -57,6 +57,18 @@ STUB
     chmod +x "$BIN/$engine"
   done
 
+  # Records every invocation for prune_images_if_low_disk's tests; exit code is scriptable via
+  # docker.rc the same way the engine stubs work, so a case can prove a failed prune is swallowed.
+  cat >"$BIN/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/docker.calls"
+case "\$*" in
+  *"system df --format"*) cat "$BIN/docker.dfout" 2>/dev/null || true ;;
+esac
+exit \$(cat "$BIN/docker.rc" 2>/dev/null || echo 0)
+STUB
+  chmod +x "$BIN/docker"
+
   # gh is only asked things the tests care about; anything else is a silent success so that helper
   # calls (labels, comments) cannot fail a case for the wrong reason.
   #
@@ -90,10 +102,42 @@ fixture=''
 case "\$*" in
   *"pr list"*"--label agent:approved"*) fixture="$BIN/fixture-pr-approved.json" ;;
   *"pr list"*"--label agent:changes-requested"*) fixture="$BIN/fixture-pr-stuck.json" ;;
+  *"pr list"*"--head "*)
+    branch=''; prev2=''
+    for a in "\$@"; do [ "\$prev2" = "--head" ] && branch="\$a"; prev2="\$a"; done
+    fixture="$BIN/fixture-pr-head-\${branch//\//_}.json"
+    ;;
   *"pr list"*"--state open"*)   fixture="$BIN/fixture-pr-open.json" ;;
   *"pr list"*"--state merged"*) fixture="$BIN/fixture-pr-merged.json" ;;
   *"issue list"*"label decision"*)     fixture="$BIN/fixture-issue-decision.json" ;;
   *"issue list"*"label agent:blocked"*) fixture="$BIN/fixture-issue-blocked.json" ;;
+esac
+
+case "\$*" in
+  *"api graphql"*)
+    # reap_worktrees's detached-HEAD path: associatedPullRequests keyed on a commit SHA embedded
+    # in the -f query="..." argument, since graphql has no separate --field for it in this call.
+    # Extracted with sed rather than a shell case/parameter-expansion pair, matching a plain
+    # double quote either side (the query string the real script builds has ordinary '"'
+    # characters by the time the shell hands \$* to this stub — its own source's \\" is just an
+    # escaped '"' inside a double-quoted string, not a literal backslash-quote pair on the wire).
+    sha=\$(printf '%s\\n' "\$*" | sed -n 's/.*expression: *"\\([^"]*\\)".*/\\1/p')
+    state=\$(cat "$BIN/fixture-graphql-\$sha.state" 2>/dev/null || echo "")
+    if [ -n "\$state" ]; then
+      json=\$(printf '{"data":{"repository":{"object":{"associatedPullRequests":{"nodes":[{"state":"%s"}]}}}}}\n' "\$state")
+    else
+      json='{"data":{"repository":{"object":{"associatedPullRequests":{"nodes":[]}}}}}'
+    fi
+    # Real gh applies -q itself; this stub must too, or a case asserting on the filtered value
+    # (rather than the raw envelope) would pass on a broken filter the same way the pre-existing
+    # comment above the fixture case warns about.
+    if [ -n "\$filter" ]; then
+      printf '%s\n' "\$json" | jq -r "\$filter" || { echo "STUB_JQ_FAILED" >> "$BIN/gh.jqfail"; exit 1; }
+    else
+      printf '%s\n' "\$json"
+    fi
+    exit 0
+    ;;
 esac
 
 case "\$*" in
@@ -170,7 +214,8 @@ reset_stubs() {
   rm -f "$BIN"/*.calls "$BIN"/*.rc "$BIN"/*.out "$BIN"/gh.paused "$BIN"/gh.enginelabels \
         "$BIN"/gh.digestissue "$BIN"/gh.jqfail "$BIN"/gh.lastbody "$BIN"/fixture-*.json \
         "$BIN"/gh.prmerge-*.rc "$BIN"/*.gh_token_seen "$BIN"/gh.merge_gh_token_seen \
-        "$BIN"/gh.clone_gh_token_seen "$BIN"/gh.paused.fail_until_token
+        "$BIN"/gh.clone_gh_token_seen "$BIN"/gh.paused.fail_until_token \
+        "$BIN"/fixture-graphql-*.state "$BIN"/docker.calls "$BIN"/docker.rc "$BIN"/docker.dfout
   make_stubs
   echo 0 > "$BIN/gh.paused"
   echo '[]' > "$BIN/fixture-events-empty.json"
@@ -213,6 +258,10 @@ GITIGNORE
   # shellcheck disable=SC1090
   source "$SRC"
   MODE=auto
+  # Tests must not depend on the disk usage of whatever host happens to run them — overridden here
+  # to a fixed, safely-below-threshold value; a case that specifically exercises
+  # prune_images_if_low_disk's own threshold logic redefines this itself afterwards.
+  disk_pcent() { echo 40; }
 }
 
 section() { printf '\n%s\n' "$1"; }
@@ -1659,6 +1708,246 @@ is "$last_line" 'main "$@"; exit $?' \
 after_main_call=$(awk '/^main "\$@"; exit \$\?$/{found=1; next} found' "$SRC" | grep -v '^\s*$' | grep -v '^\s*#')
 is "$after_main_call" "" \
   "nothing besides main \"\$@\"; exit \$? follows main()'s definition at the top level"
+
+# ---------------------------------------------------------------------------------------------
+section "reap_worktrees: removes only worktrees whose PR is merged/closed or whose branch is gone"
+# ---------------------------------------------------------------------------------------------
+# Real git throughout (worktrees, a real 'origin' remote), matching the merge_approved section's
+# convention above: git plumbing is exercised directly rather than stubbed. gh is still stubbed.
+make_origin_and_repo() {
+  # A bare repo standing in for GitHub's origin, plus the working repo `load()` already created
+  # and cd'd into, wired to it — so `git ls-remote --heads origin` and `git worktree add ...
+  # origin/main` both behave exactly as they do against the real remote.
+  local origin="$WORKROOT/origin-$$-$RANDOM.git"
+  git init -q --bare "$origin"
+  git commit --allow-empty -q -m base
+  git remote add origin "$origin"
+  git push -q origin HEAD:main
+  git fetch -q origin
+}
+
+reset_stubs; load
+make_origin_and_repo
+git branch -f agent/900-merged-pr origin/main
+wtdir="$WORKROOT/wt-900"
+git worktree add -q "$wtdir" agent/900-merged-pr
+cat > "$BIN/fixture-pr-head-agent_900-merged-pr.json" <<'JSON'
+[{"state":"MERGED"}]
+JSON
+reap_worktrees >/dev/null 2>&1
+if [ -d "$wtdir" ]; then bad "a worktree whose branch's PR is MERGED is removed" "still present at $wtdir"; else ok "a worktree whose branch's PR is MERGED is removed"; fi
+
+reset_stubs; load
+make_origin_and_repo
+git branch -f agent/901-open-pr origin/main
+wtdir="$WORKROOT/wt-901"
+git worktree add -q "$wtdir" agent/901-open-pr
+# Deliberately NOT pushed to origin: an OPEN PR must be an unconditional keep, never falling
+# through to the "does the branch still exist on origin" check that the no-PR-yet case below
+# uses — this is the exact bug this test caught in this change's own development (an OPEN PR
+# whose branch lookup shared a code path with "no PR found" was wrongly removed).
+cat > "$BIN/fixture-pr-head-agent_901-open-pr.json" <<'JSON'
+[{"state":"OPEN"}]
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a worktree whose branch has an OPEN PR is kept, even if the branch is not (yet) confirmed on origin" \
+  || bad "a worktree whose branch has an OPEN PR is kept, even if the branch is not (yet) confirmed on origin" "removed"
+
+reset_stubs; load
+make_origin_and_repo
+git branch -f agent/902-in-progress origin/main
+wtdir="$WORKROOT/wt-902"
+git worktree add -q "$wtdir" agent/902-in-progress
+# No fixture-pr-head file at all: gh returns "" (no PR opened yet), and the branch still exists
+# on origin (never pushed there in this case, but ls-remote is checked against a remote that
+# simply does not have it either) — cover the "PR not opened yet, but branch still on origin"
+# case explicitly by pushing the branch to origin.
+git push -q origin agent/902-in-progress
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a worktree with no PR yet, whose branch is still on origin, is kept (in-progress)" \
+  || bad "a worktree with no PR yet, whose branch is still on origin, is kept (in-progress)" "removed"
+
+reset_stubs; load
+make_origin_and_repo
+git branch -f agent/903-orphaned origin/main
+wtdir="$WORKROOT/wt-903"
+git worktree add -q "$wtdir" agent/903-orphaned
+# Deliberately never pushed to origin, and no PR fixture: an abandoned branch that never became a PR.
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && bad "a worktree whose branch never reached origin is removed" "still present at $wtdir" \
+  || ok "a worktree whose branch never reached origin is removed"
+
+reset_stubs; load
+make_origin_and_repo
+# The false-positive this function's own design note describes: a worktree freshly created off
+# origin/main, with no commits of its own, must NOT be matched to some other, unrelated PR that
+# happens to share that ancestry — reap_worktrees must key on the branch NAME via `gh pr list
+# --head`, never on the HEAD commit's own SHA, for a worktree that has a branch at all.
+git branch -f agent/904-brand-new origin/main
+wtdir="$WORKROOT/wt-904"
+git worktree add -q "$wtdir" agent/904-brand-new
+git push -q origin agent/904-brand-new
+head_sha=$(git -C "$wtdir" rev-parse HEAD)
+# If this were (wrongly) keyed on the SHA, it would hit this fixture and be removed.
+echo "MERGED" > "$BIN/fixture-graphql-$head_sha.state"
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a brand-new worktree sharing HEAD's ancestry with an unrelated merged PR is not removed by SHA alone" \
+  || bad "a brand-new worktree sharing HEAD's ancestry with an unrelated merged PR is not removed by SHA alone" "removed — reap_worktrees matched by commit SHA instead of branch name"
+
+reset_stubs; load
+make_origin_and_repo
+# Detached HEAD, no branch at all — the reviewer's own scratch-tree shape (see reviewer.md).
+# There is nothing to look up by branch name, so this is the one legitimate SHA-keyed path.
+git checkout -q --detach HEAD
+wtdir="$WORKROOT/wt-review-905"
+git worktree add -q --detach "$wtdir" HEAD
+head_sha=$(git -C "$wtdir" rev-parse HEAD)
+echo "MERGED" > "$BIN/fixture-graphql-$head_sha.state"
+reap_worktrees >/dev/null 2>&1
+if [ -d "$wtdir" ]; then bad "a detached reviewer scratch worktree at a merged PR's commit is removed" "still present"; else ok "a detached reviewer scratch worktree at a merged PR's commit is removed"; fi
+
+reset_stubs; load
+make_origin_and_repo
+git checkout -q --detach HEAD
+wtdir="$WORKROOT/wt-review-906"
+git worktree add -q --detach "$wtdir" HEAD
+head_sha=$(git -C "$wtdir" rev-parse HEAD)
+echo "OPEN" > "$BIN/fixture-graphql-$head_sha.state"
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a detached reviewer scratch worktree still under an OPEN PR's review is kept" \
+  || bad "a detached reviewer scratch worktree still under an OPEN PR's review is kept" "removed"
+
+reset_stubs; load
+make_origin_and_repo
+# A directory that merely lives alongside the worktrees but does not match the wt-<n> /
+# wt-review-<n> naming this function is scoped to. Must never be touched regardless of its
+# branch's PR state.
+git branch -f agent/907-other origin/main
+wtdir="$WORKROOT/not-a-managed-worktree"
+git worktree add -q "$wtdir" agent/907-other
+cat > "$BIN/fixture-pr-head-agent_907-other.json" <<'JSON'
+[{"state":"MERGED"}]
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a directory outside the wt-<n>/wt-review-<n> naming convention is never touched" \
+  || bad "a directory outside the wt-<n>/wt-review-<n> naming convention is never touched" "removed"
+
+reset_stubs; load
+# The pinned checkout itself (index 0 of `git worktree list`) must never be a removal candidate,
+# even in the pathological case where it happens to be named like a managed worktree and its own
+# branch's PR is merged — entry 0 is skipped unconditionally by loop position, never by name.
+# `load()` already cd'd into the throwaway repo; renaming it to look like a managed worktree
+# proves the exclusion is positional, not name-based.
+make_origin_and_repo
+git checkout -q -b agent/908-pinned
+pinned_dir=$(pwd)
+renamed_dir="$(dirname "$pinned_dir")/wt-908"
+mv "$pinned_dir" "$renamed_dir"
+cd "$renamed_dir" || exit 1
+cat > "$BIN/fixture-pr-head-agent_908-pinned.json" <<'JSON'
+[{"state":"MERGED"}]
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$renamed_dir/.git" ] && ok "the pinned/main checkout is never removed even if its own directory name and branch's PR look reapable" \
+  || bad "the pinned/main checkout is never removed even if its own directory name and branch's PR look reapable" "gone"
+
+# ---------------------------------------------------------------------------------------------
+section "prune_images_if_low_disk: only prunes images, and only under real disk pressure"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+disk_pcent() { echo 42; }   # overrides the real df-based function for this case
+prune_images_if_low_disk >/dev/null 2>&1
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune" "below DISK_PRUNE_PCENT, docker is never invoked at all"
+unset -f disk_pcent
+
+reset_stubs; load
+disk_pcent() { echo 92; }
+echo 0 > "$BIN/docker.rc"
+prune_images_if_low_disk >/dev/null 2>&1
+contains "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune -af" "at or above DISK_PRUNE_PCENT, it runs docker image prune -af"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "until=" "the prune has no age filter (image prune's until= is creation time, not last-used — see the function's own comment and scripts/staging-prune.sh)"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "system prune" "only image prune runs, never a blanket system prune"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "builder prune" "this function does not duplicate staging-prune.sh's build-cache reclaim"
+unset -f disk_pcent
+
+reset_stubs; load
+disk_pcent() { echo 92; }
+echo 1 > "$BIN/docker.rc"
+prune_images_if_low_disk >/dev/null 2>&1
+is "$?" 0 "a failing docker prune does not propagate a non-zero exit (best-effort, like staging-prune.sh)"
+unset -f disk_pcent
+
+reset_stubs; load
+# Still above DISK_ALERT_PCENT after pruning: a human needs to know before the disk actually fills.
+disk_pcent() { echo 90; }
+echo 0 > "$BIN/docker.rc"
+prune_images_if_low_disk >/dev/null 2>&1
+contains "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "disk still at 90%" "still above DISK_ALERT_PCENT after pruning raises an alert"
+unset -f disk_pcent
+
+reset_stubs; load
+disk_pcent() { echo 82; }  # above prune threshold (80) but below alert threshold (85)
+echo 0 > "$BIN/docker.rc"
+prune_images_if_low_disk >/dev/null 2>&1
+is "$(cat "$STATE_DIR/alerts.log" 2>/dev/null)" "" "back under DISK_ALERT_PCENT after pruning raises no alert"
+unset -f disk_pcent
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: reap_worktrees and prune_images_if_low_disk run every cycle, right after check_checkout_clean"
+# ---------------------------------------------------------------------------------------------
+reset_stubs; load
+called_file="$STATE_DIR/reap-and-prune-order.txt"
+mkdir -p "$STATE_DIR"
+reap_worktrees() { echo reap >> "$called_file"; }
+prune_images_if_low_disk() { echo prune >> "$called_file"; }
+check_checkout_clean() { echo checkout >> "$called_file"; }
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0; ROTATION=(); cycle=0; slot_n=0; broken_streak=0; MODE=auto
+run_cycle >/dev/null 2>&1
+is "$(cat "$called_file" 2>/dev/null)" "$(printf 'checkout\nreap\nprune')" \
+  "run_cycle's real scheduling path calls check_checkout_clean, then reap_worktrees, then prune_images_if_low_disk, in that order"
+unset -f reap_worktrees prune_images_if_low_disk check_checkout_clean
+
+# Mutation-test companion, matching this file's existing convention for run_cycle call sites
+# (see the guard_stuck_prs section above): reproduce the reviewer's mutation of dropping the two
+# new call sites, and confirm this exact case would catch their absence.
+reset_stubs; load
+called_file="$STATE_DIR/reap-and-prune-mutant.txt"
+mkdir -p "$STATE_DIR"
+reap_worktrees() { echo reap >> "$called_file"; }
+prune_images_if_low_disk() { echo prune >> "$called_file"; }
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0; ROTATION=(); cycle=0; slot_n=0; broken_streak=0; MODE=auto
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+run_cycle() {
+  if paused; then log "paused"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  CYCLE_WORKED=0; CYCLE_BROKEN=0
+  git fetch -q origin 2>/dev/null
+  check_checkout_clean
+  # reap_worktrees / prune_images_if_low_disk call sites deliberately omitted, matching the
+  # reviewer's mutation this case exists to catch.
+  ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
+  guard_stuck_prs
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
+  run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
+  ops_push
+  refresh_and_merge
+  for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
+    paused && break
+    run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
+  done
+  refresh_gh_token
+  ops_push
+  digest_daily
+  return 0
+}
+run_cycle >/dev/null 2>&1
+is "$(cat "$called_file" 2>/dev/null)" "" \
+  "mutant sanity check: with both call sites removed from run_cycle, neither reap_worktrees nor prune_images_if_low_disk ever runs, confirming this case would catch their absence"
+unset -f reap_worktrees prune_images_if_low_disk
 
 # ---------------------------------------------------------------------------------------------
 printf '\n%s\n' "-------------------------------------------"

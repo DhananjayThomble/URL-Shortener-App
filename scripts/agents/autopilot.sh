@@ -174,6 +174,168 @@ check_checkout_clean() {
   alert "pinned checkout is dirty: $(printf '%s' "$dirty" | awk '{print $2}' | paste -sd ' ' -)"
 }
 
+# Percent-full of the filesystem the pinned checkout lives on, as an integer (e.g. 85), or empty if
+# `df` cannot be read. Scoped to the toplevel's own mount rather than `/`, so a host with the repo
+# on a separate volume from root is still measured correctly.
+disk_pcent() {
+  df --output=pcent . 2>/dev/null | tail -n1 | tr -d ' %'
+}
+
+# Threshold (issue #564): above this, prune_images_if_low_disk actually prunes. Below it, nothing
+# in this file touches Docker images at all — a healthy disk is left alone.
+DISK_PRUNE_PCENT="${DISK_PRUNE_PCENT:-80}"
+# If reaping worktrees and pruning images did not bring usage back under this, a human needs to
+# know before the disk actually fills (issue #564's "alert if still above 85% after reaping").
+DISK_ALERT_PCENT="${DISK_ALERT_PCENT:-85}"
+
+# Removes `wt-<n>` / `wt-review-<n>[-suffix]` worktrees — created by the developer and reviewer
+# prompts as siblings of the pinned checkout (`../wt-<n>`, see _common.md and reviewer.md) — once
+# the PR they were for has merged or closed, or their branch no longer exists on the remote.
+#
+# Deliberately keyed off `git worktree list --porcelain`, the one source that cannot be fooled by
+# a stale or misleading directory name (`wt-468` on this host holds branch `agent/459-...`, whose
+# PR is #468 — the *directory* suffix and the *branch*'s own issue number frequently disagree; only
+# `git worktree list` and the PR API agree with each other). The first entry `git worktree list`
+# prints is always the worktree the command was run from — here, the pinned checkout — so it is
+# always index 0 of the parsed set and is unconditionally skipped, never matched against the
+# `wt-*` name filter at all: even if this function were somehow invoked from inside a worktree
+# named `wt-*` itself, entry 0 is still whichever checkout is running it, so a rename could never
+# make the safety check dodge the exclusion by relying on a name pattern.
+#
+# A worktree with a real branch is matched to its PR **by branch name** (`gh pr list --head`),
+# never by the HEAD commit's own SHA: a freshly created worktree that has not committed anything
+# yet has a HEAD that is still an ancestor of `origin/main`, and GitHub's commit->PR association
+# (`associatedPullRequests`) matches that ancestry and returns whatever *other*, unrelated PR
+# happened to merge that exact commit — a real false positive hit during this change's own
+# development (a brand-new worktree's HEAD resolved to a just-merged, unconnected PR by SHA). Only
+# a detached-HEAD worktree (the reviewer's scratch trees — see reviewer.md — never have a branch
+# of their own to check) falls back to the commit-SHA lookup, since there is nothing else to key on.
+#
+# Removal conditions, either one:
+#   - a branch exists, and `gh pr list --head <branch>` finds a PR that is MERGED or CLOSED; or
+#   - a branch exists, but it no longer exists on `origin` at all (force-deleted, or an
+#     autopilot/PR merge already deleted it and this is just the leftover local worktree); or
+#   - HEAD is detached, and GitHub's commit->PR association finds a PR that is MERGED or CLOSED.
+# Anything else — no branch and no PR found, an OPEN PR, or a branch still present on `origin`
+# with no merged/closed PR — is left alone: that is the "never touch in-progress or open-PR"
+# guarantee, and it falls out of the matching rule rather than needing a separate label check.
+reap_worktrees() {
+  local entries i path head branch removed=0
+  entries=$(git worktree list --porcelain 2>/dev/null)
+  [ -n "$entries" ] || return 0
+
+  path=""; head=""; branch=""
+  i=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "worktree "*)
+        # Flush the previous entry (if any) before starting the next.
+        if [ -n "$path" ] && [ "$i" -gt 0 ]; then
+          reap_one_worktree "$path" "$head" "$branch" && removed=$((removed + 1))
+        fi
+        path=${line#worktree }
+        head=""; branch=""
+        i=$((i + 1))
+        ;;
+      "HEAD "*) head=${line#HEAD } ;;
+      "branch "*) branch=${line#branch refs/heads/} ;;
+    esac
+  done <<<"$entries"
+  # Flush the last entry the loop above collected but had no next "worktree" line to trigger on.
+  if [ -n "$path" ] && [ "$i" -gt 0 ]; then
+    reap_one_worktree "$path" "$head" "$branch" && removed=$((removed + 1))
+  fi
+
+  if [ "$removed" -gt 0 ]; then
+    git worktree prune 2>/dev/null
+    log "reap_worktrees: removed $removed worktree(s)"
+  fi
+}
+
+# One worktree entry from reap_worktrees's parse: path, HEAD sha, branch name (empty if detached).
+# Never called for entry 0 (the toplevel/pinned checkout — reap_worktrees's own loop index guards
+# that). Only acts on paths that look like a developer or reviewer scratch worktree; anything else
+# on the host is left alone even if this function is somehow reached for it.
+reap_one_worktree() { # path head branch
+  local path="$1" head="$2" branch="$3" state=""
+  case "$(basename "$path")" in
+    wt-[0-9]*|wt-review-[0-9]*) ;;
+    *) return 1 ;;
+  esac
+
+  if [ -n "$branch" ]; then
+    state=$(gh pr list -R "$REPO" --head "$branch" --state all --json state -q '.[0].state // ""' 2>/dev/null)
+    case "$state" in
+      MERGED|CLOSED)
+        log "reap_worktrees: $path — branch $branch's PR is $state; removing"
+        ;;
+      OPEN)
+        # A PR is open on this branch: unconditionally in flight, regardless of anything else —
+        # never fall through to the "does the branch still exist" check below for this case.
+        return 1
+        ;;
+      *)
+        # No PR at all yet. Still in-progress unless the branch itself is already gone from
+        # origin (deleted by hand, or a squash-merge whose PR lookup above raced the delete) — a
+        # branch that exists nowhere is not "in progress" by any definition.
+        if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+          return 1
+        fi
+        log "reap_worktrees: $path — branch $branch no longer exists on origin; removing"
+        ;;
+    esac
+  else
+    # Detached HEAD: a reviewer scratch tree (see reviewer.md), which never has a branch of its
+    # own. Key on the HEAD commit's PR association instead — safe here specifically because these
+    # trees are always checked out at an already-existing commit from a PR under review, never a
+    # fresh commit of their own the way a developer worktree's first cycle would be.
+    [ -n "$head" ] || return 1
+    state=$(gh api graphql -f query="{ repository(owner:\"${REPO%%/*}\", name:\"${REPO#*/}\") { object(expression: \"$head\") { ... on Commit { associatedPullRequests(first: 1) { nodes { state } } } } } }" \
+      -q '.data.repository.object.associatedPullRequests.nodes[0].state // ""' 2>/dev/null)
+    if [ "$state" != "MERGED" ] && [ "$state" != "CLOSED" ]; then
+      return 1
+    fi
+    log "reap_worktrees: $path — detached at $head, associated PR is $state; removing"
+  fi
+
+  git worktree remove --force "$path" 2>/dev/null || { log "reap_worktrees: failed to remove $path"; return 1; }
+  [ -n "$branch" ] && git branch -D "$branch" >/dev/null 2>&1
+  return 0
+}
+
+# Docker images, pruned only under real disk pressure (issue #564). Runs `docker image prune -af`
+# with NO `until=` age filter — deliberately different from this repo's other prune script
+# (scripts/staging-prune.sh's `docker builder prune -af --filter until=24h`). That script's own
+# comment is the oracle for why an age filter is wrong here too, and more so: `image prune`'s
+# `until` matches an image's *creation* time, not when it was last used, and for a pulled base
+# image (postgres:18-alpine) creation time is whenever it was built upstream — verified against
+# this host's own `docker system df -v`, where the running `snapurl-postgres` container's image
+# was pulled 3 days ago. A 24h age filter on top of `-a` would make this function try to evict
+# that image the moment nothing referenced it, which is exactly the state right after a
+# `staging:down`, forcing a silent, costly re-pull on the next `staging:up`. `-a` alone already
+# satisfies the acceptance criterion ("do not remove images a running container uses"): it only
+# removes images with zero containers referencing them, dangling or not, regardless of age — no
+# extra filter is needed to make that true, and adding one would only make the reclaim *weaker*
+# under pressure, which is the opposite of what "under pressure" should do.
+prune_images_if_low_disk() {
+  local pcent
+  pcent=$(disk_pcent)
+  [ -n "$pcent" ] || { log "prune_images_if_low_disk: could not read disk usage; skipping"; return 0; }
+  [ "$pcent" -ge "$DISK_PRUNE_PCENT" ] 2>/dev/null || return 0
+
+  local before after
+  before=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Images"{print $2}')
+  log "prune_images_if_low_disk: disk at ${pcent}% (>= ${DISK_PRUNE_PCENT}%); running docker image prune -af"
+  docker image prune -af >/dev/null 2>&1 || log "prune_images_if_low_disk: docker image prune failed"
+  after=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Images"{print $2}')
+  log "prune_images_if_low_disk: images reclaimable before=$before after=$after"
+
+  pcent=$(disk_pcent)
+  if [ -n "$pcent" ] && [ "$pcent" -ge "$DISK_ALERT_PCENT" ] 2>/dev/null; then
+    alert "disk still at ${pcent}% after reaping worktrees and pruning images (>= ${DISK_ALERT_PCENT}%)"
+  fi
+}
+
 # Prints auto, claude or kiro. Labels beat the state file, which beats the environment.
 engine_mode() {
   local labels file
@@ -661,6 +823,10 @@ run_cycle() {
   git fetch -q origin
   # Catches the state that makes the *next* restart fail before it does: see check_checkout_clean.
   check_checkout_clean
+  # Reclaims disk before anything else runs this cycle (issue #564): worktrees of merged/closed
+  # PRs first (cheap, no daemon needed), then images only if that alone was not enough.
+  reap_worktrees
+  prune_images_if_low_disk
   # Shared memory lives in the ops repo; pull before any agent reads it, push after they write.
   ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
 
