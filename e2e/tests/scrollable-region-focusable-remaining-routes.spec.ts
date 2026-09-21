@@ -65,11 +65,65 @@ test.describe("scrollable regions are keyboard-focusable — remaining TableWrap
   // contract does not vary with viewport. This case exists to prove that with
   // evidence (matching the maintainer's own iPhone-13-dimension rerun on this
   // PR) rather than assert it from reading the source.
+  //
+  // Coverage note (#559): the desktop describe block above exercises every
+  // TableWrap call site this file covers (/domains, /forms x2, /reports), plus
+  // sibling spec files cover /team, /bio, /conversions and /developers (x2) at
+  // desktop only (scrollable-region-focusable.spec.ts). Before this block was
+  // extended, only /domains had a mobile-viewport case — #559's own
+  // investigation flagged "only checked desktop viewport... did not reproduce
+  // the mobile half" as an explicit gap. This block closes it for every
+  // TableWrap site reachable without additional fixture setup (the
+  // /domains "DNS record for <pending domain>" panel is gated on a
+  // status: "verifying" domain that no fixture seeds, so it is not
+  // reachable here at either viewport and stays a documented gap, not a
+  // silently-skipped one).
   test.use({ viewport: { width: 390, height: 852 }, isMobile: true, hasTouch: true });
 
   test("/domains: the Domains table wrapper is focusable and named on a phone viewport", async ({ page }) => {
     await seedSession(page);
     await page.goto("/domains");
     await expectFocusableRegion(page.getByRole("region", { name: "Domains" }));
+  });
+
+  test("/forms: the Forms and Form responses table wrappers are focusable and named on a phone viewport", async ({ page }) => {
+    await seedSession(page);
+    await page.goto("/forms");
+    await expectFocusableRegion(page.getByRole("region", { name: "Forms" }));
+    await page.getByRole("row", { name: /Spring launch feedback/ }).getByRole("button", { name: "Responses" }).click();
+    await expectFocusableRegion(page.getByRole("region", { name: "Form responses" }));
+  });
+
+  test("/reports: the Reports table wrapper is focusable and named on a phone viewport", async ({ page }) => {
+    await seedSession(page);
+    await page.goto("/reports");
+    await expectFocusableRegion(page.getByRole("region", { name: "Reports" }));
+  });
+
+  test("/team: the Members table and permission-matrix wrappers are focusable and named on a phone viewport", async ({ page }) => {
+    await seedSession(page);
+    await page.goto("/team");
+    await expect(page.getByRole("row", { name: /Arjun Kapoor/ })).toBeVisible();
+    await expectFocusableRegion(page.getByRole("region", { name: "Members" }));
+    await expectFocusableRegion(page.getByRole("region", { name: "What each role can do" }));
+  });
+
+  test("/bio: the pages table wrapper is focusable and named on a phone viewport", async ({ page }) => {
+    await seedSession(page);
+    await page.goto("/bio");
+    await expectFocusableRegion(page.getByRole("region", { name: "Your pages" }));
+  });
+
+  test("/conversions: the revenue-by-link table wrapper is focusable and named on a phone viewport", async ({ page }) => {
+    await seedSession(page);
+    await page.goto("/conversions");
+    await expectFocusableRegion(page.getByRole("region", { name: "Revenue by link" }));
+  });
+
+  test("/developers: the API keys and Webhooks table wrappers are focusable and named on a phone viewport", async ({ page }) => {
+    await seedSession(page);
+    await page.goto("/developers");
+    await expectFocusableRegion(page.getByRole("region", { name: "API keys" }));
+    await expectFocusableRegion(page.getByRole("region", { name: "Webhooks" }));
   });
 });
