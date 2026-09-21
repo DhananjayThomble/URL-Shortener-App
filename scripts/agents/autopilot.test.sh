@@ -89,6 +89,7 @@ done
 fixture=''
 case "\$*" in
   *"pr list"*"--label agent:approved"*) fixture="$BIN/fixture-pr-approved.json" ;;
+  *"pr list"*"--label agent:changes-requested"*) fixture="$BIN/fixture-pr-stuck.json" ;;
   *"pr list"*"--state open"*)   fixture="$BIN/fixture-pr-open.json" ;;
   *"pr list"*"--state merged"*) fixture="$BIN/fixture-pr-merged.json" ;;
   *"issue list"*"label decision"*)     fixture="$BIN/fixture-issue-decision.json" ;;
@@ -143,6 +144,16 @@ case "\$*" in
     rc=\$(cat "$BIN/gh.prmerge-\$n.rc" 2>/dev/null || echo 0)
     exit "\$rc"
     ;;
+  *"api "*"issues/"*"/events"*)
+    n=''
+    for a in "\$@"; do case "\$a" in *"issues/"*"/events") n="\${a#*issues/}"; n="\${n%/events}" ;; esac; done
+    events="$BIN/fixture-events-\$n.json"
+    [ -f "\$events" ] || events="$BIN/fixture-events-empty.json"
+    if [ -n "\$filter" ] && [ -f "\$events" ]; then
+      jq -r "\$filter" < "\$events" || { echo "STUB_JQ_FAILED" >> "$BIN/gh.jqfail"; exit 1; }
+    fi
+    exit 0
+    ;;
 esac
 
 if [ -n "\$fixture" ] && [ -f "\$fixture" ] && [ -n "\$filter" ]; then
@@ -162,6 +173,8 @@ reset_stubs() {
         "$BIN"/gh.clone_gh_token_seen "$BIN"/gh.paused.fail_until_token
   make_stubs
   echo 0 > "$BIN/gh.paused"
+  echo '[]' > "$BIN/fixture-events-empty.json"
+  echo '[]' > "$BIN/fixture-pr-stuck.json"
   # One labelled PR and one with no labels at all: the unlabelled case is what exposed jq's `//`
   # not firing on an empty string.
   cat > "$BIN/fixture-pr-open.json" <<'JSON'
@@ -781,6 +794,175 @@ JSON
 merge_approved >/dev/null 2>&1
 lacks "$(cat "$BIN/gh.calls")" "pr merge 508" "a workflow-touching PR is never merged by the autopilot"
 contains "$(cat "$BIN/gh.calls")" "pr edit 508 -R owner/repo --add-label needs-human" "a workflow-touching PR is labelled needs-human instead"
+
+# ---------------------------------------------------------------------------------------------
+section "guard_stuck_prs: a PR stuck in changes-requested is routed to a human, not retried forever"
+# ---------------------------------------------------------------------------------------------
+# The regression this guard exists for: PR #509 (issue #548) was sent back agent:changes-requested
+# 7 times in 39 hours with no mechanism to stop the loop.
+
+# 4 rounds (the default STUCK_ROUNDS_MAX) of agent:changes-requested, still open, no needs-human yet.
+reset_stubs; load
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":509}]
+JSON
+cat > "$BIN/fixture-pr-view-509.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"},{"name":"decision"}]}
+JSON
+cat > "$BIN/fixture-events-509.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:ready"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+guard_stuck_prs >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr edit 509 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" "a PR with 4 changes-requested rounds is switched to needs-human"
+contains "$(cat "$BIN/gh.calls")" "pr comment 509" "the guard explains itself in a comment"
+contains "$(cat "$BIN/gh.lastbody")" "4 times" "the comment cites the actual round count"
+
+# Fewer than the threshold: left alone, no label change, no comment.
+reset_stubs; load
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":510}]
+JSON
+cat > "$BIN/fixture-pr-view-510.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"}]}
+JSON
+cat > "$BIN/fixture-events-510.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+guard_stuck_prs >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr edit 510" "a PR with only 2 rounds is left alone"
+lacks "$(cat "$BIN/gh.calls")" "pr comment 510" "no comment is posted below the threshold"
+
+# Already needs-human: the guard must not re-fire (fires once per PR, per the acceptance criterion).
+reset_stubs; load
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":511}]
+JSON
+cat > "$BIN/fixture-pr-view-511.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"},{"name":"needs-human"}]}
+JSON
+cat > "$BIN/fixture-events-511.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+guard_stuck_prs >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr edit 511" "a PR already labelled needs-human is skipped, even at 7 rounds"
+lacks "$(cat "$BIN/gh.calls")" "pr comment 511" "no duplicate comment on an already-routed PR"
+
+# Threshold is configurable via STUCK_ROUNDS_MAX and respected.
+reset_stubs; load
+STUCK_ROUNDS_MAX=2
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":512}]
+JSON
+cat > "$BIN/fixture-pr-view-512.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"}]}
+JSON
+cat > "$BIN/fixture-events-512.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+guard_stuck_prs >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr edit 512 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" "a lower STUCK_ROUNDS_MAX fires at 2 rounds"
+
+# ---------------------------------------------------------------------------------------------
+section "run_cycle: guard_stuck_prs actually runs as part of the real cycle, not just standalone"
+# ---------------------------------------------------------------------------------------------
+# The four cases above call guard_stuck_prs() directly, which proves the helper works but not
+# that run_cycle's own body still calls it — a call site can be deleted from run_cycle while
+# every case above stays green, exactly the class of regression the token-refresh call sites
+# already guard against elsewhere in this file. This drives run_cycle itself (DEVS_PER_CYCLE=0,
+# empty ROTATION, so nothing else in the cycle can touch PR #513's labels) with a PR fixture at
+# the stuck threshold, and checks for guard_stuck_prs's real side effect: the gh pr edit that
+# swaps agent:changes-requested for needs-human.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":513}]
+JSON
+cat > "$BIN/fixture-pr-view-513.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"}]}
+JSON
+cat > "$BIN/fixture-events-513.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+run_cycle >/dev/null 2>&1
+contains "$(cat "$BIN/gh.calls")" "pr edit 513 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" \
+  "run_cycle's real scheduling path routes a stuck PR to needs-human, i.e. it still calls guard_stuck_prs"
+
+# Reproduce the reviewer's mutation: guard_stuck_prs's call site removed from run_cycle's body,
+# everything else unchanged, to prove this exact case is the one that would catch its absence.
+reset_stubs; load
+unset AGENT_GH_TOKEN GH_TOKEN
+cat > "$BIN/fixture-pr-stuck.json" <<'JSON'
+[{"number":513}]
+JSON
+cat > "$BIN/fixture-pr-view-513.json" <<'JSON'
+{"labels":[{"name":"agent:changes-requested"}]}
+JSON
+cat > "$BIN/fixture-events-513.json" <<'JSON'
+[{"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}},
+ {"event":"labeled","label":{"name":"agent:changes-requested"}}]
+JSON
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+DEVS_PER_CYCLE=0
+ROTATION=()
+cycle=0; slot_n=0; broken_streak=0
+MODE=auto
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+run_cycle() {
+  if paused; then log "paused"; return 1; fi
+  if over_budget; then wait_out_budget || return 1; fi
+  cycle=$((cycle + 1))
+  MODE=$(engine_mode)
+  CYCLE_WORKED=0; CYCLE_BROKEN=0
+  git fetch -q origin 2>/dev/null
+  check_checkout_clean
+  ops_pull || log "ops repo pull failed; agents will see stale memory and findings"
+  # guard_stuck_prs call deliberately omitted here, matching the reviewer's mutation
+  run_agent manager "$ENGINE_MANAGER" "Run your triage pass on $REPO now."
+  run_agent reviewer "$ENGINE_REVIEWER" "Do part A (review open PRs) and part B (adjudicate QA findings) now."
+  ops_push
+  refresh_and_merge
+  for _ in $(seq 1 "$DEVS_PER_CYCLE"); do
+    paused && break
+    run_agent developer "$ENGINE_DEVELOPER" "Take the next piece of work and carry it to an open PR." || break
+  done
+  refresh_gh_token
+  ops_push
+  if [ "${#ROTATION[@]}" -gt 0 ] && [ $(( (cycle - 1) % SLOT_EVERY )) -eq 0 ]; then
+    slot=${ROTATION[$(( slot_n % ${#ROTATION[@]} ))]}
+    slot_n=$((slot_n + 1))
+    role=${slot%%:*}; focus=${slot#*:}
+    paused || run_agent "$role" "$ENGINE_QA" "Run one $role session now. Focus: $focus."
+    refresh_gh_token
+    ops_push
+  fi
+  digest_daily
+  return 0
+}
+run_cycle >/dev/null 2>&1
+lacks "$(cat "$BIN/gh.calls")" "pr edit 513 -R owner/repo --remove-label agent:changes-requested --add-label needs-human" \
+  "mutant sanity check: with guard_stuck_prs's call site removed from run_cycle, PR #513 is never routed to needs-human, confirming this case would catch the call site's absence"
 
 # ---------------------------------------------------------------------------------------------
 section "engine selection and cooldown"
