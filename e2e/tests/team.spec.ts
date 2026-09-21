@@ -13,10 +13,10 @@ import { seedSession } from "../support/session";
    from the email localpart with [._-] collapsed to spaces, so the localpart is
    chosen free of those characters to keep the rendered name predictable.
 
-   Note on selectors: Card is a plain <div> (no landmark role) and Field's
-   <label> is not programmatically associated (matching the create-link spec),
-   so the invite email input is addressed by its unique placeholder and the
-   actions by their button accessible names. */
+   Note on selectors: Card is a plain <div> (no landmark role); the invite
+   email input is addressed by its accessible label (Field associates its
+   <label> with the real control — see #469), and actions by their button
+   accessible names. */
 
 test.describe("team invite and member management", () => {
   test.beforeEach(async ({ page }) => {
@@ -35,7 +35,7 @@ test.describe("team invite and member management", () => {
 
     // Open the invite form via the page-head toggle (labelled "＋ Invite").
     await page.getByRole("button", { name: /Invite/ }).click();
-    const emailInput = page.getByPlaceholder("teammate@example.com");
+    const emailInput = page.getByLabel("Email");
     await expect(emailInput).toBeVisible();
     await emailInput.fill(email);
     await page.getByRole("button", { name: "Send invitation" }).click();
@@ -74,7 +74,7 @@ test.describe("team invite and member management", () => {
     await expect(page).toHaveURL(/\/team$/);
 
     await page.getByRole("button", { name: /Invite/ }).click();
-    const emailInput = page.getByPlaceholder("teammate@example.com");
+    const emailInput = page.getByLabel("Email");
     await expect(emailInput).toBeVisible();
 
     // A non-empty but malformed address: the Send button is enabled (only an
