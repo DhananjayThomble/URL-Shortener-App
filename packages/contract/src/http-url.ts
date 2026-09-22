@@ -54,7 +54,13 @@ export const isDeniedIpv6 = (raw: string): boolean => {
   // URL hostnames wrap IPv6 in brackets; strip them and any zone id.
   const host = raw.replace(/^\[/, "").replace(/\]$/, "").split("%")[0]!.toLowerCase();
   if (host === "::" || host === "::1") return true; // unspecified / loopback
-  if (host.startsWith("fe80")) return true; // link-local
+  // fe80::/10 link-local: the first hex group's top 10 bits must be
+  // 1111111010, i.e. the group is in [0xfe80, 0xfebf]. Matching only the
+  // literal prefix "fe80" (as an earlier version of this check did) misses
+  // fe90::, fea0::, febf:: etc. — every address in the block except the one
+  // whose low 6 bits of the second byte happen to be zero.
+  const firstGroup = parseInt(host.split(":")[0] ?? "", 16);
+  if (Number.isInteger(firstGroup) && firstGroup >= 0xfe80 && firstGroup <= 0xfebf) return true;
   if (host.startsWith("fc") || host.startsWith("fd")) return true; // fc00::/7 unique-local
   // IPv4-mapped addresses. `new URL()` compresses ::ffff:169.254.169.254 to
   // ::ffff:a9fe:a9fe, so match on the ::ffff: prefix and rebuild the v4 tail

@@ -54,6 +54,14 @@ describe("resolvesToDeniedAddress", () => {
     expect(await resolvesToDeniedAddress("http://v6.example/x")).toBe(true);
   });
 
+  it("denies a name that resolves to an IPv6 link-local address outside the fe80:: literal prefix", async () => {
+    // fe80::/10 covers fe80 through febf in the first hex group, not just
+    // addresses starting with the literal string "fe80". fe90::1 is inside
+    // the block but outside that narrower literal match.
+    lookupMock.mockResolvedValue([{ address: "fe90::1", family: 6 }]);
+    expect(await resolvesToDeniedAddress("http://v6-linklocal.example/x")).toBe(true);
+  });
+
   it("allows a name that resolves only to public addresses", async () => {
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
     expect(await resolvesToDeniedAddress("https://example.com/ok")).toBe(false);
