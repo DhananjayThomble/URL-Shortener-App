@@ -37,6 +37,16 @@ minimumReleaseAgeExclude:
 # next@15.5.26 widens its optional range to `^0.34.3 || ^0.35.4`, which still
 # allows the vulnerable 0.34.5 to resolve, so an override is needed to force
 # the fixed line. See issue #591.
+#
+# postcss@8.4.31 is a direct dependency of next@15.5.26, pinned to that exact
+# version (not a range), for its internal CSS build pipeline. It carries four
+# advisories fixed across 8.5.10-8.5.23 (GHSA-6g55-p6wh-862q / CVE-2026-45623,
+# GHSA-fxqj-rqcc-2cmp / CVE-2026-69153, GHSA-qx2v-qp2m-jg93 / CVE-2026-41305,
+# GHSA-r28c-9q8g-f849 / CVE-2026-73646), the worst an arbitrary-file-read via
+# the sourceMappingURL comment parser. Everything else in the workspace
+# already resolves postcss to 8.5.26+ on its own; only next's pinned copy
+# needs forcing. See issue #590.
 overrides:
   fastify@<5.12.1: ^5.12.1
   sharp@<0.35.4: ^0.35.4
+  postcss@<8.5.23: ^8.5.23
