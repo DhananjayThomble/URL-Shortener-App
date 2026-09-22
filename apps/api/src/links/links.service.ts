@@ -300,10 +300,11 @@ export class LinksService {
       }
 
       /* Same DNS-resolving SSRF check as the single-link path (see
-         ssrf-guard.ts), but caught as a per-row problem rather than thrown —
+         ssrf-guard.ts), scoped to the same two fields (destination,
+         social.image), but caught as a per-row problem rather than thrown —
          one row resolving to a denied address must not 400 the whole batch,
          matching every other per-row check above it. */
-      for (const url of [row.destination, row.expiresTo, row.scheduledTo, row.social?.image, ...row.rules.map((r) => r.then)]) {
+      for (const url of [row.destination, row.social?.image]) {
         if (url && (await resolvesToDeniedAddress(url))) {
           problems.push(`That host isn't allowed (it resolves to a private, loopback or link-local address): ${url}`);
         }
@@ -576,17 +577,10 @@ export class LinksService {
     }
 
     /* HttpUrl already rejected a literal denied address; this resolves DNS to
-       catch a name that only resolves to one (see ssrf-guard.ts). Every
-       URL-bearing field a click can actually reach: the destination itself,
-       the two expiry/schedule redirects, the social preview image, and every
-       routing-rule target. */
-    await assertNoSsrfDnsTarget([
-      input.destination,
-      input.expiresTo,
-      input.scheduledTo,
-      input.social?.image,
-      ...input.rules.map((rule) => rule.then),
-    ]);
+       catch a name that only resolves to one (see ssrf-guard.ts). Scoped to
+       exactly the two fields #534's maintainer decision named: the
+       destination itself and the social preview image. */
+    await assertNoSsrfDnsTarget([input.destination, input.social?.image]);
 
     const scan = await this.safeBrowsing.check(input.destination);
 
@@ -703,16 +697,11 @@ export class LinksService {
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
 
-    /* Same DNS-resolving check as create, applied only to the fields this
-       patch actually touches — an omitted field keeps whatever the row
-       already had, which was checked when it was written. */
-    await assertNoSsrfDnsTarget([
-      input.destination,
-      input.expiresTo,
-      input.scheduledTo,
-      input.social?.image,
-      ...(input.rules ?? []).map((rule) => rule.then),
-    ]);
+    /* Same DNS-resolving check as create, scoped to the same two fields,
+       applied only when this patch actually touches them — an omitted field
+       keeps whatever the row already had, which was checked when it was
+       written. */
+    await assertNoSsrfDnsTarget([input.destination, input.social?.image]);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (input.destination !== undefined) {

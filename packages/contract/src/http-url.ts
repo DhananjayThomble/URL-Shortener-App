@@ -111,11 +111,10 @@ export const isDeniedHost = (host: string): boolean => {
  * this check, but still resolves to the metadata address at request time.
  * Closing that gap is `assertNoSsrfDnsTarget` in
  * `apps/api/src/common/ssrf-guard.ts` — a server-only, explicit async step
- * services call after this schema has already accepted the request body, for
- * exactly the fields that end up as a real network destination (a webhook
- * endpoint the worker `fetch()`s, a link destination the redirect service
- * sends a browser to). It reuses `isDeniedIpv4`/`isDeniedIpv6` below, exported
- * for that reason.
+ * `LinksService` calls after this schema has already accepted the request
+ * body, for the two fields a click can reach: `destination` and
+ * `social.image`. It reuses `isDeniedIpv4`/`isDeniedIpv6` below, exported for
+ * that reason.
  */
 export const HttpUrl = z
   .url({ protocol: /^https?$/, error: "Enter an absolute http(s) URL" })

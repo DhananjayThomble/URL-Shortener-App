@@ -63,26 +63,6 @@ describeDb("drainOutbox under concurrency", () => {
     handleB = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handleA.db;
 
-    /* The claim in drainOutbox() is deliberately global — a real worker must
-       drain every workspace's pending rows, not just one — so this test's
-       "exactly N" assertion only holds if the table is otherwise empty of
-       pending work when it seeds its own N rows. `pnpm test` runs every
-       project's suite against one shared Postgres (workspace-concurrency=1,
-       apps/api before apps/worker), and every link create/update in apps/api's
-       own suite leaves an unprocessed projectionOutbox row (see
-       LinksService.enqueueProjection) that nothing else ever drains — so by
-       the time this file runs, stray rows from unrelated tests are sitting in
-       the same table and would be scooped up by the same `limit batchSize`
-       claim, pushing the combined processed count above N. Draining them here
-       (with a target that is thrown away) makes the table's pending set
-       exactly this test's own N by construction, instead of assuming a
-       cleanliness the shared-database model does not provide. */
-    const flush = new CountingTarget();
-    let drained: { processed: number; failed: number };
-    do {
-      drained = await drainOutbox(db, flush, 500);
-    } while (drained.processed + drained.failed > 0);
-
     const stamp = Date.now();
     const [ws] = await db
       .insert(workspaces)

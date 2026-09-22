@@ -13,3 +13,12 @@ allowBuilds:
   sharp: true
   argon2: true
   '@scarf/scarf': true
+
+# fastify@5.11.3 (still resolved transitively via @nestjs/platform-fastify) is
+# affected by GHSA-3m5p-2c4r-xxw2 and GHSA-w2qp-rph6-63g4; both are patched in
+# 5.12.1. Direct deps in apps/api and apps/redirect are bumped in their own
+# package.json, but @nestjs/platform-fastify@11.2.3 pins fastify itself, so an
+# override is needed to close the transitive copy too. See issue #537.
+overrides:
+  fastify@<5.12.1: ^5.12.1
+

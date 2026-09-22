@@ -19,25 +19,10 @@ import { isDeniedHost, isDeniedIpv4, isDeniedIpv6 } from "@snapurl/contract";
 
    This is the explicit, server-only second step: call `assertNoSsrfDnsTarget`
    once per URL field right after the sync contract schema has already
-   accepted the request body, for every field that ends up as a real
-   server-side request — a webhook endpoint the worker `fetch()`s
-   (apps/worker/src/jobs/webhooks.ts) — or a redirect a victim's browser
-   follows (a link destination, routing-rule target, or scheduled/expiry
-   redirect).
-
-   apps/worker cannot import this file (packages/architecture.md forbids
-   cross-`apps` imports), so it re-derives the same check locally
-   (apps/worker/src/jobs/webhooks.ts) from the same exported
-   `isDeniedIpv4`/`isDeniedIpv6` primitives this file also uses — no shared
-   mutable state or business rule to drift between the two, since both call
-   the one range-classifying implementation in packages/contract. That
-   worker-side copy runs again immediately before its `fetch`, at delivery
-   time rather than write time, and fails *closed* rather than open: a
-   hostname can resolve to a public address when a webhook is created and a
-   private/loopback one when it is later resolved again (DNS rebinding, or
-   just a record that changed), so the check that actually guards the
-   connection has no "harmless typo" case to protect the way a write-time
-   check does.
+   accepted the request body. Scoped, per the maintainer decision on #534, to
+   exactly the two link fields a click can reach: `destination` and
+   `social.image` — wired into `LinksService.create`/`.update`/`.bulkCreate`
+   (apps/api/src/links/links.service.ts).
    ============================================================ */
 
 /**
