@@ -19,7 +19,7 @@
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",
-    "fastify": "^5.6.1",
+    "fastify": "^5.12.1",
     "jsonwebtoken": "^9.0.2",
     "pino": "^9.6.0"
   },
