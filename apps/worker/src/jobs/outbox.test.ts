@@ -270,6 +270,85 @@ describeDb("drainOutbox cache invalidation on delete (#470)", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]!.msg).toContain("cache bust failed");
   });
+
+  /* #470 follow-up: CacheStore.del() above only reaches a process sharing the
+     SAME CacheStore instance/backing store — a no-op across processes under
+     CACHE_DRIVER=memory (the flagship single-node/compose profile, where the
+     worker and redirect are separate processes with separate Maps). This is
+     drainOutbox's OTHER half of the fix: a real pg_notify a real, independent
+     Postgres LISTEN connection receives, proving the mechanism the redirect's
+     listenForCacheBust (apps/redirect/src/cache-bust-listener.ts) relies on
+     is actually fired by production drainOutbox — not just documented. */
+  it("fires a pg_notify on 'link_cache_bust' for a delete row, received by an independent LISTEN connection", async () => {
+    const slug = "notify-me";
+    const key = linkCacheKey(host, slug);
+
+    // A SEPARATE connection — standing in for the redirect process — with no
+    // CacheStore shared with anything drainOutbox is given below.
+    const listener = createDatabase({ url: DATABASE_URL!, max: 1 });
+    const received: Array<{ host?: string; slug?: string }> = [];
+    try {
+      await listener.sql.listen("link_cache_bust", (payload) => {
+        received.push(JSON.parse(payload) as { host?: string; slug?: string });
+      });
+
+      await seedDeleteRow(slug);
+      // No cache passed at all — this proves the notify does not depend on a
+      // CacheStore being wired, unlike the del() path above.
+      const result = await drainOutbox(db, new NoProjection());
+      expect(result.processed).toBe(1);
+
+      // Bounded poll: NOTIFY delivery is async over the wire.
+      const start = Date.now();
+      while (received.length === 0 && Date.now() - start < 2000) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(received).toHaveLength(1);
+      expect(received[0]).toEqual({ host, slug });
+      // Sanity: this is the exact key CachingLinkResolver/listenForCacheBust computes.
+      expect(linkCacheKey(received[0]!.host!, received[0]!.slug!)).toBe(key);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("marks the row processed even when the pg_notify call throws, and logs rather than failing the row", async () => {
+    const errors: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const linkId = await seedDeleteRow("notify-down");
+
+    /* A thin wrapper around the real `db`: every statement runs for real
+       EXCEPT the pg_notify call, which throws — isolating just the notify
+       failure path without needing to break the connection outright (which
+       would also break the claim/markProcessed statements this same call
+       needs to succeed). Drizzle's sql`` template stores its literal
+       fragments in queryChunks (not surfaced via toString()), so that is
+       what a fake has to inspect to tell the notify statement apart from
+       every other query drainOutbox issues in the same call. */
+    const isNotifyQuery = (query: unknown): boolean =>
+      Array.isArray((query as { queryChunks?: Array<{ value?: string[] }> })?.queryChunks) &&
+      (query as { queryChunks: Array<{ value?: string[] }> }).queryChunks.some((chunk) =>
+        chunk?.value?.some((v) => v.includes("pg_notify")),
+      );
+    const flaky: Database = {
+      ...db,
+      execute: ((query: unknown) => {
+        if (isNotifyQuery(query)) throw new Error("notify unavailable");
+        return db.execute(query as never);
+      }) as Database["execute"],
+    } as Database;
+
+    const result = await drainOutbox(flaky, new NoProjection(), 200, undefined, {
+      error: (obj, msg) => errors.push({ obj, msg }),
+    });
+
+    // The row's own bookkeeping is unaffected by a notify failure — still
+    // processed, not retried forever over a transient notify hiccup. The
+    // short LINK_CACHE_TTL_SECONDS remains the backstop for this one row.
+    expect(result.processed).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(errors.some((e) => e.msg.includes("notify failed"))).toBe(true);
+    expect(errors.some((e) => e.obj.linkId === linkId)).toBe(true);
+  });
 });
 
 describeDb("rollupClicks under concurrency", () => {

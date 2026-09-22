@@ -46,6 +46,28 @@ import { linkCacheKey, type CacheStore } from "@snapurl/cache";
    and claimed_at cleared so the row is retryable on the next drain
    without waiting out the lease. A row at MAX_ATTEMPTS is never
    claimed again — it is a real alert that the edge is stale.
+
+   Cache invalidation on delete (#470)
+   ------------------------------------
+   A "delete" row also busts the redirect's hot-link cache, two ways at once:
+
+     1. CacheStore.del() on whatever CacheStore this call was given — reaches
+        the redirect ONLY when CACHE_DRIVER is 'redis' or 'dynamodb', i.e. a
+        store genuinely shared across processes.
+     2. pg_notify('link_cache_bust', ...) — reaches the redirect ALWAYS
+        (every profile that gives the redirect a Postgres connection, i.e.
+        every profile except LINK_PROJECTION=dynamo), because NOTIFY is a
+        Postgres server-side broadcast, not a shared application store. This
+        is what closes the gap CacheStore.del() cannot: under CACHE_DRIVER=
+        memory (the flagship single-node/compose profile) the api, worker and
+        redirect each hold their OWN Map, so no application-level store is
+        ever actually shared there. See apps/redirect/src/main.ts's init(),
+        which opens sql.listen('link_cache_bust', ...) on its own Postgres
+        connection and evicts the matching key from ITS OWN CacheStore
+        instance on receipt.
+
+   Both are best-effort and never fail the row: the short LINK_CACHE_TTL_SECONDS
+   remains the final fallback if a notify or a del() is lost.
    ============================================================ */
 
 /** One claimed outbox row, reduced to what a projection target acts on. */
@@ -189,17 +211,39 @@ export async function drainOutbox(
      and the short TTL is exactly the pre-#470 fallback for that case. A
      del() failure (Redis/DynamoDB unavailable) is logged and swallowed:
      losing the bust for one row must not fail the whole batch's bookkeeping,
-     the same isolation principle the target/markFailed split already uses. */
-  if (cache) {
-    for (const row of rows) {
-      if (row.operation !== "delete") continue;
-      const { host, slug } = row.payload ?? {};
-      if (!host || !slug) continue;
-      try {
-        await cache.del(linkCacheKey(host, slug));
-      } catch (err) {
-        log?.error({ err, linkId: row.link_id }, "cache bust failed for a deleted link");
-      }
+     the same isolation principle the target/markFailed split already uses.
+
+     A SEPARATE pg_notify fires alongside the CacheStore.del() above (not
+     instead of it) for exactly the memory driver's blind spot: CACHE_DRIVER=
+     memory (the flagship single-node/compose profile) gives every process —
+     api, worker, redirect — its OWN Map, so this process's cache.del() above
+     only ever clears the worker's private Map and can never reach the
+     redirect's. NOTIFY has no such boundary: it is a Postgres server-side
+     broadcast to every session that has LISTENed on the channel, regardless
+     of which process opened that session, and the redirect already holds a
+     Postgres connection in every profile except LINK_PROJECTION=dynamo (see
+     apps/redirect/src/main.ts's init(), which opens sql.listen() on that same
+     connection). This is NOT gated on `cache` being passed: a caller with no
+     CacheStore (redis/dynamodb profiles pass one; the AWS profile does not,
+     because there is no Postgres connection on that path for the redirect to
+     listen from — LINK_PROJECTION=dynamo) simply notifies nobody, which costs
+     nothing. Failure is logged and swallowed for the same reason as the
+     cache.del() above: a lost notification is not a reason to fail the row —
+     the short TTL remains the final fallback. */
+  for (const row of rows) {
+    if (row.operation !== "delete") continue;
+    const { host, slug } = row.payload ?? {};
+    if (!host || !slug) continue;
+    try {
+      await db.execute(sql`select pg_notify('link_cache_bust', ${JSON.stringify({ host, slug })})`);
+    } catch (err) {
+      log?.error({ err, linkId: row.link_id }, "cache-bust notify failed for a deleted link");
+    }
+    if (!cache) continue;
+    try {
+      await cache.del(linkCacheKey(host, slug));
+    } catch (err) {
+      log?.error({ err, linkId: row.link_id }, "cache bust failed for a deleted link");
     }
   }
 
