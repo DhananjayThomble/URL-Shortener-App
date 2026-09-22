@@ -787,6 +787,25 @@ export class SnapUrlStack extends Stack {
            "off" rather than "misconfigured". Only the API verifies OAuth ID
            tokens, so redirectFn and workerFn never get this key. */
         ...(props.googleOAuthClientId ? { GOOGLE_OAUTH_CLIENT_ID: props.googleOAuthClientId } : {}),
+        /* #470/#426, closing the AWS-profile gap the reviewer found on
+           PR #594: LinkCacheBustService.bust() (apps/api/src/common/) calls
+           CacheStore.del(linkCacheKey(host, slug)) so the redirect's hot-cache
+           entry is evicted the moment a delete/flag write commits. That only
+           reaches the REDIRECT process when both sides share the SAME backing
+           store. redirectFn already sets CACHE_DRIVER=dynamodb +
+           CACHE_DYNAMO_TABLE (below) precisely because LINK_PROJECTION=dynamo
+           means it holds no Postgres connection, so pg_notify/LISTEN — the
+           mechanism that covers every OTHER profile, memory included — cannot
+           reach it either. Without this pair set here too, apiFn built its own
+           PRIVATE in-memory CacheStore (env.CACHE_DRIVER's default), deleted a
+           key nothing else ever reads, and the redirect kept serving the old
+           destination until LINK_CACHE_TTL_SECONDS ran out — invisible to
+           every other profile's test because they all have the pg_notify
+           fallback this one deliberately gave up leaving the VPC. Set only on
+           apiFn (not commonEnv): the worker never calls bust() and stays off
+           this table, matching the grant below. */
+        CACHE_DRIVER: "dynamodb",
+        CACHE_DYNAMO_TABLE: cacheTable.tableName,
       },
       ...vpcSettings,
     });
@@ -806,6 +825,13 @@ export class SnapUrlStack extends Stack {
         resources: [`arn:aws:ses:${this.region}:${this.account}:identity/*`],
       }),
     );
+
+    /* LinkCacheBustService.bust() only ever calls CacheStore.del() (see
+       apps/api/src/common/link-cache-bust.service.ts) — a delete, never a
+       get/set — so grantWriteData is the least-privilege grant, unlike
+       redirectFn's grantReadWriteData below (which also reads/writes the
+       daily-salt cache on the same table). */
+    cacheTable.grantWriteData(apiFn);
 
     const httpApi = new apigw.HttpApi(this, "HttpApi", {
       // The app sets its own CORS headers; doing it here too would send two.

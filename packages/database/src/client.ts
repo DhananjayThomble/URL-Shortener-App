@@ -4,6 +4,13 @@ import * as schema from "./schema/index.js";
 
 export type Database = ReturnType<typeof createDatabase>["db"];
 
+/** The raw postgres.js client createDatabase wraps in Drizzle. Exposed as a
+ *  type so a caller that needs postgres.js-specific features Drizzle does not
+ *  surface — LISTEN/NOTIFY (the redirect's cross-process cache-bust signal,
+ *  #470/#426), for instance — can type against it without importing the
+ *  `postgres` package itself just to name the type. */
+export type PgSql = ReturnType<typeof createDatabase>["sql"];
+
 /** What a callback passed to db.transaction() receives. It is NOT a Database —
  *  it has no $client — so anything that runs both inside and outside a
  *  transaction has to accept this union. */

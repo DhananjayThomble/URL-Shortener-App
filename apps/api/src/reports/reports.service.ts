@@ -1,14 +1,18 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { abuseReports, and, desc, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
+import { abuseReports, and, desc, domains, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
 import type { AbuseReport, SubmitReportInput, SubmitReportResult, UpdateAbuseReportInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
+import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 
 type AbuseReportRow = typeof abuseReports.$inferSelect;
 
 @Injectable()
 export class ReportsService {
-  constructor(@Inject(DB) private readonly db: Database) {}
+  constructor(
+    @Inject(DB) private readonly db: Database,
+    private readonly cacheBust: LinkCacheBustService,
+  ) {}
   private readonly logger = new Logger(ReportsService.name);
 
   /**
@@ -117,6 +121,11 @@ export class ReportsService {
 
     const flagged = await this.db.transaction(async (tx) => {
       let didFlag = false;
+      // Populated only when the flag actually lands — the (host, slug) the
+      // cache-bust needs. Read from the SAME row the UPDATE just changed, via
+      // a join on domainId, so there is no second query and no risk of the
+      // bust key naming a different link than the one just flagged.
+      let flaggedLocation: { host: string; slug: string } | undefined;
 
       if (attemptFlag) {
         // .returning() yields exactly the rows the UPDATE changed. An empty
@@ -126,7 +135,7 @@ export class ReportsService {
           .update(links)
           .set({ safeBrowsingStatus: "flagged", safeBrowsingCheckedAt: new Date() })
           .where(and(eq(links.id, report.linkId!), eq(links.workspaceId, workspaceId)))
-          .returning({ id: links.id });
+          .returning({ id: links.id, slug: links.slug, domainId: links.domainId });
         didFlag = updated.length > 0;
 
         // Issue #346: propagate the flag to the read projection in the SAME
@@ -136,11 +145,19 @@ export class ReportsService {
         // "clean", so a link an operator just flagged keeps redirecting until
         // some unrelated write happens to re-project it.
         if (didFlag) {
+          const flaggedRow = updated[0]!;
           await tx.insert(projectionOutbox).values({
             linkId: report.linkId!,
             operation: "upsert",
             payload: { linkId: report.linkId!, operation: "upsert" },
           });
+
+          const [domainRow] = await tx
+            .select({ domain: domains.domain })
+            .from(domains)
+            .where(eq(domains.id, flaggedRow.domainId))
+            .limit(1);
+          if (domainRow) flaggedLocation = { host: domainRow.domain, slug: flaggedRow.slug };
         }
       }
 
@@ -156,19 +173,27 @@ export class ReportsService {
           .where(and(eq(abuseReports.id, id), eq(abuseReports.workspaceId, workspaceId)));
       }
 
-      return didFlag;
+      return { didFlag, flaggedLocation };
     });
+
+    // #426: bust the redirect's hot-cache entry for exactly this (host, slug)
+    // now that the flag has committed — see LinkCacheBustService's header for
+    // why this must run here, after commit, rather than from the worker's
+    // scheduled outbox drain.
+    if (flagged.flaggedLocation) {
+      await this.cacheBust.bust(flagged.flaggedLocation.host, flagged.flaggedLocation.slug);
+    }
 
     // The audit reflects what actually happened: a 'link.flagged' entry only
     // when a link row was truly updated, otherwise the plain reviewed entry.
-    const recordedStatus = input.status ?? (flagged ? "actioned" : report.status);
+    const recordedStatus = input.status ?? (flagged.didFlag ? "actioned" : report.status);
     await recordActivity(this.db, this.logger, {
       workspaceId,
       actor,
-      auditAction: flagged ? "link.flagged" : "abuse_report.reviewed",
-      targetType: flagged ? "link" : "abuse_report",
-      targetId: flagged ? report.linkId! : id,
-      metadata: { reportId: id, slug: report.slug, status: recordedStatus, flagged },
+      auditAction: flagged.didFlag ? "link.flagged" : "abuse_report.reviewed",
+      targetType: flagged.didFlag ? "link" : "abuse_report",
+      targetId: flagged.didFlag ? report.linkId! : id,
+      metadata: { reportId: id, slug: report.slug, status: recordedStatus, flagged: flagged.didFlag },
     });
 
     return this.get(workspaceId, id);

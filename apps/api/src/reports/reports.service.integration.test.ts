@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { abuseReports, createDatabase, domains, eq, links, projectionOutbox, workspaces, type Database } from "@snapurl/database";
 import { ReportsService } from "./reports.service.js";
+import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 
 /* ============================================================
    ReportsService.submitReport against a real Postgres (#291).
@@ -15,6 +16,10 @@ import { ReportsService } from "./reports.service.js";
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeDb = DATABASE_URL ? describe : describe.skip;
 
+/** This suite (submitReport only) never flags a link, so bust() is never
+ *  called — a no-op stub is all the constructor needs. */
+const cacheBustStub = { bust: async () => {} } as unknown as LinkCacheBustService;
+
 describeDb("ReportsService.submitReport", () => {
   let handle: ReturnType<typeof createDatabase>;
   let db: Database;
@@ -28,7 +33,7 @@ describeDb("ReportsService.submitReport", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new ReportsService(db);
+    service = new ReportsService(db, cacheBustStub);
 
     const [ws] = await db
       .insert(workspaces)
@@ -131,12 +136,15 @@ describeDb("ReportsService.list / review", () => {
   let handle: ReturnType<typeof createDatabase>;
   let db: Database;
   let service: ReportsService;
+  let cacheBust: { bust: ReturnType<typeof vi.fn> };
 
   const stamp = Date.now();
   let wsA: string;
   let wsB: string;
   let linkA: string;
   let linkB: string;
+  let domainAHost: string;
+  let domainBHost: string;
   let reportOnLinkA: string;
   let reportOnLinkA2: string;
   let reportInWsB: string;
@@ -149,7 +157,8 @@ describeDb("ReportsService.list / review", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new ReportsService(db);
+    cacheBust = { bust: vi.fn(async () => {}) };
+    service = new ReportsService(db, cacheBust as unknown as LinkCacheBustService);
 
     // Two independent workspaces, each with a domain and a link.
     const [a] = await db
@@ -163,13 +172,15 @@ describeDb("ReportsService.list / review", () => {
       .returning({ id: workspaces.id });
     wsB = b!.id;
 
+    domainAHost = `rev-a-${stamp}.test`;
+    domainBHost = `rev-b-${stamp}.test`;
     const [domA] = await db
       .insert(domains)
-      .values({ workspaceId: wsA, domain: `rev-a-${stamp}.test` })
+      .values({ workspaceId: wsA, domain: domainAHost })
       .returning({ id: domains.id });
     const [domB] = await db
       .insert(domains)
-      .values({ workspaceId: wsB, domain: `rev-b-${stamp}.test` })
+      .values({ workspaceId: wsB, domain: domainBHost })
       .returning({ id: domains.id });
 
     const [lA] = await db
@@ -262,6 +273,12 @@ describeDb("ReportsService.list / review", () => {
       .from(projectionOutbox)
       .where(eq(projectionOutbox.linkId, linkA));
     expect(outbox.some((r) => r.op === "upsert")).toBe(true);
+
+    // #426: the redirect's hot-cache entry for exactly this (host, slug) must
+    // be busted once the flag has committed — not deferred to the worker's
+    // scheduled outbox drain (see LinkCacheBustService's header for why that
+    // was the defect the earlier #578/#589 review rounds caught).
+    expect(cacheBust.bust).toHaveBeenCalledWith(domainAHost, `rev-a-${stamp}`);
   });
 
   it("updates status without touching safeBrowsingStatus for a status-only review", async () => {
@@ -306,5 +323,10 @@ describeDb("ReportsService.list / review", () => {
       .where(eq(links.id, linkB))
       .limit(1);
     expect(row!.status).not.toBe("flagged");
+
+    // No bust either: nothing was actually flagged, so there is no
+    // (host, slug) to invalidate. This call must not be confused with the
+    // one the passing "flags the resolved link" test above already made.
+    expect(cacheBust.bust).not.toHaveBeenCalledWith(domainBHost, expect.anything());
   });
 });

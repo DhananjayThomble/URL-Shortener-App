@@ -37,6 +37,9 @@ const safeBrowsingStub = {
   check: async () => ({ status: "clean" as const, checkedAt: new Date() }),
 } as any;
 const projectionNudgeStub = { nudge: () => {} } as any;
+/** These tests never delete a link, so bust() is never called — a no-op
+ *  stub is all the constructor needs. */
+const cacheBustStub = { bust: async () => {} } as any;
 
 const actor = toActor({ userId: null, label: "test" });
 
@@ -78,7 +81,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
 
   it("LinksService.create rejects a destination that resolves to a denied address", async () => {
     denyLookup();
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
     const input = {
       destination: rebindingUrl,
       domain: domainName,
@@ -96,7 +99,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
 
   it("LinksService.create accepts a destination that only resolves to public addresses", async () => {
     allowLookup();
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
     const input = {
       destination: `https://example.com/ok-${stamp}`,
       domain: domainName,
@@ -126,7 +129,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
         ? [{ address: "169.254.169.254", family: 4 }]
         : [{ address: "93.184.216.34", family: 4 }],
     );
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
     const input = {
       destination: `https://example.com/social-${stamp}`,
       domain: domainName,
@@ -145,7 +148,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
 
   it("LinksService.update rejects a destination patch that resolves to a denied address", async () => {
     allowLookup();
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
     const created = await service.create(workspaceId, actor, {
       destination: `https://example.com/before-update-${stamp}`,
       domain: domainName,
