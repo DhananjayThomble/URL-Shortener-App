@@ -330,6 +330,60 @@ contains "unlock token opens the link (G3)" "example.com/locked" "$(loc "$RUN-lo
 contains "a token for another link is refused" "unlock=1" "$(loc "$RUN-locked?k=not-a-real-token")"
 
 echo
+echo "== immediate cache invalidation on delete/flag (#470, #426) =="
+# The real-stack acceptance criterion both #578 and #589's review rounds
+# demanded: warm the redirect's hot-link cache via an actual redirect, then
+# perform the API action, then assert the VERY NEXT redirect already reflects
+# it — with no fixed sleep and no reliance on LINK_CACHE_TTL_SECONDS (default
+# 10s) or the worker's scheduled outbox drain to eventually catch up. Earlier
+# attempts fired pg_notify from inside drainOutbox's scheduled pass, which
+# only shortened the window to the next poll tick; this fix fires it from the
+# write-side API call itself (apps/api/src/common/link-cache-bust.service.ts),
+# so the invalidation should already have landed by the time curl returns.
+mklink "{\"destination\":\"https://example.com/cachebust-delete\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-cb-del\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+CB_DEL_ID="$LAST_ID"
+mklink "{\"destination\":\"https://example.com/cachebust-flag\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-cb-flag\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+CB_FLAG_ID="$LAST_ID"
+wait_for_projection "'$CB_DEL_ID','$CB_FLAG_ID'"
+
+if [ -n "$CB_DEL_ID" ] && [ -n "$CB_FLAG_ID" ]; then
+  # Warm the cache: a redirect that resolves the link populates the
+  # CachingLinkResolver entry the API's bust() must reach.
+  expect "delete-target link is live before deletion" "302|https://example.com/cachebust-delete" "$(loc "$RUN-cb-del")"
+
+  curl -s -o /dev/null -w '%{http_code}' -X DELETE "$API/links/$CB_DEL_ID" -H "Authorization: Bearer $ACCESS" > /tmp/smoke-del-status
+  DEL_STATUS=$(cat /tmp/smoke-del-status); rm -f /tmp/smoke-del-status
+  expect "DELETE /links/:id returns 204" "204" "$DEL_STATUS"
+
+  # No sleep here: this is the assertion. If invalidation still depended on
+  # the worker's scheduled drain or the TTL, this would intermittently (or
+  # always, at TTL=10s >> request latency) observe a stale 302 instead.
+  IMMEDIATE=$(loc "$RUN-cb-del")
+  expect "the VERY NEXT redirect after DELETE is already 404 (#470)" "404|" "$IMMEDIATE"
+
+  # A link warmed then flagged via an abuse report must stop serving the
+  # destination immediately too — the #426 half of the same fix.
+  expect "flag-target link is live before flagging" "302|https://example.com/cachebust-flag" "$(loc "$RUN-cb-flag")"
+
+  REPORT_BODY=$(curl -s -X POST "$API/public/links/$RUN-cb-flag/report" -H 'Content-Type: application/json' \
+    -d '{"reason":"smoke test flag"}')
+  # list() is scoped to workspaceId + linkId — this is the same operator
+  # workspace that created the link, so its own intake report is visible here.
+  REPORT_ID=$(curl -s "$API/reports" -H "Authorization: Bearer $ACCESS" \
+    | RUN_SLUG="$RUN-cb-flag" node -pe 'const r=JSON.parse(require("fs").readFileSync(0,"utf8")); (r.find(x=>x.slug===process.env.RUN_SLUG)||{}).id||""')
+  if [ -n "$REPORT_ID" ]; then
+    curl -s -o /dev/null -X PATCH "$API/reports/$REPORT_ID" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+      -d '{"flagLink":true}'
+    FLAGGED=$(loc "$RUN-cb-flag")
+    contains "the VERY NEXT redirect after flagging carries the warning interstitial (#426)" "warning=unsafe" "$FLAGGED"
+  else
+    bad "abuse report for the flag-invalidation check" "no report found for slug $RUN-cb-flag: $REPORT_BODY"
+  fi
+else
+  bad "cache-invalidation fixtures" "delete or flag target link was not created"
+fi
+
+echo
 echo "== deep linking =="
 ANDROID='User-Agent: Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'
 IPHONE='User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile Safari/604.1'

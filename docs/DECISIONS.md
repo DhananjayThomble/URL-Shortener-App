@@ -1061,6 +1061,83 @@ open-by-default. If that pressure recurs across many routes, reconsider whether
 scopes are the right granularity at all (e.g. a "read-only key" class), which
 would be its own ADR.
 
+### Delete and abuse-flag invalidate the redirect's hot-cache entry from the write-side call, not from the outbox drain (#470, #426)
+
+**Found by:** the QA lab's real-stack reproduction, and — the harder lesson —
+by two rounds of review on the first fix attempt, both rejecting a design
+that looked plausible and passed every unit test.
+
+A deleted or abuse-flagged link kept 302-redirecting to its old destination
+for up to `LINK_CACHE_TTL_SECONDS` (default 10s) after the API had already
+reported it gone/flagged. The obvious-looking first fix busted the redirect's
+`CacheStore` entry from `drainOutbox` — the worker's scheduled outbox drain —
+alongside a new `pg_notify('link_cache_bust', ...)` for the `CACHE_DRIVER=
+memory` profile (single-node/compose, where the API, worker and redirect each
+hold their own private `Map` and no shared-store bust can ever reach the
+redirect). That passed its own unit tests, because they called `drainOutbox`
+directly. It did **not** satisfy the actual requirement: `drainOutbox` only
+runs on `PROJECTION_INTERVAL_SECONDS` (default 30s), so firing the notify
+from inside it just moved the bounded-staleness window from "up to the TTL"
+to "up to the next poll tick" — not synchronous with the write, which is what
+both #470's and #426's maintainer decisions actually asked for. A real-stack
+regression that warmed the cache, deleted through the API, and polled the
+redirect caught this immediately (`302` for the full drain interval, `404`
+only once the scheduled drain finally ran) — the kind of check the earlier
+attempt didn't have, because its own tests invoked `drainOutbox` manually and
+so never observed the interval at all.
+
+The fix: `LinkCacheBustService` (`apps/api/src/common/`) is called directly
+by `LinksService.remove()` and `ReportsService.review()` — the write-side
+callers — immediately **after** their transaction commits, never from the
+outbox/worker. It does the same two things the outbox-based attempt did, just
+from the right place: `CacheStore.del(linkCacheKey(host, slug))` for the
+`redis`/`dynamodb` profiles (an actual shared store), and
+`pg_notify('link_cache_bust', {host, slug})` on the API's own Postgres
+connection for every profile that gives the redirect one (`memory` included
+— NOTIFY is a Postgres server-side broadcast, not a per-process application
+store, so it has no `CACHE_DRIVER=memory` blind spot). The redirect's
+`cache-bust-listener.ts` `LISTEN`s for it and evicts the matching
+`linkCacheKey`, unchanged from the design either prior attempt already had —
+only the *trigger's location* was wrong, not the notify/listen mechanism
+itself. `projection_outbox` and `drainOutbox` are untouched by this fix: they
+keep doing exactly what they did before (driving the DynamoDB projection),
+with no new responsibility and no new `CacheStore`/`ProjectionTarget`
+plumbing — which also means the worker never needs a `CacheStore` and none of
+the CDK/Helm worker wiring the outbox-based attempt required is needed here.
+
+`linkCacheKey(host, slug)` moved into `packages/cache` as the one place the
+cache-key format is defined (`link:<host>|<slug>`, `|` rather than `:` so a
+`Host` header carrying a non-default port cannot shift the boundary and
+collide two different pairs), so the redirect's `CachingLinkResolver` (which
+reads the key) and the API's `LinkCacheBustService` (which busts it) cannot
+silently disagree about which entry a given call names.
+
+Verified against the real single-node/compose profile (`pnpm staging:up`,
+`CACHE_DRIVER=memory`, the flagship self-host default): warm a redirect,
+`DELETE /links/:id`, and the *very next* redirect is already 404 — no sleep,
+no manual `drainOutbox` call — and the equivalent for actioning an abuse
+report with `flagLink: true` (the very next redirect already carries the
+warning interstitial). See `scripts/smoke-redirect.sh`'s "immediate cache
+invalidation" section.
+
+**What it was chosen over.** Negative-caching a 404/flagged result at the
+redirect was rejected: it adds a second cache semantics (positive TTL vs.
+negative outcome) to a decorator whose header comment already documents one
+deliberate trade-off, for no benefit over invalidating the specific key that
+changed. Treating this as in-scope of the existing bounded-staleness trade-off
+(i.e. doing nothing beyond documentation) was rejected per the maintainer's
+explicit decision on both #470 and #426 that delete/flag get immediate
+invalidation, not TTL-bounded staleness. Keeping the bust inside
+`drainOutbox` — the first attempt's design — was rejected once the real-stack
+regression showed it does not change the observable window's *order of
+magnitude*, only its size (TTL vs. poll interval); both are "wait for a timer
+to fire," which is exactly what "immediate" was chosen to rule out.
+
+**Revisit if** a future write path needs the same immediate-invalidation
+property for a reason other than delete/flag (e.g. a bulk operator action) —
+call `LinkCacheBustService.bust()` from that write-side transaction's caller
+too, rather than reintroducing an outbox-driven bust for the new case.
+
 ---
 
 ## Part 5 — Open questions for you

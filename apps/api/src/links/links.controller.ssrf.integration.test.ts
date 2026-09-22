@@ -40,6 +40,8 @@ const safeBrowsingStub = {
   check: async () => ({ status: "clean" as const, checkedAt: new Date() }),
 } as any;
 const projectionNudgeStub = { nudge: () => {} } as any;
+/** This test never calls remove(), so bust() is never invoked. */
+const cacheBustStub = { bust: async () => {} } as any;
 
 describeDb("LinksController.create — request-level SSRF DNS regression (#534)", () => {
   let handle: ReturnType<typeof createDatabase>;
@@ -58,7 +60,7 @@ describeDb("LinksController.create — request-level SSRF DNS regression (#534)"
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub));
 
     const [ws] = await db
       .insert(workspaces)

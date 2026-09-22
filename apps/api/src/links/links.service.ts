@@ -16,6 +16,7 @@ import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingCh
 import { DB, READ_DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { ProjectionNudgeService } from "./projection-nudge.service.js";
+import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget, resolvesToDeniedAddress } from "../common/ssrf-guard.js";
@@ -42,6 +43,7 @@ export class LinksService {
     @Inject(READ_DB) private readonly readDb: Database,
     private readonly safeBrowsing: SafeBrowsingService,
     private readonly projectionNudge: ProjectionNudgeService,
+    private readonly cacheBust: LinkCacheBustService,
   ) {}
 
   private readonly logger = new Logger(LinksService.name);
@@ -779,11 +781,14 @@ export class LinksService {
   }
 
   async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
-    // The slug is read before the delete because it is the only thing that
-    // makes the audit entry and the webhook payload mean anything afterwards.
+    // The slug and domain are read before the delete because they are the
+    // only things that make the audit entry, the webhook payload, and the
+    // cache-bust key mean anything afterwards — once the row is gone there is
+    // nothing left to join against for the domain string.
     const [row] = await this.db
-      .select({ id: links.id, slug: links.slug })
+      .select({ id: links.id, slug: links.slug, domain: domains.domain })
       .from(links)
+      .innerJoin(domains, eq(links.domainId, domains.id))
       .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
       .limit(1);
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
@@ -792,6 +797,12 @@ export class LinksService {
       await this.enqueueProjection(tx, id, "delete");
       await tx.delete(links).where(eq(links.id, id));
     });
+
+    // #470: bust the redirect's hot-cache entry for exactly this (host, slug)
+    // now that the delete has committed — see LinkCacheBustService's header
+    // for why this must run here, after commit, rather than from the
+    // worker's scheduled outbox drain.
+    await this.cacheBust.bust(row.domain, row.slug);
 
     await recordActivity(this.db, this.logger, {
       workspaceId,
