@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { abuseReports, and, desc, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
+import { abuseReports, and, desc, domains, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
 import type { AbuseReport, SubmitReportInput, SubmitReportResult, UpdateAbuseReportInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
@@ -126,7 +126,7 @@ export class ReportsService {
           .update(links)
           .set({ safeBrowsingStatus: "flagged", safeBrowsingCheckedAt: new Date() })
           .where(and(eq(links.id, report.linkId!), eq(links.workspaceId, workspaceId)))
-          .returning({ id: links.id });
+          .returning({ id: links.id, slug: links.slug, domainId: links.domainId });
         didFlag = updated.length > 0;
 
         // Issue #346: propagate the flag to the read projection in the SAME
@@ -135,11 +135,30 @@ export class ReportsService {
         // service reads a stale projected copy whose safeBrowsingStatus is still
         // "clean", so a link an operator just flagged keeps redirecting until
         // some unrelated write happens to re-project it.
+        //
+        // #426: also carry (host, slug) in the payload, so drainOutbox
+        // (apps/worker/src/jobs/outbox.ts) can bust the redirect's hot-link
+        // CacheStore entry for exactly this link synchronously, rather than
+        // waiting out LINK_CACHE_TTL_SECONDS while a flagged link keeps
+        // serving its destination. Same mechanism as #470's delete path —
+        // one invalidation path, two triggers, per the maintainer decision on
+        // this issue. The host is read from the SAME row the flag UPDATE just
+        // changed (via a join on domainId), so there is no second query and
+        // no risk of racing a concurrent domain move.
         if (didFlag) {
+          const [flaggedRow] = updated;
+          const [domainRow] = await tx
+            .select({ domain: domains.domain })
+            .from(domains)
+            .where(eq(domains.id, flaggedRow!.domainId))
+            .limit(1);
+
           await tx.insert(projectionOutbox).values({
             linkId: report.linkId!,
             operation: "upsert",
-            payload: { linkId: report.linkId!, operation: "upsert" },
+            payload: domainRow
+              ? { linkId: report.linkId!, operation: "upsert", host: domainRow.domain, slug: flaggedRow!.slug }
+              : { linkId: report.linkId!, operation: "upsert" },
           });
         }
       }

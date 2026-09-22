@@ -258,10 +258,19 @@ describeDb("ReportsService.list / review", () => {
     // transaction, or under LINK_PROJECTION=dynamo the redirect keeps serving
     // the stale (clean) projected copy. Without the enqueue, this is empty.
     const outbox = await db
-      .select({ id: projectionOutbox.linkId, op: projectionOutbox.operation })
+      .select({ id: projectionOutbox.linkId, op: projectionOutbox.operation, payload: projectionOutbox.payload })
       .from(projectionOutbox)
       .where(eq(projectionOutbox.linkId, linkA));
     expect(outbox.some((r) => r.op === "upsert")).toBe(true);
+
+    // #426: the SAME row must also carry (host, slug), independent of the
+    // worker — this is the contract drainOutbox's cache-bust reads (see
+    // apps/worker/src/jobs/outbox.ts). A break here shows up on this side of
+    // the boundary rather than only as a worker test failure.
+    const flagRow = outbox.find((r) => r.op === "upsert");
+    const payload = flagRow!.payload as { host?: string; slug?: string };
+    expect(payload.slug).toBe(`rev-a-${stamp}`);
+    expect(payload.host).toBe(`rev-a-${stamp}.test`);
   });
 
   it("updates status without touching safeBrowsingStatus for a status-only review", async () => {

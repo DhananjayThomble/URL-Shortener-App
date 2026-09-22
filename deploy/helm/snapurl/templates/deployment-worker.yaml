@@ -50,6 +50,20 @@ spec:
                   name: {{ include "snapurl.secretName" . }}
                   key: database-ca-cert
             {{- end }}
+            {{- if .Values.redis.url }}
+            # #470 / #426: the worker's outbox drain busts a deleted or
+            # newly-flagged link's cache entry via CacheStore.del(). It
+            # already inherits CACHE_DRIVER=redis from the shared ConfigMap
+            # above when redis.url is set, but the driver needs the
+            # connection string itself — without this the CacheStore
+            # construction throws the moment CACHE_DRIVER=redis is set,
+            # matching the redirect/api deployments' own REDIS_URL block.
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: redis-url
+            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

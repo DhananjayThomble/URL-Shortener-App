@@ -33,6 +33,23 @@
        time-to-live measured from the moment of the write.
    ============================================================ */
 
+/**
+ * The hot-link cache key for a (host, slug) pair.
+ *
+ * This is the ONE place the format is defined. `CachingLinkResolver`
+ * (apps/redirect) writes and reads it on every redirect; the projection
+ * outbox (apps/worker) deletes it when a link is deleted or an operator
+ * flags it as abusive (#470, #426), so every writer and the resolver never
+ * disagree about which key names a given link's cache entry. Lowercasing
+ * both host and slug here — rather than trusting each caller to have
+ * normalised first — means a caller that forgets to call normaliseHost
+ * itself still lands on the same key, matching the case-insensitive lookup
+ * the Postgres resolver and the DynamoDB projection both use.
+ */
+export function linkCacheKey(host: string, slug: string): string {
+  return `link:${host.toLowerCase().trim()}:${slug.toLowerCase()}`;
+}
+
 export interface CacheStore {
   /**
    * Read a string value. Returns null when the key is absent or has

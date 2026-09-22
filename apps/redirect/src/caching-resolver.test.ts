@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryCacheStore } from "@snapurl/cache";
+import { linkCacheKey, MemoryCacheStore } from "@snapurl/cache";
 import { CachingLinkResolver } from "./caching-resolver.js";
 import type { LinkResolver, ResolvedDomain, ResolvedLink } from "./resolver.js";
 
@@ -129,6 +129,20 @@ describe("CachingLinkResolver", () => {
     // Both calls fell through: nulls are never cached.
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(await cache.get("link:snap.to:ghost")).toBeNull();
+  });
+
+  it("writes under the SAME key linkCacheKey() computes — the contract drainOutbox's cache-bust relies on (#470, #426)", async () => {
+    const link = makeLink();
+    const { resolver } = spyInner(link);
+    const caching = new CachingLinkResolver(resolver, cache, TTL);
+
+    await caching.resolve("SNAP.TO", "Hot");
+
+    // If this resolver and the outbox's bust ever computed the key
+    // differently, a delete/flag bust would silently miss the entry this
+    // resolve() just wrote, and the cache would keep serving the flagged or
+    // deleted link for the full TTL — exactly the bug #470/#426 fix.
+    expect(await cache.get(linkCacheKey("snap.to", "hot"))).not.toBeNull();
   });
 
   it("passes resolveDomain straight through to the inner resolver", async () => {

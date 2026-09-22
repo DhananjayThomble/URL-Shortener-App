@@ -1100,6 +1100,16 @@ export class SnapUrlStack extends Stack {
            On workerFn ONLY — the redirect never writes the KVS; the CloudFront
            Function reads it via its association above. */
         LINK_PROJECTION_KVS_ARN: linkKvs.keyValueStoreArn,
+        /* #470 / #426: back the outbox drain's cache-bust with the SAME
+           DynamoDB-backed CacheStore redirectFn reads (see its CACHE_DRIVER
+           note above) — this is what makes a deleted or newly-flagged link's
+           cache entry bust cross-process on the AWS profile, where
+           CACHE_DRIVER=memory's per-process Map (and the pg_notify fallback,
+           which needs a Postgres connection this profile deliberately has
+           neither redirectFn nor workerFn hold for LINK_PROJECTION=dynamo)
+           would otherwise leave nothing shared to bust. */
+        CACHE_DRIVER: "dynamodb",
+        CACHE_DYNAMO_TABLE: cacheTable.tableName,
       },
       ...vpcSettings,
     });
@@ -1108,6 +1118,12 @@ export class SnapUrlStack extends Stack {
        and queries the linkId GSI to find what to delete — readWriteData covers
        the table and its indexes. */
     linkProjectionTable.grantReadWriteData(workerFn);
+
+    /* #470 / #426: the worker's outbox drain reads and deletes cache entries
+       via CacheStore.del() on a delete/flag row — readWriteData covers the
+       del() as well as the get()/set() other CacheStore consumers use, kept
+       symmetric with redirectFn's own grant on this table above. */
+    cacheTable.grantReadWriteData(workerFn);
 
     /* #289 edge fast path: the worker's KvsWriter maintains the RedirectLinkKvs
        store on the same outbox drain that writes the DynamoDB projection —

@@ -1,4 +1,5 @@
 import { sql, type Database } from "@snapurl/database";
+import { linkCacheKey, type CacheStore } from "@snapurl/cache";
 
 /* ============================================================
    Draining the projection outbox.
@@ -45,12 +46,53 @@ import { sql, type Database } from "@snapurl/database";
    and claimed_at cleared so the row is retryable on the next drain
    without waiting out the lease. A row at MAX_ATTEMPTS is never
    claimed again — it is a real alert that the edge is stale.
+
+   Cache invalidation on delete (#470) and abuse-flag (#426)
+   -----------------------------------------------------------
+   A "delete" row, or an "upsert" row whose payload names a cache-bust
+   target, also busts the redirect's hot-link cache, two ways at once:
+
+     1. CacheStore.del() on whatever CacheStore this call was given — reaches
+        the redirect ONLY when CACHE_DRIVER is 'redis' or 'dynamodb', i.e. a
+        store genuinely shared across processes.
+     2. pg_notify('link_cache_bust', ...) — reaches the redirect ALWAYS
+        (every profile that gives the redirect a Postgres connection, i.e.
+        every profile except LINK_PROJECTION=dynamo), because NOTIFY is a
+        Postgres server-side broadcast, not a shared application store. This
+        is what closes the gap CacheStore.del() cannot: under CACHE_DRIVER=
+        memory (the flagship single-node/compose profile) the api, worker and
+        redirect each hold their OWN Map, so no application-level store is
+        ever actually shared there. The redirect is expected to open()
+        sql.listen('link_cache_bust', ...) on its own Postgres connection and
+        evict the matching key from ITS OWN CacheStore instance on receipt.
+
+   A flagged link (operator actions an abuse report with flagLink=true,
+   apps/api/src/reports/reports.service.ts) writes an "upsert" outbox row —
+   the DynamoDB projection needs re-upserting either way — but ONLY that
+   write path additionally carries {host, slug} in the payload (a plain
+   link-edit upsert does not; see #426's edit-invalidation note in
+   caching-resolver.ts, still unbuilt). That is what distinguishes a
+   flag-triggered upsert from every other upsert below: only rows that
+   actually carry host/slug get busted, so an ordinary edit upsert is
+   byte-for-byte unaffected by this addition.
+
+   Both are best-effort and never fail the row: the short LINK_CACHE_TTL_SECONDS
+   remains the final fallback if a notify or a del() is lost.
    ============================================================ */
 
 /** One claimed outbox row, reduced to what a projection target acts on. */
 export interface ProjectionOp {
   linkId: string;
   operation: string;
+}
+
+/** The minimum a logger must offer for drainOutbox to surface a cache-bust
+ *  failure. Mirrors DynamoProjection's ProjectionLogger (same shape, defined
+ *  separately so this file has no dependency on dynamo-projection.ts); a pino
+ *  logger satisfies it, and it is optional so every existing call site and
+ *  unit test that does not care about cache invalidation keeps compiling. */
+export interface OutboxLogger {
+  error(obj: Record<string, unknown>, msg: string): void;
 }
 
 /** The per-op outcome of a batched apply(): the batch method must report each
@@ -90,10 +132,30 @@ const MAX_ATTEMPTS = 8;
    inside it; short enough that a crashed worker's rows come back promptly. */
 const CLAIM_LEASE = sql`interval '5 minutes'`;
 
+/** The subset of an outbox row's jsonb payload drainOutbox looks at itself,
+ *  independent of whatever a given ProjectionTarget reads from it. Optional
+ *  because only LinksService.remove() (#470) and ReportsService.review()'s
+ *  flag path (#426) currently populate host/slug — a plain link-edit upsert
+ *  carries no cache-invalidation payload yet (see #426's edit-invalidation
+ *  note in caching-resolver.ts, still unbuilt for that case). */
+interface OutboxPayload {
+  host?: string;
+  slug?: string;
+}
+
 export async function drainOutbox(
   db: Database,
   target: ProjectionTarget,
   batchSize = 200,
+  // The SAME CacheStore the redirect's CachingLinkResolver reads (shared
+  // only when CACHE_DRIVER is 'redis' or 'dynamodb' — see the per-row bust
+  // below). Optional and defaults to undefined so every existing
+  // caller/test that only cares about the projection target keeps compiling
+  // and behaving exactly as before; passing one is what turns the bust on.
+  cache?: CacheStore,
+  /** Optional: logs a cache-bust failure at error level instead of it being
+   *  silently swallowed. Omit in tests that do not pass a cache either. */
+  log?: OutboxLogger,
 ): Promise<{ processed: number; failed: number }> {
   /* Atomic claim. The inner SELECT ... FOR UPDATE SKIP LOCKED runs inside the
      implicit transaction of this single UPDATE, so the row locks are held for
@@ -111,8 +173,14 @@ export async function drainOutbox(
       limit ${batchSize}
       for update skip locked
     )
-    returning id, link_id, operation, attempts
-  `)) as unknown as Array<{ id: string; link_id: string; operation: string; attempts: number }>;
+    returning id, link_id, operation, attempts, payload
+  `)) as unknown as Array<{
+    id: string;
+    link_id: string;
+    operation: string;
+    attempts: number;
+    payload: OutboxPayload;
+  }>;
 
   let processed = 0;
   let failed = 0;
@@ -140,6 +208,52 @@ export async function drainOutbox(
       where id = ${id}::uuid
     `);
   };
+
+  /* Bust the hot-link cache for every claimed row that carries a (host, slug)
+     cache-invalidation target — a "delete" row (#470) always does; an
+     "upsert" row does only when it came from the abuse-flag path (#426),
+     which is what payload.host/payload.slug being present distinguishes from
+     a plain link-edit upsert (no cache-invalidation payload at all). This is
+     deliberately NOT gated on target upsert/remove/apply success below: the
+     cache entry and the DynamoDB projection are two different stores serving
+     two different readers (CachingLinkResolver vs. DynamoLinkResolver), and a
+     projection failure being retried on the next drain is no reason to leave
+     a deleted or newly-flagged link's redirect cache entry warm in the
+     meantime. A row missing host/slug in its payload is silently skipped —
+     nothing to bust, and the short TTL is exactly the fallback for that case.
+     A del() failure (Redis/DynamoDB unavailable) is logged and swallowed:
+     losing the bust for one row must not fail the whole batch's bookkeeping,
+     the same isolation principle the target/markFailed split already uses.
+
+     A SEPARATE pg_notify fires alongside the CacheStore.del() above (not
+     instead of it) for exactly the memory driver's blind spot: CACHE_DRIVER=
+     memory (the flagship single-node/compose profile) gives every process —
+     api, worker, redirect — its OWN Map, so this process's cache.del() above
+     only ever clears the worker's private Map and can never reach the
+     redirect's. NOTIFY has no such boundary: it is a Postgres server-side
+     broadcast to every session that has LISTENed on the channel, regardless
+     of which process opened that session, and the redirect holds a Postgres
+     connection in every profile except LINK_PROJECTION=dynamo. This is NOT
+     gated on `cache` being passed: a caller with no CacheStore simply
+     notifies nobody, which costs nothing. Failure is logged and swallowed for
+     the same reason as the cache.del() above: a lost notification is not a
+     reason to fail the row — the short TTL remains the final fallback. */
+  for (const row of rows) {
+    if (row.operation !== "delete" && row.operation !== "upsert") continue;
+    const { host, slug } = row.payload ?? {};
+    if (!host || !slug) continue;
+    try {
+      await db.execute(sql`select pg_notify('link_cache_bust', ${JSON.stringify({ host, slug })})`);
+    } catch (err) {
+      log?.error({ err, linkId: row.link_id }, "cache-bust notify failed for a link");
+    }
+    if (!cache) continue;
+    try {
+      await cache.del(linkCacheKey(host, slug));
+    } catch (err) {
+      log?.error({ err, linkId: row.link_id }, "cache bust failed for a link");
+    }
+  }
 
   /* Processed outside any long transaction: the projection write may be a
      DynamoDB network call, and each row is marked on its own so a slow or

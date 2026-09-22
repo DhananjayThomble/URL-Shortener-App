@@ -11,6 +11,7 @@ import {
   type Database,
 } from "@snapurl/database";
 import { hashForTesting } from "@snapurl/domain";
+import { MemoryCacheStore } from "@snapurl/cache";
 import { drainOutbox, type ProjectionTarget } from "./outbox.js";
 import { rollupClicks } from "./rollup.js";
 
@@ -151,6 +152,160 @@ describeDb("drainOutbox under concurrency", () => {
       where l.workspace_id = ${workspaceId}::uuid and o.processed_at is not null
     `)) as unknown as [{ n: number }];
     expect(n).toBe(N);
+  });
+});
+
+describeDb("drainOutbox cache invalidation (#470, #426)", () => {
+  let handle: ReturnType<typeof createDatabase>;
+  let db: Database;
+  let workspaceId: string;
+  let domainName: string;
+
+  /** A target whose upsert/remove never throw, so these tests isolate the
+   *  cache-bust behaviour from projection success/failure. */
+  class NoopTarget implements ProjectionTarget {
+    async upsert(): Promise<void> {}
+    async remove(): Promise<void> {}
+  }
+
+  beforeAll(async () => {
+    handle = createDatabase({ url: DATABASE_URL!, max: 2 });
+    db = handle.db;
+
+    const stamp = Date.now();
+    const [ws] = await db
+      .insert(workspaces)
+      .values({ name: "cache-bust test", slug: `cachebust-${stamp}` })
+      .returning({ id: workspaces.id });
+    workspaceId = ws!.id;
+    domainName = `cachebust-${stamp}.test`;
+    await db.insert(domains).values({ workspaceId, domain: domainName });
+  });
+
+  afterAll(async () => {
+    if (workspaceId) await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+    await handle?.close();
+  });
+
+  const seedLink = async (slug: string) => {
+    const [dom] = await db
+      .select({ id: domains.id })
+      .from(domains)
+      .where(eq(domains.domain, domainName))
+      .limit(1);
+    const [link] = await db
+      .insert(links)
+      .values({ workspaceId, domainId: dom!.id, slug, destination: "https://example.com/x" })
+      .returning({ id: links.id });
+    return link!.id;
+  };
+
+  it("busts the exact linkCacheKey for a delete row that carries (host, slug)", async () => {
+    const linkId = await seedLink(`del-${Date.now()}`);
+    const [row] = await db
+      .select({ slug: links.slug })
+      .from(links)
+      .where(eq(links.id, linkId))
+      .limit(1);
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "delete",
+      payload: { linkId, operation: "delete", host: domainName, slug: row!.slug },
+    });
+
+    const cache = new MemoryCacheStore();
+    const key = `link:${domainName}:${row!.slug.toLowerCase()}`;
+    await cache.set(key, "warm-value", 60);
+    expect(await cache.get(key)).toBe("warm-value");
+
+    await drainOutbox(db, new NoopTarget(), 500, cache);
+
+    expect(await cache.get(key)).toBeNull();
+  });
+
+  it("busts the exact linkCacheKey for an upsert row that carries (host, slug) — the flag path", async () => {
+    const linkId = await seedLink(`flag-${Date.now()}`);
+    const [row] = await db
+      .select({ slug: links.slug })
+      .from(links)
+      .where(eq(links.id, linkId))
+      .limit(1);
+    // Mirrors ReportsService.review()'s flag-triggered outbox insert (#426):
+    // an "upsert" operation (the DynamoDB projection still needs re-upserting)
+    // but WITH host/slug in the payload, unlike a plain edit upsert.
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "upsert",
+      payload: { linkId, operation: "upsert", host: domainName, slug: row!.slug },
+    });
+
+    const cache = new MemoryCacheStore();
+    const key = `link:${domainName}:${row!.slug.toLowerCase()}`;
+    await cache.set(key, "warm-value", 60);
+
+    await drainOutbox(db, new NoopTarget(), 500, cache);
+
+    expect(await cache.get(key)).toBeNull();
+  });
+
+  it("leaves an unrelated key alone when draining a plain edit upsert with no cache payload", async () => {
+    const linkId = await seedLink(`edit-${Date.now()}`);
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "upsert",
+      payload: { linkId, operation: "upsert" }, // no host/slug — a plain edit
+    });
+
+    const cache = new MemoryCacheStore();
+    const unrelatedKey = "link:untouched.test:someslug";
+    await cache.set(unrelatedKey, "still-here", 60);
+
+    const result = await drainOutbox(db, new NoopTarget(), 500, cache);
+
+    expect(result.processed).toBeGreaterThanOrEqual(1);
+    expect(await cache.get(unrelatedKey)).toBe("still-here");
+  });
+
+  it("still processes a delete row when no cache is passed (back-compat)", async () => {
+    const linkId = await seedLink(`nocache-${Date.now()}`);
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "delete",
+      payload: { linkId, operation: "delete", host: domainName, slug: "whatever" },
+    });
+
+    // No cache argument at all — every pre-existing caller/test that only
+    // cares about the projection target must keep compiling and working.
+    const result = await drainOutbox(db, new NoopTarget(), 500);
+
+    expect(result.processed).toBeGreaterThanOrEqual(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("marks the row processed even when cache.del() throws", async () => {
+    const linkId = await seedLink(`throws-${Date.now()}`);
+    const [row] = await db
+      .select({ slug: links.slug })
+      .from(links)
+      .where(eq(links.id, linkId))
+      .limit(1);
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "delete",
+      payload: { linkId, operation: "delete", host: domainName, slug: row!.slug },
+    });
+
+    const throwingCache: typeof MemoryCacheStore.prototype = Object.assign(new MemoryCacheStore(), {
+      del: async () => {
+        throw new Error("simulated Redis outage");
+      },
+    });
+
+    const result = await drainOutbox(db, new NoopTarget(), 500, throwingCache);
+
+    // A lost bust must not fail the row's own bookkeeping.
+    expect(result.failed).toBe(0);
+    expect(result.processed).toBeGreaterThanOrEqual(1);
   });
 });
 

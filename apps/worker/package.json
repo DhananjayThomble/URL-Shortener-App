@@ -20,6 +20,7 @@
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",
+    "@snapurl/cache": "workspace:*",
     "pino": "^9.6.0"
   },
   "devDependencies": {

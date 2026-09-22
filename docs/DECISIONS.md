@@ -1063,6 +1063,69 @@ would be its own ADR.
 
 ---
 
+### Synchronous cache-bust for a deleted or flagged link, not just the TTL (#470, #426)
+
+`CachingLinkResolver`'s bounded-staleness TTL (`LINK_CACHE_TTL_SECONDS`, default 10s) was a
+deliberate trade-off for **edit**: an edited link still legitimately exists, so a few seconds of
+staleness while the database stays off the hot path is an acceptable cost. Delete and abuse-flag are
+different — the link stops existing (delete) or is under active, known abuse (flag) — and letting a
+warm cache entry keep serving the old response for up to `LINK_CACHE_TTL_SECONDS` after the API has
+already reported the change is a worse exposure than the staleness the TTL was designed to tolerate.
+
+**What changed.** `LinksService.remove()` and `ReportsService.review()`'s flag path each carry
+`(host, slug)` in the `projection_outbox` row's jsonb `payload` for exactly their trigger (delete,
+flag-that-actually-took-effect). `drainOutbox` (`apps/worker/src/jobs/outbox.ts`) reads that payload
+and busts the redirect's hot-link cache entry two ways at once, independent of whatever the
+`ProjectionTarget` does with the row:
+
+1. `CacheStore.del()` on the same `CacheStore` the redirect's `CachingLinkResolver` reads — reaches
+   the redirect only when `CACHE_DRIVER` is `redis` or `dynamodb`, a store genuinely shared across
+   processes.
+2. `pg_notify('link_cache_bust', ...)` — reaches the redirect in every profile that gives it its own
+   Postgres connection (i.e. every profile except `LINK_PROJECTION=dynamo`), because `NOTIFY` is a
+   Postgres server-side broadcast rather than an application-level store. This is what closes the
+   `CACHE_DRIVER=memory` blind spot: on the flagship single-node/compose profile, the api, worker and
+   redirect each hold their own private `Map`, so no application store is ever actually shared there,
+   and `CacheStore.del()` alone would be a no-op cross-process. The redirect's `init()` opens
+   `sql.listen('link_cache_bust', ...)` on its existing Postgres connection (when it has one) and
+   evicts the matching key from its own `CacheStore` instance on receipt.
+
+Both are best-effort and never fail the outbox row: the short TTL remains the final fallback if a
+notify or a `del()` is lost. `linkCacheKey()` moved into `packages/cache` as the one place the cache
+key format is defined, so the resolver (reading) and the outbox drain (busting) cannot disagree about
+which key names a given link's entry.
+
+**What it was chosen over.** Treating delete/flag as in-scope of the existing edit trade-off and
+just documenting the window was rejected for delete (a gone link has no "few seconds of staleness"
+that is acceptable — it does not exist) and for flag (the whole point of flagging is to stop the
+harm now, not in ten seconds). A negative-cache-on-404 approach was considered and rejected: it
+solves delete but not flag, since a flagged link's origin still resolves — it is gated at 302-time by
+`gateFor()`, not by non-existence — so it would have needed a second mechanism for flag anyway,
+defeating the point of one invalidation path for both triggers.
+
+**The cost.** The worker now also constructs a `CacheStore` (previously only the redirect and the
+API's rate-limit throttler did), and the AWS profile's `workerFn`/Helm's worker deployment needed the
+same `CACHE_DRIVER`/`CACHE_DYNAMO_TABLE`/`REDIS_URL` wiring `redirectFn` already had, purely so the
+bust is reachable cross-process on those profiles. The single-node/compose default is functionally
+unchanged: `CACHE_DRIVER=memory` still cannot share a bust via `CacheStore.del()`, so `pg_notify` is
+the only mechanism that actually closes the gap there, and it depends on the redirect holding a
+Postgres connection — which is true for every profile this fix targets, and false only for
+`LINK_PROJECTION=dynamo` (AWS serverless), where the DynamoDB-backed `CacheStore.del()` is what
+covers it instead.
+
+A plain link-edit `upsert` row still carries no cache-invalidation payload — this fix is scoped to
+delete and flag, per the maintainer's decision on #426. Extending it to edit (closing the TTL window
+for every mutation, not just these two) is explicitly named as unbuilt future work in
+`caching-resolver.ts`'s header comment and is not part of this change.
+
+**Revisit if** a future trigger needs the same synchronous-bust treatment (e.g. moving a link to a
+different domain) — reuse this `(host, slug)` payload convention and the same `drainOutbox` bust loop
+rather than inventing a third mechanism. If `LINK_PROJECTION=dynamo` ever gains a Postgres connection
+for some other reason, the `pg_notify` path could be extended to cover that profile too, removing its
+current sole reliance on `CacheStore.del()`.
+
+---
+
 ## Part 5 — Open questions for you
 
 1. **Is the v1 Mongo database still live?** Decides whether the import script matters (G9).

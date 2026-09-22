@@ -16,7 +16,7 @@ import {
   visitorHash,
   clientIpFromXff,
 } from "@snapurl/domain";
-import { createCacheStore, type CacheDriver } from "@snapurl/cache";
+import { createCacheStore, linkCacheKey, type CacheDriver } from "@snapurl/cache";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { SQSClient } from "@aws-sdk/client-sqs";
@@ -214,6 +214,32 @@ async function init(): Promise<void> {
     dynamoTable: CACHE_DYNAMO_TABLE,
   });
   resolver = new CachingLinkResolver(baseResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
+
+  /* #470 / #426: synchronous cache invalidation for a deleted or newly-flagged
+     link. drainOutbox (apps/worker/src/jobs/outbox.ts) issues
+     pg_notify('link_cache_bust', '{"host":...,"slug":...}') for exactly those
+     two triggers, on the SAME Postgres server this connection talks to —
+     NOTIFY is a server-side broadcast to every session that has LISTENed on
+     the channel, so it reaches this process regardless of which process
+     (api/worker) sent it, and regardless of CACHE_DRIVER: this closes the
+     memory driver's blind spot, where the worker's own CacheStore.del() can
+     never reach this process's private Map. Only wired when this process
+     actually holds a Postgres connection (i.e. not LINK_PROJECTION=dynamo,
+     which is also the one profile where the outbox and this NOTIFY do not
+     apply). Errors are logged, never fatal: a lost notification just leaves
+     the short LINK_CACHE_TTL_SECONDS as the fallback, same as before this
+     existed. */
+  if (database) {
+    await database.sql.listen("link_cache_bust", async (payload) => {
+      try {
+        const { host, slug } = JSON.parse(payload) as { host?: string; slug?: string };
+        if (!host || !slug) return;
+        await cacheStore.del(linkCacheKey(host, slug));
+      } catch (err) {
+        app.log.warn({ err }, "failed to process a link_cache_bust notification");
+      }
+    });
+  }
 
   /* The click sink: an awaited SQS SendMessage on the AWS profile (freeze-safe,
      drained by the worker), a Postgres INSERT everywhere else. */

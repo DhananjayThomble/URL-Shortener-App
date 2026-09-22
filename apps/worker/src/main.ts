@@ -14,6 +14,7 @@ import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyval
    fast path never fills, silently, with redirects still served by the Lambda. */
 import "@aws-sdk/signature-v4a";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
+import { createCacheStore, type CacheDriver, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
@@ -44,6 +45,32 @@ const MAINTENANCE_SECONDS = Number(process.env.MAINTENANCE_INTERVAL_SECONDS ?? 3
 /* Four for the long-running process; the scheduled Lambda sets this to 1,
    where every extra connection is idle and counted against RDS's limit. */
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 4);
+
+/* #470 / #426: which CacheStore the outbox drain busts a deleted or
+   newly-flagged link's cache entry from. Mirrors apps/redirect's own
+   CACHE_DRIVER/REDIS_URL/CACHE_DYNAMO_TABLE exactly, because this MUST be the
+   same store the redirect's CachingLinkResolver reads for the bust to be
+   observable at all — 'memory' (the default) is one Map per process, so on
+   that driver this process's del() can never reach the redirect's; the
+   pg_notify fallback in drainOutbox is what covers that case instead. Only
+   'redis' and 'dynamodb' make this bust cross-process. */
+const CACHE_DRIVER = (process.env.CACHE_DRIVER ?? "memory") as CacheDriver;
+const REDIS_URL = process.env.REDIS_URL;
+const CACHE_DYNAMO_TABLE = process.env.CACHE_DYNAMO_TABLE;
+let cacheStorePromise: Promise<CacheStore> | undefined;
+
+/** Built once and reused across warm Lambda invocations, mirroring
+ *  projectionFor's memoisation below. */
+function cacheStoreFor(): Promise<CacheStore> {
+  if (!cacheStorePromise) {
+    cacheStorePromise = createCacheStore({
+      driver: CACHE_DRIVER,
+      redisUrl: REDIS_URL,
+      dynamoTable: CACHE_DYNAMO_TABLE,
+    });
+  }
+  return cacheStorePromise;
+}
 
 /* The replica URL and SSL settings are plumbed through for consistency, but the
    worker deliberately runs every job on the PRIMARY `db` handle: rollups drain
@@ -214,7 +241,7 @@ function projectionFor(database: Database): ProjectionTarget {
  *  configured interval regardless of what rollupClicks or deliverWebhooks are
  *  doing. */
 export async function runProjection(database: Database) {
-  const outbox = await drainOutbox(database, projectionFor(database));
+  const outbox = await drainOutbox(database, projectionFor(database), 200, await cacheStoreFor(), log);
   if (outbox.processed || outbox.failed) {
     log.info({ projected: outbox.processed, projectionFailures: outbox.failed }, "projection drain");
   }
