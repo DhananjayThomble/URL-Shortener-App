@@ -51,7 +51,7 @@ jobs:
     steps:
       # The plan role is trusted on the main branch ref, which is what a
       # `schedule` trigger runs as. See docs/CD-AWS-OIDC.md.
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ap-south-1
