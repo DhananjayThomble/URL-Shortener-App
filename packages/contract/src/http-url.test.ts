@@ -54,6 +54,8 @@ describe("HttpUrl — denylisted host ranges", () => {
     ["ipv6 loopback", "http://[::1]/x"],
     ["ipv6 unspecified", "http://[::]/x"],
     ["ipv6 link-local", "http://[fe80::1]/x"],
+    ["ipv6 link-local (outside fe80 literal, inside fe80::/10)", "http://[fe90::1]/x"],
+    ["ipv6 link-local (top of fe80::/10 range)", "http://[febf::1]/x"],
     ["ipv6 unique-local", "http://[fd00::1]/x"],
     ["ipv4-mapped metadata", "http://[::ffff:169.254.169.254]/x"],
   ])("rejects %s: %s", (_label, url) => {
@@ -65,6 +67,8 @@ describe("HttpUrl — denylisted host ranges", () => {
     expect(HttpUrl.safeParse("http://172.32.0.1/x").success).toBe(true); // just above 172.31
     expect(HttpUrl.safeParse("http://100.63.0.1/x").success).toBe(true); // just below CGNAT
     expect(HttpUrl.safeParse("http://100.128.0.1/x").success).toBe(true); // just above CGNAT
+    expect(HttpUrl.safeParse("http://[fe7f::1]/x").success).toBe(true); // just below fe80::/10
+    expect(HttpUrl.safeParse("http://[fec0::1]/x").success).toBe(true); // just above fe80::/10
   });
 });
 
