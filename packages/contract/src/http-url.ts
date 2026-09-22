@@ -25,8 +25,15 @@ import { z } from "zod";
  * 169.254.0.0/16 link-local block that carries the instance metadata service
  * at 169.254.169.254. With no NAT the reachable SSRF surface here is intra-VPC
  * (RDS is what is in there), but "different threat model" is not "no threat".
+ *
+ * Exported (not just used internally) so the DNS-resolving half of this guard
+ * — `apps/api/src/common/ssrf-guard.ts` — can apply the same range rules to a
+ * *resolved* address without duplicating them. That half cannot live in this
+ * package: it needs `node:dns`, and this package is imported by `web/`'s
+ * browser bundle, which cannot resolve a `node:` built-in (see the docblock on
+ * `HttpUrl` below).
  */
-const isDeniedIpv4 = (host: string): boolean => {
+export const isDeniedIpv4 = (host: string): boolean => {
   const parts = host.split(".");
   if (parts.length !== 4) return false;
   const octets = parts.map((p) => Number(p));
@@ -42,7 +49,8 @@ const isDeniedIpv4 = (host: string): boolean => {
   return false;
 };
 
-const isDeniedIpv6 = (raw: string): boolean => {
+/** See the docblock on `isDeniedIpv4` — exported for the same reason. */
+export const isDeniedIpv6 = (raw: string): boolean => {
   // URL hostnames wrap IPv6 in brackets; strip them and any zone id.
   const host = raw.replace(/^\[/, "").replace(/\]$/, "").split("%")[0]!.toLowerCase();
   if (host === "::" || host === "::1") return true; // unspecified / loopback
@@ -90,6 +98,24 @@ export const isDeniedHost = (host: string): boolean => {
  *
  * `z.url({ protocol })` (zod 4) rejects non-http(s) schemes such as
  * `javascript:`, `data:`, `file:` and `ftp:` before the host check ever runs.
+ *
+ * This check is deliberately synchronous and only ever looks at the literal
+ * hostname text — it does not resolve DNS, and cannot: this package is
+ * imported by `web/`'s browser bundle (`web/src/lib/api/types.ts` re-exports
+ * it wholesale), which cannot resolve a `node:dns` import, and zod cannot run
+ * an async refinement during a synchronous `parse`/`safeParse` — of which
+ * there are several call sites in this codebase, including in tests, that
+ * would start throwing `$ZodAsyncError` instead of failing validation.
+ *
+ * A name like `169.254.169.254.nip.io` is not a denied literal, so it passes
+ * this check, but still resolves to the metadata address at request time.
+ * Closing that gap is `assertNoSsrfDnsTarget` in
+ * `apps/api/src/common/ssrf-guard.ts` — a server-only, explicit async step
+ * services call after this schema has already accepted the request body, for
+ * exactly the fields that end up as a real network destination (a webhook
+ * endpoint the worker `fetch()`s, a link destination the redirect service
+ * sends a browser to). It reuses `isDeniedIpv4`/`isDeniedIpv6` below, exported
+ * for that reason.
  */
 export const HttpUrl = z
   .url({ protocol: /^https?$/, error: "Enter an absolute http(s) URL" })

@@ -5,6 +5,7 @@ import { and, domains, eq, links, sql, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
+import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 
 @Injectable()
 export class DomainsService {
@@ -47,6 +48,12 @@ export class DomainsService {
       .where(sql`lower(${domains.domain}) = ${domain}`)
       .limit(1);
     if (taken) throw new ConflictException(`${domain} is already connected to a workspace.`);
+
+    /* HttpUrl already rejected a literal denied address; this resolves DNS to
+       catch a redirect that only resolves to one (see ssrf-guard.ts). Both
+       fields are the redirect service's Location header on the root path or
+       a 404, so a victim's browser is sent wherever they resolve to. */
+    await assertNoSsrfDnsTarget([input.rootRedirect, input.notFoundRedirect]);
 
     const [row] = await this.db
       .insert(domains)

@@ -18,6 +18,7 @@ import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { ProjectionNudgeService } from "./projection-nudge.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
+import { assertNoSsrfDnsTarget, resolvesToDeniedAddress } from "../common/ssrf-guard.js";
 import {
   SPARKLINE_DAYS,
   buildSparkline,
@@ -297,6 +298,16 @@ export class LinksService {
         // than a discriminated union, so `reason` does not narrow here.
         if (!shape.ok) problems.push(shape.reason ?? "That back-half isn't usable.");
       }
+
+      /* Same DNS-resolving SSRF check as the single-link path (see
+         ssrf-guard.ts), but caught as a per-row problem rather than thrown —
+         one row resolving to a denied address must not 400 the whole batch,
+         matching every other per-row check above it. */
+      for (const url of [row.destination, row.expiresTo, row.scheduledTo, row.social?.image, ...row.rules.map((r) => r.then)]) {
+        if (url && (await resolvesToDeniedAddress(url))) {
+          problems.push(`That host isn't allowed (it resolves to a private, loopback or link-local address): ${url}`);
+        }
+      }
       const domain = await resolveDomainCached(row.domain);
       if (typeof domain === "string") problems.push(domain);
 
@@ -564,6 +575,19 @@ export class LinksService {
       if (!shape.ok) throw new BadRequestException(shape.reason);
     }
 
+    /* HttpUrl already rejected a literal denied address; this resolves DNS to
+       catch a name that only resolves to one (see ssrf-guard.ts). Every
+       URL-bearing field a click can actually reach: the destination itself,
+       the two expiry/schedule redirects, the social preview image, and every
+       routing-rule target. */
+    await assertNoSsrfDnsTarget([
+      input.destination,
+      input.expiresTo,
+      input.scheduledTo,
+      input.social?.image,
+      ...input.rules.map((rule) => rule.then),
+    ]);
+
     const scan = await this.safeBrowsing.check(input.destination);
 
     /* Random slugs, retried on collision.
@@ -678,6 +702,17 @@ export class LinksService {
       ),
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
+
+    /* Same DNS-resolving check as create, applied only to the fields this
+       patch actually touches — an omitted field keeps whatever the row
+       already had, which was checked when it was written. */
+    await assertNoSsrfDnsTarget([
+      input.destination,
+      input.expiresTo,
+      input.scheduledTo,
+      input.social?.image,
+      ...(input.rules ?? []).map((rule) => rule.then),
+    ]);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (input.destination !== undefined) {

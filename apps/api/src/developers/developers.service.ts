@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, apiKeys, desc, eq, isNull, webhooks, type Database } from "@snapurl/database";
 import type { ApiKey, CreateApiKeyInput, CreateWebhookInput, CreatedApiKey, Webhook } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 
 @Injectable()
 export class DevelopersService {
@@ -93,6 +94,13 @@ export class DevelopersService {
   }
 
   async createWebhook(workspaceId: string, input: CreateWebhookInput): Promise<Webhook & { secret: string }> {
+    /* HttpUrl already rejected a literal denied address; this resolves DNS to
+       catch an endpoint that only resolves to one (see ssrf-guard.ts). This
+       is the field that matters most here: deliverWebhooks
+       (apps/worker/src/jobs/webhooks.ts) `fetch()`s it directly from the
+       server. */
+    await assertNoSsrfDnsTarget([input.endpoint]);
+
     // Shown once, like an API key. The receiver uses it to verify our signature.
     const secret = `whsec_${randomBytes(24).toString("base64url")}`;
 

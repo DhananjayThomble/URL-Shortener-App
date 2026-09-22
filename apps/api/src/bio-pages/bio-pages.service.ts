@@ -4,6 +4,7 @@ import type { BioPage, PublicBioPage, UpsertBioPageInput } from "@snapurl/contra
 import { isSlugAvailableShape } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";
+import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 
 @Injectable()
 export class BioPagesService {
@@ -64,6 +65,11 @@ export class BioPagesService {
   async upsert(workspaceId: string, input: UpsertBioPageInput): Promise<BioPage> {
     const shape = isSlugAvailableShape(input.slug);
     if (!shape.ok) throw new BadRequestException(shape.reason);
+
+    /* HttpUrl already rejected a literal denied address; this resolves DNS to
+       catch a block href that only resolves to one (see ssrf-guard.ts). A bio
+       page is public and rendered as a clickable <a href> to any visitor. */
+    await assertNoSsrfDnsTarget(input.blocks.map((block) => block.href));
 
     const [domain] = await this.db
       .select()
