@@ -1,0 +1,12 @@
+# Add this block to .github/dependabot.yml (create the file if it doesn't exist yet;
+# if it exists, add this entry to the existing `updates:` list — do not replace the file).
+#
+# Keeps the SHA pins from pin-github-actions.patch from going stale: Dependabot resolves
+# each new upstream release back to its SHA and opens a normal PR, so pins never need
+# manual updating and CI still verifies every bump before it merges.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
