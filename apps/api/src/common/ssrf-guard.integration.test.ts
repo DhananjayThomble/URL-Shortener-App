@@ -144,6 +144,36 @@ describeDb("SSRF DNS guard — wired into every write path (#534)", () => {
     await expect(service.create(workspaceId, actor, input)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("LinksService.create rejects a social.image that resolves to a denied address", async () => {
+    /* Must discriminate by hostname: denyLookup() denies every hostname
+       unconditionally, which would make this pass for the wrong reason (the
+       destination itself getting rejected) even if social.image were never
+       checked at all. Only the social.image host must resolve to a denied
+       address; the destination must resolve to a public one, so the only way
+       this test can fail-shut is if assertNoSsrfDnsTarget actually looks at
+       social.image. */
+    lookupMock.mockImplementation(async (host: string) =>
+      host.includes("169-254") || host.includes("169.254")
+        ? [{ address: "169.254.169.254", family: 4 }]
+        : [{ address: "93.184.216.34", family: 4 }],
+    );
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    const input = {
+      destination: `https://example.com/social-${stamp}`,
+      domain: domainName,
+      tags: [],
+      rules: [],
+      redirectType: "302" as const,
+      forwardQuery: true,
+      deepLink: false,
+      hideReferrer: false,
+      publicPreview: true,
+      social: { image: rebindingUrl },
+    } as unknown as CreateLinkInput;
+
+    await expect(service.create(workspaceId, actor, input)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("DomainsService.add rejects a rootRedirect that resolves to a denied address", async () => {
     denyLookup();
     const service = new DomainsService(db);
