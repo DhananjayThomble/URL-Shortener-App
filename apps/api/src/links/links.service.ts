@@ -18,6 +18,7 @@ import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { ProjectionNudgeService } from "./projection-nudge.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
+import { assertNoSsrfDnsTarget, resolvesToDeniedAddress } from "../common/ssrf-guard.js";
 import {
   SPARKLINE_DAYS,
   buildSparkline,
@@ -297,6 +298,17 @@ export class LinksService {
         // than a discriminated union, so `reason` does not narrow here.
         if (!shape.ok) problems.push(shape.reason ?? "That back-half isn't usable.");
       }
+
+      /* Same DNS-resolving SSRF check as the single-link path (see
+         ssrf-guard.ts), scoped to the same two fields (destination,
+         social.image), but caught as a per-row problem rather than thrown —
+         one row resolving to a denied address must not 400 the whole batch,
+         matching every other per-row check above it. */
+      for (const url of [row.destination, row.social?.image]) {
+        if (url && (await resolvesToDeniedAddress(url))) {
+          problems.push(`That host isn't allowed (it resolves to a private, loopback or link-local address): ${url}`);
+        }
+      }
       const domain = await resolveDomainCached(row.domain);
       if (typeof domain === "string") problems.push(domain);
 
@@ -564,6 +576,12 @@ export class LinksService {
       if (!shape.ok) throw new BadRequestException(shape.reason);
     }
 
+    /* HttpUrl already rejected a literal denied address; this resolves DNS to
+       catch a name that only resolves to one (see ssrf-guard.ts). Scoped to
+       exactly the two fields #534's maintainer decision named: the
+       destination itself and the social preview image. */
+    await assertNoSsrfDnsTarget([input.destination, input.social?.image]);
+
     const scan = await this.safeBrowsing.check(input.destination);
 
     /* Random slugs, retried on collision.
@@ -678,6 +696,12 @@ export class LinksService {
       ),
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
+
+    /* Same DNS-resolving check as create, scoped to the same two fields,
+       applied only when this patch actually touches them — an omitted field
+       keeps whatever the row already had, which was checked when it was
+       written. */
+    await assertNoSsrfDnsTarget([input.destination, input.social?.image]);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (input.destination !== undefined) {
