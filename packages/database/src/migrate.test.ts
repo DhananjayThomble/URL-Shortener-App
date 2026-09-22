@@ -1,5 +1,4 @@
-import { describe, expect, it } from "vitest";
-import postgres from "postgres";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 
 /* runMigrations' TLS handling is security-critical (#580): `ssl: true` must
    verify the certificate chain and hostname by default, the same policy
@@ -24,6 +23,70 @@ import { buildSslOption } from "./client.js";
 import type { MigrateSslOption } from "./migrate.js";
 
 const PRIMARY_URL = "postgres://user:pass@primary.example:5432/db";
+
+/* ============================================================
+   Seam around the actual runMigrations -> postgres() call.
+
+   The suite above pins buildSslOption's own contract but never calls
+   runMigrations, so a regression *inside* migrate.ts itself — e.g.
+   resolveSslOption reverting to the old unconditional
+   `{ rejectUnauthorized: false }`, or runMigrations no longer routing
+   through resolveSslOption at all — would not fail any of it. Confirmed by
+   mutation: restoring `ssl: true -> { rejectUnauthorized: false }` inside
+   migrate.ts left every case above green.
+
+   `postgres` and the drizzle migrator are mocked so runMigrations runs for
+   real (no stubbed re-implementation of its logic) without opening a
+   socket or touching a migrations folder: we intercept the exact options
+   object the module hands to `postgres()`. */
+const postgresOptionsCalls: Array<Record<string, unknown>> = [];
+
+vi.mock("postgres", () => ({
+  default: vi.fn((_url: string, options: Record<string, unknown>) => {
+    postgresOptionsCalls.push(options);
+    return { end: vi.fn().mockResolvedValue(undefined) };
+  }),
+}));
+
+vi.mock("drizzle-orm/postgres-js", () => ({
+  drizzle: vi.fn(() => ({})),
+}));
+
+vi.mock("drizzle-orm/postgres-js/migrator", () => ({
+  migrate: vi.fn().mockResolvedValue(undefined),
+}));
+
+describe("runMigrations (real call, mocked postgres()/migrate())", () => {
+  beforeEach(() => {
+    postgresOptionsCalls.length = 0;
+    vi.clearAllMocks();
+  });
+
+  it("passes ssl:'verify-full' to postgres() for a bare `ssl: true`, never rejectUnauthorized:false", async () => {
+    const { runMigrations } = await import("./migrate.js");
+    await runMigrations(PRIMARY_URL, true);
+
+    expect(postgresOptionsCalls).toHaveLength(1);
+    expect(postgresOptionsCalls[0]?.ssl).toBe("verify-full");
+    expect(postgresOptionsCalls[0]?.ssl).not.toEqual({ rejectUnauthorized: false });
+  });
+
+  it("passes ssl:undefined to postgres() for the default (no ssl arg)", async () => {
+    const { runMigrations } = await import("./migrate.js");
+    await runMigrations(PRIMARY_URL);
+
+    expect(postgresOptionsCalls).toHaveLength(1);
+    expect(postgresOptionsCalls[0]?.ssl).toBeUndefined();
+  });
+
+  it("only disables verification via the explicit sslNoVerify opt-out", async () => {
+    const { runMigrations } = await import("./migrate.js");
+    await runMigrations(PRIMARY_URL, { ssl: true, sslNoVerify: true });
+
+    expect(postgresOptionsCalls).toHaveLength(1);
+    expect(postgresOptionsCalls[0]?.ssl).toEqual({ rejectUnauthorized: false });
+  });
+});
 
 function sslOptionFor(ssl: MigrateSslOption) {
   const opts = typeof ssl === "boolean" ? { url: PRIMARY_URL, ssl } : { url: PRIMARY_URL, ...ssl };
@@ -53,29 +116,5 @@ describe("runMigrations TLS policy (via the same buildSslOption migrate.ts deleg
   it("verifies against a supplied CA bundle when sslCaCert is set", () => {
     const CA_PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----";
     expect(sslOptionFor({ ssl: true, sslCaCert: CA_PEM })).toEqual({ ca: CA_PEM, rejectUnauthorized: true });
-  });
-});
-
-describe("runMigrations argument construction", () => {
-  it("builds a postgres-js client whose ssl option is 'verify-full' for a bare true, without connecting", async () => {
-    // Constructing a postgres-js client does not open a socket until a query
-    // runs (documented behaviour, relied on elsewhere in this package's
-    // tests), so this pins the actual option object runMigrations hands to
-    // `postgres()` for its ssl connection, not just buildSslOption in isolation.
-    const sql = postgres(PRIMARY_URL, { max: 1, ssl: sslOptionFor(true), onnotice: () => {} });
-    try {
-      expect(sql.options.ssl).toBe("verify-full");
-    } finally {
-      await sql.end({ timeout: 0 });
-    }
-  });
-
-  it("builds a postgres-js client whose ssl option is undefined for the default (no ssl arg)", async () => {
-    const sql = postgres(PRIMARY_URL, { max: 1, ssl: sslOptionFor(false), onnotice: () => {} });
-    try {
-      expect(sql.options.ssl).toBeFalsy();
-    } finally {
-      await sql.end({ timeout: 0 });
-    }
   });
 });
