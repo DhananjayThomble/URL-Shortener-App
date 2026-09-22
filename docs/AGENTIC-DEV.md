@@ -151,6 +151,29 @@ guarantee the host never fills. A periodic host-wide `docker system prune -af --
 install units — and is out of scope here. Also out of scope: deciding whether the `zaproxy` image
 belongs on the Factory at all, since the security charter runs in the QA lab, not here.
 
+**The autopilot itself now reaps two other sources** (issue #564), at the top of every cycle,
+right after `check_checkout_clean`:
+
+- `reap_worktrees` removes `../wt-<n>` and `../wt-review-<n>[-suffix]` worktrees — created by the
+  developer and reviewer prompts (see `_common.md`, `reviewer.md`) — once the PR they were for has
+  merged or closed, or their branch no longer exists on `origin`. A worktree with a branch is
+  matched to its PR **by branch name** (`gh pr list --head`), never by the HEAD commit's own SHA:
+  a brand-new worktree with no commits of its own would otherwise be misidentified via any *other*
+  PR that happens to share that ancestry. Only a detached-HEAD worktree (a reviewer scratch tree,
+  which never has a branch of its own) falls back to a commit-SHA lookup
+  (`associatedPullRequests`). An open PR, or an in-progress branch with no PR yet, is always kept.
+- `prune_images_if_low_disk` runs `docker image prune -af` — **with no `until=` filter** — once
+  disk usage reaches `DISK_PRUNE_PCENT` (default 80). Unlike `staging-prune.sh` above, an age
+  filter is not just unnecessary here, it would be actively wrong for the same `image prune`
+  creation-time reason explained above, except more so: filtering by age would make an
+  under-pressure reclaim *weaker*, not stronger, since `-a` alone already satisfies "never remove
+  an image a running container uses" (it only ever considers images with zero containers
+  referencing them). If usage is still at or above `DISK_ALERT_PCENT` (default 85) after both
+  steps, `alert` raises it into the daily digest.
+
+Tests for both live in `scripts/agents/autopilot.test.sh` with real throwaway git worktrees and a
+stubbed `docker`/`gh`.
+
 ## Timezones
 
 **The host stays on UTC and always will.** GitHub's API returns UTC, Actions cron is UTC-only, and

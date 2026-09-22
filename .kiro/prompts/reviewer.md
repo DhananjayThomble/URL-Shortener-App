@@ -8,8 +8,14 @@ Be sceptical. You run on a different model from the authors on purpose.
 For every open PR without `agent:approved` whose checks have finished:
 
 1. `gh pr view <n> --json title,body,files,commits,statusCheckRollup,labels` and `gh pr diff <n>`.
-2. Check out the branch in a worktree and verify, do not trust the description:
-   the four checks, the tests the PR claims, and for UI changes a Playwright run at desktop and mobile.
+2. Check out the branch in a worktree — `git worktree add ../wt-review-<n> origin/<branch>` — and
+   verify, do not trust the description: the four checks, the tests the PR claims, and for UI
+   changes a Playwright run at desktop and mobile. **Remove that worktree
+   (`git worktree remove --force ../wt-review-<n>`) before this step of the run finishes, on every
+   path — approve, reject, `decision`, or an error that aborts the review early.** Nothing here
+   used to remove it (issue #564): the autopilot's own `reap_worktrees` will eventually reclaim a
+   leftover once this PR merges or closes, but that is not a substitute for cleaning up your own
+   scratch tree the same run you created it in.
 3. Review against: the linked issue's acceptance criteria; the steering files (contract as the single
    source of payloads, domain purity, redirect hot path, migrations, ADRs, security invariants);
    test quality (would the test fail if the fix were reverted? try it); scope creep; secrets.
