@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { sql, type Database } from "@snapurl/database";
+import { isDeniedHost, isDeniedIpv4, isDeniedIpv6 } from "@snapurl/contract";
 
 /* ============================================================
    Webhook delivery with exponential backoff.
@@ -35,6 +37,53 @@ export function signPayload(secret: string, timestamp: number, body: string): st
   return createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
 }
 
+/**
+ * True when `url` is safe to actually connect to right now: it parses, its
+ * host resolves, and none of the resolved addresses are denied.
+ *
+ * This is `apps/api/src/common/ssrf-guard.ts`'s `resolvesToDeniedAddress`,
+ * inverted and made fail-**closed**, re-derived here rather than imported
+ * because `apps/worker` cannot import from `apps/api` (no cross-`apps`
+ * imports). Both call the same `isDeniedIpv4`/`isDeniedIpv6` range rules from
+ * `@snapurl/contract`, so there is one implementation of "what counts as
+ * denied" even though there are two call sites of "resolve and check".
+ *
+ * `assertNoSsrfDnsTarget` already ran when this webhook was created — but
+ * that was a check at write time, and this fetch happens at delivery time,
+ * potentially much later. A hostname can resolve to a public address when it
+ * is written and a private/loopback/link-local one when it is resolved again
+ * here: DNS rebinding, or just a record that changed. The write-time check
+ * fails *open* on a lookup error (an unresolvable name isn't reachable
+ * either, so there's no SSRF to guard against, and rejecting a typo with a
+ * security error is the wrong trade-off) — but there is no such trade-off at
+ * the actual connection point: an unparseable URL, a lookup failure, and "no
+ * addresses returned" all mean this fetch cannot and must not proceed, so
+ * they are all "not permitted".
+ */
+export async function resolvesToPermittedAddress(url: string): Promise<boolean> {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+
+  if (isDeniedHost(host)) return false;
+
+  let records: Array<{ address: string; family: number }>;
+  try {
+    records = await lookup(host, { all: true, verbatim: true });
+  } catch {
+    return false;
+  }
+
+  if (records.length === 0) return false;
+
+  return records.every((record) =>
+    record.family === 6 ? !isDeniedIpv6(record.address) : !isDeniedIpv4(record.address),
+  );
+}
+
 export async function deliverWebhooks(db: Database, batchSize = 50): Promise<{ sent: number; failed: number }> {
   const rows = (await db.execute(sql`
     select d.id, d.webhook_id, d.event, d.payload, d.attempts, w.endpoint, w.secret
@@ -54,6 +103,23 @@ export async function deliverWebhooks(db: Database, batchSize = 50): Promise<{ s
   for (const row of rows) {
     const body = JSON.stringify({ event: row.event, data: row.payload });
     const timestamp = Math.floor(Date.now() / 1000);
+
+    /* The endpoint already passed assertNoSsrfDnsTarget when the webhook was
+       created (apps/api/src/common/ssrf-guard.ts) — but that was a check at
+       write time, and this fetch happens at delivery time, potentially much
+       later. A hostname can resolve to a public address when it is written
+       and a private/loopback/link-local one when it is resolved again here:
+       DNS rebinding, or just a record that changed. Re-checking immediately
+       before the request is the only point that actually matters, so it
+       fails *closed* (resolvesToPermittedAddress, not
+       resolvesToDeniedAddress's fail-open twin) — unlike the write-time
+       check, there is no "harmless typo" case to protect here: an
+       unresolvable endpoint was never going to be delivered to either. */
+    if (!(await resolvesToPermittedAddress(row.endpoint))) {
+      await recordFailure(db, row, "endpoint does not resolve to a permitted address", null);
+      failed++;
+      continue;
+    }
 
     try {
       const response = await fetch(row.endpoint, {

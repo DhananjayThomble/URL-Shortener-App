@@ -10,8 +10,8 @@ import { isDeniedHost, isDeniedIpv4, isDeniedIpv6 } from "@snapurl/contract";
    at contract-validation time. It cannot catch a public-looking DNS name that
    *resolves* to a denied address: `169.254.169.254.nip.io` and any other
    attacker-controlled name pointed at an internal or metadata address. That
-   needs a DNS lookup, which is I/O, which is why it is not part of the zod
-   schema (zod's synchronous `parse`/`safeParse` — used by the bulk-create
+   needs a DNS lookup, which is I/O, which is why it is not part of the sync
+   zod schema (zod's synchronous `parse`/`safeParse` — used by the bulk-create
    per-row path, the browser extension, and every existing contract test —
    cannot run an async refinement) and why it cannot live in packages/contract
    at all (that package is imported by web/'s browser bundle, which cannot
@@ -24,6 +24,20 @@ import { isDeniedHost, isDeniedIpv4, isDeniedIpv6 } from "@snapurl/contract";
    (apps/worker/src/jobs/webhooks.ts) — or a redirect a victim's browser
    follows (a link destination, routing-rule target, or scheduled/expiry
    redirect).
+
+   apps/worker cannot import this file (packages/architecture.md forbids
+   cross-`apps` imports), so it re-derives the same check locally
+   (apps/worker/src/jobs/webhooks.ts) from the same exported
+   `isDeniedIpv4`/`isDeniedIpv6` primitives this file also uses — no shared
+   mutable state or business rule to drift between the two, since both call
+   the one range-classifying implementation in packages/contract. That
+   worker-side copy runs again immediately before its `fetch`, at delivery
+   time rather than write time, and fails *closed* rather than open: a
+   hostname can resolve to a public address when a webhook is created and a
+   private/loopback one when it is later resolved again (DNS rebinding, or
+   just a record that changed), so the check that actually guards the
+   connection has no "harmless typo" case to protect the way a write-time
+   check does.
    ============================================================ */
 
 /**
