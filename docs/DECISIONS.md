@@ -1138,6 +1138,49 @@ property for a reason other than delete/flag (e.g. a bulk operator action) —
 call `LinkCacheBustService.bust()` from that write-side transaction's caller
 too, rather than reintroducing an outbox-driven bust for the new case.
 
+**Follow-up: the AWS profile (`LINK_PROJECTION=dynamo`) needed `CACHE_DRIVER`
+wired on `apiFn` too, not just `redirectFn` (PR #594 review round).** The fix
+above closes the gap for every profile that gives the redirect a Postgres
+connection (memory included, via `pg_notify`/LISTEN). `LINK_PROJECTION=dynamo`
+is the one profile that does not: the redirect resolves entirely from the
+DynamoDB projection and holds no Postgres handle, so it has no LISTEN
+fallback — the *only* path that can reach it is the shared `CacheStore`
+itself, `CACHE_DRIVER=dynamodb` pointed at the same table on both sides. The
+CDK stack (`infra/lib/snapurl-stack.ts`) already set `CACHE_DRIVER=dynamodb`
++ `CACHE_DYNAMO_TABLE` on `redirectFn` (Phase 7, #288, for the shared
+daily-salt cache) but never on `apiFn` — so in the real deployed AWS profile,
+`LinkCacheBustService.getCache()` silently built its own private in-memory
+`CacheStore` (`env.CACHE_DRIVER`'s default) and deleted a key nothing else
+ever read. `cdk synth` succeeded regardless, because a missing env var and a
+missing grant are not synth errors — this was a genuinely invisible gap
+without an assertion on the synthesized template, which is exactly what a
+reviewer's real-stack run against the `dynamo-smoke` CI job caught (that job
+had the identical gap: `CACHE_DRIVER` was never set on either process, so
+the job exercised the same silently-broken combination the deployed stack
+would have).
+
+The fix: `apiFn` gets `CACHE_DRIVER=dynamodb` + `CACHE_DYNAMO_TABLE` (same
+`cacheTable` as `redirectFn`) and a `cacheTable.grantWriteData(apiFn)` IAM
+grant — write-only, not `grantReadWriteData`, because `bust()` only ever
+calls `CacheStore.del()`. The `dynamo-smoke` CI job was updated to match: it
+now creates a `pk`-keyed cache table in dynamodb-local and sets
+`CACHE_DRIVER=dynamodb`/`CACHE_DYNAMO_TABLE` on both the API and redirect
+processes it starts, mirroring the CDK stack's actual pairing rather than
+leaving `CACHE_DRIVER` at its `memory` default. A CDK-synth unit test
+(`infra/lib/snapurl-stack.cache-bust.test.ts`) now pins this: both functions'
+`CACHE_DRIVER`/`CACHE_DYNAMO_TABLE` must agree and reference the same table
+logical ID, and `apiFn`'s IAM policy must include `dynamodb:DeleteItem` but
+not a read action on that table — a wiring regression like this one fails in
+seconds, with no Docker/dynamodb-local required, rather than only surfacing
+on a real-stack CI run.
+
+**Revisit if** a future profile adds a THIRD process that needs to read or
+bust this cache (e.g. a second redirect-like service) — it needs the same
+`CACHE_DRIVER`/`CACHE_DYNAMO_TABLE` pair and the correct grant (`grantReadData`
+if it only reads, `grantWriteData` if it only busts, `grantReadWriteData` if
+both), and the CDK test above should gain an assertion for it rather than
+trusting a new function to have copied the pattern correctly by eye.
+
 ---
 
 ## Part 5 — Open questions for you
