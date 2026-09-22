@@ -206,6 +206,9 @@ importers:
       '@aws-sdk/signature-v4a':
         specifier: ^3.1111.0
         version: 3.1111.0
+      '@snapurl/cache':
+        specifier: workspace:*
+        version: link:../../packages/cache
       '@snapurl/contract':
         specifier: workspace:*
         version: link:../../packages/contract

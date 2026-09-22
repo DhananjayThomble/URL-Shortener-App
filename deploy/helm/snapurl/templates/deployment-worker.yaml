@@ -37,12 +37,25 @@ spec:
             - configMapRef:
                 name: {{ include "snapurl.configMapName" . }}
           env:
-            # The worker needs NEITHER JWT secret — it does no auth. Only the DB.
+            # The worker needs NEITHER JWT secret — it does no auth. Only the DB
+            # and, when redis.url is set, the shared CacheStore Redis connects
+            # to — #470's delete-time cache bust (apps/worker/src/jobs/outbox.ts)
+            # needs the SAME store the redirect's CachingLinkResolver reads, and
+            # CACHE_DRIVER=redis with no REDIS_URL throws at cache-store
+            # construction (packages/cache/src/factory.ts), so this must be set
+            # whenever the ConfigMap sets CACHE_DRIVER to "redis".
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "snapurl.secretName" . }}
                   key: database-url
+            {{- if .Values.redis.url }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "snapurl.secretName" . }}
+                  key: redis-url
+            {{- end }}
             {{- if .Values.postgres.caCert }}
             - name: DATABASE_CA_CERT
               valueFrom:

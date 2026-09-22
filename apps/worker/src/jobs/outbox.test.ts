@@ -11,7 +11,8 @@ import {
   type Database,
 } from "@snapurl/database";
 import { hashForTesting } from "@snapurl/domain";
-import { drainOutbox, type ProjectionTarget } from "./outbox.js";
+import { linkCacheKey, MemoryCacheStore } from "@snapurl/cache";
+import { drainOutbox, NoProjection, type ProjectionTarget } from "./outbox.js";
 import { rollupClicks } from "./rollup.js";
 
 /* ============================================================
@@ -131,6 +132,123 @@ describeDb("drainOutbox under concurrency", () => {
       where l.workspace_id = ${workspaceId}::uuid and o.processed_at is not null
     `)) as unknown as [{ n: number }];
     expect(n).toBe(N);
+  });
+});
+
+/* #470: a deleted link keeps 302-redirecting for up to LINK_CACHE_TTL_SECONDS
+   after DELETE returns 204 and GET returns 404, because nothing busts the
+   redirect's hot-link CacheStore entry on delete. drainOutbox now does that
+   itself, given a CacheStore and a "delete" row whose payload carries the
+   (host, slug) LinksService.remove() wrote. These tests seed the outbox row
+   directly (bypassing the API) against a real Postgres, exactly like the
+   concurrency suite above, and assert against a real MemoryCacheStore rather
+   than a mock, so the assertion is "the exact key CachingLinkResolver would
+   have read is gone", not "del() was called with some arguments". */
+describeDb("drainOutbox cache invalidation on delete (#470)", () => {
+  let handle: ReturnType<typeof createDatabase>;
+  let db: Database;
+  let workspaceId: string;
+  let host: string;
+
+  beforeAll(async () => {
+    handle = createDatabase({ url: DATABASE_URL!, max: 1 });
+    db = handle.db;
+
+    const stamp = Date.now();
+    const [ws] = await db
+      .insert(workspaces)
+      .values({ name: "outbox cache-bust test", slug: `outbox-cache-${stamp}` })
+      .returning({ id: workspaces.id });
+    workspaceId = ws!.id;
+    host = `outbox-cache-${stamp}.test`;
+    await db.insert(domains).values({ workspaceId, domain: host });
+  });
+
+  afterAll(async () => {
+    if (workspaceId) await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+    await handle?.close();
+  });
+
+  /** Seed one pending "delete" outbox row carrying the given (host, slug) in
+   *  its payload, matching exactly what LinksService.remove() writes. Uses a
+   *  random linkId: the row's own link no longer existing (the real case,
+   *  post-delete) must not stop the bust from happening, since drainOutbox
+   *  never reads the links table for this. */
+  async function seedDeleteRow(slug: string) {
+    const linkId = crypto.randomUUID();
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "delete",
+      payload: { linkId, operation: "delete", host, slug },
+    });
+    return linkId;
+  }
+
+  it("busts the exact linkCacheKey the redirect's CachingLinkResolver reads, on a delete row", async () => {
+    const slug = "doomed";
+    const key = linkCacheKey(host, slug);
+    const cache = new MemoryCacheStore();
+    // Warm the cache exactly as CachingLinkResolver.resolve() would on a hit.
+    await cache.set(key, JSON.stringify({ id: "whatever" }), 10);
+    expect(await cache.get(key)).not.toBeNull();
+
+    await seedDeleteRow(slug);
+    const result = await drainOutbox(db, new NoProjection(), 200, cache);
+
+    expect(result.processed).toBe(1);
+    expect(result.failed).toBe(0);
+    // The bust reached the SAME store instance a shared CacheStore would be.
+    expect(await cache.get(key)).toBeNull();
+  });
+
+  it("is a no-op against the cache for an upsert row (no host/slug payload)", async () => {
+    const linkId = crypto.randomUUID();
+    const key = linkCacheKey(host, "untouched");
+    const cache = new MemoryCacheStore();
+    await cache.set(key, "some-value", 10);
+
+    await db.insert(projectionOutbox).values({
+      linkId,
+      operation: "upsert",
+      payload: { linkId, operation: "upsert" },
+    });
+    const result = await drainOutbox(db, new NoProjection(), 200, cache);
+
+    expect(result.processed).toBe(1);
+    // upsert carries no cache-invalidation payload (yet — see #426's
+    // edit-invalidation half), so the unrelated key is untouched.
+    expect(await cache.get(key)).toBe("some-value");
+  });
+
+  it("still processes (and does not throw) a delete row when no cache is passed", async () => {
+    // Mirrors every pre-#470 caller: drainOutbox(db, target) with no 4th arg.
+    await seedDeleteRow("legacy-caller");
+    const result = await drainOutbox(db, new NoProjection());
+
+    expect(result.processed).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("marks the row processed even when the cache del() throws, and logs rather than failing the row", async () => {
+    const errors: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const throwingCache = {
+      ...new MemoryCacheStore(),
+      del: async () => {
+        throw new Error("cache unavailable");
+      },
+    };
+    await seedDeleteRow("cache-down");
+
+    const result = await drainOutbox(db, new NoProjection(), 200, throwingCache as any, {
+      error: (obj, msg) => errors.push({ obj, msg }),
+    });
+
+    // The outbox row's own bookkeeping is unaffected by a cache failure — it
+    // is still marked processed, not retried forever over a cache outage.
+    expect(result.processed).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.msg).toContain("cache bust failed");
   });
 });
 

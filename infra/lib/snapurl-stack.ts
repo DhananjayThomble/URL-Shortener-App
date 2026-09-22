@@ -869,8 +869,10 @@ export class SnapUrlStack extends Stack {
            generate its own salt and hash the same visitor differently all day,
            inflating unique counts by the instance fan-out. The table is
            single-key on `pk`, matching DynamoDbCacheStore. Set on redirectFn
-           only (not commonEnv): the api/worker keep their own CACHE_DRIVER
-           story and the single-node/k8s profiles never see it. */
+           AND workerFn (below) — the api keeps its own CACHE_DRIVER story (the
+           throttler counter) — because #470's cache-bust-on-delete needs the
+           worker deleting from the SAME table this reads from, not a
+           per-instance store the redirect never sees. */
         CACHE_DRIVER: "dynamodb",
         CACHE_DYNAMO_TABLE: cacheTable.tableName,
       },
@@ -1100,6 +1102,14 @@ export class SnapUrlStack extends Stack {
            On workerFn ONLY — the redirect never writes the KVS; the CloudFront
            Function reads it via its association above. */
         LINK_PROJECTION_KVS_ARN: linkKvs.keyValueStoreArn,
+        /* #470: the SAME CacheStore driver + table as redirectFn (see the note
+           on RedirectFn's CACHE_DRIVER above), so drainOutbox's cache-bust on
+           link deletion (apps/worker/src/jobs/outbox.ts) reaches the identical
+           DynamoDB item the redirect's CachingLinkResolver reads — the shared
+           store is exactly what makes the bust observable cross-process on
+           this profile, unlike the single-node 'memory' default. */
+        CACHE_DRIVER: "dynamodb",
+        CACHE_DYNAMO_TABLE: cacheTable.tableName,
       },
       ...vpcSettings,
     });
@@ -1108,6 +1118,13 @@ export class SnapUrlStack extends Stack {
        and queries the linkId GSI to find what to delete — readWriteData covers
        the table and its indexes. */
     linkProjectionTable.grantReadWriteData(workerFn);
+
+    /* #470: the worker only DELETES a key from the cache table (drainOutbox's
+       cache-bust on link deletion) and never reads or writes a salt or a
+       hot-link cache entry itself, but DynamoDbCacheStore's del() is a plain
+       DeleteItem — there's no narrower CDK grant than readWriteData for a
+       DynamoDB table, so this grants the same as redirectFn's. */
+    cacheTable.grantReadWriteData(workerFn);
 
     /* #289 edge fast path: the worker's KvsWriter maintains the RedirectLinkKvs
        store on the same outbox drain that writes the DynamoDB projection —

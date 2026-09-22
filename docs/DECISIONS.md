@@ -183,6 +183,25 @@ Phase-7 follow-up (#288), and #288 wires it: the stack now provisions a `CacheTa
 genuinely DynamoDB rather than the per-instance in-memory default. The point of the port is
 precisely that this stays a per-profile config choice, not a rewrite.
 
+**#470 — the worker also holds a `CacheStore` client.** Before this, only `apps/redirect` ever
+constructed one; `apps/api`'s only `CacheStore` use was the rate-limit throttler's counter, a
+different concern entirely. `DELETE /links/:id` left the redirect's hot-link cache entry warm for
+up to `LINK_CACHE_TTL_SECONDS` after the API had already returned 404 for the same link — a
+correctness bug, not the edit-path's accepted bounded-staleness trade (see the header comment on
+`apps/redirect/src/caching-resolver.ts`). The fix keeps the redirect hot path untouched (no new
+call on the request path) and instead has `LinksService.remove()` carry the deleted link's
+`(host, slug)` into its `projection_outbox` row; `drainOutbox` (`apps/worker/src/jobs/outbox.ts`)
+busts that key from the SAME `CacheStore` the redirect reads, via the shared `linkCacheKey()`
+format now exported from `packages/cache` rather than being a string literal private to
+`caching-resolver.ts`. `apps/worker` reads the identical `CACHE_DRIVER`/`REDIS_URL`/
+`CACHE_DYNAMO_TABLE` env the redirect does, so the bust reaches the correct store per profile: real
+on Redis and DynamoDB (the worker is granted `cacheTable` read/write in the CDK stack and given
+`REDIS_URL` in the Helm chart, alongside the redirect), a no-op under the single-node default
+(`CACHE_DRIVER=memory` is one Map per process — the worker's own Map is not the redirect's, so the
+short TTL remains the only guarantee there, unchanged from before). Revisit if the single-node
+profile ever needs synchronous cross-process invalidation too — that would mean introducing a
+shared store there, which is exactly the dependency Profile 1 exists to avoid.
+
 **A GraphQL layer.** The frontend is TanStack Query over REST and the contract is already typed
 end to end. GraphQL would add a schema to keep in sync with no caller asking for it.
 

@@ -1,4 +1,5 @@
 import { sql, type Database } from "@snapurl/database";
+import { linkCacheKey, type CacheStore } from "@snapurl/cache";
 
 /* ============================================================
    Draining the projection outbox.
@@ -53,6 +54,15 @@ export interface ProjectionOp {
   operation: string;
 }
 
+/** The minimum a logger must offer for drainOutbox to surface a cache-bust
+ *  failure. Mirrors DynamoProjection's ProjectionLogger (same shape, defined
+ *  separately so this file has no dependency on dynamo-projection.ts); a pino
+ *  logger satisfies it, and it is optional so every existing call site and
+ *  unit test that does not care about cache invalidation keeps compiling. */
+export interface OutboxLogger {
+  error(obj: Record<string, unknown>, msg: string): void;
+}
+
 /** The per-op outcome of a batched apply(): the batch method must report each
  *  op independently so drainOutbox keeps its per-row processed_at / attempts
  *  bookkeeping — one poisonous row must not fail the whole batch's rows. */
@@ -90,10 +100,30 @@ const MAX_ATTEMPTS = 8;
    inside it; short enough that a crashed worker's rows come back promptly. */
 const CLAIM_LEASE = sql`interval '5 minutes'`;
 
+/** The subset of an outbox row's jsonb payload drainOutbox looks at itself,
+ *  independent of whatever a given ProjectionTarget reads from it. Optional
+ *  because only LinksService.remove() (#470) currently populates host/slug —
+ *  upsert rows carry no cache-invalidation payload yet (see #426's
+ *  edit-invalidation half). */
+interface OutboxPayload {
+  host?: string;
+  slug?: string;
+}
+
 export async function drainOutbox(
   db: Database,
   target: ProjectionTarget,
   batchSize = 200,
+  // #470: the SAME CacheStore the redirect's CachingLinkResolver reads
+  // (shared only when CACHE_DRIVER is 'redis' or 'dynamodb' — see the
+  // per-row bust below). Optional and defaults to undefined so every
+  // existing caller/test that only cares about the projection target keeps
+  // compiling and behaving exactly as before; passing one is what turns the
+  // bust on.
+  cache?: CacheStore,
+  /** Optional: logs a cache-bust failure at error level instead of it being
+   *  silently swallowed. Omit in tests that do not pass a cache either. */
+  log?: OutboxLogger,
 ): Promise<{ processed: number; failed: number }> {
   /* Atomic claim. The inner SELECT ... FOR UPDATE SKIP LOCKED runs inside the
      implicit transaction of this single UPDATE, so the row locks are held for
@@ -111,8 +141,14 @@ export async function drainOutbox(
       limit ${batchSize}
       for update skip locked
     )
-    returning id, link_id, operation, attempts
-  `)) as unknown as Array<{ id: string; link_id: string; operation: string; attempts: number }>;
+    returning id, link_id, operation, attempts, payload
+  `)) as unknown as Array<{
+    id: string;
+    link_id: string;
+    operation: string;
+    attempts: number;
+    payload: OutboxPayload;
+  }>;
 
   let processed = 0;
   let failed = 0;
@@ -140,6 +176,32 @@ export async function drainOutbox(
       where id = ${id}::uuid
     `);
   };
+
+  /* #470: bust the hot-link cache for every claimed "delete" row, up front and
+     independent of how the ProjectionTarget below fares. This is deliberately
+     NOT gated on target upsert/remove/apply success: the cache entry and the
+     DynamoDB projection are two different stores serving two different
+     readers (CachingLinkResolver vs. DynamoLinkResolver), and a projection
+     failure being retried on the next drain is no reason to leave a deleted
+     link's redirect cache entry warm in the meantime. A row missing host/slug
+     in its payload (upsert rows never carry it; pre-#470 delete rows in an
+     in-flight upgrade won't either) is silently skipped — nothing to bust,
+     and the short TTL is exactly the pre-#470 fallback for that case. A
+     del() failure (Redis/DynamoDB unavailable) is logged and swallowed:
+     losing the bust for one row must not fail the whole batch's bookkeeping,
+     the same isolation principle the target/markFailed split already uses. */
+  if (cache) {
+    for (const row of rows) {
+      if (row.operation !== "delete") continue;
+      const { host, slug } = row.payload ?? {};
+      if (!host || !slug) continue;
+      try {
+        await cache.del(linkCacheKey(host, slug));
+      } catch (err) {
+        log?.error({ err, linkId: row.link_id }, "cache bust failed for a deleted link");
+      }
+    }
+  }
 
   /* Processed outside any long transaction: the projection write may be a
      DynamoDB network call, and each row is marked on its own so a slow or

@@ -14,6 +14,7 @@ import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyval
    fast path never fills, silently, with redirects still served by the Lambda. */
 import "@aws-sdk/signature-v4a";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
+import { createCacheStore, type CacheDriver, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
@@ -111,6 +112,43 @@ export async function close(): Promise<void> {
    rather than at import (which would open no Postgres connection either way). */
 const LINK_PROJECTION = process.env.LINK_PROJECTION ?? "none";
 let projectionTarget: ProjectionTarget | undefined;
+
+/* #470: the SAME CacheStore driver config the redirect service resolves
+   (apps/redirect/src/main.ts) — 'memory' (the default, one Map per process),
+   'redis' + REDIS_URL (Helm/scaled profile), or 'dynamodb' + CACHE_DYNAMO_TABLE
+   (AWS profile). Reading the identical env names here is what lets the
+   worker bust the exact cache entry the redirect's CachingLinkResolver reads
+   on delete — see drainOutbox's cache param. Under the single-node default
+   this still constructs a MemoryCacheStore, but it is the WORKER's own
+   private Map, a different process from the redirect's, so del() against it
+   busts nothing the redirect can see; that limitation is inherent to the
+   'memory' driver being per-process, not a bug in this wiring (see
+   caching-resolver.ts's header for the full explanation). It only becomes a
+   real fix once CACHE_DRIVER is 'redis' or 'dynamodb', i.e. once the store is
+   actually shared across processes. */
+const CACHE_DRIVER = (process.env.CACHE_DRIVER ?? "memory") as CacheDriver;
+const REDIS_URL = process.env.REDIS_URL;
+const CACHE_DYNAMO_TABLE = process.env.CACHE_DYNAMO_TABLE;
+let cacheStore: CacheStore | undefined;
+let cacheStorePromise: Promise<CacheStore> | undefined;
+
+/** Build (once) and reuse the CacheStore drainOutbox busts a deleted link's
+ *  entry from. Memoised the same way projectionFor's target is, and lazily so
+ *  importing this module never opens a Redis/DynamoDB connection by itself. */
+function cacheFor(): Promise<CacheStore> {
+  if (cacheStore) return Promise.resolve(cacheStore);
+  if (!cacheStorePromise) {
+    cacheStorePromise = createCacheStore({
+      driver: CACHE_DRIVER,
+      redisUrl: REDIS_URL,
+      dynamoTable: CACHE_DYNAMO_TABLE,
+    }).then((store) => {
+      cacheStore = store;
+      return store;
+    });
+  }
+  return cacheStorePromise;
+}
 
 /* An OPTIONAL endpoint override for the DynamoDB client. Unset in production
    (the client resolves the real regional endpoint); set to something like
@@ -214,7 +252,7 @@ function projectionFor(database: Database): ProjectionTarget {
  *  configured interval regardless of what rollupClicks or deliverWebhooks are
  *  doing. */
 export async function runProjection(database: Database) {
-  const outbox = await drainOutbox(database, projectionFor(database));
+  const outbox = await drainOutbox(database, projectionFor(database), 200, await cacheFor(), log);
   if (outbox.processed || outbox.failed) {
     log.info({ projected: outbox.processed, projectionFailures: outbox.failed }, "projection drain");
   }

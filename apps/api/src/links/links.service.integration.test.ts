@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NotFoundException } from "@nestjs/common";
-import { createDatabase, domains, eq, linkCounters, links, workspaces, type Database } from "@snapurl/database";
+import { createDatabase, domains, eq, linkCounters, links, projectionOutbox, workspaces, type Database } from "@snapurl/database";
 import { CloneLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
@@ -438,6 +438,48 @@ describeDb("LinksService.get / clone / update / remove — workspace ownership",
 
       const stillThere = await db.select({ id: links.id }).from(links).where(eq(links.id, linkAId));
       expect(stillThere).toHaveLength(1);
+    });
+  });
+
+  /* #470: a deleted link kept 302-redirecting for up to LINK_CACHE_TTL_SECONDS
+     after DELETE returned 204 and GET returned 404, because the outbox row a
+     delete enqueues carried no way to identify the redirect's hot-link cache
+     entry for that link. remove() now reads the domain string alongside the
+     slug (both are gone from the links/domains tables the instant the delete
+     commits) and writes them into the outbox row's jsonb payload, which is
+     what apps/worker/src/jobs/outbox.ts's drainOutbox reads to bust the
+     correct linkCacheKey. This pins the payload shape independent of the
+     worker, so a change to either side that breaks the contract between them
+     shows up here, not just in a staging repro. */
+  describe("remove() — cache-bust payload (#470)", () => {
+    it("enqueues a delete outbox row whose payload carries this link's (host, slug)", async () => {
+      const slug = `own${stamp}-cachebust`;
+      const [link] = await db
+        .insert(links)
+        .values({
+          workspaceId: wsA,
+          domainId: domainA,
+          slug,
+          destination: `https://example.com/${slug}`,
+        })
+        .returning({ id: links.id });
+      const linkId = link!.id;
+
+      await service.remove(wsA, linkId, actor);
+
+      const [row] = await db
+        .select({ operation: projectionOutbox.operation, payload: projectionOutbox.payload })
+        .from(projectionOutbox)
+        .where(eq(projectionOutbox.linkId, linkId));
+
+      expect(row).toBeDefined();
+      expect(row!.operation).toBe("delete");
+      expect(row!.payload).toMatchObject({
+        linkId,
+        operation: "delete",
+        host: `own-${stamp}.test`,
+        slug,
+      });
     });
   });
 });

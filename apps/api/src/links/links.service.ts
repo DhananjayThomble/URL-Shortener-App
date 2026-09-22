@@ -755,17 +755,24 @@ export class LinksService {
   }
 
   async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
-    // The slug is read before the delete because it is the only thing that
-    // makes the audit entry and the webhook payload mean anything afterwards.
+    // The slug and domain are read before the delete because they are the
+    // only things that make the audit entry, the webhook payload, and the
+    // cache-bust key mean anything afterwards — once the row is gone there is
+    // nothing left to join against for the domain string.
     const [row] = await this.db
-      .select({ id: links.id, slug: links.slug })
+      .select({ id: links.id, slug: links.slug, domain: domains.domain })
       .from(links)
+      .innerJoin(domains, eq(links.domainId, domains.id))
       .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
       .limit(1);
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
 
     await this.db.transaction(async (tx) => {
-      await this.enqueueProjection(tx, id, "delete");
+      // #470: carry (host, slug) into the outbox row so the drain can bust
+      // the redirect's hot-link CacheStore entry for exactly this link,
+      // without a second query after the row (and the domain join it needs)
+      // is gone.
+      await this.enqueueProjection(tx, id, "delete", { host: row.domain, slug: row.slug });
       await tx.delete(links).where(eq(links.id, id));
     });
 
@@ -834,8 +841,22 @@ export class LinksService {
      stale destination with nothing to notice. The row and the outbox entry
      commit together, and the worker drains it — so a failed projection retries
      instead of silently diverging. */
-  private async enqueueProjection(tx: Executor, linkId: string, operation: "upsert" | "delete") {
-    await tx.insert(projectionOutbox).values({ linkId, operation, payload: { linkId, operation } });
+  private async enqueueProjection(
+    tx: Executor,
+    linkId: string,
+    operation: "upsert" | "delete",
+    // #470: only the delete path currently carries this — it is what lets
+    // drainOutbox bust the redirect's hot-link CacheStore entry for exactly
+    // this (host, slug) without a second, post-delete query. upsert has no
+    // analogous synchronous-invalidation requirement yet (see #426's
+    // edit-invalidation half), so it stays undefined there.
+    cacheInvalidation?: { host: string; slug: string },
+  ) {
+    await tx.insert(projectionOutbox).values({
+      linkId,
+      operation,
+      payload: cacheInvalidation ? { linkId, operation, ...cacheInvalidation } : { linkId, operation },
+    });
     /* #394: nudge the worker to drain now instead of waiting out the 1-minute
        schedule. Fire-and-forget and safe inside an open transaction — it never
        awaits a network round trip that could stall the commit, and a failed

@@ -1,4 +1,4 @@
-import type { CacheStore } from "@snapurl/cache";
+import { linkCacheKey, type CacheStore } from "@snapurl/cache";
 import {
   normaliseHost,
   type LinkResolver,
@@ -24,6 +24,20 @@ import {
    then the short TTL is the whole guarantee, and a few seconds of
    staleness on a just-edited link is the accepted trade for taking
    the database out of the hot path.
+
+   Delete IS invalidated synchronously (#470), unlike edit: the
+   projection outbox (apps/worker/src/jobs/outbox.ts) deletes this
+   resolver's cache key from the SAME CacheStore when a link's outbox
+   row is a "delete" op, via the shared linkCacheKey() format from
+   @snapurl/cache. This resolver does not call del() itself — it never
+   sees a delete, only resolve() calls — the invalidation happens
+   entirely on the write side, from the API/worker, keeping this file
+   and the redirect hot path unchanged. That bust is only observable
+   when the CacheStore is actually shared across processes (CACHE_DRIVER
+   =redis or dynamodb); under the single-node default (CACHE_DRIVER=
+   memory, one Map per process) the worker's del() lands on its own
+   private store, not the redirect's, so a deleted link there still
+   relies on the short TTL to stop serving, same as before.
 
    What this decorator does NOT touch: click recording. main.ts
    still calls record() per request after resolve(), so caching the
@@ -66,8 +80,11 @@ export class CachingLinkResolver implements LinkResolver {
 
   async resolve(host: string, slug: string): Promise<ResolvedLink | null> {
     // Key on the SAME normalisation the DB lookup uses, so a printed
-    // "SNAP.TO/Foo" and a header "snap.to/foo" share one cache entry.
-    const key = `link:${normaliseHost(host)}:${slug.toLowerCase()}`;
+    // "SNAP.TO/Foo" and a header "snap.to/foo" share one cache entry. This is
+    // the same linkCacheKey the projection outbox deletes on link deletion
+    // (#470) — one key format, shared via @snapurl/cache, so the two never
+    // disagree about which key names a given link's entry.
+    const key = linkCacheKey(normaliseHost(host), slug);
 
     const cached = await this.cache.get(key);
     if (cached !== null) {
