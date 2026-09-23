@@ -40,7 +40,7 @@ async function accessibleNamesWithin(page: import("@playwright/test").Page, cont
   const results: { role: string; name: string }[] = [];
   for (const node of nodes) {
     const role = node.role?.value;
-    if (role !== "link" && role !== "button") continue;
+    if (role !== "link" && role !== "button" && role !== "textbox" && role !== "combobox") continue;
     const name = node.name?.value ?? "";
     if (!node.backendDOMNodeId) continue;
     // DOM.resolveNode + containment check.
@@ -110,5 +110,38 @@ test.describe("primary navigation accessible names carry no decorative glyph (#4
     const chevronPolluted = names.filter((n) => n.role === "button" && n.name.includes("▾"));
     expect(chevronPolluted, JSON.stringify(chevronPolluted, null, 2)).toEqual([]);
     void sidebar;
+  });
+
+  /* #557 frames the audited surface as "desktop sidebar + topbar" (18 controls)
+     and "mobile nav drawer" (14 controls) — the two tests above cover the
+     <aside> sidebar and the drawer, but neither scopes to the <header> topbar
+     (search combobox, "Import from Bitly", create-link button, hamburger,
+     account menu), which also carries decorative glyphs (⌕ on the search
+     input, and the hamburger/create buttons render Unicode glyphs as their
+     visible content). This closes that gap against the same oracle. */
+  test("desktop topbar", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await seedSession(page);
+    await page.goto("/links");
+    await page.waitForLoadState("networkidle").catch(() => {});
+
+    await expect(page.getByRole("banner")).toBeVisible();
+    const names = await accessibleNamesWithin(page, "header");
+    expect(names.length).toBeGreaterThan(0);
+    const polluted = names.filter((n) => containsDecorativeGlyph(n.name));
+    expect(polluted, `polluted accessible names: ${JSON.stringify(polluted, null, 2)}`).toEqual([]);
+  });
+
+  test("mobile topbar", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 852 });
+    await seedSession(page);
+    await page.goto("/links");
+    await page.waitForLoadState("networkidle").catch(() => {});
+
+    await expect(page.getByRole("banner")).toBeVisible();
+    const names = await accessibleNamesWithin(page, "header");
+    expect(names.length).toBeGreaterThan(0);
+    const polluted = names.filter((n) => containsDecorativeGlyph(n.name));
+    expect(polluted, `polluted accessible names: ${JSON.stringify(polluted, null, 2)}`).toEqual([]);
   });
 });
