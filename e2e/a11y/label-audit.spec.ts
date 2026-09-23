@@ -248,6 +248,18 @@ for (const theme of THEMES) {
         await page.waitForLoadState("networkidle").catch(() => {});
         await page.getByRole("button", { name: /invite/i }).first().click();
         await expect(page.getByRole("group", { name: "Role" })).toBeVisible();
+
+        // The analytics/conversions date-range Segmented is the same defect
+        // class but was missed in the first pass of this fix (see PR #608
+        // review) — neither page wraps its Segmented in a Field, so each needed
+        // its own direct aria-label.
+        await page.goto("/analytics");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await expect(page.getByRole("group", { name: "Analytics date range" })).toBeVisible();
+
+        await page.goto("/conversions");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await expect(page.getByRole("group", { name: "Conversions date range" })).toBeVisible();
       });
 
       test("/links/[id] Edit destination Field has no label/select-name violations", async ({ page }) => {
