@@ -115,8 +115,8 @@ export default function TeamPage() {
                   onKeyDown={(e) => { if (e.key === "Enter") void sendInvite(); }}
                 />
               </Field>
-              <Field label="Role">
-                <Segmented value={role} onChange={setRole} options={INVITE_ROLES} />
+              <Field label="Role" controlId="team-invite-role">
+                <Segmented id="team-invite-role" aria-label="Role" value={role} onChange={setRole} options={INVITE_ROLES} />
               </Field>
             </div>
             <div className="flex gap-2">
@@ -200,6 +200,7 @@ export default function TeamPage() {
                       {editing === m.id ? (
                         <div className="inline-flex items-center gap-2">
                           <Segmented
+                            aria-label={`Role for ${m.email}`}
                             value={m.role}
                             onChange={(next) => setMemberRole(m.id, next)}
                             options={ROLE_OPTIONS}
