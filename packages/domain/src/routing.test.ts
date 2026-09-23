@@ -116,6 +116,33 @@ describe("evaluateRouting", () => {
     expect(evaluateRouting(rules, "https://fallback", ctx({ country: null })).destination)
       .toBe("https://fallback");
   });
+
+  // Regression for #423: evaluateRouting used to partition into
+  // conditional-then-catch-all regardless of author order, which disagreed
+  // with validateRoutingChain's strict positional model ("a rule after an
+  // unweighted catch-all can never run"). The contract's declared oracle for
+  // chain evaluation ("First match wins", packages/contract/src/link.ts) is
+  // positional, so an unweighted catch-all placed first must shadow every
+  // rule that follows it, exactly as the save-time validator already assumes.
+  it("lets an unweighted catch-all placed first shadow a later conditional rule", () => {
+    const rules = [
+      rule({ id: "everything", when: {}, then: "https://everything" }),
+      rule({ id: "ios-only", when: { device: "ios" }, then: "https://apps.apple.com" }),
+    ];
+    const out = evaluateRouting(rules, "https://fallback", ctx({ device: "ios" }));
+    expect(out.matchedRuleId).toBe("everything");
+    expect(out.destination).toBe("https://everything");
+  });
+
+  it("still scans a weighted catch-all group positionally against an earlier conditional", () => {
+    const rules = [
+      rule({ id: "in", when: { country: "IN" }, then: "https://acme.in" }),
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    const out = evaluateRouting(rules, "https://f", ctx({ country: "IN" }));
+    expect(out.matchedRuleId).toBe("in");
+  });
 });
 
 describe("validateRoutingChain", () => {

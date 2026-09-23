@@ -89,39 +89,49 @@ function pickWeighted(rules: RoutingRule[], seed: string): RoutingRule {
   return rules[rules.length - 1]!;
 }
 
+function isWeightedCatchAll(rule: RoutingRule): boolean {
+  return isCatchAll(rule) && typeof rule.weight === "number" && rule.weight > 0;
+}
+
 /**
- * Walk the chain, first match wins, and fall back to the link's own destination.
+ * Walk the chain in author order and stop at the first rule that matches —
+ * "first match wins" (`packages/contract/src/link.ts`'s docstring on
+ * `RoutingRule`), the declared oracle for chain evaluation. This must agree
+ * with `validateRoutingChain`, which already rejects a rule placed after an
+ * unweighted catch-all on exactly this assumption.
  *
- * Weighted rules are gathered as a group: if several catch-all rules carry
- * weights, they form one split rather than the first one always winning.
+ * Weighted catch-all rules are the one exception to "stop at the first
+ * match": a run of consecutive weighted catch-alls reached by the scan forms
+ * one split rather than the first one always winning, so authors can list
+ * several weighted destinations back to back and have them split traffic
+ * instead of the first swallowing 100% of it.
  */
 export function evaluateRouting(
   rules: RoutingRule[],
   fallbackDestination: string,
   ctx: VisitorContext,
 ): RoutingDecision {
-  const conditional = rules.filter((r) => !isCatchAll(r));
-  const catchAll = rules.filter(isCatchAll);
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i]!;
 
-  for (const rule of conditional) {
+    if (isWeightedCatchAll(rule)) {
+      const group: RoutingRule[] = [rule];
+      let j = i + 1;
+      while (j < rules.length && isWeightedCatchAll(rules[j]!)) {
+        group.push(rules[j]!);
+        j++;
+      }
+      const picked = pickWeighted(group, ctx.visitorHash);
+      return {
+        destination: picked.then,
+        matchedRuleId: picked.id,
+        variant: `${group.indexOf(picked) + 1}/${group.length}`,
+      };
+    }
+
     if (matches(rule, ctx)) {
       return { destination: rule.then, matchedRuleId: rule.id, variant: null };
     }
-  }
-
-  const weighted = catchAll.filter((r) => typeof r.weight === "number" && r.weight > 0);
-  if (weighted.length > 0) {
-    const picked = pickWeighted(weighted, ctx.visitorHash);
-    return {
-      destination: picked.then,
-      matchedRuleId: picked.id,
-      variant: `${weighted.indexOf(picked) + 1}/${weighted.length}`,
-    };
-  }
-
-  const plainCatchAll = catchAll.find((r) => !r.weight);
-  if (plainCatchAll) {
-    return { destination: plainCatchAll.then, matchedRuleId: plainCatchAll.id, variant: null };
   }
 
   return { destination: fallbackDestination, matchedRuleId: null, variant: null };
