@@ -143,6 +143,38 @@ describe("evaluateRouting", () => {
     const out = evaluateRouting(rules, "https://f", ctx({ country: "IN" }));
     expect(out.matchedRuleId).toBe("in");
   });
+
+  // Regression: validateRoutingChain sums every weighted catch-all's weight
+  // against the whole chain, not just a consecutive run, so it accepts a
+  // conditional interleaved between two weighted catch-alls as one valid
+  // 100% split — `[weight 50 -> A, {country: IN} -> IN, weight 50 -> B]`.
+  // evaluateRouting must agree: the visitor matched by the interleaved
+  // conditional gets it, and every other visitor still splits across BOTH
+  // weighted catch-alls (not just the one the scan reaches first).
+  it("treats every weighted catch-all in the chain as one split even when a conditional is interleaved", () => {
+    const rules = [
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "in", when: { country: "IN" }, then: "https://acme.in" }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([]);
+
+    const inVisitor = evaluateRouting(rules, "https://f", ctx({ country: "IN" }));
+    expect(inVisitor.matchedRuleId).toBe("in");
+    expect(inVisitor.destination).toBe("https://acme.in");
+
+    let a = 0;
+    let b = 0;
+    const n = 4000;
+    for (let i = 0; i < n; i++) {
+      const out = evaluateRouting(rules, "https://f", ctx({ country: "US", visitorHash: `visitor-${i}` }));
+      if (out.matchedRuleId === "a") a++;
+      if (out.matchedRuleId === "b") b++;
+    }
+    expect(a + b).toBe(n);
+    expect(a / n).toBeGreaterThan(0.45);
+    expect(a / n).toBeLessThan(0.55);
+  });
 });
 
 describe("validateRoutingChain", () => {
