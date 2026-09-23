@@ -116,6 +116,65 @@ describe("evaluateRouting", () => {
     expect(evaluateRouting(rules, "https://fallback", ctx({ country: null })).destination)
       .toBe("https://fallback");
   });
+
+  // Regression for #423: evaluateRouting used to partition into
+  // conditional-then-catch-all regardless of author order, which disagreed
+  // with validateRoutingChain's strict positional model ("a rule after an
+  // unweighted catch-all can never run"). The contract's declared oracle for
+  // chain evaluation ("First match wins", packages/contract/src/link.ts) is
+  // positional, so an unweighted catch-all placed first must shadow every
+  // rule that follows it, exactly as the save-time validator already assumes.
+  it("lets an unweighted catch-all placed first shadow a later conditional rule", () => {
+    const rules = [
+      rule({ id: "everything", when: {}, then: "https://everything" }),
+      rule({ id: "ios-only", when: { device: "ios" }, then: "https://apps.apple.com" }),
+    ];
+    const out = evaluateRouting(rules, "https://fallback", ctx({ device: "ios" }));
+    expect(out.matchedRuleId).toBe("everything");
+    expect(out.destination).toBe("https://everything");
+  });
+
+  it("still scans a weighted catch-all group positionally against an earlier conditional", () => {
+    const rules = [
+      rule({ id: "in", when: { country: "IN" }, then: "https://acme.in" }),
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    const out = evaluateRouting(rules, "https://f", ctx({ country: "IN" }));
+    expect(out.matchedRuleId).toBe("in");
+  });
+
+  // Regression: validateRoutingChain sums every weighted catch-all's weight
+  // against the whole chain, not just a consecutive run, so it accepts a
+  // conditional interleaved between two weighted catch-alls as one valid
+  // 100% split — `[weight 50 -> A, {country: IN} -> IN, weight 50 -> B]`.
+  // evaluateRouting must agree: the visitor matched by the interleaved
+  // conditional gets it, and every other visitor still splits across BOTH
+  // weighted catch-alls (not just the one the scan reaches first).
+  it("treats every weighted catch-all in the chain as one split even when a conditional is interleaved", () => {
+    const rules = [
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "in", when: { country: "IN" }, then: "https://acme.in" }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([]);
+
+    const inVisitor = evaluateRouting(rules, "https://f", ctx({ country: "IN" }));
+    expect(inVisitor.matchedRuleId).toBe("in");
+    expect(inVisitor.destination).toBe("https://acme.in");
+
+    let a = 0;
+    let b = 0;
+    const n = 4000;
+    for (let i = 0; i < n; i++) {
+      const out = evaluateRouting(rules, "https://f", ctx({ country: "US", visitorHash: `visitor-${i}` }));
+      if (out.matchedRuleId === "a") a++;
+      if (out.matchedRuleId === "b") b++;
+    }
+    expect(a + b).toBe(n);
+    expect(a / n).toBeGreaterThan(0.45);
+    expect(a / n).toBeLessThan(0.55);
+  });
 });
 
 describe("validateRoutingChain", () => {
