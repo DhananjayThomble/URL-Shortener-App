@@ -21,6 +21,16 @@ test.describe("conversions dashboard", () => {
     await seedSession(page);
   });
 
+  test("the range Segmented has a programmatic accessible name", async ({ page }) => {
+    // Issue #600 review — same defect class as the analytics page: the range
+    // control is a role="group" of otherwise unlabelled buttons ("24h", "7d",
+    // ...), which needs its own accessible name per WCAG 2.1 SC 4.1.2. Oracle:
+    // the accessibility tree's computed name via getByRole, not axe's
+    // label/select-name rule (doesn't cover role="group") — see PR #608.
+    await page.goto("/conversions");
+    await expect(page.getByRole("group", { name: "Conversions date range" })).toBeVisible();
+  });
+
   test("renders the conversion report and the range switch keeps it stable", async ({ page }) => {
     // Full load (also the fixture reset) lands on the authenticated shell, not login.
     await page.goto("/conversions");

@@ -206,14 +206,35 @@ export function Segmented<T extends string>({
   value,
   onChange,
   className,
+  id,
+  "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
 }: {
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
   className?: string;
+  /**
+   * The root is `role="group"` — none of the individual option buttons name
+   * what the group as a whole configures, so the group itself needs an
+   * accessible name. Pass `id` (with a wrapping `Field`'s `controlId` pointed
+   * at the same value) so `<label htmlFor>` names the group, same pattern as
+   * the Tags input in the create-link drawer (see Field's `controlId` doc).
+   * `aria-label`/`aria-describedby` are also accepted directly for callers
+   * that don't go through `Field`.
+   */
+  id?: string;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
 }) {
   return (
-    <div className={cn("flex gap-[4px]", className)} role="group">
+    <div
+      className={cn("flex gap-[4px]", className)}
+      role="group"
+      id={id}
+      aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
+    >
       {options.map((o) => {
         const active = o.value === value;
         return (

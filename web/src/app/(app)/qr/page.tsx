@@ -129,8 +129,11 @@ export default function QrStudioPage() {
                   ))}
                 </div>
               </Field>
-              <Field label="Error correction" help="Q tolerates a centre logo and light print wear.">
+              <Field label="Error correction" help="Q tolerates a centre logo and light print wear." controlId="qr-error-correction">
                 <Segmented
+                  id="qr-error-correction"
+                  aria-label="Error correction"
+                  aria-describedby="qr-error-correction-hint"
                   value={ecl}
                   onChange={setEcl}
                   options={[

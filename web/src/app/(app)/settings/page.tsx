@@ -103,8 +103,12 @@ export default function SettingsPage() {
                     label="Default redirect type"
                     help="Applies to new links. Any link can override it."
                     error={problem ?? undefined}
+                    controlId="settings-default-redirect-type"
                   >
                     <Segmented<RedirectType>
+                      id="settings-default-redirect-type"
+                      aria-label="Default redirect type"
+                      aria-describedby="settings-default-redirect-type-hint"
                       value={draft.defaultRedirect}
                       onChange={(v) => set("defaultRedirect", v)}
                       options={[
@@ -159,8 +163,10 @@ export default function SettingsPage() {
                 </div>
               </Field>
 
-              <Field label="Theme">
+              <Field label="Theme" controlId="settings-theme">
                 <Segmented<Mode>
+                  id="settings-theme"
+                  aria-label="Theme"
                   value={appearance.mode}
                   onChange={(mode) => appearance.set({ mode })}
                   options={[
@@ -172,8 +178,10 @@ export default function SettingsPage() {
               </Field>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Density">
+                <Field label="Density" controlId="settings-density">
                   <Segmented
+                    id="settings-density"
+                    aria-label="Density"
                     value={appearance.density}
                     onChange={(density) => appearance.set({ density })}
                     options={[
@@ -183,8 +191,10 @@ export default function SettingsPage() {
                     ]}
                   />
                 </Field>
-                <Field label="Corners">
+                <Field label="Corners" controlId="settings-corners">
                   <Segmented
+                    id="settings-corners"
+                    aria-label="Corners"
                     value={appearance.radius}
                     onChange={(radius) => appearance.set({ radius })}
                     options={[
@@ -233,8 +243,12 @@ export default function SettingsPage() {
               <Field
                 label="Click data retention"
                 help="Rollups are kept regardless; this is how long the raw click rows live. Rows may survive up to a day beyond this setting, since they expire a whole day at a time."
+                controlId="settings-retention"
               >
                 <Segmented
+                  id="settings-retention"
+                  aria-label="Click data retention"
+                  aria-describedby="settings-retention-hint"
                   value={retentionValue(draft?.retentionYears ?? 3)}
                   onChange={(v) => set("retentionYears", v === "forever" ? FOREVER_YEARS : Number(v))}
                   options={[

@@ -15,6 +15,18 @@ test.describe("analytics dashboard", () => {
     await seedSession(page);
   });
 
+  test("the range Segmented has a programmatic accessible name", async ({ page }) => {
+    // Issue #600 review — the range control is a role="group" of otherwise
+    // unlabelled buttons ("24h", "7d", ...); WCAG 2.1 SC 4.1.2 requires the
+    // group itself to expose a name for what it configures. Oracle: the
+    // accessibility tree's computed name via Playwright's getByRole, which
+    // resolves aria-label the same way assistive tech does — not axe's
+    // label/select-name rule, which only targets input/select/textarea and
+    // does not fire on an unnamed role="group" (see PR #608 discussion).
+    await page.goto("/analytics");
+    await expect(page.getByRole("group", { name: "Analytics date range" })).toBeVisible();
+  });
+
   test("renders analytics tiles and the range switch keeps them stable", async ({ page }) => {
     await page.goto("/analytics");
 
