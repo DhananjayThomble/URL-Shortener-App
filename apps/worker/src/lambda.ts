@@ -147,7 +147,11 @@ export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
        neither an ARN nor a plain URL yields a value. */
     const url = await resolveDatabaseUrl();
     if (!url) throw new Error("DATABASE_URL is not set on this function.");
-    const result = await runMigrations(url, process.env.DATABASE_SSL === "true");
+    const result = await runMigrations(url, {
+      ssl: process.env.DATABASE_SSL === "true",
+      sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY === "true",
+      sslCaCert: process.env.DATABASE_CA_CERT,
+    });
     return { task: "migrate", ...result };
   }
 

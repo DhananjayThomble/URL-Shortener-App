@@ -51,7 +51,7 @@ spec:
           command:
             - node
             - -e
-            - "require('@snapurl/database').runMigrations(process.env.DATABASE_URL, process.env.DATABASE_SSL==='true').then(r=>{console.log('migrations applied',r.folder);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+            - "require('@snapurl/database').runMigrations(process.env.DATABASE_URL, {ssl: process.env.DATABASE_SSL==='true', sslNoVerify: process.env.DATABASE_SSL_NO_VERIFY==='true', sslCaCert: process.env.DATABASE_CA_CERT}).then(r=>{console.log('migrations applied',r.folder);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
           env:
             - name: NODE_ENV
               value: "production"
