@@ -3,6 +3,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { buildSslOption, type DatabaseOptions } from "./client.js";
 
 /* ============================================================
    Applying migrations from inside the VPC.
@@ -46,17 +47,34 @@ export interface MigrateResult {
   folder: string;
 }
 
+/** Accepts either a plain boolean (back-compat: `ssl=true` now verifies the
+ *  certificate chain AND hostname by default, matching client.ts, instead of
+ *  the old unconditional `{ rejectUnauthorized: false }`) or the same TLS
+ *  options `createDatabase` takes, for a caller that needs `sslNoVerify` or
+ *  `sslCaCert`. */
+export type MigrateSslOption = boolean | Pick<DatabaseOptions, "ssl" | "sslNoVerify" | "sslCaCert">;
+
+function resolveSslOption(ssl: MigrateSslOption): postgres.Options<Record<string, never>>["ssl"] {
+  const opts = typeof ssl === "boolean" ? { url: "", ssl } : { url: "", ...ssl };
+  return buildSslOption(opts);
+}
+
 /**
  * Apply every pending migration, then close the connection.
  *
  * Uses its own single connection rather than a shared pool: this runs once,
  * holds a lock while it works, and should not leave anything behind.
+ *
+ * TLS verification goes through the same `buildSslOption` policy as
+ * `createDatabase` in client.ts: `ssl: true` defaults to 'verify-full' (verifies
+ * the certificate chain AND the hostname). An insecure connection requires the
+ * explicit `sslNoVerify` opt-out, never the bare boolean.
  */
-export async function runMigrations(databaseUrl: string, ssl = false): Promise<MigrateResult> {
+export async function runMigrations(databaseUrl: string, ssl: MigrateSslOption = false): Promise<MigrateResult> {
   const folder = migrationsFolder();
   const sql = postgres(databaseUrl, {
     max: 1,
-    ssl: ssl ? { rejectUnauthorized: false } : undefined,
+    ssl: resolveSslOption(ssl),
     onnotice: () => {},
   });
   try {
