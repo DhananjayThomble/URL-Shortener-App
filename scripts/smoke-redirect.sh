@@ -177,21 +177,22 @@ CAN_SPOOF_COUNTRY=$DB_AVAILABLE
 # nothing drains the outbox — so polling it to zero would hang forever. In that
 # mode, and when the DB is unreachable (deployed CDN), this is a no-op.
 #   $1 = comma-separated quoted uuid list, e.g. "'a','b'"
+#   $2 = optional label for the PASS/FAIL line (default "fixtures projected")
 wait_for_projection() {
   case "${LINK_PROJECTION:-none}" in
     dynamo|kvs) : ;;                       # projected backends drain the outbox
     *) return 0 ;;                          # none/postgres-direct: nothing to wait for
   esac
   [ "$DB_AVAILABLE" -eq 1 ] || { skip "projection barrier (no DB)"; return 0; }
-  local ids="$1" waited=0
+  local ids="$1" label="${2:-fixtures projected}" waited=0
   while [ "$waited" -lt 60 ]; do
     local pending
     pending=$(dbq "select count(*) from projection_outbox where processed_at is null and link_id in ($ids)")
-    [ "${pending:-1}" = "0" ] && { ok "fixtures projected (0 pending)"; return 0; }
+    [ "${pending:-1}" = "0" ] && { ok "$label (0 pending)"; return 0; }
     sleep 0.5
     waited=$((waited+1))
   done
-  bad "fixtures projected" "still $pending pending outbox row(s) after 30s"
+  bad "$label" "still $pending pending outbox row(s) after 30s"
 }
 
 # loc <path> [extra curl args...] -> prints "STATUS|LOCATION"
@@ -340,6 +341,17 @@ echo "== immediate cache invalidation on delete/flag (#470, #426) =="
 # only shortened the window to the next poll tick; this fix fires it from the
 # write-side API call itself (apps/api/src/common/link-cache-bust.service.ts),
 # so the invalidation should already have landed by the time curl returns.
+#
+# Under a projected backend (LINK_PROJECTION=dynamo|kvs) the redirect does not
+# read Postgres at all: a cache miss reads the projection, which only the
+# worker's outbox drain updates. Busting the cache cannot make that copy
+# current, so on those profiles each assertion first waits for this link's
+# outbox row to drain (wait_for_projection, a no-op on the Postgres-direct
+# profile, where the strict "very next redirect" check still applies as-is).
+# The bust also lands BEFORE that drain, so a request arriving in between
+# re-caches the stale entry for up to LINK_CACHE_TTL_SECONDS. On the AWS
+# profile the guarantee is therefore bounded staleness (drain lag plus at most
+# one TTL), not immediate; closing that gap is tracked separately.
 mklink "{\"destination\":\"https://example.com/cachebust-delete\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-cb-del\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 CB_DEL_ID="$LAST_ID"
 mklink "{\"destination\":\"https://example.com/cachebust-flag\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-cb-flag\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
@@ -358,6 +370,9 @@ if [ -n "$CB_DEL_ID" ] && [ -n "$CB_FLAG_ID" ]; then
   # No sleep here: this is the assertion. If invalidation still depended on
   # the worker's scheduled drain or the TTL, this would intermittently (or
   # always, at TTL=10s >> request latency) observe a stale 302 instead.
+  # (Projected backends only: wait for the delete to reach the projection —
+  # see the section header.)
+  wait_for_projection "'$CB_DEL_ID'" "delete projected"
   IMMEDIATE=$(loc "$RUN-cb-del")
   expect "the VERY NEXT redirect after DELETE is already 404 (#470)" "404|" "$IMMEDIATE"
 
@@ -374,6 +389,7 @@ if [ -n "$CB_DEL_ID" ] && [ -n "$CB_FLAG_ID" ]; then
   if [ -n "$REPORT_ID" ]; then
     curl -s -o /dev/null -X PATCH "$API/reports/$REPORT_ID" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
       -d '{"flagLink":true}'
+    wait_for_projection "'$CB_FLAG_ID'" "flag projected"
     FLAGGED=$(loc "$RUN-cb-flag")
     contains "the VERY NEXT redirect after flagging carries the warning interstitial (#426)" "warning=unsafe" "$FLAGGED"
   else

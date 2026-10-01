@@ -1174,6 +1174,19 @@ not a read action on that table — a wiring regression like this one fails in
 seconds, with no Docker/dynamodb-local required, rather than only surfacing
 on a real-stack CI run.
 
+**Correction: on the projected AWS profile this is bounded staleness, not
+immediate (#620).** Sharing the `CacheStore` lets the API's bust reach the
+redirect, but the redirect's cache sits in front of the DynamoDB projection,
+which only the worker's outbox drain updates. The bust lands *before* that
+drain, so until it runs a cache miss re-reads the stale projection, and a
+request arriving in between re-caches the stale entry for up to
+`LINK_CACHE_TTL_SECONDS`. `dynamo-smoke` showed exactly this: `DELETE` 204, no
+bust error, and the very next redirect still 302. The guarantee there is
+therefore drain lag plus at most one TTL. `scripts/smoke-redirect.sh` waits
+for the projection to drain before its delete/flag assertions on projected
+backends only; the Postgres-direct profiles keep the strict "very next
+redirect" assertion. Options for closing the gap are in #620.
+
 **Revisit if** a future profile adds a THIRD process that needs to read or
 bust this cache (e.g. a second redirect-like service) — it needs the same
 `CACHE_DRIVER`/`CACHE_DYNAMO_TABLE` pair and the correct grant (`grantReadData`
