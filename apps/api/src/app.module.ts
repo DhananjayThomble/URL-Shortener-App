@@ -23,6 +23,7 @@ import { DevelopersModule } from "./developers/developers.module.js";
 import { BioPagesModule } from "./bio-pages/bio-pages.module.js";
 import { PublicModule } from "./public/public.module.js";
 import { HealthController } from "./common/health.controller.js";
+import { CommonModule } from "./common/common.module.js";
 import { FormsModule } from "./forms/forms.module.js";
 import { ReportsModule } from "./reports/reports.module.js";
 import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
@@ -74,6 +75,7 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
       }),
     }),
     DatabaseModule,
+    CommonModule,
     MailModule,
     AuthModule,
     SafeBrowsingModule,

@@ -108,3 +108,32 @@ export interface CacheStore {
     ttlSeconds?: number,
   ): Promise<{ estimate: number }>;
 }
+
+/**
+ * The one place the redirect's hot-link cache key format is defined.
+ *
+ * apps/redirect's CachingLinkResolver computes this key when it reads
+ * (cache hit/miss), and the API computes the SAME key when it needs to bust
+ * a specific link's entry after a delete or an abuse flag (#470, #426) — so
+ * the two sides cannot silently disagree about which key names a given
+ * link's cache entry. Both must normalise identically: lowercase + trim the
+ * host (a link created against "SNAP.TO" must resolve, and be busted, from a
+ * request whose Host header is "snap.to"), and lowercase the slug.
+ *
+ * This mirrors @snapurl/database's normaliseHost exactly, but is NOT
+ * imported from there: @snapurl/cache has no dependency on
+ * @snapurl/database (and must not gain one — see architecture.md's package
+ * boundaries), so the same trivial normalisation is defined here as the
+ * cache-key format's own concern, independent of how the DB layer resolves a
+ * host lookup.
+ *
+ * The separator is "|", not ":" — a host is a DNS name and a slug is
+ * restricted to [a-zA-Z0-9._-] by isSlugAvailableShape, so neither can ever
+ * contain either character today, but "|" additionally guards against a
+ * host containing ":" (a non-default port in a Host header, e.g.
+ * "localhost:3002") shifting the boundary and colliding two different
+ * (host, slug) pairs into the same key.
+ */
+export function linkCacheKey(host: string, slug: string): string {
+  return `link:${host.toLowerCase().trim()}|${slug.toLowerCase()}`;
+}

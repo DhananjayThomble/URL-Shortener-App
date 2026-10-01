@@ -63,7 +63,7 @@ describe("CachingLinkResolver", () => {
     expect(result).toEqual(link);
     expect(resolve).toHaveBeenCalledTimes(1);
     // The entry is now cached under the normalised key.
-    expect(await cache.get("link:snap.to:hot")).not.toBeNull();
+    expect(await cache.get("link:snap.to|hot")).not.toBeNull();
   });
 
   it("serves a second resolve of the same link from the cache without touching the inner resolver", async () => {
@@ -128,7 +128,7 @@ describe("CachingLinkResolver", () => {
     expect(await caching.resolve("snap.to", "ghost")).toBeNull();
     // Both calls fell through: nulls are never cached.
     expect(resolve).toHaveBeenCalledTimes(2);
-    expect(await cache.get("link:snap.to:ghost")).toBeNull();
+    expect(await cache.get("link:snap.to|ghost")).toBeNull();
   });
 
   it("passes resolveDomain straight through to the inner resolver", async () => {

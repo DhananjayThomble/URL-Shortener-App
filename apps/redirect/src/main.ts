@@ -22,6 +22,7 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoLinkResolver, PostgresLinkResolver, type LinkResolver, type ResolvedLink } from "./resolver.js";
 import { CachingLinkResolver } from "./caching-resolver.js";
+import { listenForCacheBust } from "./cache-bust-listener.js";
 import { PostgresClickSink, SqsClickSink, type ClickSink } from "./click-sink.js";
 import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
 
@@ -214,6 +215,20 @@ async function init(): Promise<void> {
     dynamoTable: CACHE_DYNAMO_TABLE,
   });
   resolver = new CachingLinkResolver(baseResolver, cacheStore, LINK_CACHE_TTL_SECONDS);
+
+  /* #470 / #426: evict a deleted or newly-flagged link's hot-cache entry the
+     moment the API's write-side transaction commits, instead of waiting out
+     LINK_CACHE_TTL_SECONDS. See cache-bust-listener.ts's header for why this
+     is needed even though the API's bust also calls cache.del() on its own
+     CacheStore (that only reaches this process when CACHE_DRIVER is 'redis'
+     or 'dynamodb' — an actual shared store; under the default 'memory' the
+     api and redirect each hold their own Map, and NOTIFY is what closes that
+     gap). Only wired when this process actually holds a Postgres connection
+     (`database` is set — every profile except LINK_PROJECTION=dynamo,
+     mirrored by `needsPostgres` above). */
+  if (database) {
+    await listenForCacheBust(database.sql, cacheStore, app.log);
+  }
 
   /* The click sink: an awaited SQS SendMessage on the AWS profile (freeze-safe,
      drained by the worker), a Postgres INSERT everywhere else. */

@@ -1,10 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NotFoundException } from "@nestjs/common";
 import { createDatabase, domains, eq, linkCounters, links, workspaces, type Database } from "@snapurl/database";
 import { CloneLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
+import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 import { toActor } from "../common/activity.js";
 
 /* ============================================================
@@ -31,6 +32,11 @@ const safeBrowsingStub = {
  *  row, so the nudge is never called — a no-op stub is all the constructor
  *  needs. */
 const projectionNudgeStub = { nudge: () => {} } as unknown as ProjectionNudgeService;
+
+/** A no-op stub for the suites in this file that call remove() — bust() is
+ *  asserted for real in link-cache-bust.integration.test.ts, against a real
+ *  CacheStore and a real LISTEN; this file only needs the constructor shape. */
+const cacheBustStub = { bust: async () => {} } as unknown as LinkCacheBustService;
 
 const query = (over: Partial<ListLinksQuery> = {}) => ListLinksQuery.parse({ status: "all", ...over });
 
@@ -94,7 +100,7 @@ describeDb("LinksService.list", () => {
     db = handle.db;
     // Second arg is the read-only handle. Single-node here, so it is the same
     // db handle as the primary (matches READ_DB === DB when no replica is set).
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
 
     const [ws] = await db
       .insert(workspaces)
@@ -351,7 +357,7 @@ describeDb("LinksService.get / clone / update / remove — workspace ownership",
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
 
     const [a] = await db
       .insert(workspaces)
@@ -439,5 +445,92 @@ describeDb("LinksService.get / clone / update / remove — workspace ownership",
       const stillThere = await db.select({ id: links.id }).from(links).where(eq(links.id, linkAId));
       expect(stillThere).toHaveLength(1);
     });
+  });
+});
+
+/* ============================================================
+   LinksService.remove() — the delete half of the cache-bust fix (#470).
+
+   The oracle: the maintainer decisions on #470 (and #426 for the flag
+   trigger) require the redirect's hot-cache entry to be invalidated
+   synchronously with the write, not on the worker's later scheduled outbox
+   drain (see LinkCacheBustService's header for why the earlier #578/#589
+   attempts — which fired pg_notify from inside drainOutbox — did not
+   satisfy this). remove() is the write-side caller; this pins that it calls
+   cacheBust.bust(host, slug) exactly once, with the deleted link's own
+   domain and slug, AFTER the delete has committed — not before, and not at
+   all when the delete itself fails.
+   ============================================================ */
+describeDb("LinksService.remove() — cache-bust trigger", () => {
+  let handle: ReturnType<typeof createDatabase>;
+  let db: Database;
+  let service: LinksService;
+  let workspaceId: string;
+  let domainHost: string;
+
+  const stamp = Date.now();
+  const actor = toActor({ userId: null, label: "cache-bust-test@example.com" });
+
+  beforeAll(async () => {
+    handle = createDatabase({ url: DATABASE_URL!, max: 1 });
+    db = handle.db;
+
+    const [ws] = await db
+      .insert(workspaces)
+      .values({ name: "cache bust test", slug: `cachebust-${stamp}` })
+      .returning({ id: workspaces.id });
+    workspaceId = ws!.id;
+
+    domainHost = `cachebust-${stamp}.test`;
+    await db.insert(domains).values({ workspaceId, domain: domainHost });
+  });
+
+  afterAll(async () => {
+    if (workspaceId) await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+    await handle?.close();
+  });
+
+  it("busts exactly (host, slug) for the deleted link, after the delete has committed", async () => {
+    const cacheBust = { bust: vi.fn(async () => {}) };
+    service = new LinksService(
+      db,
+      db,
+      safeBrowsingStub,
+      projectionNudgeStub,
+      cacheBust as unknown as LinkCacheBustService,
+    );
+
+    const [dom] = await db.select({ id: domains.id }).from(domains).where(eq(domains.domain, domainHost)).limit(1);
+    const slug = `cb${stamp}-target`;
+    const [link] = await db
+      .insert(links)
+      .values({ workspaceId, domainId: dom!.id, slug, destination: "https://example.com/target" })
+      .returning({ id: links.id });
+
+    await service.remove(workspaceId, link!.id, actor);
+
+    expect(cacheBust.bust).toHaveBeenCalledTimes(1);
+    expect(cacheBust.bust).toHaveBeenCalledWith(domainHost, slug);
+
+    // The row is actually gone — bust() firing is not a substitute for the
+    // delete itself.
+    const stillThere = await db.select({ id: links.id }).from(links).where(eq(links.id, link!.id));
+    expect(stillThere).toHaveLength(0);
+  });
+
+  it("does not bust when the link does not exist (NotFoundException, nothing to invalidate)", async () => {
+    const cacheBust = { bust: vi.fn(async () => {}) };
+    service = new LinksService(
+      db,
+      db,
+      safeBrowsingStub,
+      projectionNudgeStub,
+      cacheBust as unknown as LinkCacheBustService,
+    );
+
+    await expect(
+      service.remove(workspaceId, "00000000-0000-0000-0000-000000000000", actor),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(cacheBust.bust).not.toHaveBeenCalled();
   });
 });
