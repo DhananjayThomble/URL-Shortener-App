@@ -206,14 +206,34 @@ export function Segmented<T extends string>({
   value,
   onChange,
   className,
+  id,
+  "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
 }: {
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
   className?: string;
+  /**
+   * The root is `role="group"` — none of the individual option buttons name
+   * what the group as a whole configures, so every caller MUST name the group
+   * with `aria-label`. A wrapping `Field`'s `<label htmlFor>` does NOT name
+   * it: the root is a `<div>`, which is not a labelable element, so browsers
+   * ignore that association. `id` exists only so a `Field` with the same
+   * `controlId` derives `${controlId}-hint` for `aria-describedby`.
+   */
+  id?: string;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
 }) {
   return (
-    <div className={cn("flex gap-[4px]", className)} role="group">
+    <div
+      className={cn("flex gap-[4px]", className)}
+      role="group"
+      id={id}
+      aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
+    >
       {options.map((o) => {
         const active = o.value === value;
         return (

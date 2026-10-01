@@ -23,6 +23,7 @@ export default function AnalyticsPage() {
             {/* Was a dead "Last 30 days ▾" button, so 24h, 7d, 90d and 12m
                 were unreachable even though the API serves all five. */}
             <Segmented<AnalyticsRange>
+              aria-label="Analytics date range"
               value={range}
               onChange={setRange}
               options={[

@@ -136,7 +136,7 @@ jobs:
       # one in the plan and deploy jobs. Two reasons: main advancing between the
       # two jobs must not make the applied change differ from the reviewed diff,
       # and `git_ref` needs a single place to take effect for a rollback.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git_ref || github.sha }}
 
@@ -329,7 +329,7 @@ jobs:
       # one in the plan and deploy jobs. Two reasons: main advancing between the
       # two jobs must not make the applied change differ from the reviewed diff,
       # and `git_ref` needs a single place to take effect for a rollback.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git_ref || github.sha }}
 

@@ -8,12 +8,15 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
    Issue #472 added `aria-allowed-attr` to this same suite (the create-link
    drawer's tab strip used `aria-selected` on a plain `<button>`, which that
    rule forbids — `aria-selected` is only valid on roles that support it).
+   Issue #600 added the `Segmented` group-naming check below (see that test
+   for why axe's own rules do not, and cannot, catch that class of bug).
 
    Oracle: axe-core's own `label`, `select-name` and `aria-allowed-attr` rules
-   (WCAG 2.1 SC 4.1.2 / 1.3.1, ARIA 1.2 role/attribute allowlist). Not a
-   judgement call — a form control either has a programmatically associated
-   accessible name or it does not, and an ARIA attribute is either allowed on
-   its host role or it is not.
+   (WCAG 2.1 SC 4.1.2 / 1.3.1, ARIA 1.2 role/attribute allowlist) for the
+   route-level scans; the accessibility tree directly (getByRole name
+   resolution) for the `Segmented`/#469-style checks that axe's ruleset does
+   not cover. Not a judgement call either way — a form control/group either
+   has a programmatically associated accessible name or it does not.
 
    Runs against the REAL staging stack (playwright.a11y.config.ts builds web with
    NEXT_PUBLIC_USE_FIXTURES=false, pointed at api :3001). qa-oracles §5 forbids
@@ -205,6 +208,58 @@ for (const theme of THEMES) {
         // what actually matters to assistive technology, regardless of <label for>.
         await expect(drawer.getByRole("textbox", { name: "Short link" })).toBeVisible();
         await expect(drawer.getByRole("textbox", { name: "Tags" })).toBeVisible();
+      });
+
+      test("create-link drawer + settings + qr + team: Segmented control groups have an accessible name (#600)", async ({ page }) => {
+        // Oracle: WCAG 2.1 SC 4.1.2 + the accessibility tree (what a screen reader
+        // actually resolves). NOT axe's `label`/`select-name` rule — that rule
+        // targets <input>/<select>/<textarea> and does not fire on an unnamed
+        // role="group" at all, so a `Segmented` control (a `role="group"` of
+        // plain <button>s, none of which say what the group configures) passed
+        // every prior axe-only pass while genuinely having no accessible name.
+        // Also NOT `<label for>` resolution alone — a `<label for>` pointing at a
+        // role="group" div is DOM-valid but browsers do not compute an accessible
+        // name from it, because a plain div is not a labelable element per the
+        // HTML spec; only `aria-label`/`aria-labelledby` work on it. Fixed by
+        // giving `Segmented` an `aria-label` prop, set at every call site that
+        // wraps it in a `Field` (see web/src/components/ui/index.tsx).
+        await page.goto("/links");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await page
+          .getByRole("button", { name: /New link|Create a link/ })
+          .first()
+          .click();
+        const drawer = page.getByRole("dialog", { name: "Create a link" });
+        await expect(drawer).toBeVisible();
+        await drawer.getByRole("tab", { name: "Routing" }).click();
+        await expect(drawer.getByRole("group", { name: "Redirect type" })).toBeVisible();
+
+        await page.goto("/settings");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        for (const name of ["Theme", "Density", "Corners", "Default redirect type", "Click data retention"]) {
+          await expect(page.getByRole("group", { name })).toBeVisible();
+        }
+
+        await page.goto("/qr");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await expect(page.getByRole("group", { name: "Error correction" })).toBeVisible();
+
+        await page.goto("/team");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await page.getByRole("button", { name: /invite/i }).first().click();
+        await expect(page.getByRole("group", { name: "Role" })).toBeVisible();
+
+        // The analytics/conversions date-range Segmented is the same defect
+        // class but was missed in the first pass of this fix (see PR #608
+        // review) — neither page wraps its Segmented in a Field, so each needed
+        // its own direct aria-label.
+        await page.goto("/analytics");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await expect(page.getByRole("group", { name: "Analytics date range" })).toBeVisible();
+
+        await page.goto("/conversions");
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await expect(page.getByRole("group", { name: "Conversions date range" })).toBeVisible();
       });
 
       test("/links/[id] Edit destination Field has no label/select-name violations", async ({ page }) => {

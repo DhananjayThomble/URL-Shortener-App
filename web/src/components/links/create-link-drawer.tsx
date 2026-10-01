@@ -315,12 +315,13 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
 
             {tab === "route" && (
               <div role="tabpanel" id="create-link-tabpanel-route" aria-labelledby="create-link-tab-route" className="flex flex-col gap-[18px]">
-                <Field
-                  label="Routing rules"
-                  help="Rules are checked top to bottom at the edge. The first match wins; anything that matches nothing falls through to the default destination."
-                >
-                  <div />
-                </Field>
+                <div className="flex flex-col gap-[6px]">
+                  <h4 className="text-[12.5px] font-semibold m-0">Routing rules</h4>
+                  <p className="text-[11.5px] text-ink-3 leading-[1.5] m-0">
+                    Rules are checked top to bottom at the edge. The first match wins; anything that matches nothing
+                    falls through to the default destination.
+                  </p>
+                </div>
                 <Controller
                   control={control}
                   name="rules"
@@ -335,12 +336,19 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
 
                 <SectionLabel>Redirect behaviour</SectionLabel>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Field label="Redirect type" help="302 keeps analytics accurate; 301 is better for permanent SEO moves.">
+                  <Field
+                    label="Redirect type"
+                    help="302 keeps analytics accurate; 301 is better for permanent SEO moves."
+                    controlId="create-link-redirect-type"
+                  >
                     <Controller
                       control={control}
                       name="redirectType"
                       render={({ field }) => (
                         <Segmented<RedirectType>
+                          id="create-link-redirect-type"
+                          aria-label="Redirect type"
+                          aria-describedby="create-link-redirect-type-hint"
                           value={field.value ?? "302"}
                           onChange={field.onChange}
                           options={[
@@ -492,12 +500,13 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
 
             {tab === "social" && (
               <div role="tabpanel" id="create-link-tabpanel-social" aria-labelledby="create-link-tab-social" className="flex flex-col gap-[18px]">
-                <Field
-                  label="Custom social preview"
-                  help="Overrides what WhatsApp, Slack, LinkedIn and X show when the link is pasted. Leave blank to use the destination's own tags."
-                >
-                  <div />
-                </Field>
+                <div className="flex flex-col gap-[6px]">
+                  <h4 className="text-[12.5px] font-semibold m-0">Custom social preview</h4>
+                  <p className="text-[11.5px] text-ink-3 leading-[1.5] m-0">
+                    Overrides what WhatsApp, Slack, LinkedIn and X show when the link is pasted. Leave blank to use
+                    the destination&apos;s own tags.
+                  </p>
+                </div>
                 <div className="border border-line rounded-[var(--radius)] overflow-hidden bg-surface-2">
                   <div className="h-[132px] grid place-items-center text-white font-display font-extrabold text-[22px] tracking-[-0.02em] bg-[linear-gradient(120deg,var(--accent)_0%,var(--violet)_100%)]">
                     {watch("social.title") || "Your preview image"}
