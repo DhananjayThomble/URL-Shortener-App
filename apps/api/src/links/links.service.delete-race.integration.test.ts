@@ -3,6 +3,7 @@ import { createDatabase, domains, eq, links, sql, workspaces, type Database } fr
 import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
+import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 import { toActor } from "../common/activity.js";
 
 /* ============================================================
@@ -38,6 +39,7 @@ const safeBrowsingStub = {
   check: async () => ({ status: "clean" as const, checkedAt: new Date().toISOString() }),
 } as unknown as SafeBrowsingService;
 const projectionNudgeStub = { nudge: () => {} } as unknown as ProjectionNudgeService;
+const cacheBustStub = { bust: async () => {} } as unknown as LinkCacheBustService;
 
 describeDb("LinksService.remove — concurrent click rollup", () => {
   // Three connections: the service under test, the simulated rollup holding its
@@ -58,7 +60,7 @@ describeDb("LinksService.remove — concurrent click rollup", () => {
     rollupHandle = createDatabase({ url: DATABASE_URL!, max: 1 });
     observerHandle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = serviceHandle.db;
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
 
     const [ws] = await db
       .insert(workspaces)
