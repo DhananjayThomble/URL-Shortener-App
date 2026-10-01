@@ -89,39 +89,57 @@ function pickWeighted(rules: RoutingRule[], seed: string): RoutingRule {
   return rules[rules.length - 1]!;
 }
 
+function isWeightedCatchAll(rule: RoutingRule): boolean {
+  return isCatchAll(rule) && typeof rule.weight === "number" && rule.weight > 0;
+}
+
 /**
- * Walk the chain, first match wins, and fall back to the link's own destination.
+ * Walk the chain in author order and stop at the first rule that matches —
+ * "first match wins" (`packages/contract/src/link.ts`'s docstring on
+ * `RoutingRule`), the declared oracle for chain evaluation. This must agree
+ * with `validateRoutingChain`, which already rejects a rule placed after an
+ * unweighted catch-all on exactly this assumption.
  *
- * Weighted rules are gathered as a group: if several catch-all rules carry
- * weights, they form one split rather than the first one always winning.
+ * Weighted catch-all rules are the one exception to "stop at the first
+ * match": every weighted catch-all anywhere in the chain forms a single
+ * split, decided only once no earlier conditional rule matches, rather than
+ * the first one reached always winning. This has to hold even when a
+ * conditional rule sits between two weighted catch-alls — `validateRoutingChain`
+ * sums every weighted catch-all's weight against the whole chain (not just a
+ * contiguous run) when checking the split adds up to 100%, so it already
+ * treats an interleaved chain like `[weight 50 -> A, {country: IN} -> IN,
+ * weight 50 -> B]` as one valid split, and evaluation must agree.
  */
 export function evaluateRouting(
   rules: RoutingRule[],
   fallbackDestination: string,
   ctx: VisitorContext,
 ): RoutingDecision {
-  const conditional = rules.filter((r) => !isCatchAll(r));
-  const catchAll = rules.filter(isCatchAll);
+  // validateRoutingChain sums every weighted catch-all's weight against the
+  // whole chain, not just a consecutive run — it accepts a chain with a
+  // conditional interleaved between two weighted catch-alls (e.g.
+  // `[weight 50 -> A, {country: IN} -> IN, weight 50 -> B]`) as one 100%
+  // split. Evaluation has to agree: treat every weighted catch-all in the
+  // chain as one group, decided once the scan falls through the last
+  // non-weighted rule, rather than stopping at whichever one is hit first.
+  const weightedGroup = rules.filter(isWeightedCatchAll);
 
-  for (const rule of conditional) {
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i]!;
+    if (isWeightedCatchAll(rule)) continue;
+
     if (matches(rule, ctx)) {
       return { destination: rule.then, matchedRuleId: rule.id, variant: null };
     }
   }
 
-  const weighted = catchAll.filter((r) => typeof r.weight === "number" && r.weight > 0);
-  if (weighted.length > 0) {
-    const picked = pickWeighted(weighted, ctx.visitorHash);
+  if (weightedGroup.length > 0) {
+    const picked = pickWeighted(weightedGroup, ctx.visitorHash);
     return {
       destination: picked.then,
       matchedRuleId: picked.id,
-      variant: `${weighted.indexOf(picked) + 1}/${weighted.length}`,
+      variant: `${weightedGroup.indexOf(picked) + 1}/${weightedGroup.length}`,
     };
-  }
-
-  const plainCatchAll = catchAll.find((r) => !r.weight);
-  if (plainCatchAll) {
-    return { destination: plainCatchAll.then, matchedRuleId: plainCatchAll.id, variant: null };
   }
 
   return { destination: fallbackDestination, matchedRuleId: null, variant: null };

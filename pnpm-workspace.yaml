@@ -14,11 +14,39 @@ allowBuilds:
   argon2: true
   '@scarf/scarf': true
 
+minimumReleaseAgeExclude:
+  - '@next/env@15.5.26'
+  - '@next/swc-darwin-arm64@15.5.26'
+  - '@next/swc-darwin-x64@15.5.26'
+  - '@next/swc-linux-arm64-gnu@15.5.26'
+  - '@next/swc-linux-arm64-musl@15.5.26'
+  - '@next/swc-linux-x64-gnu@15.5.26'
+  - '@next/swc-linux-x64-musl@15.5.26'
+  - '@next/swc-win32-arm64-msvc@15.5.26'
+  - '@next/swc-win32-x64-msvc@15.5.26'
+  - next@15.5.26
+
 # fastify@5.11.3 (still resolved transitively via @nestjs/platform-fastify) is
 # affected by GHSA-3m5p-2c4r-xxw2 and GHSA-w2qp-rph6-63g4; both are patched in
 # 5.12.1. Direct deps in apps/api and apps/redirect are bumped in their own
 # package.json, but @nestjs/platform-fastify@11.2.3 pins fastify itself, so an
 # override is needed to close the transitive copy too. See issue #537.
+#
+# sharp@0.34.5 (an optional dependency of next) inherits libvips/libheif
+# vulnerabilities (GHSA-f88m-g3jw-g9cj, GHSA-rgj7-g3m4-5g8c), fixed in 0.35.4+.
+# next@15.5.26 widens its optional range to `^0.34.3 || ^0.35.4`, which still
+# allows the vulnerable 0.34.5 to resolve, so an override is needed to force
+# the fixed line. See issue #591.
+#
+# postcss@8.4.31 is a direct dependency of next@15.5.26, pinned to that exact
+# version (not a range), for its internal CSS build pipeline. It carries four
+# advisories fixed across 8.5.10-8.5.23 (GHSA-6g55-p6wh-862q / CVE-2026-45623,
+# GHSA-fxqj-rqcc-2cmp / CVE-2026-69153, GHSA-qx2v-qp2m-jg93 / CVE-2026-41305,
+# GHSA-r28c-9q8g-f849 / CVE-2026-73646), the worst an arbitrary-file-read via
+# the sourceMappingURL comment parser. Everything else in the workspace
+# already resolves postcss to 8.5.26+ on its own; only next's pinned copy
+# needs forcing. See issue #590.
 overrides:
   fastify@<5.12.1: ^5.12.1
-
+  sharp@<0.35.4: ^0.35.4
+  postcss@<8.5.23: ^8.5.23

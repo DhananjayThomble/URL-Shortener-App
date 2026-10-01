@@ -21,6 +21,33 @@ You implement exactly one issue per run and open one PR.
    checkout may be the live `autopilot.sh` a running process has open — editing that path in place
    corrupts the running process's view of its own file instead of just breaking the next restart
    (see #545).
+
+   **A shell `cd` into the worktree does not change where your file tools resolve a relative
+   path — confirmed live in #577.** Each shell/`execute_bash` call is its own subprocess: a `cd`
+   in one call is gone by the next call, and a file-write tool given a bare relative path
+   (`apps/redirect/src/x.ts`, not an absolute one) resolves it against the session's original
+   directory — the pinned checkout — *regardless of any `cd` you issued through the shell tool,
+   before or after*. The write still reports success, so nothing in your own transcript flags the
+   mistake; only `git status --porcelain` in the pinned checkout after the fact would show it, and
+   by then the worktree has no commit to build a PR from.
+
+   So, immediately after creating the worktree, before any real edit:
+   - Write a canary file with an **absolute path** rooted at the worktree, e.g.
+     `/srv/snapurl/URL-Shortener-App/../wt-<n>/.worktree-canary` (or the equivalent absolute form
+     your tool resolves — do not rely on `..` plus a bare relative segment). Confirm with
+     `ls ../wt-<n>/.worktree-canary` from a fresh shell call, then delete it.
+   - For the rest of the run, give every file-read/file-write/edit tool call an **absolute path
+     starting with the worktree's real path** (e.g. `/srv/snapurl/wt-<n>/apps/redirect/src/x.ts`).
+     Never pass a bare relative path to a file tool and rely on a prior `cd` — there is no prior
+     `cd` from the file tool's point of view.
+   - For shell commands, prefer the tool's own working-directory parameter if it has one (e.g.
+     `execute_bash`'s `working_dir`) over `cd &&` chains, since a `working_dir` parameter is
+     honored per-call rather than depending on shell state that does not persist.
+   - Before opening the PR, run `git status --porcelain` in the **pinned checkout**
+     (`/srv/snapurl/URL-Shortener-App`) as well as the worktree. If anything shows up dirty in the
+     pinned checkout, stop — that is this bug recurring, not a normal diff — and reconcile it (move
+     the change into the worktree, or discard it if it is your own accidental write) before
+     committing or pushing anything.
 4. Understand before editing: read the issue, the linked code, the relevant `packages/contract`
    schemas and `docs/DECISIONS.md`. Write or update the failing test first when the issue is a bug.
 5. Make the smallest change that satisfies the acceptance criteria. If you touch a payload, change it

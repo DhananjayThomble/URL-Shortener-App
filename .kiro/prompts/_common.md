@@ -48,6 +48,11 @@ agents never take the same issue.
   below), never in this directory. If you created a new file directly here by
   mistake, `git status --porcelain` and remove or relocate it before you finish
   — do not leave it for the next restart to trip over.
+  A shell `cd` into a worktree does **not** make a file tool's relative paths
+  resolve there — confirmed in #577: each shell call is a fresh subprocess, so
+  the `cd` is gone by the next tool call, and a bare relative path handed to a
+  file-write tool still resolves against this pinned checkout. Use an absolute
+  path rooted at the worktree for every file tool call once one exists.
 
 ## CI mode (QA lab workflow)
 
