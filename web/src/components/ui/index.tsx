@@ -216,12 +216,11 @@ export function Segmented<T extends string>({
   className?: string;
   /**
    * The root is `role="group"` — none of the individual option buttons name
-   * what the group as a whole configures, so the group itself needs an
-   * accessible name. Pass `id` (with a wrapping `Field`'s `controlId` pointed
-   * at the same value) so `<label htmlFor>` names the group, same pattern as
-   * the Tags input in the create-link drawer (see Field's `controlId` doc).
-   * `aria-label`/`aria-describedby` are also accepted directly for callers
-   * that don't go through `Field`.
+   * what the group as a whole configures, so every caller MUST name the group
+   * with `aria-label`. A wrapping `Field`'s `<label htmlFor>` does NOT name
+   * it: the root is a `<div>`, which is not a labelable element, so browsers
+   * ignore that association. `id` exists only so a `Field` with the same
+   * `controlId` derives `${controlId}-hint` for `aria-describedby`.
    */
   id?: string;
   "aria-label"?: string;
