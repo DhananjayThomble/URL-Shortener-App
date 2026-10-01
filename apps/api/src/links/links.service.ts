@@ -789,6 +789,19 @@ export class LinksService {
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
 
     await this.db.transaction(async (tx) => {
+      /* Lock the link's clicks before the link itself. The worker's rollup
+         locks a batch of click_events rows and then, through the FK check on
+         its click_daily insert, the parent links row. A bare DELETE takes the
+         links row first and reaches click_events only through ON DELETE
+         CASCADE — the opposite order — so a delete landing mid-rollup
+         deadlocked and returned 500. Taking click_events first makes the
+         delete wait for the rollup to commit instead. The cascade below
+         deletes these same rows, so this adds no work it wasn't already doing;
+         the count(*) wrapper keeps a popular link's clicks from being shipped
+         to Node one row each. */
+      await tx.execute(sql`
+        select count(*) from (select 1 from click_events where link_id = ${id} for update) locked
+      `);
       await this.enqueueProjection(tx, id, "delete");
       await tx.delete(links).where(eq(links.id, id));
     });
