@@ -1714,6 +1714,110 @@ lacks "$(cat "$log_out" 2>/dev/null)" "corrupted: this replaced" \
   "the replacement file's own content was never executed by the running process"
 
 # ---------------------------------------------------------------------------------------------
+section "main(): the 'shift ended' digest only posts if a cycle actually ran (#621)"
+# ---------------------------------------------------------------------------------------------
+# The regression: a paused start calls run_cycle, which returns 1 (via paused()) before $cycle
+# ever moves off 0, so main()'s while-loop breaks on its very first iteration — but the
+# unconditional digest_now "shift ended" call after the loop still fired. Restart=always +
+# RestartSec=300 on the systemd unit then reposted that same zero-work digest every 5 minutes for
+# as long as the factory stayed paused. Both cases below run the real main() as a subprocess
+# (not AUTOPILOT_LIB_ONLY), same shape as the #545 test above, so this exercises the actual
+# post-loop statement rather than a stand-in.
+
+# Case 1: paused from the very first cycle — the PAUSE_FILE already exists before main() starts,
+# so run_cycle's own paused() check trips immediately and $cycle never leaves 0.
+reset_stubs; load
+dir=$PWD
+: > "$BIN/gh.digestissue"   # an existing digest issue, so a post (if any) would reuse it, not create one
+echo 42 > "$BIN/gh.digestissue"
+
+run_copy="$dir/autopilot-run-paused.sh"
+cp "$SRC" "$run_copy"
+pause_file="$dir/.paused-from-start"
+: > "$pause_file"           # paused before main() ever runs a cycle
+
+log_out="$dir/run-paused.out"
+AUTOPILOT_LIB_ONLY= HOURS=1 SLEEP_MIN=0 REPO=owner/repo STATE_DIR="$dir/.state-paused" \
+  PAUSE_FILE="$pause_file" OPS_DIR="$dir/nonexistent-ops" \
+  AGENT_GH_TOKEN=test-token PATH="$BIN:$PATH" \
+  bash "$run_copy" >"$log_out" 2>&1 &
+run_pid=$!
+
+exited=0
+for _ in $(seq 1 150); do
+  if ! kill -0 "$run_pid" 2>/dev/null; then exited=1; break; fi
+  sleep 0.1
+done
+if [ "$exited" = 1 ]; then
+  wait "$run_pid"; rc=$?
+else
+  kill "$run_pid" 2>/dev/null; wait "$run_pid" 2>/dev/null; rc=124
+fi
+
+is "$rc" 0 "a start that is paused from the first cycle still exits 0"
+contains "$(cat "$log_out" 2>/dev/null)" "autopilot stopped" \
+  "the normal shutdown log line still appears when paused from the start"
+lacks "$(cat "$BIN/gh.calls" 2>/dev/null)" "issue comment" \
+  "a start that is paused from the first cycle posts no digest comment (#621)"
+
+# Case 2: a shift that runs at least one real cycle before ending (clock expiry, HOURS=0 with the
+# loop condition already false after one pass is awkward to force deterministically, so instead
+# let cycle 1 run for real — same stub shape as the #545 test — then have that cycle's own stub
+# agent write PAUSE_FILE so cycle 2's paused() check ends the loop via main()'s normal `break`,
+# exactly as in the #545 test above. $cycle is 1 by the time the loop exits, so the digest must
+# still post.
+reset_stubs; load
+dir=$PWD
+echo 42 > "$BIN/gh.digestissue"
+
+cat > "$BIN/claude" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/claude.calls"
+: > "$PAUSE_FILE"
+exit 0
+STUB
+chmod +x "$BIN/claude"
+cat > "$BIN/kiro-cli" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/kiro-cli.calls"
+: > "$PAUSE_FILE"
+exit 0
+STUB
+chmod +x "$BIN/kiro-cli"
+
+run_copy="$dir/autopilot-run-worked.sh"
+cp "$SRC" "$run_copy"
+
+# The subprocess's own PAUSE_FILE must be the exact path the claude/kiro-cli stubs above just
+# wrote into their heredoc (load() already exported PAUSE_FILE="$dir/.paused" into this shell,
+# which is what got interpolated into the stub scripts above) — a different path here would mean
+# the stub writes a pause file the subprocess's own paused() check never looks at, and the loop
+# would run until HOURS expires instead of stopping after cycle 1.
+log_out="$dir/run-worked.out"
+AUTOPILOT_LIB_ONLY= HOURS=1 SLEEP_MIN=0 REPO=owner/repo STATE_DIR="$dir/.state-worked" \
+  PAUSE_FILE="$PAUSE_FILE" OPS_DIR="$dir/nonexistent-ops" \
+  AGENT_GH_TOKEN=test-token PATH="$BIN:$PATH" \
+  bash "$run_copy" >"$log_out" 2>&1 &
+run_pid=$!
+
+exited=0
+for _ in $(seq 1 150); do
+  if ! kill -0 "$run_pid" 2>/dev/null; then exited=1; break; fi
+  sleep 0.1
+done
+if [ "$exited" = 1 ]; then
+  wait "$run_pid"; rc=$?
+else
+  kill "$run_pid" 2>/dev/null; wait "$run_pid" 2>/dev/null; rc=124
+fi
+
+is "$rc" 0 "a shift that ran one cycle before the pause label tripped still exits 0"
+contains "$(cat "$log_out" 2>/dev/null)" "autopilot stopped" \
+  "the normal shutdown log line still appears after a worked cycle"
+contains "$(cat "$BIN/gh.calls" 2>/dev/null)" "issue comment 42" \
+  "a shift that ran >=1 cycle still posts the 'shift ended' digest (#621)"
+
+# ---------------------------------------------------------------------------------------------
 section "main \"\$@\" / exit \$? boundary: a length-changing in-place edit after main returns (#553)"
 # ---------------------------------------------------------------------------------------------
 # The gap the previous test does not cover: that test's overwrite lands WHILE main()'s while-loop
