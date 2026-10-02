@@ -1,11 +1,16 @@
 "use client";
 
+import { zodResolver } from "@hookform/resolvers/zod";
+import { EmailVerifyResendInput } from "@snapurl/contract";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Button, Field, Input } from "@/components/ui";
 import { useResendEmailVerification, useVerifyEmail } from "@/lib/api/hooks";
+
+type ResendValues = EmailVerifyResendInput;
 
 // No dynamic segment on this route, so Next tries to statically prerender it —
 // useSearchParams() requires a Suspense boundary during prerender or the
@@ -27,8 +32,12 @@ function VerifyEmailContent() {
   // useMutation itself causes (isPending flipping, etc).
   const attempted = useRef(false);
 
-  const [resendEmail, setResendEmail] = useState("");
   const [resendSent, setResendSent] = useState(false);
+  const {
+    register: registerResend,
+    handleSubmit: handleResendSubmit,
+    formState: resendFormState,
+  } = useForm<ResendValues>({ resolver: zodResolver(EmailVerifyResendInput) });
 
   useEffect(() => {
     if (!token || attempted.current) return;
@@ -40,15 +49,14 @@ function VerifyEmailContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  async function onResend(e: React.FormEvent) {
-    e.preventDefault();
+  const onResend = handleResendSubmit(async (values) => {
     try {
-      await resend.mutateAsync({ email: resendEmail });
+      await resend.mutateAsync(values);
       setResendSent(true);
     } catch {
       /* surfaced from resend.error */
     }
-  }
+  });
 
   if (!token) {
     return (
@@ -94,17 +102,11 @@ function VerifyEmailContent() {
         </p>
       ) : (
         <form onSubmit={onResend} className="flex flex-col gap-3.5">
-          <Field label="Email">
-            <Input
-              value={resendEmail}
-              onChange={(e) => setResendEmail(e.target.value)}
-              type="email"
-              autoComplete="email"
-              placeholder="you@company.com"
-            />
+          <Field label="Email" error={resendFormState.errors.email?.message}>
+            <Input {...registerResend("email")} type="email" autoComplete="email" placeholder="you@company.com" />
           </Field>
           {resend.isError ? <p className="text-[12.5px] text-bad m-0">{(resend.error as Error).message}</p> : null}
-          <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={resend.isPending || !resendEmail}>
+          <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={resend.isPending}>
             {resend.isPending ? "Sending…" : "Resend verification email"}
           </Button>
         </form>

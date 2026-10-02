@@ -1,22 +1,19 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { PasswordResetRequestInput } from "@snapurl/contract";
 import Link from "next/link";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Button, Field, Input } from "@/components/ui";
 import { useRequestPasswordReset } from "@/lib/api/hooks";
 
-const Schema = z.object({
-  email: z.string().min(1, "Enter your email address").email("That doesn't look like an email address"),
-});
-type Values = z.infer<typeof Schema>;
+type Values = PasswordResetRequestInput;
 
 export default function ForgotPasswordPage() {
   const requestReset = useRequestPasswordReset();
-  const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
+  const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(PasswordResetRequestInput) });
   // Set once the request succeeds; the confirmation below replaces the form
   // and never varies with whether the email actually has an account — the API
   // gives the same response either way, and the UI must not become the

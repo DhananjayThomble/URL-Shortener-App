@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { PasswordResetConfirmInput } from "@snapurl/contract";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
@@ -10,11 +11,7 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { Button, Field, Input } from "@/components/ui";
 import { useConfirmPasswordReset } from "@/lib/api/hooks";
 
-const Schema = z.object({
-  // Must match PasswordResetConfirmInput in @snapurl/contract (min 12, same
-  // message as register/login so the rule reads consistently everywhere).
-  password: z.string().min(12, "Use at least 12 characters — length beats complexity"),
-});
+const Schema = PasswordResetConfirmInput.pick({ password: true });
 type Values = z.infer<typeof Schema>;
 
 // This route has no dynamic segment (unlike /p/[slug]), so Next tries to
