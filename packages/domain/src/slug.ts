@@ -41,6 +41,15 @@ export function isSlugAvailableShape(slug: string): { ok: boolean; reason?: stri
   if (!/^[a-zA-Z0-9._-]+$/.test(slug)) {
     return { ok: false, reason: "Use letters, numbers, dots, dashes or underscores." };
   }
+  /* "." and ".." are shape-legal (dots are an allowed character) but WHATWG
+     URL dot-segment normalisation collapses them to the path root before any
+     browser or spec-compliant client ever reaches the redirect service — see
+     issue #639. Only the exact one- and two-dot forms are affected; "..." and
+     longer runs are not normalised and still resolve, so this does not widen
+     to a general ban on dots. */
+  if (/^\.{1,2}$/.test(slug)) {
+    return { ok: false, reason: "Back-halves can't be \".\" or \"..\" — browsers can never reach them." };
+  }
   if (RESERVED_SLUGS.has(slug.toLowerCase())) {
     return { ok: false, reason: `"${slug}" is reserved by SnapURL. Try another back-half.` };
   }

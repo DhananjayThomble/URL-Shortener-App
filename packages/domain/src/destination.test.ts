@@ -243,6 +243,16 @@ describe("slugs", () => {
     expect(isSlugAvailableShape("spring-sale_2026.v2").ok).toBe(true);
   });
 
+  it("rejects '.' and '..', which WHATWG URL dot-segment normalisation collapses to the root before any browser reaches the redirect service", () => {
+    expect(isSlugAvailableShape(".").ok).toBe(false);
+    expect(isSlugAvailableShape("..").ok).toBe(false);
+  });
+
+  it("does not widen the rejection to longer dot runs, which are not normalised and still resolve", () => {
+    expect(isSlugAvailableShape("...").ok).toBe(true);
+    expect(isSlugAvailableShape("....").ok).toBe(true);
+  });
+
   it("explains itself when it says no", () => {
     expect(isSlugAvailableShape("login").reason).toContain("reserved");
   });

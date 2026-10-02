@@ -56,6 +56,16 @@ describe("slug rules reject shapes the contract schema would accept", () => {
     );
   });
 
+  it("'.' and '..' are shape-valid but rule-rejected (unreachable after WHATWG dot-segment normalisation)", () => {
+    fc.assert(
+      fc.property(fc.constantFrom(".", ".."), (slug) => {
+        expect(SHAPE.test(slug)).toBe(true);
+        expect(isSlugAvailableShape(slug).ok).toBe(false);
+      }),
+      { numRuns: 2, seed: SEED },
+    );
+  });
+
   it("a shape-legal, non-reserved, extension-free, in-length slug is accepted", () => {
     // Same: build from the alphabet, then exclude the two rule-level rejections.
     const shapeChar = fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789_-".split(""));
