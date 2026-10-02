@@ -1020,7 +1020,14 @@ main() {
     log "cycle $cycle done; sleeping ${SLEEP_MIN}m"
     sleep $((SLEEP_MIN * 60))
   done
-  digest_now "shift ended"
+  # Only post the "shift ended" digest if the shift actually did something. run_cycle increments
+  # $cycle itself, after its own paused() check — so a shift that is paused from the very first
+  # cycle (or hits any other zero-work exit: budget exhaustion, an early failure) returns 1 before
+  # $cycle ever moves off 0, and `main`'s loop breaks on the first iteration. Without this guard,
+  # that zero-work exit still fell through to an unconditional digest_now call, and
+  # Restart=always + RestartSec=300 turned every paused 24h window into a comment every 5 minutes
+  # (issue #621). A shift that ran at least one cycle still gets its normal "shift ended" digest.
+  [ "$cycle" -gt 0 ] && digest_now "shift ended"
   log "autopilot stopped"
 }
 
