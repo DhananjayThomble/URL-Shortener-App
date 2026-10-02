@@ -21,6 +21,35 @@
    http://localhost:3001/api/v1 (api) and http://localhost:3002 (redirect),
    and the `snapurl-staging-postgres` container reachable via `docker exec`
    for the DB-level workspace-isolation oracle.
+
+   Bug-injection gate (qa-oracles.md §4) — run on PR #628, reverted every time
+   (`.qa-runs/` artifacts are gitignored, so this is the durable record):
+     - reserved-slug: commented out the RESERVED_SLUGS condition in
+       packages/domain/src/slug.ts -> 6 sev2 `reserved-slug-bypass-*` findings,
+       exit 1. Reverted; clean rerun exit 0.
+     - workspace-scoping/IDOR: dropped `eq(links.workspaceId, workspaceId)`
+       from LinksService.getFrom's WHERE clause (apps/api/src/links/links.service.ts)
+       -> 2 sev1 `idor-links-{get,patch}-*` findings, exit 1. Reverted; clean
+       rerun exit 0.
+     - SSRF/routing: disabled the 169.254.0.0/16 metadata-range check in
+       isDeniedIpv4 (packages/contract/src/http-url.ts) -> sev1 findings at
+       BOTH create (`open-redirect-chain-create-...169.254...`) and actual
+       redirect-serve (`open-redirect-chain-serve-...169.254...`), exit 1.
+       Reverted; clean rerun exit 0.
+     - refresh-token reuse: disabled the `row.replacedById` branch in
+       TokenService.rotate (apps/api/src/auth/token.service.ts) -> the
+       family-revocation check (`refresh-reuse-family-revocation-*`) went
+       sev1, exit 1 (the stale-token-rejected check stayed 401 via the
+       separate `revokedAt` guard, as expected — the gate is discriminating
+       enough to tell the two apart). Reverted; clean rerun exit 0.
+     - DB-ownership oracle: hardcoded a wrong workspaceId on insert in
+       LinksService.insert (apps/api/src/links/links.service.ts) -> the
+       `workspace-isolation-db-row-ownership-*` check went sev1, exit 1 —
+       proving that check (fixed on PR #628 to be discriminating; it
+       previously always recorded "unknown") actually catches a mismatch.
+       Reverted; clean rerun exit 0.
+   Each injection was its own rebuild+run+revert; a clean `git status
+   --porcelain` on every touched file was confirmed after each revert.
    ============================================================ */
 
 import { randomBytes } from "node:crypto";
@@ -123,6 +152,14 @@ function writeSummary() {
   lines.push("  browser; `profile.bio`, `block.title` and `block.href` are checked at the");
   lines.push("  HTTP/contract layer only (see that phase's findings for which).");
   lines.push("- No ZAP/semgrep/static scan is run by this suite.");
+  lines.push("");
+  lines.push("## Bug-injection gate (qa-oracles.md §4)");
+  lines.push("");
+  lines.push("Reserved-slug, workspace-scoping/IDOR, SSRF/routing, refresh-token-reuse,");
+  lines.push("and the DB-ownership oracle have each been independently verified to catch a");
+  lines.push("reversible injected defect (sev1/sev2 finding + non-zero exit) on a prior run");
+  lines.push("of this suite — see the file header comment in qa/adversarial/run.mjs for the");
+  lines.push("per-injection record (this run did not itself re-inject anything).");
   lines.push("");
   mkdirSync(RUN_DIR, { recursive: true });
   writeFileSync(SUMMARY_FILE, lines.join("\n"));
@@ -316,7 +353,13 @@ async function phase2_db_isolation() {
   });
 
   // Oracle check 2: direct DB row ownership — the link's workspace_id column
-  // must equal wsA.id, independent of what any API response claims.
+  // must equal wsA.id, independent of what any API response claims. This
+  // comparison must be discriminating: a mismatch OR a query failure is the
+  // defect signature (an unreadable/wrong-owner row is exactly what the
+  // oracle says must never happen), so either case gets a non-"unknown"
+  // severity_hint. Only an exact, successfully-read match stays "unknown"
+  // (review on PR #628: a check whose severity_hint is "unknown" regardless
+  // of outcome lets the suite stay green against a violated DB oracle).
   let dbRow = "";
   let dbErr = null;
   try {
@@ -324,20 +367,25 @@ async function phase2_db_isolation() {
   } catch (e) {
     dbErr = String(e);
   }
+  const normalizedDbRow = dbRow.trim().toLowerCase();
+  const normalizedExpected = String(wsA.id).trim().toLowerCase();
+  const rowMatches = !dbErr && normalizedDbRow === normalizedExpected;
   const artifact2 = saveArtifact("db-isolation-row-ownership.txt", `workspace_id for link ${linkId}: ${dbRow}\nexpected wsA.id: ${wsA.id}\nerror: ${dbErr}`);
   finding({
     id: `workspace-isolation-db-row-ownership-${randSuffix()}`,
     layer: "adversarial",
     title: "Direct Postgres check that link row's workspace_id matches the creating workspace",
     target: "packages/database links table (via docker exec psql)",
-    what_i_did: `Queried Postgres directly (not through the API) for the workspace_id column of link id=${linkId}, bypassing any API-layer response shaping.`,
-    expected: `workspace_id column must equal A's workspace id (${wsA.id}), the invariant qa-oracles.md §1.4 names explicitly as a DB-level check, not just an API response-shape check.`,
-    observed: dbErr ? `psql error: ${dbErr}` : `workspace_id=${dbRow}`,
+    what_i_did: `Queried Postgres directly (not through the API) for the workspace_id column of link id=${linkId}, bypassing any API-layer response shaping. Compared the result against the workspace id A's own registration/currentWorkspace call returned.`,
+    expected: `workspace_id column must equal A's workspace id (${wsA.id}), the invariant qa-oracles.md §1.4 names explicitly as a DB-level check, not just an API response-shape check. A mismatch or an unreadable row is the defect signature this check exists to catch, not an inconclusive result.`,
+    observed: dbErr ? `psql error: ${dbErr}` : `workspace_id=${dbRow}; matches creating workspace (${wsA.id}) = ${rowMatches}`,
     evidence: [artifact2],
     repro: `docker exec -i ${PG_CONTAINER} psql -U snapurl -d snapurl -t -A -c "select workspace_id from links where id = '${linkId}';"`,
-    severity_hint: "unknown",
+    severity_hint: rowMatches ? "unknown" : "sev1",
     confidence: dbErr ? "low" : "high",
-    notes: dbErr ? "psql invocation failed; see notes for a different-method cross-check next time (API list) rather than treating this as a pass." : "",
+    notes: dbErr
+      ? "psql invocation failed; treated as non-\"unknown\" because an unverifiable DB-level ownership check is itself a finding worth having (qa-oracles.md §2: two methods disagreeing, or one method failing outright, is a finding), not a silent pass. Re-probe by a different method (API list-leak check above) if this recurs."
+      : "",
   });
 }
 
@@ -529,7 +577,7 @@ async function phase5_bio_xss() {
         title: `GET /public/bio-pages/:slug after storing payload in ${payload.field}`,
         target: "GET /public/bio-pages/:slug",
         what_i_did: `Fetched the unauthenticated public bio-page JSON for the page created above and checked whether the raw payload markup is present in the response body.`,
-        expected: `This is a JSON API response, not HTML — the oracle for actual execution is the web app's JSX rendering (text interpolation auto-escapes; web/src/app/b/[slug]/page.tsx has no dangerouslySetInnerHTML as of this run's read of that file). This check only establishes whether the API stores/echoes the payload verbatim; it is NOT a DOM execution oracle by itself.`,
+        expected: `This is a JSON API response, not HTML — issue #607's own oracle for this scope item is "bio page output must not execute injected script — DOM-based oracle (does the payload execute), not a judgement call," which this check does not attempt. This check only establishes whether the API stores/echoes the payload verbatim; it is NOT a DOM execution oracle by itself, and is not treated as one.`,
         observed: `status=${publicRes.status}; raw payload substring present in response = ${containsRawScriptTag}`,
         evidence: [artifact2],
         repro: `curl -s ${API}/public/bio-pages/${slug}`,
@@ -542,13 +590,13 @@ async function phase5_bio_xss() {
     // DOM-execution oracle (issue #607: "DOM-based oracle (does the payload
     // execute), not a judgement call") — run the real-browser check from
     // e2e/adversarial/dom-xss.spec.ts against THIS payload's slug, for the
-    // profile.name case. profile.name is picked because it is the one field
-    // rendered unconditionally on every bio page regardless of other content
-    // (web/src/app/b/[slug]/page.tsx renders {p.profile.name} directly in an
-    // <h1>), making it the most representative single DOM check to wire into
-    // the automated suite; the other three payloads are still exercised at
-    // the HTTP/contract layer above and are a named coverage gap in
-    // summary.md for the DOM layer specifically.
+    // profile.name case. profile.name is picked because it is the field
+    // every bio page's public contract (packages/contract/src/workspace.ts
+    // BioPage.profile.name, a required non-optional z.string()) declares as present on every page regardless of
+    // other content, making it the most representative single DOM check to
+    // wire into the automated suite; the other three payloads are still
+    // exercised at the HTTP/contract layer above and are a named coverage
+    // gap in summary.md for the DOM layer specifically.
     if (payload.field === "profile.name" && upsertRes.status >= 200 && upsertRes.status < 300) {
       const domResult = runDomXssCheck(slug);
       const artifact3 = saveArtifact(`bio-xss-dom-${payload.field.replace(/[^a-z0-9-]/gi, "_")}.json`, domResult);
@@ -558,7 +606,7 @@ async function phase5_bio_xss() {
         title: `Real-browser DOM check: does the ${payload.field} payload execute on the rendered /b/${slug} page?`,
         target: "web /b/:slug (e2e/adversarial/dom-xss.spec.ts)",
         what_i_did: `Ran e2e/adversarial/dom-xss.spec.ts (Playwright, real Chromium) with BIO_SLUG=${slug} against the public bio page carrying the ${payload.field} payload ${JSON.stringify(payload.value)}.`,
-        expected: `web/src/app/b/[slug]/page.tsx renders profile.name via plain JSX text interpolation ({p.profile.name}), which React escapes — the spec's oracle is window.alert/dialog firing. Oracle predicts the Playwright test PASSES (fired=false, no execution).`,
+        expected: `Issue #607's acceptance criterion: "bio page output must not execute injected script — DOM-based oracle (does the payload execute), not a judgement call." The spec's oracle is window.alert/dialog firing when the page is rendered in a real browser. Oracle predicts the Playwright test PASSES (fired=false, no execution).`,
         observed: `playwright exit code=${domResult.exitCode}; ${domResult.summaryLine ?? "(no DOM_XSS_RESULT line captured — see artifact for raw output)"}`,
         evidence: [artifact3],
         repro: `BIO_SLUG=${slug} QA_WEB_URL=http://localhost:3000 QA_API_URL=${API} pnpm --filter snapurl-e2e exec playwright test -c adversarial/playwright.dom-xss.config.ts`,
@@ -574,11 +622,10 @@ async function phase5_bio_xss() {
 
 // ============================================================
 // Phase 6 — Refresh-token reuse after rotation
-// Oracle: apps/api/src/auth/token.service.ts TokenService.rotate — a token
-// that has already been replaced (row.replacedById set) must revoke the
-// WHOLE family, not just refuse the one reused token. security-and-context.md:
-// "rotating refresh token with reuse detection... do not remove reuse
-// detection".
+// Oracle: security-and-context.md — "15-min access JWT + rotating refresh
+// token with reuse detection and server-side logout. Do not... remove reuse
+// detection." / docs/DECISIONS.md "Sessions" row — "Rotation with reuse
+// detection revokes a whole token family on replay."
 // ============================================================
 async function phase6_refresh_reuse() {
   const user = await registerUser("reuse");
@@ -593,7 +640,7 @@ async function phase6_refresh_reuse() {
     title: "First use of a freshly issued refresh token rotates successfully",
     target: "POST /auth/refresh",
     what_i_did: `Registered a user, then immediately called POST /auth/refresh once with the refresh token issued at registration.`,
-    expected: `token.service.ts TokenService.rotate: a valid, unused, unexpired token rotates and returns a new pair. Oracle predicts 200 with a new refreshToken different from the original.`,
+    expected: `security-and-context.md: "15-min access JWT + rotating refresh token." A valid, unused, unexpired token is the normal rotation path. Oracle predicts 200 with a new refreshToken different from the original.`,
     observed: `status=${first.status}; new token issued and differs from original = ${rotatedToken && rotatedToken !== user.refreshToken}`,
     evidence: [artifact1],
     repro: `curl -s -X POST ${API}/auth/refresh -H "content-type: application/json" -d '{"refreshToken":"<ORIGINAL_REFRESH_TOKEN>"}'`,
@@ -612,7 +659,7 @@ async function phase6_refresh_reuse() {
     title: "Reusing the original (already-rotated) refresh token must be rejected",
     target: "POST /auth/refresh",
     what_i_did: `Called POST /auth/refresh AGAIN with the SAME original refresh token already consumed in the prior check.`,
-    expected: `token.service.ts: row.replacedById is set from the first rotation, so TokenService.rotate must throw UnauthorizedException("...already used...") and revoke the whole family (reuse detection). Oracle predicts 401, never a fresh token pair.`,
+    expected: `security-and-context.md: "rotating refresh token with reuse detection... do not... remove reuse detection." A token already consumed by a prior rotation is the exact reuse scenario the invariant names. Oracle predicts 401, never a fresh token pair.`,
     observed: `status=${reuseAttempt.status} body=${JSON.stringify(reuseAttempt.body).slice(0, 300)}`,
     evidence: [artifact2],
     repro: `curl -s -X POST ${API}/auth/refresh -H "content-type: application/json" -d '{"refreshToken":"<ORIGINAL_REFRESH_TOKEN>"}'`,
@@ -634,7 +681,7 @@ async function phase6_refresh_reuse() {
       title: "After a detected reuse, the legitimately-rotated token from the same family must also be dead",
       target: "POST /auth/refresh",
       what_i_did: `After the stale-token reuse attempt above (which should trigger revokeFamily), called POST /auth/refresh with the NEW token from the FIRST legitimate rotation — same family, never itself reused.`,
-      expected: `token.service.ts docblock: "the whole family is revoked and every session descended from that login is dead." Oracle predicts 401 even though this specific token was never directly reused.`,
+      expected: `docs/DECISIONS.md ("Sessions" row): "Rotation with reuse detection revokes a whole token family on replay." security-and-context.md: "rotating refresh token with reuse detection and server-side logout. Do not... remove reuse detection." Both describe family-wide revocation as the declared behavior, independent of any implementation file. Oracle predicts 401 even though this specific token was never directly reused.`,
       observed: `status=${familyCheck.status} body=${JSON.stringify(familyCheck.body).slice(0, 300)}`,
       evidence: [artifact3],
       repro: `curl -s -X POST ${API}/auth/refresh -H "content-type: application/json" -d '{"refreshToken":"<ROTATED_TOKEN_FROM_FIRST_REFRESH>"}'`,
@@ -711,11 +758,14 @@ async function phase7_idor_other_resources() {
 
 // ============================================================
 // Phase 8 — API key scope boundary (part of the workspace-isolation /
-// authorization scope item). Oracle: apps/api/src/auth/auth.guard.ts —
-// "A key may now reach a route only if that route names a scope the key
-// actually holds" (fixing the historical gap documented in that file's own
-// comment). A links:read-only key reaching a @Roles("admin")-gated,
-// no-@Scope route (e.g. members, developers) is the defect signature.
+// authorization scope item). Oracle: SELF-HOSTING.md "Breaking change: API
+// keys now fail closed on scope-less routes" — "an API key can only reach a
+// route that declares a scope the key holds. A route with no scope
+// requirement is no longer reachable by an API key — it returns 403 instead
+// of 200." A links:read-only key reaching a scope-less route (e.g. members)
+// or a route scoped links:write is the defect signature that doc names
+// explicitly (its own example: "the member roster, which exposes each
+// member's email and 2FA status").
 // ============================================================
 async function phase8_api_key_scope_boundary() {
   const user = await registerUser("apikey");
@@ -732,7 +782,7 @@ async function phase8_api_key_scope_boundary() {
     title: "Create an API key scoped to links:read only",
     target: "POST /api-keys",
     what_i_did: `Created an API key with scopes=["links:read"] only.`,
-    expected: `packages/contract/src/workspace.ts CreatedApiKey; expect 201 with a usable key string.`,
+    expected: `packages/contract/src/workspace.ts CreatedApiKey schema declares the response shape for a created key; expect 201 with a usable key string.`,
     observed: `status=${createKeyRes.status} key present=${Boolean(apiKey)}`,
     evidence: [artifactCreate],
     repro: `curl -s -X POST ${API}/api-keys -H "authorization: Bearer <TOKEN>" -H "content-type: application/json" -d '{"name":"probe","scopes":["links:read"]}'`,
@@ -743,20 +793,18 @@ async function phase8_api_key_scope_boundary() {
 
   if (!apiKey) return;
 
-  // Route with NO @Scope decorator and @Roles("admin") — members list.
-  // auth.guard.ts: "API keys fail CLOSED... A key may now reach a route only
-  // if that route names a scope the key actually holds." members has no
-  // @Scope at all, so the guard's `if (!scope) throw Forbidden` branch should
-  // fire before @Roles is even consulted for an API-key actor.
+  // Route with NO declared scope — members list. SELF-HOSTING.md's own
+  // example: "the member roster, which exposes each member's email and 2FA
+  // status" is the scope-less route it names as the hole being closed.
   const membersRes = await req("GET", `${API}/members`, { token: apiKey });
   const artifactMembers = saveArtifact("apikey-members-probe.json", membersRes);
   finding({
     id: `apikey-scope-boundary-members-${randSuffix()}`,
     layer: "adversarial",
-    title: "links:read-scoped API key attempts GET /members (no @Scope on that route)",
+    title: "links:read-scoped API key attempts GET /members (no declared scope on that route)",
     target: "GET /members",
     what_i_did: `Called GET /members using the Authorization header set to the links:read-only API key created above (not a user JWT).`,
-    expected: `auth.guard.ts: a route with no @Scope decorator must reject any API-key actor outright ("This route is not available to API keys."), regardless of what scopes the key holds. Oracle predicts 403, never member data.`,
+    expected: `SELF-HOSTING.md: "A route with no scope requirement is no longer reachable by an API key — it returns 403 instead of 200," naming the member roster as its own example. Oracle predicts 403, never member data.`,
     observed: `status=${membersRes.status} body=${JSON.stringify(membersRes.body).slice(0, 300)}`,
     evidence: [artifactMembers],
     repro: `curl -s ${API}/members -H "authorization: Bearer <API_KEY>"`,
@@ -765,7 +813,7 @@ async function phase8_api_key_scope_boundary() {
     notes: "",
   });
 
-  // Route WITH @Scope("links:write") but the key only has links:read.
+  // Route scoped to links:write but the key only has links:read.
   const createLinkWithKey = await req("POST", `${API}/links`, {
     token: apiKey,
     body: { destination: "https://example.com/apikey-scope-probe", domain: "localhost:3002", slug: `l5key-${randSuffix()}` },
@@ -774,10 +822,10 @@ async function phase8_api_key_scope_boundary() {
   finding({
     id: `apikey-scope-boundary-links-write-${randSuffix()}`,
     layer: "adversarial",
-    title: "links:read-scoped API key attempts POST /links (@Scope(\"links:write\"))",
+    title: "links:read-scoped API key attempts POST /links (a links:write-scoped route)",
     target: "POST /links",
-    what_i_did: `Called POST /links (which declares @Scope("links:write")) using the links:read-only API key.`,
-    expected: `auth.guard.ts: "if (!request.actor.scopes?.includes(scope)) throw Forbidden". Oracle predicts 403, no link created.`,
+    what_i_did: `Called POST /links (a route covered by the scope set per SELF-HOSTING.md, requiring links:write) using the links:read-only API key.`,
+    expected: `SELF-HOSTING.md: "Routes covered by the scope set (links, analytics, domains, conversions) keep working as long as the key was granted the matching scope." A links:read-only key was not granted the write scope POST /links requires. Oracle predicts 403, no link created.`,
     observed: `status=${createLinkWithKey.status} body=${JSON.stringify(createLinkWithKey.body).slice(0, 300)}`,
     evidence: [artifactWrite],
     repro: `curl -s -X POST ${API}/links -H "authorization: Bearer <API_KEY>" -H "content-type: application/json" -d '{"destination":"https://example.com/x","domain":"localhost:3002","slug":"probe"}'`,
