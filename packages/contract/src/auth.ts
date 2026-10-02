@@ -24,7 +24,7 @@ export const LoginInput = z.object({
 export type LoginInput = z.infer<typeof LoginInput>;
 
 export const RegisterInput = z.object({
-  name: z.string().min(1).max(80),
+  name: z.string().trim().min(1).max(80),
   email: z.string().email(),
   password: z
     .string()
