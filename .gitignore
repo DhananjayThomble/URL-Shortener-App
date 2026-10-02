@@ -56,6 +56,13 @@ logs/
 # Left untracked here would otherwise sit in the pinned checkout as a perpetually dirty/untracked
 # path (issue #523) — gitignoring it means a fresh clone or restart never has to care.
 .kiro/settings/lsp.json
+# Durable role memory belongs in $OPS_DIR/memory/ (the private ops repo, see _common.md's "Shared
+# memory" section) — never under .kiro/ in this pinned public checkout. A role invented this path
+# anyway (issue #611), and the resulting untracked directory made check_checkout_clean alert
+# "pinned checkout is dirty" on effectively every cycle, which was the trigger for a week-long
+# factory pause. Gitignoring it means a repeat of the same mistake alerts once instead of forever;
+# it does not make writing here correct — see _common.md and cloud.md for where memory goes.
+.kiro/memory/
 
 # Agent track-coordination markers (e.g. EXT-R3.done). Local handoff state.
 *.done
