@@ -8,8 +8,12 @@ import {
   LoginResult,
   TotpRecoveryCodes,
   TotpSetup,
+  type EmailVerifyInput,
+  type EmailVerifyResendInput,
   type LoginInput,
   type OAuthSignInInput,
+  type PasswordResetConfirmInput,
+  type PasswordResetRequestInput,
   type RegisterInput,
   type TotpDisableInput,
   type TotpEnableInput,
@@ -116,6 +120,45 @@ export function useLogout() {
     tokens.clear();
     qc.clear();
   };
+}
+
+/* P0 — account recovery (#363, #364, #638). Both request/confirm are public
+ * (anonymous: true) — a locked-out user by definition has no access token.
+ * request and resend deliberately return no usable body (202, z.undefined()):
+ * the API gives the SAME response whether or not the email has an account, so
+ * neither hook can be used to tell. Callers must show a fixed confirmation,
+ * never branch on the result.
+ */
+export function useRequestPasswordReset() {
+  return useMutation({
+    mutationFn: (body: PasswordResetRequestInput) =>
+      request("/auth/password-reset/request", z.undefined(), { method: "POST", body, anonymous: true }),
+  });
+}
+
+export function useConfirmPasswordReset() {
+  return useMutation({
+    mutationFn: (body: PasswordResetConfirmInput) =>
+      request("/auth/password-reset/confirm", z.undefined(), { method: "POST", body, anonymous: true }),
+  });
+}
+
+/* P0 — email verification (#638). verify is called from a link clicked in an
+ * email, often before the visitor has ever signed in on this device/browser —
+ * anonymous: true, same as the password-reset pair. resend mirrors request's
+ * anti-enumeration shape (202, no usable body). */
+export function useVerifyEmail() {
+  return useMutation({
+    mutationFn: (body: EmailVerifyInput) =>
+      request("/auth/email/verify", z.undefined(), { method: "POST", body, anonymous: true }),
+  });
+}
+
+export function useResendEmailVerification() {
+  return useMutation({
+    mutationFn: (body: EmailVerifyResendInput) =>
+      request("/auth/email/resend", z.undefined(), { method: "POST", body, anonymous: true }),
+  });
 }
 
 /* Two-factor (G6). The team page renders a 2FA column, so there has to be a

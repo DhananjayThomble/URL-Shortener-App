@@ -622,6 +622,10 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["POST"], pattern: /^\/auth\/(login|register|oauth)$/ },
   { methods: ["GET"], pattern: /^\/auth\/me$/ },
   { methods: ["POST"], pattern: /^\/auth\/logout$/ },
+  { methods: ["POST"], pattern: /^\/auth\/password-reset\/request$/ },
+  { methods: ["POST"], pattern: /^\/auth\/password-reset\/confirm$/ },
+  { methods: ["POST"], pattern: /^\/auth\/email\/verify$/ },
+  { methods: ["POST"], pattern: /^\/auth\/email\/resend$/ },
   { methods: ["POST"], pattern: /^\/auth\/2fa\/setup$/ },
   { methods: ["POST"], pattern: /^\/auth\/2fa\/enable$/ },
   { methods: ["POST"], pattern: /^\/auth\/2fa\/verify$/ },
@@ -701,6 +705,21 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/auth\/(register|oauth)$/)) data = SESSION;
   else if (m(/^\/auth\/me$/)) data = SESSION.user;
   else if (m(/^\/auth\/logout$/)) data = undefined;
+  // Request/resend give the SAME response for any email (no enumeration) —
+  // the real anti-enumeration shape, so there is nothing to branch on here.
+  else if (m(/^\/auth\/password-reset\/request$/)) data = undefined;
+  else if (m(/^\/auth\/password-reset\/confirm$/)) {
+    // "fixture.invalid.token" is the one sentinel that fails, so the
+    // expired/invalid-token path is exercisable in fixtures mode; any other
+    // token (e.g. the one a reset email would contain) succeeds.
+    const token = (opts.body as { token?: string })?.token ?? "";
+    if (token === "fixture.invalid.token") throw new Error("That reset link is invalid or has expired.");
+    data = undefined;
+  } else if (m(/^\/auth\/email\/verify$/)) {
+    const token = (opts.body as { token?: string })?.token ?? "";
+    if (token === "fixture.invalid.token") throw new Error("That verification link is invalid or has expired.");
+    data = undefined;
+  } else if (m(/^\/auth\/email\/resend$/)) data = undefined;
   else if (m(/^\/auth\/2fa\/setup$/)) {
     data = {
       otpauthUri: `otpauth://totp/SnapURL:${SESSION.user.email}?secret=JBSWY3DPEHPK3PXP&issuer=SnapURL`,
