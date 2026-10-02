@@ -479,10 +479,11 @@ strip_ansi() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z]//g'; }
 # alternative there, because a monthly cap needs different handling than a daily/session one —
 # retrying on the other engine (what every other `limited` reason gets, via cool_down) cannot
 # possibly succeed before the reset date the message itself states, so run_agent below checks
-# this pattern specifically to pause the whole factory instead. monthly_limit_text() still counts
-# as a LIMIT_RE-equivalent reason for limit_text()/classify_run(), so classify_run's own verdict
-# (ok|limited|timeout|broken) is unchanged — only run_agent's *response* to "limited" branches
-# further on this.
+# this pattern specifically to pause the whole factory instead. monthly_limit_text() is also
+# checked by classify_run() itself even when rc is 0 — Kiro's actual production transcript for
+# this message exits 0 (confirmed in #609 and in review on #623), so a check that only ran for a
+# nonzero exit would never see it. Every other `limited` reason still requires a nonzero exit;
+# only this one specific, unambiguous phrasing overrides that.
 LIMIT_RE='usage limit|rate limit(ed)? (reached|exceeded)|quota (exceeded|reached|exhausted)|out of credits|insufficient credits|credit limit|too many requests|429 |resource_exhausted'
 MONTHLY_LIMIT_RE='monthly (request )?limit|limits reset on [0-9]'
 AUTH_RE='not logged in|login required|please (log|sign) in to (use|continue using)|invalid (api )?key|authentication failed|credentials (are )?(invalid|expired)'
@@ -508,9 +509,19 @@ monthly_reset_date() { # logfile
 #   limited the engine refused for quota/auth reasons: retry elsewhere, cool this engine down.
 #   timeout it used the whole AGENT_TIMEOUT: never retried, because a retry costs as much again.
 #   broken  a missing binary, a rejected --model, a crash: no engine cooldown, but escalate.
+#
+# The monthly cap is checked even on exit 0: kiro-cli exits 0 while printing "Monthly request
+# limit reached" (issue #609's production transcript, confirmed in review on #623 — a run hitting
+# the monthly cap never reached limit_text() at all, because this function returned ok on rc=0
+# before any text was examined, so the pause/alert path in run_agent was unreachable from the
+# actual failure mode). Deliberately checked with the narrow MONTHLY_LIMIT_RE, not the broad
+# LIMIT_RE: a real 0-exit success run is allowed to mention "quota" or "Unauthorized" in its own
+# prose (e.g. summarising this product's click-quota UI) without being misclassified, which is why
+# that case has its own test and must keep returning ok. Only the one specific, unambiguous
+# monthly-cap phrasing overrides a 0 exit code.
 classify_run() { # rc logfile
   case "$1" in
-    0)   echo ok ;;
+    0)   monthly_limit_text "$2" && echo limited || echo ok ;;
     124) echo timeout ;;
     *)   limit_text "$2" && echo limited || echo broken ;;
   esac
