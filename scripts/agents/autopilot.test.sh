@@ -2182,8 +2182,7 @@ git worktree add -q --detach "$wtdir" HEAD
 SCRATCH_WORKTREE_AGE_SEC=3600
 echo "still working" > "$wtdir/scratch-note.txt"
 reap_worktrees >/dev/null 2>&1
-[ -d "$wtdir" ] && ok "a wt-cloud-* worktree with a file touched inside the age window is kept" \
-  || bad "a wt-cloud-* worktree with a file touched inside the age window is kept" "removed"
+if [ -d "$wtdir" ]; then ok "a wt-cloud-* worktree with a file touched inside the age window is kept"; else bad "a wt-cloud-* worktree with a file touched inside the age window is kept" "removed"; fi
 
 reset_stubs; load
 make_origin_and_repo
@@ -2210,8 +2209,7 @@ cat > "$BIN/fixture-issue-view-916.json" <<'JSON'
 {"labels":[{"name":"agent:in-progress"}]}
 JSON
 reap_worktrees >/dev/null 2>&1
-[ -d "$wtdir" ] && ok "a wt-adjudicate-* worktree whose branch parses as agent/<n>-... still goes through the issue-in-progress gate instead of pure staleness" \
-  || bad "a wt-adjudicate-* worktree whose branch parses as agent/<n>-... still goes through the issue-in-progress gate instead of pure staleness" "removed"
+if [ -d "$wtdir" ]; then ok "a wt-adjudicate-* worktree whose branch parses as agent/<n>-... still goes through the issue-in-progress gate instead of pure staleness"; else bad "a wt-adjudicate-* worktree whose branch parses as agent/<n>-... still goes through the issue-in-progress gate instead of pure staleness" "removed"; fi
 
 reset_stubs; load
 make_origin_and_repo
@@ -2221,8 +2219,7 @@ git worktree add -q "$wtdir" other-456
 SCRATCH_WORKTREE_AGE_SEC=1
 sleep 2
 reap_worktrees >/dev/null 2>&1
-[ -d "$wtdir" ] && ok "a directory outside every wt-* naming convention is still never touched, even when stale" \
-  || bad "a directory outside every wt-* naming convention is still never touched, even when stale" "removed"
+if [ -d "$wtdir" ]; then ok "a directory outside every wt-* naming convention is still never touched, even when stale"; else bad "a directory outside every wt-* naming convention is still never touched, even when stale" "removed"; fi
 
 # ---------------------------------------------------------------------------------------------
 section "prune_images_if_low_disk: prunes images and unused volumes, only under real disk pressure"
