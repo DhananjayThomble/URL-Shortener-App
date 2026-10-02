@@ -2233,6 +2233,7 @@ disk_pcent() { echo 42; }   # overrides the real df-based function for this case
 prune_images_if_low_disk >/dev/null 2>&1
 lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune" "below DISK_PRUNE_PCENT, docker is never invoked at all"
 lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "volume prune" "below DISK_PRUNE_PCENT, volume prune is not run either"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "builder prune" "below DISK_PRUNE_PCENT, builder prune is not run either (issue #610)"
 unset -f disk_pcent
 
 reset_stubs; load
@@ -2240,11 +2241,14 @@ reset_stubs; load
 disk_pcent() { echo 92; }
 echo 0 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
-contains "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune -af" "at or above DISK_PRUNE_PCENT, it runs docker image prune -af"
-lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "until=" "the prune has no age filter (image prune's until= is creation time, not last-used — see the function's own comment and scripts/staging-prune.sh)"
-lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "system prune" "only image/volume prune run, never a blanket system prune"
-lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "builder prune" "this function does not duplicate staging-prune.sh's build-cache reclaim"
+image_prune_call="$(grep -F "image prune" "$BIN/docker.calls" 2>/dev/null)"
+contains "$image_prune_call" "image prune -af" "at or above DISK_PRUNE_PCENT, it runs docker image prune -af"
+lacks "$image_prune_call" "until=" "the image prune has no age filter (image prune's until= is creation time, not last-used — see the function's own comment and scripts/staging-prune.sh)"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "system prune" "only image/volume/builder prune run, never a blanket system prune"
 contains "$(cat "$BIN/docker.calls" 2>/dev/null)" "volume prune -f" "at or above DISK_PRUNE_PCENT, it also runs docker volume prune -f (issue #610 — unused volumes were a reclaim source this function never covered)"
+builder_prune_call="$(grep -F "builder prune" "$BIN/docker.calls" 2>/dev/null)"
+contains "$builder_prune_call" "builder prune -af" "at or above DISK_PRUNE_PCENT, it also runs docker builder prune -af (issue #610 review — build cache was a reclaim source only staging-prune.sh covered, and only after a session's own teardown)"
+contains "$builder_prune_call" "until=24h" "the builder prune keeps the same 24h age bound as scripts/staging-prune.sh's own call, not an unbounded reclaim"
 unset -f disk_pcent
 
 reset_stubs; load
@@ -2275,6 +2279,27 @@ STUB
 chmod +x "$BIN/docker"
 prune_images_if_low_disk >/dev/null 2>&1
 is "$?" 0 "a failing docker volume prune (image prune succeeding) also does not propagate a non-zero exit"
+unset -f disk_pcent
+
+reset_stubs; load
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+disk_pcent() { echo 92; }
+echo 0 > "$BIN/docker.rc"
+# Same technique, this time image prune and volume prune succeed but builder prune fails — proves
+# the best-effort swallow applies to the new builder-prune call too, not only the two call sites
+# that predate issue #610's review round.
+cat > "$BIN/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/docker.calls"
+case "\$*" in
+  *"builder prune"*) exit 1 ;;
+  *"system df --format"*) cat "$BIN/docker.dfout" 2>/dev/null || true; exit 0 ;;
+  *) exit 0 ;;
+esac
+STUB
+chmod +x "$BIN/docker"
+prune_images_if_low_disk >/dev/null 2>&1
+is "$?" 0 "a failing docker builder prune (image/volume prune succeeding) also does not propagate a non-zero exit"
 unset -f disk_pcent
 
 reset_stubs; load

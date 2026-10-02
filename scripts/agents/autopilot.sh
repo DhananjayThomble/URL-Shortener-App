@@ -415,9 +415,10 @@ reap_one_worktree() { # path head branch
   return 0
 }
 
-# Docker images and unused volumes, pruned only under real disk pressure (issue #564; volumes
-# added by #610). Runs `docker image prune -af` with NO `until=` age filter — deliberately
-# different from this repo's other prune script (scripts/staging-prune.sh's `docker builder
+# Docker images, unused volumes, and (as of #610's review round) build cache, pruned only under
+# real disk pressure (issue #564; volumes and builder prune added by #610). Runs
+# `docker image prune -af` with NO `until=` age filter — deliberately different from the builder
+# prune below and from this repo's other prune script (scripts/staging-prune.sh's `docker builder
 # prune -af --filter until=24h`). That script's own comment is the oracle for why an age filter
 # is wrong here too, and more so: `image prune`'s `until` matches an image's *creation* time, not
 # when it was last used, and for a pulled base image (postgres:18-alpine) creation time is
@@ -436,11 +437,32 @@ reap_one_worktree() { # path head branch
 # them (no age filter, nothing a running stack depends on), so it is exactly as safe to run
 # unconditionally under pressure as the image prune two lines above. Issue #610 found this
 # reclaim source sitting unused — `docker system df` showed Local Volumes at 846MB with 663MB
-# already reclaimable — because this function only ever covered images. It still deliberately
-# does NOT touch build cache: that stays scripts/staging-prune.sh's job, bounded by its own
-# until=24h filter and run after every `staging:down` rather than here, for the reason that
-# script's own header gives (a blanket, unbounded reclaim here would fight a session's still-warm
-# cache instead of only cleaning up what staging:down's teardown already made unreferenced).
+# already reclaimable — because this function only ever covered images.
+#
+# `docker builder prune -af --filter until=${DISK_PRUNE_BUILDER_UNTIL}` runs last, gated the same
+# way, and is the one source neither this function nor scripts/staging-prune.sh covered under
+# pressure before #610's review round: staging-prune.sh only runs after a session's own
+# `staging:down`, so a periodic autopilot cycle that finds the disk over threshold *between*
+# sessions (or because some other build on the host grew the cache) had no path to reclaim build
+# cache at all until it was that session's turn to tear its own stack down. Issue #610's own
+# `docker system df` showed Build Cache at 13.95GB with 0% reclaimable at the time, i.e. nothing
+# for this call to evict right then — but the whole point of a pressure-triggered call is to catch
+# the case where that later becomes nonzero and the next `staging:down` is far enough away that
+# waiting for it would mean staying over threshold in the meantime.
+#
+# This deliberately mirrors scripts/staging-prune.sh's own call byte-for-byte (same flags, same
+# `until=24h` default) rather than inventing a stricter or looser variant, and for the same
+# reasons that script's header gives: `-af` with an age filter is safe for build cache
+# specifically (unlike `image prune`, see the comment above this function) because the filter
+# bounds it to layers untouched in the last 24h, so a build still warm elsewhere on the host
+# survives. It does NOT replace staging-prune.sh or change when that script runs — this is an
+# additional, independent call site for the one case staging-prune.sh's own per-teardown timing
+# cannot cover, not a relocation of its job. Same best-effort contract as the two prune calls
+# above: a failure here (unreachable daemon, lock contention with a concurrent builder-prune) logs
+# and continues, never propagates a non-zero exit, and never counts as a reason to skip the
+# disk-alert check below.
+DISK_PRUNE_BUILDER_UNTIL="${DISK_PRUNE_BUILDER_UNTIL:-24h}"
+
 prune_images_if_low_disk() {
   local pcent
   pcent=$(disk_pcent)
@@ -460,6 +482,14 @@ prune_images_if_low_disk() {
   docker volume prune -f >/dev/null 2>&1 || log "prune_images_if_low_disk: docker volume prune failed"
   vol_after=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Local Volumes"{print $2}')
   log "prune_images_if_low_disk: volumes reclaimable before=$vol_before after=$vol_after"
+
+  local build_before build_after
+  build_before=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Build Cache"{print $2}')
+  log "prune_images_if_low_disk: running docker builder prune -af --filter until=${DISK_PRUNE_BUILDER_UNTIL}"
+  docker builder prune -af --filter "until=${DISK_PRUNE_BUILDER_UNTIL}" >/dev/null 2>&1 \
+    || log "prune_images_if_low_disk: docker builder prune failed"
+  build_after=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Build Cache"{print $2}')
+  log "prune_images_if_low_disk: build cache reclaimable before=$build_before after=$build_after"
 
   pcent=$(disk_pcent)
   if [ -n "$pcent" ] && [ "$pcent" -ge "$DISK_ALERT_PCENT" ] 2>/dev/null; then
