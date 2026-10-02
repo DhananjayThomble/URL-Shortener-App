@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Header, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res } from "@nestjs/common";
+import type { OutgoingHttpHeaders } from "node:http";
 import type { FastifyReply } from "fastify";
 import { BulkCreateLinksInput, CloneLinkInput, CreateLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
@@ -29,7 +30,13 @@ export class LinksController {
     @Query(zodQuery(ListLinksQuery)) query: ListLinksQuery,
     @Res() reply: FastifyReply,
   ) {
+    // reply.raw.writeHead() bypasses Fastify's reply pipeline entirely, so
+    // the CORS headers @fastify/cors already set on `reply` (e.g. via the
+    // @Header decorators and the cors plugin's hook) are never sent unless
+    // they're copied across explicitly. Without this, the browser discards
+    // the response as a CORS failure even though the preflight succeeded.
     reply.raw.writeHead(200, {
+      ...(reply.getHeaders() as OutgoingHttpHeaders),
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="snapurl-links.csv"',
     });
