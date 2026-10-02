@@ -23,6 +23,13 @@ import type { RequestActor } from "../auth/auth.guard.js";
    head was already committed when it throws*. A fake raw response tracks
    exactly that.
 
+   Also covers issue #636: writeHead's own header object used to replace
+   whatever @fastify/cors had already set on `reply` via reply.header(...),
+   rather than merge with it, so the 200 response carried no
+   access-control-allow-origin and the browser discarded it. The fix spreads
+   reply.getHeaders() into the writeHead call; fakeRawResponse's header()/
+   getHeaders() stand in for the reply-level API the real cors plugin uses.
+
    Runs only when DATABASE_URL is set — see the note in rollup.test.ts.
    ============================================================ */
 
@@ -30,14 +37,21 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const describeDb = DATABASE_URL ? describe : describe.skip;
 
 /** Tracks exactly what the controller does to Fastify's raw response,
- *  without pulling in a real HTTP server. */
+ *  without pulling in a real HTTP server. Also exposes the reply-level
+ *  header() / getHeaders() pair (see #636) so the writeHead call can be
+ *  checked for a merged-in CORS header, mirroring Fastify's own reply API
+ *  closely enough for that purpose: a case-insensitive header bag that
+ *  writeHead's argument has to be merged with, not replaced by. */
 function fakeRawResponse() {
   const chunks: string[] = [];
+  const headers: Record<string, string> = {};
+  let sentHeaders: Record<string, string> | null = null;
   const raw = {
     headWritten: false,
     ended: false,
-    writeHead(_status: number, _headers: Record<string, string>) {
+    writeHead(_status: number, headersArg: Record<string, string>) {
       raw.headWritten = true;
+      sentHeaders = headersArg;
     },
     write(chunk: string) {
       chunks.push(chunk);
@@ -46,7 +60,11 @@ function fakeRawResponse() {
       raw.ended = true;
     },
   };
-  return { raw, chunks };
+  const header = (name: string, value: string) => {
+    headers[name.toLowerCase()] = value;
+  };
+  const getHeaders = () => ({ ...headers });
+  return { raw, chunks, header, getHeaders, sentHeaders: () => sentHeaders };
 }
 
 const actorFor = (workspaceId: string): RequestActor => ({
@@ -112,8 +130,8 @@ describeDb("FormsController.exportResponses", () => {
   });
 
   it("streams a CSV with the header row for the happy path", async () => {
-    const { raw, chunks } = fakeRawResponse();
-    await controller.exportResponses(actorFor(workspaceId), formId, { raw } as never);
+    const { raw, chunks, getHeaders } = fakeRawResponse();
+    await controller.exportResponses(actorFor(workspaceId), formId, { raw, getHeaders } as never);
 
     expect(raw.headWritten).toBe(true);
     expect(raw.ended).toBe(true);
@@ -123,10 +141,24 @@ describeDb("FormsController.exportResponses", () => {
     expect(chunks.join("")).toContain("Ada");
   });
 
+  it("forwards a CORS header already set on the reply into the raw writeHead call (#636)", async () => {
+    const { raw, getHeaders, header, sentHeaders } = fakeRawResponse();
+    // Standing in for @fastify/cors's onRequest hook, which has already run
+    // and called reply.header(...) by the time the handler body executes.
+    header("Access-Control-Allow-Origin", "http://localhost:3000");
+
+    await controller.exportResponses(actorFor(workspaceId), formId, { raw, getHeaders } as never);
+
+    expect(raw.headWritten).toBe(true);
+    expect(sentHeaders()).not.toBeNull();
+    expect(sentHeaders()!["access-control-allow-origin"]).toBe("http://localhost:3000");
+    expect(sentHeaders()!["Content-Type"]).toContain("text/csv");
+  });
+
   it("rejects another workspace's form id with the service's normal not-found, and never commits the response head", async () => {
-    const { raw } = fakeRawResponse();
+    const { raw, getHeaders } = fakeRawResponse();
     await expect(
-      controller.exportResponses(actorFor(workspaceId), otherFormId, { raw } as never),
+      controller.exportResponses(actorFor(workspaceId), otherFormId, { raw, getHeaders } as never),
     ).rejects.toBeInstanceOf(NotFoundException);
 
     // This is the assertion the original bug fails: the unfixed handler calls
@@ -136,11 +168,11 @@ describeDb("FormsController.exportResponses", () => {
   });
 
   it("rejects a random, non-existent form id with the service's normal not-found, and never commits the response head", async () => {
-    const { raw } = fakeRawResponse();
+    const { raw, getHeaders } = fakeRawResponse();
     const missing = randomUUID();
-    await expect(controller.exportResponses(actorFor(workspaceId), missing, { raw } as never)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      controller.exportResponses(actorFor(workspaceId), missing, { raw, getHeaders } as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
     expect(raw.headWritten).toBe(false);
   });
 });

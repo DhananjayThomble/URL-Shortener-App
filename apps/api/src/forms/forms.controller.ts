@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Patch, Res } from "@nestjs/common";
+import type { OutgoingHttpHeaders } from "node:http";
 import type { FastifyReply } from "fastify";
 import { CreateFormInput, UpdateFormInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
@@ -54,7 +55,12 @@ export class FormsController {
     @Res() reply: FastifyReply,
   ) {
     await this.forms.get(actor.workspaceId, id);
+    // reply.raw.writeHead() bypasses Fastify's reply pipeline entirely, so
+    // the CORS headers @fastify/cors already set on `reply` are never sent
+    // unless they're copied across explicitly — the browser then discards
+    // the response as a CORS failure even though the preflight succeeded.
     reply.raw.writeHead(200, {
+      ...(reply.getHeaders() as OutgoingHttpHeaders),
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="snapurl-responses.csv"',
     });
