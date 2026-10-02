@@ -30,7 +30,9 @@
     "staging:up": "docker compose -f docker-compose.staging.yml up -d --build --wait",
     "staging:smoke": "API=http://localhost:3001/api/v1 RD=http://localhost:3002 DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl DB_CONTAINER=snapurl-staging-postgres bash scripts/smoke.sh && API=http://localhost:3001/api/v1 RD=http://localhost:3002 DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl DB_CONTAINER=snapurl-staging-postgres bash scripts/smoke-redirect.sh && API=http://localhost:3001/api/v1 RD=http://localhost:3002 DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl DB_CONTAINER=snapurl-staging-postgres bash scripts/integration-assertions.sh",
     "staging:logs": "docker compose -f docker-compose.staging.yml logs --no-color",
-    "staging:down": "docker compose -f docker-compose.staging.yml down -v && (bash scripts/staging-prune.sh || true)"
+    "staging:down": "docker compose -f docker-compose.staging.yml down -v && (bash scripts/staging-prune.sh || true)",
+    "qa:l3-web-usage": "node --experimental-strip-types qa/l3-web-usage/run.mts",
+    "qa:l3-web-usage:selftest": "node --experimental-strip-types qa/l3-web-usage/selftest.mts"
   },
   "repository": {
     "type": "git",
