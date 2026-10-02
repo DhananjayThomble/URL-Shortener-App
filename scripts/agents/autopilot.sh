@@ -292,10 +292,46 @@ issue_still_in_progress() { # issue_number
   case " $labels " in *" agent:in-progress "*) return 0 ;; *) return 1 ;; esac
 }
 
+# How long an untracked-by-issue-number scratch worktree (see SCRATCH_WORKTREE_AGE_SEC's own
+# comment below) must sit with no file activity before it is considered abandoned rather than
+# mid-session. 24h matches scripts/staging-prune.sh's own age bound for the same reason: a
+# session can go quiet for a long tool call or an AGENT_TIMEOUT-bounded run without writing a
+# file, so the threshold has to be comfortably longer than one role's own timeout, not just
+# "longer than a coffee break".
+SCRATCH_WORKTREE_AGE_SEC="${SCRATCH_WORKTREE_AGE_SEC:-86400}"
+
+# True (0) if no file under $1 has been modified more recently than SCRATCH_WORKTREE_AGE_SEC ago
+# — i.e. the tree looks abandoned rather than actively in use by a running session. Checks file
+# mtimes anywhere in the tree (not just git's own HEAD/index), because a session reproducing a
+# finding or running a build inside the scratch tree touches ordinary files — logs, build output,
+# a checked-out commit — well before it touches git plumbing again, so this is a strictly wider
+# (safer) activity signal than git state alone. There is no lockfile or PID convention for "a
+# session is using this worktree" (none of the role prompts write one), so mtime is the only
+# signal available; see this change's own issue (#610) for why that is an accepted trade-off
+# rather than a solved one.
+worktree_is_stale() { # path
+  local path="$1"
+  [ -d "$path" ] || return 1
+  ! find "$path" -newermt "@$(($(date +%s) - SCRATCH_WORKTREE_AGE_SEC))" -print -quit 2>/dev/null | grep -q .
+}
+
 # One worktree entry from reap_worktrees's parse: path, HEAD sha, branch name (empty if detached).
 # Never called for entry 0 (the toplevel/pinned checkout — reap_worktrees's own loop index guards
-# that). Only acts on paths that look like a developer or reviewer scratch worktree; anything else
-# on the host is left alone even if this function is somehow reached for it.
+# that). Only acts on paths that look like a developer, reviewer or other scratch worktree;
+# anything else on the host is left alone even if this function is somehow reached for it.
+#
+# `wt-adjudicate-*` / `wt-cloud-<timestamp>` (issue #610) are scratch trees from the same family
+# as `wt-<n>`/`wt-review-<n>` — created as throwaway siblings of the pinned checkout by a run that
+# needs a working copy — but neither name encodes an issue number the way the developer/reviewer
+# convention does (no `.kiro/prompts/*.md` documents either name; see #610's investigation), so
+# `branch_issue_number`/`issue_still_in_progress` have nothing to key on for them. They get a
+# second, name-based match (`wt-[a-z]*-*`, deliberately excluding the digit-first `wt-[0-9]*` and
+# `wt-review-[0-9]*` shapes already handled below so this doesn't change those paths at all) and a
+# different removal rule: reap on staleness (worktree_is_stale) rather than PR/branch state, since
+# a scratch tree with no issue-shaped branch has no PR to look up in the first place. A branch that
+# *does* happen to parse as `agent/<n>-...` inside one of these still gets the in-progress label
+# check below, same as every other path — the extra name match only widens which directories reach
+# that check, it never narrows the safety net around them.
 #
 # issue #567's second review round: the agent:in-progress guard must hold for EVERY removal path,
 # not only the no-PR/branch-gone-from-origin one it was first added to. A MERGED/CLOSED PR or a
@@ -307,13 +343,26 @@ issue_still_in_progress() { # issue_number
 # (both branch shapes, and a detached HEAD whose PR number `gh` can report) — never only for the
 # orphaned-branch path.
 reap_one_worktree() { # path head branch
-  local path="$1" head="$2" branch="$3" state="" issue=""
+  local path="$1" head="$2" branch="$3" state="" issue="" scratch=0
   case "$(basename "$path")" in
     wt-[0-9]*|wt-review-[0-9]*) ;;
+    wt-[a-z]*-*)
+      scratch=1
+      ;;
     *) return 1 ;;
   esac
 
-  if [ -n "$branch" ]; then
+  if [ "$scratch" = 1 ] && [ -z "$(branch_issue_number "${branch:-}")" ]; then
+    # No issue-shaped branch name to look up a PR for (the common case for these: an ad-hoc
+    # branch name, or detached HEAD). Age is the only signal; everything below this still runs
+    # (the in-progress check), but there is nothing for it to find without an issue number, so a
+    # branch that does not parse as agent/<n>-... falls straight to the staleness check.
+    if worktree_is_stale "$path"; then
+      log "reap_worktrees: $path — scratch worktree with no issue-shaped branch, stale for >= ${SCRATCH_WORKTREE_AGE_SEC}s; removing"
+    else
+      return 1
+    fi
+  elif [ -n "$branch" ]; then
     issue=$(branch_issue_number "$branch")
     state=$(gh pr list -R "$REPO" --head "$branch" --state all --json state -q '.[0].state // ""' 2>/dev/null)
     case "$state" in
@@ -366,20 +415,54 @@ reap_one_worktree() { # path head branch
   return 0
 }
 
-# Docker images, pruned only under real disk pressure (issue #564). Runs `docker image prune -af`
-# with NO `until=` age filter — deliberately different from this repo's other prune script
-# (scripts/staging-prune.sh's `docker builder prune -af --filter until=24h`). That script's own
-# comment is the oracle for why an age filter is wrong here too, and more so: `image prune`'s
-# `until` matches an image's *creation* time, not when it was last used, and for a pulled base
-# image (postgres:18-alpine) creation time is whenever it was built upstream — verified against
-# this host's own `docker system df -v`, where the running `snapurl-postgres` container's image
-# was pulled 3 days ago. A 24h age filter on top of `-a` would make this function try to evict
-# that image the moment nothing referenced it, which is exactly the state right after a
-# `staging:down`, forcing a silent, costly re-pull on the next `staging:up`. `-a` alone already
-# satisfies the acceptance criterion ("do not remove images a running container uses"): it only
-# removes images with zero containers referencing them, dangling or not, regardless of age — no
-# extra filter is needed to make that true, and adding one would only make the reclaim *weaker*
-# under pressure, which is the opposite of what "under pressure" should do.
+# Docker images, unused volumes, and (as of #610's review round) build cache, pruned only under
+# real disk pressure (issue #564; volumes and builder prune added by #610). Runs
+# `docker image prune -af` with NO `until=` age filter — deliberately different from the builder
+# prune below and from this repo's other prune script (scripts/staging-prune.sh's `docker builder
+# prune -af --filter until=24h`). That script's own comment is the oracle for why an age filter
+# is wrong here too, and more so: `image prune`'s `until` matches an image's *creation* time, not
+# when it was last used, and for a pulled base image (postgres:18-alpine) creation time is
+# whenever it was built upstream — verified against this host's own `docker system df -v`, where
+# the running `snapurl-postgres` container's image was pulled 3 days ago. A 24h age filter on top
+# of `-a` would make this function try to evict that image the moment nothing referenced it,
+# which is exactly the state right after a `staging:down`, forcing a silent, costly re-pull on the
+# next `staging:up`. `-a` alone already satisfies the acceptance criterion ("do not remove images
+# a running container uses"): it only removes images with zero containers referencing them,
+# dangling or not, regardless of age — no extra filter is needed to make that true, and adding one
+# would only make the reclaim *weaker* under pressure, which is the opposite of what "under
+# pressure" should do.
+#
+# `docker volume prune -f` runs right after, for the same reason and with the same safety
+# property: like `image prune`, it only ever removes volumes with zero containers referencing
+# them (no age filter, nothing a running stack depends on), so it is exactly as safe to run
+# unconditionally under pressure as the image prune two lines above. Issue #610 found this
+# reclaim source sitting unused — `docker system df` showed Local Volumes at 846MB with 663MB
+# already reclaimable — because this function only ever covered images.
+#
+# `docker builder prune -af --filter until=${DISK_PRUNE_BUILDER_UNTIL}` runs last, gated the same
+# way, and is the one source neither this function nor scripts/staging-prune.sh covered under
+# pressure before #610's review round: staging-prune.sh only runs after a session's own
+# `staging:down`, so a periodic autopilot cycle that finds the disk over threshold *between*
+# sessions (or because some other build on the host grew the cache) had no path to reclaim build
+# cache at all until it was that session's turn to tear its own stack down. Issue #610's own
+# `docker system df` showed Build Cache at 13.95GB with 0% reclaimable at the time, i.e. nothing
+# for this call to evict right then — but the whole point of a pressure-triggered call is to catch
+# the case where that later becomes nonzero and the next `staging:down` is far enough away that
+# waiting for it would mean staying over threshold in the meantime.
+#
+# This deliberately mirrors scripts/staging-prune.sh's own call byte-for-byte (same flags, same
+# `until=24h` default) rather than inventing a stricter or looser variant, and for the same
+# reasons that script's header gives: `-af` with an age filter is safe for build cache
+# specifically (unlike `image prune`, see the comment above this function) because the filter
+# bounds it to layers untouched in the last 24h, so a build still warm elsewhere on the host
+# survives. It does NOT replace staging-prune.sh or change when that script runs — this is an
+# additional, independent call site for the one case staging-prune.sh's own per-teardown timing
+# cannot cover, not a relocation of its job. Same best-effort contract as the two prune calls
+# above: a failure here (unreachable daemon, lock contention with a concurrent builder-prune) logs
+# and continues, never propagates a non-zero exit, and never counts as a reason to skip the
+# disk-alert check below.
+DISK_PRUNE_BUILDER_UNTIL="${DISK_PRUNE_BUILDER_UNTIL:-24h}"
+
 prune_images_if_low_disk() {
   local pcent
   pcent=$(disk_pcent)
@@ -392,6 +475,21 @@ prune_images_if_low_disk() {
   docker image prune -af >/dev/null 2>&1 || log "prune_images_if_low_disk: docker image prune failed"
   after=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Images"{print $2}')
   log "prune_images_if_low_disk: images reclaimable before=$before after=$after"
+
+  local vol_before vol_after
+  vol_before=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Local Volumes"{print $2}')
+  log "prune_images_if_low_disk: running docker volume prune -f"
+  docker volume prune -f >/dev/null 2>&1 || log "prune_images_if_low_disk: docker volume prune failed"
+  vol_after=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Local Volumes"{print $2}')
+  log "prune_images_if_low_disk: volumes reclaimable before=$vol_before after=$vol_after"
+
+  local build_before build_after
+  build_before=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Build Cache"{print $2}')
+  log "prune_images_if_low_disk: running docker builder prune -af --filter until=${DISK_PRUNE_BUILDER_UNTIL}"
+  docker builder prune -af --filter "until=${DISK_PRUNE_BUILDER_UNTIL}" >/dev/null 2>&1 \
+    || log "prune_images_if_low_disk: docker builder prune failed"
+  build_after=$(docker system df --format '{{.Type}}\t{{.Reclaimable}}' 2>/dev/null | awk -F'\t' '$1=="Build Cache"{print $2}')
+  log "prune_images_if_low_disk: build cache reclaimable before=$build_before after=$build_after"
 
   pcent=$(disk_pcent)
   if [ -n "$pcent" ] && [ "$pcent" -ge "$DISK_ALERT_PCENT" ] 2>/dev/null; then
