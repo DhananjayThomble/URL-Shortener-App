@@ -16,6 +16,7 @@
     "playwright.journeys.config.ts",
     "tests/**/*.ts",
     "support/**/*.ts",
-    "journeys/**/*.ts"
+    "journeys/**/*.ts",
+    "adversarial/**/*.ts"
   ]
 }
