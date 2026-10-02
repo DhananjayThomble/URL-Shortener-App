@@ -314,6 +314,29 @@ is "$(classify_run 1 limited.log)" limited "a failed run reporting a usage limit
 printf 'You are out of credits for this month.\n' > credits.log
 is "$(classify_run 1 credits.log)" limited "out of credits is limited"
 
+# The exact transcript from issue #609: "Monthly request limit reached" matched none of LIMIT_RE's
+# alternatives (closest was "rate limit(ed) (reached|exceeded)" — the real text says "request",
+# not "rate"), so 34+ hours of these runs were classified ok and nothing alerted.
+printf 'Monthly request limit reached\n\nYou can enable overages to continue making requests.\n\nThe limits reset on 10/01.\n' > monthly.log
+is "$(classify_run 1 monthly.log)" limited "Kiro's monthly-quota message is limited, not ok"
+if monthly_limit_text monthly.log; then ok "monthly_limit_text recognises the monthly-cap message"; else bad "monthly_limit_text recognises the monthly-cap message"; fi
+is "$(monthly_reset_date monthly.log)" "10/01" "monthly_reset_date parses the reset date out of the message"
+
+if monthly_limit_text limited.log; then bad "a daily/session usage limit is not mistaken for the monthly cap"; else ok "a daily/session usage limit is not mistaken for the monthly cap"; fi
+is "$(monthly_reset_date limited.log)" "" "no reset date is parsed from a non-monthly limit message"
+
+# The production case, per #609 and review on #623: kiro-cli exits 0 while printing this exact
+# message — classify_run's rc==0 branch returned ok unconditionally, before limit_text was ever
+# consulted, so this run never reached the pause/alert path at all. monthly.log's content is the
+# same real transcript; only the exit code differs, matching what Kiro actually does.
+is "$(classify_run 0 monthly.log)" limited "Kiro's monthly-quota message is limited even on exit 0, matching production"
+
+# A 0-exit run must still be allowed to merely mention a quota/limit in its own prose (ux.log,
+# above) without being misclassified — only the exact, narrow monthly-cap phrasing overrides a
+# clean exit code; the broader LIMIT_RE text (e.g. a plain "usage limit") does not.
+printf 'done\nClaude usage limit reached. Your limit will reset at 3pm.\n' > limited-exit0.log
+is "$(classify_run 0 limited-exit0.log)" ok "a 0-exit run mentioning a plain usage limit (not the monthly cap) is still ok"
+
 printf 'TypeError: cannot read property of undefined\n' > crash.log
 is "$(classify_run 1 crash.log)" broken "a failed run with no quota message is broken"
 
@@ -1054,6 +1077,43 @@ MODE=kiro
 is "$(pick_engine claude)" kiro "a forced engine overrides the role's preference"
 cool_down kiro >/dev/null
 is "$(pick_engine claude)" "" "a forced engine that is cooling runs nothing rather than falling back"
+
+# A monthly, account-wide cap cannot be waited out by cooling the engine down and retrying on the
+# other one — the message's own stated reset date is days away, not COOLDOWN_MIN minutes. run_agent
+# must pause the whole factory (issue #609), not just mark one engine cooling, and the alert must
+# name the reset date so the digest tells the maintainer when to expect it to resume.
+reset_stubs; load
+MODE=kiro
+echo 1 > "$BIN/kiro-cli.rc"
+printf 'Monthly request limit reached\n\nYou can enable overages to continue making requests.\n\nThe limits reset on 10/01.\n' > "$BIN/kiro-cli.out"
+run_agent developer kiro "work" >/dev/null 2>&1
+if [ -f "$PAUSE_FILE" ]; then ok "a monthly limit pauses the factory"; else bad "a monthly limit pauses the factory"; fi
+contains "$(cat "$STATE_DIR/alerts.log")" "monthly request limit" "the pause alert names the reason"
+contains "$(cat "$STATE_DIR/alerts.log")" "10/01" "the pause alert names the reset date parsed from the message"
+if [ -f "$STATE_DIR/cooldown-kiro" ]; then bad "a monthly limit does not also mark the engine cooling (pausing the factory already covers it)"; else ok "a monthly limit does not also mark the engine cooling (pausing the factory already covers it)"; fi
+
+# The production case, per #609 and review on #623: kiro-cli actually exits 0 while printing this
+# message, not 1. Before classify_run checked monthly_limit_text on rc==0, this run never reached
+# the pause branch above at all — it was classified ok and run_agent returned success on the first
+# attempt, with no pause file and no alert. Same transcript, exit code 0 this time.
+reset_stubs; load
+MODE=kiro
+echo 0 > "$BIN/kiro-cli.rc"
+printf 'Monthly request limit reached\n\nYou can enable overages to continue making requests.\n\nThe limits reset on 10/01.\n' > "$BIN/kiro-cli.out"
+run_agent developer kiro "work" >/dev/null 2>&1
+if [ -f "$PAUSE_FILE" ]; then ok "a monthly limit pauses the factory even when kiro-cli exits 0"; else bad "a monthly limit pauses the factory even when kiro-cli exits 0"; fi
+contains "$(cat "$STATE_DIR/alerts.log")" "monthly request limit" "the pause alert names the reason (exit 0 case)"
+contains "$(cat "$STATE_DIR/alerts.log")" "10/01" "the pause alert names the reset date parsed from the message (exit 0 case)"
+
+# A plain, per-engine usage limit (not the monthly cap) must keep its existing behaviour: cool the
+# engine down and retry on the other one, with no factory-wide pause.
+reset_stubs; load
+MODE=auto
+echo 1 > "$BIN/kiro-cli.rc"; printf 'Claude usage limit reached. Your limit will reset at 3pm.\n' > "$BIN/kiro-cli.out"
+echo 0 > "$BIN/claude.rc"; printf 'done\n' > "$BIN/claude.out"
+run_agent developer kiro "work" >/dev/null 2>&1
+if [ -f "$PAUSE_FILE" ]; then bad "a plain usage limit does not pause the factory"; else ok "a plain usage limit does not pause the factory"; fi
+if [ -f "$STATE_DIR/cooldown-kiro" ]; then ok "a plain usage limit still cools the engine down"; else bad "a plain usage limit still cools the engine down"; fi
 
 # ---------------------------------------------------------------------------------------------
 section "reviewer independence"
