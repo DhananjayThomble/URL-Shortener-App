@@ -27,6 +27,11 @@ import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, "../..");
 
 const API = process.env.QA_API_URL ?? "http://localhost:3001/api/v1";
 const REDIRECT = process.env.QA_REDIRECT_URL ?? "http://localhost:3002";
@@ -34,20 +39,93 @@ const PG_CONTAINER = process.env.QA_DB_CONTAINER ?? "snapurl-staging-postgres";
 const RUN_DIR = process.env.QA_RUN_DIR ?? path.resolve(process.cwd(), ".qa-runs/adversarial-local");
 const FINDINGS_FILE = path.join(RUN_DIR, "findings.jsonl");
 const ARTIFACTS_DIR = path.join(RUN_DIR, "artifacts");
+const SUMMARY_FILE = path.join(RUN_DIR, "summary.md");
+const PROGRESS_FILE = path.join(RUN_DIR, "progress.md");
 
 mkdirSync(ARTIFACTS_DIR, { recursive: true });
+
+/** Findings with a severity_hint other than "unknown" recorded this run —
+ * tracked so main() can turn an exploit signature into a non-zero exit
+ * (steering §2/§4: a suite that stays green against a real signature is
+ * worthless; writing a finding alone is not a passing assertion). */
+const nonUnknownFindings = [];
 
 /** Append one finding immediately — never buffered (steering §3). */
 function finding(f) {
   const line = JSON.stringify(f);
   appendFileSync(FINDINGS_FILE, line + "\n");
   console.log(`[finding] ${f.id}`);
+  if (f.severity_hint && f.severity_hint !== "unknown") {
+    nonUnknownFindings.push({ id: f.id, severity_hint: f.severity_hint, target: f.target });
+  }
 }
 
 function saveArtifact(name, data) {
   const file = path.join(ARTIFACTS_DIR, name);
   writeFileSync(file, typeof data === "string" ? data : JSON.stringify(data, null, 2));
   return file;
+}
+
+/* ------------------------------------------------------------
+   summary.md — created before any check runs, updated as each phase
+   finishes (steering §3.1). Tracked in-memory and rewritten in full on
+   every update rather than appended-to, since the per-phase status lines
+   mutate (pending -> completed/errored) rather than only growing.
+   ------------------------------------------------------------ */
+const phaseStatus = new Map();
+
+function initSummary(phaseNames) {
+  for (const name of phaseNames) phaseStatus.set(name, { result: "pending", detail: "" });
+  writeSummary();
+}
+
+function setPhaseStatus(name, result, detail) {
+  phaseStatus.set(name, { result, detail });
+  writeSummary();
+}
+
+function writeSummary() {
+  const lines = [];
+  lines.push("# L5 adversarial run — summary");
+  lines.push("");
+  lines.push(`Run dir: \`${RUN_DIR}\``);
+  lines.push(`Generated: ${new Date().toISOString()} (rewritten as each phase finishes)`);
+  lines.push("");
+  lines.push("## Phases");
+  lines.push("");
+  lines.push("| phase | result | detail |");
+  lines.push("| --- | --- | --- |");
+  for (const [name, s] of phaseStatus.entries()) {
+    lines.push(`| ${name} | ${s.result} | ${s.detail.replace(/\|/g, "/").slice(0, 200)} |`);
+  }
+  lines.push("");
+  const attempted = phaseStatus.size;
+  const completed = [...phaseStatus.values()].filter((s) => s.result === "completed").length;
+  const errored = [...phaseStatus.values()].filter((s) => s.result === "errored").length;
+  const pending = [...phaseStatus.values()].filter((s) => s.result === "pending").length;
+  lines.push(`Checks: ${attempted} phases attempted, ${completed} completed, ${errored} errored, ${pending} pending.`);
+  lines.push("");
+  lines.push("## Findings with a non-\"unknown\" severity_hint recorded this run");
+  lines.push("");
+  if (nonUnknownFindings.length === 0) {
+    lines.push("(none yet)");
+  } else {
+    for (const f of nonUnknownFindings) {
+      lines.push(`- \`${f.severity_hint}\` ${f.id} — ${f.target}`);
+    }
+  }
+  lines.push("");
+  lines.push("## Coverage gaps");
+  lines.push("");
+  lines.push("- Phase 3 (reserved-slug) probes 8 of the full `RESERVED_SLUGS` list in");
+  lines.push("  `packages/domain/src/slug.ts`, not all of it.");
+  lines.push("- Phase 5 (bio XSS) DOM-executes only the `profile.name` payload via a real");
+  lines.push("  browser; `profile.bio`, `block.title` and `block.href` are checked at the");
+  lines.push("  HTTP/contract layer only (see that phase's findings for which).");
+  lines.push("- No ZAP/semgrep/static scan is run by this suite.");
+  lines.push("");
+  mkdirSync(RUN_DIR, { recursive: true });
+  writeFileSync(SUMMARY_FILE, lines.join("\n"));
 }
 
 async function req(method, url, { body, token, headers } = {}) {
@@ -72,6 +150,42 @@ function psql(sql) {
     ["exec", "-i", PG_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-t", "-A", "-c", sql],
     { encoding: "utf8" },
   ).trim();
+}
+
+/** Drives e2e/adversarial/dom-xss.spec.ts (real Chromium via Playwright)
+ * against a bio-page slug this run already wrote a payload into. Playwright
+ * manages its own webServer lifecycle (next dev), so nothing long-lived is
+ * hand-started from this script's shell (session-hygiene.md). Synchronous
+ * on purpose — this phase must not move on to other payloads/finish while a
+ * browser check for THIS payload is still outstanding. */
+function runDomXssCheck(slug) {
+  const env = {
+    ...process.env,
+    BIO_SLUG: slug,
+    QA_RUN_DIR: RUN_DIR,
+    QA_API_URL: API,
+  };
+  let stdout = "";
+  let exitCode = 0;
+  try {
+    stdout = execFileSync(
+      "pnpm",
+      ["--filter", "snapurl-e2e", "exec", "playwright", "test", "-c", "adversarial/playwright.dom-xss.config.ts"],
+      { cwd: path.join(REPO_ROOT, "e2e"), env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (e) {
+    // execFileSync throws on non-zero exit — that IS the signal (a failed
+    // Playwright assertion means fired=true, i.e. the payload executed).
+    stdout = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
+    exitCode = typeof e.status === "number" ? e.status : 1;
+  }
+  const match = stdout.match(/DOM_XSS_RESULT.*$/m);
+  return {
+    exitCode,
+    ranSuccessfully: /DOM_XSS_RESULT/.test(stdout),
+    summaryLine: match ? match[0] : undefined,
+    rawOutputTail: stdout.slice(-4000),
+  };
 }
 
 function randSuffix() {
@@ -421,7 +535,38 @@ async function phase5_bio_xss() {
         repro: `curl -s ${API}/public/bio-pages/${slug}`,
         severity_hint: "unknown",
         confidence: "medium",
-        notes: "This check cannot by itself confirm or rule out DOM execution — see coverage gap in summary.md for the Playwright/axe-based follow-up this run did not execute.",
+        notes: "",
+      });
+    }
+
+    // DOM-execution oracle (issue #607: "DOM-based oracle (does the payload
+    // execute), not a judgement call") — run the real-browser check from
+    // e2e/adversarial/dom-xss.spec.ts against THIS payload's slug, for the
+    // profile.name case. profile.name is picked because it is the one field
+    // rendered unconditionally on every bio page regardless of other content
+    // (web/src/app/b/[slug]/page.tsx renders {p.profile.name} directly in an
+    // <h1>), making it the most representative single DOM check to wire into
+    // the automated suite; the other three payloads are still exercised at
+    // the HTTP/contract layer above and are a named coverage gap in
+    // summary.md for the DOM layer specifically.
+    if (payload.field === "profile.name" && upsertRes.status >= 200 && upsertRes.status < 300) {
+      const domResult = runDomXssCheck(slug);
+      const artifact3 = saveArtifact(`bio-xss-dom-${payload.field.replace(/[^a-z0-9-]/gi, "_")}.json`, domResult);
+      finding({
+        id: `bio-xss-dom-execution-${payload.field.replace(/[^a-z0-9-]/gi, "_")}-${randSuffix()}`,
+        layer: "adversarial",
+        title: `Real-browser DOM check: does the ${payload.field} payload execute on the rendered /b/${slug} page?`,
+        target: "web /b/:slug (e2e/adversarial/dom-xss.spec.ts)",
+        what_i_did: `Ran e2e/adversarial/dom-xss.spec.ts (Playwright, real Chromium) with BIO_SLUG=${slug} against the public bio page carrying the ${payload.field} payload ${JSON.stringify(payload.value)}.`,
+        expected: `web/src/app/b/[slug]/page.tsx renders profile.name via plain JSX text interpolation ({p.profile.name}), which React escapes — the spec's oracle is window.alert/dialog firing. Oracle predicts the Playwright test PASSES (fired=false, no execution).`,
+        observed: `playwright exit code=${domResult.exitCode}; ${domResult.summaryLine ?? "(no DOM_XSS_RESULT line captured — see artifact for raw output)"}`,
+        evidence: [artifact3],
+        repro: `BIO_SLUG=${slug} QA_WEB_URL=http://localhost:3000 QA_API_URL=${API} pnpm --filter snapurl-e2e exec playwright test -c adversarial/playwright.dom-xss.config.ts`,
+        severity_hint: domResult.exitCode !== 0 ? "sev1" : "unknown",
+        confidence: domResult.ranSuccessfully ? "high" : "low",
+        notes: domResult.ranSuccessfully
+          ? ""
+          : "The Playwright invocation itself did not complete cleanly (see artifact raw output) — this is a harness-execution concern worth re-probing, not evidence either way about the payload.",
       });
     }
   }
@@ -654,17 +799,57 @@ async function main() {
     ["api-key-scope-boundary", phase8_api_key_scope_boundary],
   ];
 
+  // summary.md must exist before any check runs (steering §3.1), not only
+  // once a reviewer or operator happens to create it by hand.
+  initSummary(phases.map(([name]) => name));
+
+  let anyPhaseErrored = false;
+
   for (const [name, fn] of phases) {
-    const progressFile = path.join(RUN_DIR, "progress.md");
     try {
       await fn();
-      appendFileSync(progressFile, `${new Date().toISOString()} phase=${name} result=completed\n`);
+      appendFileSync(PROGRESS_FILE, `${new Date().toISOString()} phase=${name} result=completed\n`);
       console.log(`== phase ${name}: completed ==`);
+      setPhaseStatus(name, "completed", "");
     } catch (e) {
-      appendFileSync(progressFile, `${new Date().toISOString()} phase=${name} result=errored: ${String(e).slice(0, 300)}\n`);
+      anyPhaseErrored = true;
+      appendFileSync(PROGRESS_FILE, `${new Date().toISOString()} phase=${name} result=errored: ${String(e).slice(0, 300)}\n`);
       console.error(`== phase ${name}: ERRORED ==`, e);
+      setPhaseStatus(name, "errored", String(e).slice(0, 300));
     }
   }
+
+  // Final summary rewrite happens inside setPhaseStatus already, but do one
+  // more pass so the "non-unknown findings" section reflects anything a
+  // phase recorded on its very last iteration.
+  writeSummary();
+
+  // The runner must turn an exploit signature or phase failure into a
+  // non-zero exit — a finding written to findings.jsonl is evidence, not a
+  // passing assertion (review on PR #628, confirmed by the bug-injection
+  // gate: disabling RESERVED_SLUGS produced sev2 findings but a 0 exit).
+  if (nonUnknownFindings.length > 0) {
+    console.error(
+      `\n[FAIL] ${nonUnknownFindings.length} finding(s) with a non-"unknown" severity_hint were recorded this run:`,
+    );
+    for (const f of nonUnknownFindings) {
+      console.error(`  - ${f.severity_hint} ${f.id} (${f.target})`);
+    }
+    console.error(`See ${FINDINGS_FILE} and ${SUMMARY_FILE} for full detail.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (anyPhaseErrored) {
+    console.error(`\n[FAIL] at least one phase errored. See ${PROGRESS_FILE} and ${SUMMARY_FILE}.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`\n[OK] all phases completed, no non-"unknown" severity_hint recorded.`);
 }
 
-main();
+main().catch((e) => {
+  console.error("[FATAL]", e);
+  process.exitCode = 1;
+});
