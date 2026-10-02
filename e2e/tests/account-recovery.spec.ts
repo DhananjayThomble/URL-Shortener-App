@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { makeEmail } from "../support/unique-identity";
+import { REAL_BACKEND } from "../support/real-session";
+import { makeEmail, readOutboxToken, registerAccount } from "../support/unique-identity";
 
 /* E2E journey: account recovery (#363, #364, #638). Three UNauthenticated
    pages: /forgot-password, /reset-password, /verify-email. None of these seed
@@ -26,14 +27,20 @@ import { makeEmail } from "../support/unique-identity";
    below hold unchanged. confirm/verify are exercised with a syntactically
    plausible but WRONG token, which the real API rejects the same way an
    expired/already-used token would (AuthService.confirmPasswordReset /
-   verifyEmail both reject on no matching row) — this is the one case the
-   browser layer can drive without reading the mail outbox out of the api
-   container's filesystem, which no e2e harness in this repo currently has a
-   way to do (the outbox is written to /tmp inside the container — see
-   docker-compose.staging.yml's "mail is outbox, not SMTP" note; the backend
-   round trip through an actual issued token is already covered at the service
-   layer by auth/password-reset.integration.test.ts and
-   auth/email-verification.integration.test.ts against real Postgres). */
+   verifyEmail both reject on no matching row).
+
+   The two "real round trip" describe blocks below additionally drive request
+   → outbox → confirm with an ACTUAL issued token, read out of the staging api
+   container's filesystem (MAIL_TRANSPORT=outbox writes to /tmp/snapurl-outbox
+   inside the container — see docker-compose.staging.yml's "mail is outbox, not
+   SMTP" note and support/unique-identity.ts#readOutboxToken). They are gated on
+   REAL_BACKEND and are a no-op under playwright.config.ts (fixtures mode),
+   where there is no container and no outbox to read. The backend round trip
+   through an actual issued token is ALSO covered at the service layer by
+   auth/password-reset.integration.test.ts and
+   auth/email-verification.integration.test.ts against real Postgres — these
+   browser-level tests additionally prove the web forms (not just the API) carry
+   a real token through to a successful reset/verification. */
 
 test.describe("forgot password", () => {
   test("requesting a reset shows the same confirmation for any well-formed email", async ({ page }) => {
@@ -108,5 +115,71 @@ test.describe("verify email", () => {
     await page.getByRole("button", { name: "Resend verification email" }).click();
 
     await expect(page.getByText(/we've sent a new link/i)).toBeVisible();
+  });
+});
+
+/* Real round trip: request → outbox → confirm, with an ACTUAL issued token.
+   REAL_BACKEND-gated — no-op (test.skip) in fixtures mode, where there is no
+   api container and no outbox to read. See the file header for the full
+   rationale and the oracle each assertion below relies on. */
+test.describe("password reset — real round trip (requires the api container's mail outbox)", () => {
+  test("a reset link with a real issued token actually changes the password", async ({ page }) => {
+    test.skip(!REAL_BACKEND, "needs the staging api container's mail outbox — see support/unique-identity.ts");
+
+    const email = makeEmail("reset-roundtrip");
+    const oldPassword = "the-original-password-123456";
+    const newPassword = "a-brand-new-password-654321";
+    await registerAccount(email, oldPassword);
+
+    // Registration itself sends a verification email first; the reset request
+    // below sends a second mail to the same address. readOutboxToken takes the
+    // newest file matching this email's sanitized form by mtime, so it picks up
+    // the reset mail (written after the verification mail) rather than racing
+    // on filename ordering.
+    await page.goto("/forgot-password");
+    await page.getByPlaceholder("you@company.com").fill(email);
+    await page.getByRole("button", { name: "Send reset link" }).click();
+    await expect(page.getByText(/check your email/i)).toBeVisible();
+
+    const token = await readOutboxToken(email);
+
+    await page.goto(`/reset-password?token=${encodeURIComponent(token)}`);
+    await page.getByPlaceholder("••••••••").fill(newPassword);
+    await page.getByRole("button", { name: "Reset password" }).click();
+
+    // Oracle: web/src/app/(auth)/reset-password/page.tsx — on success the
+    // page calls router.push("/login") immediately; it has no success state of
+    // its own to render. Navigation away from /reset-password with no error
+    // text is the correct success signal here, not inline copy.
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByText(/invalid or has expired/i)).toHaveCount(0);
+
+    // End-to-end proof the password actually changed server-side: sign in
+    // with the new password.
+    await page.getByPlaceholder("you@company.com").fill(email);
+    await page.getByPlaceholder("••••••••").fill(newPassword);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(/\/links$/);
+  });
+});
+
+test.describe("verify email — real round trip (requires the api container's mail outbox)", () => {
+  test("a verification link with a real issued token actually verifies the account", async ({ page }) => {
+    test.skip(!REAL_BACKEND, "needs the staging api container's mail outbox — see support/unique-identity.ts");
+
+    const email = makeEmail("verify-roundtrip");
+    await registerAccount(email, "a-reasonably-long-password-123");
+
+    // Registration itself sends the verification mail (apps/api/src/auth/
+    // auth.service.ts) — no separate /forgot-password-style trigger needed.
+    const token = await readOutboxToken(email);
+
+    await page.goto(`/verify-email?token=${encodeURIComponent(token)}`);
+
+    // Oracle: packages/contract/src/auth.ts EmailVerifyInput — 200 on success.
+    // The failure-path copy ("verification failed") must NOT appear; the
+    // success copy must.
+    await expect(page.getByText(/verification failed/i)).toHaveCount(0);
+    await expect(page.getByText(/verified/i)).toBeVisible();
   });
 });
