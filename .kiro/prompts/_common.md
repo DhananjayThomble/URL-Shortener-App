@@ -86,6 +86,12 @@ one. Durable knowledge must therefore live in files both can read, not in either
   add or update one note there: one topic per file, frontmatter with `name`, `description` and
   `type` (`user`, `feedback`, `project` or `reference`), and a one-line pointer in `MEMORY.md`.
   Update an existing note rather than adding a near-duplicate; delete notes that proved wrong.
+- **Never invent a second, local memory location under this repo** — e.g. a `.kiro/memory/`
+  directory in the pinned checkout. `$OPS_DIR/memory/` is the only place durable role memory
+  goes. A role did this once (issue #611): the untracked directory made `check_checkout_clean`
+  alert "pinned checkout is dirty" on effectively every cycle and was the trigger for a
+  week-long factory pause. If `$OPS_DIR` is unavailable and you have no other way to persist a
+  note, say so in your run's report instead of writing scratch state into the pinned checkout.
 - Never write secrets, tokens or anything from `.qa-runs/` there.
 - The autopilot commits and pushes the ops repo after each role, so do not commit it yourself.
 - If `$OPS_DIR` does not exist (for example in the QA lab), skip this section.

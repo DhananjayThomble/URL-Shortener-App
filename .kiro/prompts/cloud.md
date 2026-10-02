@@ -16,3 +16,8 @@ a clear fix):
 6. Recent failures: `gh run list --status failure --limit 20` — for each, find the cause and either open a
    PR or record a finding. Flaky tests go in a finding with the run links.
 7. Cost and reliability notes for the AWS profile go in `summary.md`.
+
+Running notes across sessions (standing state, re-verification history) go in
+`$OPS_DIR/memory/cloud-engineer.md` — see `_common.md`'s "Shared memory" section. Never create a
+`.kiro/memory/` directory in this repo; that is not the shared-memory location and leaving an
+untracked directory in the pinned checkout breaks the next factory restart (issue #611).
