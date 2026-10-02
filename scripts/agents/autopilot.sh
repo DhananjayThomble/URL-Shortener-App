@@ -471,11 +471,36 @@ strip_ansi() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z]//g'; }
 
 # Quota exhaustion, as the engines themselves report it. Deliberately narrow: bare "quota" and
 # bare "unauthorized" both occur in this product's own output and cost us a cycle already.
+#
+# MONTHLY_LIMIT_RE is a distinct, narrower pattern (not folded into LIMIT_RE's own alternation)
+# for Kiro's "Monthly request limit reached" message (issue #609): the word is "request", not
+# "rate", so none of LIMIT_RE's existing alternatives matched it, and 34+ hours of runs were
+# misclassified `ok` as a result. Kept separate from LIMIT_RE, rather than just adding one more
+# alternative there, because a monthly cap needs different handling than a daily/session one —
+# retrying on the other engine (what every other `limited` reason gets, via cool_down) cannot
+# possibly succeed before the reset date the message itself states, so run_agent below checks
+# this pattern specifically to pause the whole factory instead. monthly_limit_text() still counts
+# as a LIMIT_RE-equivalent reason for limit_text()/classify_run(), so classify_run's own verdict
+# (ok|limited|timeout|broken) is unchanged — only run_agent's *response* to "limited" branches
+# further on this.
 LIMIT_RE='usage limit|rate limit(ed)? (reached|exceeded)|quota (exceeded|reached|exhausted)|out of credits|insufficient credits|credit limit|too many requests|429 |resource_exhausted'
+MONTHLY_LIMIT_RE='monthly (request )?limit|limits reset on [0-9]'
 AUTH_RE='not logged in|login required|please (log|sign) in to (use|continue using)|invalid (api )?key|authentication failed|credentials (are )?(invalid|expired)'
 
 limit_text() { # logfile
-  tail -n "$TAIL_LINES" "$1" 2>/dev/null | strip_ansi | grep -qiE "$LIMIT_RE|$AUTH_RE"
+  tail -n "$TAIL_LINES" "$1" 2>/dev/null | strip_ansi | grep -qiE "$LIMIT_RE|$MONTHLY_LIMIT_RE|$AUTH_RE"
+}
+
+# True if the limit this run hit is the monthly account-wide cap, not a daily/session one.
+monthly_limit_text() { # logfile
+  tail -n "$TAIL_LINES" "$1" 2>/dev/null | strip_ansi | grep -qiE "$MONTHLY_LIMIT_RE"
+}
+
+# Prints the reset date exactly as the engine stated it (e.g. "10/01"), or nothing if the tail
+# does not name one — callers must treat an empty result as "unknown", not fail.
+monthly_reset_date() { # logfile
+  tail -n "$TAIL_LINES" "$1" 2>/dev/null | strip_ansi \
+    | grep -oiE 'limits reset on [0-9]{1,2}/[0-9]{1,2}' | tail -n 1 | grep -oE '[0-9]{1,2}/[0-9]{1,2}'
 }
 
 # ok | limited | timeout | broken.
@@ -712,7 +737,20 @@ run_agent() { # role preferred-engine task
         return 1
         ;;
       limited)
-        cool_down "$engine"   # retry on whichever engine is left
+        if monthly_limit_text "$out"; then
+          # A monthly, account-wide cap outlives every cooldown this loop knows how to wait out:
+          # cool_down's retry-on-the-other-engine only helps a per-engine daily/session limit, and
+          # retrying every ~$SLEEP_MIN minutes until the stated reset date cannot do anything but
+          # spend the rest of the shift re-discovering the same message (issue #609). Pause the
+          # whole factory instead, with whatever reset date the message itself named — unknown
+          # (empty) rather than silently omitted, since a human reading the digest still needs to
+          # know this is a monthly cap even if the date could not be parsed.
+          local reset_date
+          reset_date=$(monthly_reset_date "$out")
+          pause_factory "monthly request limit reached on $engine; resets on ${reset_date:-an unknown date (unparsed)} — see $out"
+        else
+          cool_down "$engine"   # retry on whichever engine is left
+        fi
         ;;
       broken)
         CYCLE_BROKEN=$((CYCLE_BROKEN + 1))
