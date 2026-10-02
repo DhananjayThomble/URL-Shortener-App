@@ -736,6 +736,16 @@ export async function fixtureRequest<T>(
   /* ---- links ---- */
   else if (m(/^\/links$/) && method === "POST") {
     const body = opts.body as { destination: string; domain: string; slug?: string };
+    // Mirrors the server's 409 on a back-half already in use under the same
+    // domain — needed so issue #640 (stale server error surviving a form
+    // edit) is reproducible against fixtures, same as the bulk-create path
+    // above already does.
+    if (
+      body.slug &&
+      linkStore.some((l) => l.domain === body.domain && l.slug.toLowerCase() === body.slug!.toLowerCase())
+    ) {
+      throw new Error(`${body.domain}/${body.slug} is already taken. Try another back-half.`);
+    }
     const link: Link = {
       ...LINKS[0],
       id: uid("lnk"),
