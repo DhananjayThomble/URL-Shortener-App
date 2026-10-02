@@ -2156,13 +2156,83 @@ lacks "$calls" "$renamed_dir2" "the pinned checkout (entry 0) is never passed to
 contains "$calls" "$third_wtdir" "the second, genuinely reapable worktree (entry 1) is still passed to reap_one_worktree"
 
 # ---------------------------------------------------------------------------------------------
-section "prune_images_if_low_disk: only prunes images, and only under real disk pressure"
+section "reap_worktrees: wt-adjudicate-*/wt-cloud-* scratch worktrees (issue #610)"
+# ---------------------------------------------------------------------------------------------
+# These names carry no issue number (no agent/<n>-... branch, often a detached HEAD), so none of
+# the PR/branch-based removal signals above apply to them at all — age (SCRATCH_WORKTREE_AGE_SEC,
+# via worktree_is_stale) is the only one available. Every case here sets SCRATCH_WORKTREE_AGE_SEC
+# to a small, deterministic value and backdates/touches real files rather than mocking
+# worktree_is_stale, so the test exercises the actual mtime-scanning logic.
+
+reset_stubs; load
+make_origin_and_repo
+git checkout -q --detach HEAD
+wtdir="$WORKROOT/wt-adjudicate-20260922"
+git worktree add -q --detach "$wtdir" HEAD
+SCRATCH_WORKTREE_AGE_SEC=1
+sleep 2
+reap_worktrees >/dev/null 2>&1
+if [ -d "$wtdir" ]; then bad "a detached-HEAD wt-adjudicate-* worktree with no recent file activity is removed" "still present"; else ok "a detached-HEAD wt-adjudicate-* worktree with no recent file activity is removed"; fi
+
+reset_stubs; load
+make_origin_and_repo
+git checkout -q --detach HEAD
+wtdir="$WORKROOT/wt-cloud-20260922-230908"
+git worktree add -q --detach "$wtdir" HEAD
+SCRATCH_WORKTREE_AGE_SEC=3600
+echo "still working" > "$wtdir/scratch-note.txt"
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a wt-cloud-* worktree with a file touched inside the age window is kept" \
+  || bad "a wt-cloud-* worktree with a file touched inside the age window is kept" "removed"
+
+reset_stubs; load
+make_origin_and_repo
+git branch -f cloud-session-abc origin/main
+wtdir="$WORKROOT/wt-cloud-session-abc"
+git worktree add -q "$wtdir" cloud-session-abc
+SCRATCH_WORKTREE_AGE_SEC=1
+sleep 2
+reap_worktrees >/dev/null 2>&1
+if [ -d "$wtdir" ]; then bad "a wt-<slug>-* worktree with a non-issue-shaped branch name is still staleness-reaped, not kept forever for lack of a PR to check" "still present"; else ok "a wt-<slug>-* worktree with a non-issue-shaped branch name is still staleness-reaped, not kept forever for lack of a PR to check"; fi
+
+reset_stubs; load
+make_origin_and_repo
+# A scratch worktree whose branch DOES happen to parse as agent/<n>-... must still go through the
+# normal PR/branch path (and its agent:in-progress gate), not the staleness path — the extra
+# wt-[a-z]*-* name match only widens which directories can be *considered*, it must not bypass the
+# existing in-progress protection for one that happens to carry a real issue number.
+git branch -f agent/916-adjudicate-but-claimed origin/main
+wtdir="$WORKROOT/wt-adjudicate-916"
+git worktree add -q "$wtdir" agent/916-adjudicate-but-claimed
+SCRATCH_WORKTREE_AGE_SEC=1
+sleep 2
+cat > "$BIN/fixture-issue-view-916.json" <<'JSON'
+{"labels":[{"name":"agent:in-progress"}]}
+JSON
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a wt-adjudicate-* worktree whose branch parses as agent/<n>-... still goes through the issue-in-progress gate instead of pure staleness" \
+  || bad "a wt-adjudicate-* worktree whose branch parses as agent/<n>-... still goes through the issue-in-progress gate instead of pure staleness" "removed"
+
+reset_stubs; load
+make_origin_and_repo
+git branch -f other-456 origin/main
+wtdir="$WORKROOT/not-a-managed-worktree-456"
+git worktree add -q "$wtdir" other-456
+SCRATCH_WORKTREE_AGE_SEC=1
+sleep 2
+reap_worktrees >/dev/null 2>&1
+[ -d "$wtdir" ] && ok "a directory outside every wt-* naming convention is still never touched, even when stale" \
+  || bad "a directory outside every wt-* naming convention is still never touched, even when stale" "removed"
+
+# ---------------------------------------------------------------------------------------------
+section "prune_images_if_low_disk: prunes images and unused volumes, only under real disk pressure"
 # ---------------------------------------------------------------------------------------------
 reset_stubs; load
 # shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
 disk_pcent() { echo 42; }   # overrides the real df-based function for this case
 prune_images_if_low_disk >/dev/null 2>&1
 lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune" "below DISK_PRUNE_PCENT, docker is never invoked at all"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "volume prune" "below DISK_PRUNE_PCENT, volume prune is not run either"
 unset -f disk_pcent
 
 reset_stubs; load
@@ -2172,8 +2242,9 @@ echo 0 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
 contains "$(cat "$BIN/docker.calls" 2>/dev/null)" "image prune -af" "at or above DISK_PRUNE_PCENT, it runs docker image prune -af"
 lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "until=" "the prune has no age filter (image prune's until= is creation time, not last-used — see the function's own comment and scripts/staging-prune.sh)"
-lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "system prune" "only image prune runs, never a blanket system prune"
+lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "system prune" "only image/volume prune run, never a blanket system prune"
 lacks "$(cat "$BIN/docker.calls" 2>/dev/null)" "builder prune" "this function does not duplicate staging-prune.sh's build-cache reclaim"
+contains "$(cat "$BIN/docker.calls" 2>/dev/null)" "volume prune -f" "at or above DISK_PRUNE_PCENT, it also runs docker volume prune -f (issue #610 — unused volumes were a reclaim source this function never covered)"
 unset -f disk_pcent
 
 reset_stubs; load
@@ -2181,7 +2252,29 @@ reset_stubs; load
 disk_pcent() { echo 92; }
 echo 1 > "$BIN/docker.rc"
 prune_images_if_low_disk >/dev/null 2>&1
-is "$?" 0 "a failing docker prune does not propagate a non-zero exit (best-effort, like staging-prune.sh)"
+is "$?" 0 "a failing docker image prune does not propagate a non-zero exit (best-effort, like staging-prune.sh)"
+unset -f disk_pcent
+
+reset_stubs; load
+# shellcheck disable=SC2317  # invoked below; shellcheck can't see the reassignment
+disk_pcent() { echo 92; }
+echo 0 > "$BIN/docker.rc"
+# Override the shared docker stub just for this case: image prune succeeds, volume prune fails —
+# proves the best-effort swallow applies to the volume-prune call too, not only the image-prune
+# one already covered above. Same heredoc convention as make_stubs's own docker stub ($BIN
+# interpolated at stub-creation time, not read at runtime).
+cat > "$BIN/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BIN/docker.calls"
+case "\$*" in
+  *"volume prune"*) exit 1 ;;
+  *"system df --format"*) cat "$BIN/docker.dfout" 2>/dev/null || true; exit 0 ;;
+  *) exit 0 ;;
+esac
+STUB
+chmod +x "$BIN/docker"
+prune_images_if_low_disk >/dev/null 2>&1
+is "$?" 0 "a failing docker volume prune (image prune succeeding) also does not propagate a non-zero exit"
 unset -f disk_pcent
 
 reset_stubs; load
