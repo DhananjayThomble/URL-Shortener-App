@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip, Field } from "@/components/ui";
 import { useBulkCreateLinks, useDomains } from "@/lib/api/hooks";
+import { parseRows } from "@/lib/bulk-create-rows";
 import type { CreateLinkInput } from "@snapurl/contract";
 
 const MAX_ROWS = 100;
@@ -10,29 +11,6 @@ const MAX_ROWS = 100;
 const TEXTAREA_CLASS =
   "w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[12.5px] text-ink font-mono " +
   "placeholder:text-ink-3 focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash";
-
-/**
- * One input line becomes one link.
- *
- * `https://example.com/a, spring` — everything before the first comma is the
- * destination, anything after it is the back-half you want. The comma is
- * optional; without one the server generates a back-half.
- *
- * Split on the *first* comma only, because destinations legitimately contain
- * them in query strings.
- */
-export function parseRows(text: string): Array<{ destination: string; slug?: string }> {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const comma = line.indexOf(",");
-      if (comma === -1) return { destination: line };
-      const slug = line.slice(comma + 1).trim();
-      return { destination: line.slice(0, comma).trim(), ...(slug ? { slug } : {}) };
-    });
-}
 
 export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
   const { data: domains } = useDomains();
@@ -86,7 +64,7 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
       <CardBody className="flex flex-col gap-3">
         <Field
           label="One link per line"
-          help="Add a comma and a back-half to choose one — otherwise we generate it. Everything before the first comma is the destination, so query strings are safe."
+          help="Add a comma, then a space, then a back-half to choose one — otherwise we generate it. Only a comma followed by a space and a slug-shaped back-half (letters, numbers, dots, dashes or underscores) is treated that way, so a destination with commas in its query string is safe."
           error={tooMany ? `That's ${rows.length} rows. Split it into batches of ${MAX_ROWS}.` : undefined}
         >
           <textarea
