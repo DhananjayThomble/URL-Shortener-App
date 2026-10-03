@@ -105,6 +105,9 @@ export default function LoginPage() {
         <Field label="Password" error={formState.errors.password?.message}>
           <Input {...register("password")} type="password" autoComplete="current-password" placeholder="••••••••" />
         </Field>
+        <Link href="/forgot-password" className="text-[12.5px] text-accent font-semibold self-end -mt-1.5">
+          Forgot password?
+        </Link>
         {login.isError ? <p className="text-[12.5px] text-bad m-0">{(login.error as Error).message}</p> : null}
         <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={login.isPending}>
           {login.isPending ? "Signing in…" : "Sign in"}

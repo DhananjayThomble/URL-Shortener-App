@@ -17,9 +17,12 @@
   directly.
 
 ## Known operational gaps (context, so agents don't "discover" them as new)
-- **P0 — no account recovery.** Password reset and email verification are
-  absent (not stubbed). A locked-out user has no automated path. This is the
-  top-priority product gap.
+- Password reset and email verification are implemented end to end — API
+  (`POST /auth/password-reset/{request,confirm}`, `POST /auth/email/{verify,resend}`)
+  and the web pages (`web/src/app/(auth)/{forgot-password,reset-password,verify-email}`).
+  **Mail is still a stub** (`MAIL_TRANSPORT=outbox`, SES unwired) — see below —
+  so no actual email is delivered yet; the outbox file is the only way to get
+  the link today.
 - **Mail is a stub** (`MAIL_TRANSPORT=outbox`, SES unwired). Any flow needing
   email does not actually send yet.
 - Safe Browsing is off without a key. Several AWS-egress features (webhooks,

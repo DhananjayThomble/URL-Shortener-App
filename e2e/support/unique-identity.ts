@@ -1,5 +1,9 @@
 import { createHmac } from "node:crypto";
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 /* ============================================================
    Per-run unique identity helper (issue #440).
@@ -235,4 +239,75 @@ export async function registerWith2FA(email: string, password: string): Promise<
   }
 
   return { ...seed, secret };
+}
+
+/* ------------------------------------------------------------ */
+/* Mail outbox (real-stack only)                                 */
+/* ------------------------------------------------------------ */
+
+/**
+ * The staging api container's name, per docker-compose.staging.yml's compose
+ * project name (`name: snapurl-staging` + the `api` service, no explicit
+ * container_name → compose's default `<project>-<service>-1`). Override with
+ * QA_API_CONTAINER if a run uses a differently-named stack.
+ */
+const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
+
+/**
+ * Read the most recently written mail outbox file for `email` out of the
+ * staging api container's filesystem and return the ?token= value embedded in
+ * its body.
+ *
+ * Oracle: apps/api/src/mail/mail.service.ts — MAIL_TRANSPORT=outbox writes
+ * `${dir}/${Date.now()}-${to.replace(/[^a-z0-9]/gi, "_")}.txt` containing
+ * `To: / Subject: / <body>`, and every account-recovery mail body (sendPasswordReset,
+ * sendEmailVerification) embeds the reset/verify URL as `...?token=<value>`.
+ * There is no API or e2e-visible way to read this file other than reaching
+ * into the container (docker-compose.staging.yml's "mail is outbox, not SMTP"
+ * note) — `docker exec` is the same mechanism scripts/smoke-redirect.sh and
+ * scripts/integration-assertions.sh already use to reach into compose
+ * containers for assertions this stack has no HTTP endpoint for.
+ *
+ * Only meaningful against the real stack (REAL_BACKEND) — there is no
+ * container and no outbox in fixtures mode.
+ *
+ * @param email        The address the mail was sent to (same string passed to
+ *                     the request/resend/register call).
+ * @param attempts      Poll attempts (the api container writes the file
+ *                     asynchronously relative to the request's 202/201).
+ */
+export async function readOutboxToken(email: string, attempts = 20): Promise<string> {
+  const sanitized = email.replace(/[^a-z0-9]/gi, "_");
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const { stdout } = await execFileAsync("docker", [
+        "exec",
+        API_CONTAINER,
+        "sh",
+        "-c",
+        // Sort by the filename's leading Date.now() component, not `ls -t`
+        // mtime: a registration (verification mail) and a password-reset
+        // request to the same address can land within the same filesystem
+        // mtime granularity, and `ls -t`'s tie-break order is not guaranteed
+        // to match the actual write order. The embedded epoch-ms timestamp is
+        // an exact, unambiguous sort key (apps/api/src/mail/mail.service.ts:
+        // `${Date.now()}-${to-sanitized}.txt`).
+        `ls /tmp/snapurl-outbox/*${sanitized}* 2>/dev/null | sort -t/ -k4 -n | tail -1`,
+      ]);
+      const file = stdout.trim();
+      if (file) {
+        const { stdout: body } = await execFileAsync("docker", ["exec", API_CONTAINER, "cat", file]);
+        const match = body.match(/[?&]token=([^\s&]+)/);
+        if (match) return decodeURIComponent(match[1]);
+      }
+    } catch {
+      // docker exec fails with a non-zero exit when the glob matches nothing
+      // under `sh -c ... | head -1` in some shells, or the container isn't
+      // reachable yet — fall through to the next poll attempt.
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(
+    `readOutboxToken: no outbox file for "${email}" appeared under /tmp/snapurl-outbox in container "${API_CONTAINER}" after ${attempts} attempts`,
+  );
 }
