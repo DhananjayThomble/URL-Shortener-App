@@ -23,6 +23,10 @@ import { isDeniedHost, isDeniedIpv4, isDeniedIpv6 } from "@snapurl/contract";
    exactly the two link fields a click can reach: `destination` and
    `social.image` — wired into `LinksService.create`/`.update`/`.bulkCreate`
    (apps/api/src/links/links.service.ts).
+
+   Also wired into `DevelopersService.createWebhook` (#622). A webhook endpoint
+   is fetched by our own worker, which makes it the most direct SSRF target of
+   all. The worker repeats the check at connect time (apps/worker/src/jobs/safe-post.ts).
    ============================================================ */
 
 /**
