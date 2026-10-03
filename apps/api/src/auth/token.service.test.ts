@@ -78,3 +78,57 @@ describe("TokenService.verifyAccessToken", () => {
     await expect(tokens.verifyAccessToken(signed)).resolves.toEqual(expect.objectContaining(claims));
   });
 });
+
+/* ============================================================
+   #629: only an access token may authenticate a request.
+
+   The 2FA challenge token and the link-unlock token are signed with the same
+   secret as access tokens, so their signatures verify here too. Before the fix,
+   the challenge token (issued after the password, *before* the second factor)
+   was accepted as a full session, which skipped 2FA.
+   ============================================================ */
+
+describe("TokenService.verifyAccessToken — token purpose (#629)", () => {
+  const tokens = new TokenService({} as unknown as Database, env, new JwtService());
+  const jwt = new JwtService();
+  const claims = { sub: "user-1", wid: "ws-1", role: "owner", email: "person@example.com" };
+
+  it("rejects the 2FA challenge token", async () => {
+    const challenge = await tokens.signChallengeToken("user-1");
+    await expect(tokens.verifyAccessToken(challenge)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("rejects a password-protected-link unlock token", async () => {
+    const unlock = await tokens.signUnlockToken("link-1");
+    await expect(tokens.verifyAccessToken(unlock)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("rejects a correctly signed token with an unknown purpose", async () => {
+    const odd = await jwt.signAsync({ ...claims, purpose: "something-else" }, { secret: env.JWT_ACCESS_SECRET });
+    await expect(tokens.verifyAccessToken(odd)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("rejects a correctly signed token that is missing a session claim", async () => {
+    const { wid: _wid, ...noWorkspace } = claims;
+    const partial = await jwt.signAsync({ ...noWorkspace, purpose: "access" }, { secret: env.JWT_ACCESS_SECRET });
+    await expect(tokens.verifyAccessToken(partial)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("accepts a new access token and returns exactly the session claims", async () => {
+    const signed = await tokens.signAccessToken(claims);
+    await expect(tokens.verifyAccessToken(signed)).resolves.toEqual(claims);
+  });
+
+  it("still accepts an access token issued before purpose existed", async () => {
+    // Tokens already in users' browsers at deploy time have no purpose claim.
+    // They expire within JWT_ACCESS_TTL, and must keep working until then.
+    const legacy = await jwt.signAsync(claims, { secret: env.JWT_ACCESS_SECRET, expiresIn: "15m" });
+    await expect(tokens.verifyAccessToken(legacy)).resolves.toEqual(claims);
+  });
+
+  it("the challenge verifier still refuses an access token", async () => {
+    // The reverse direction already worked; pinned so it stays that way.
+    const signed = await tokens.signAccessToken(claims);
+    await expect(tokens.verifyChallengeToken(signed)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+});
