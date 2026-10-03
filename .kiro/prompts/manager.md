@@ -22,4 +22,7 @@ Each run:
 4. Priority order for `agent:ready`: `release-blocker` and `security` first, then `bug`,
    then `qa:agent-confirmed`, then the oldest. Record the top 5 in a single pinned tracking
    issue titled `Agent board` (create it if missing; edit its body, do not spam comments).
-5. Never label more than 10 issues `agent:ready` at once.
+5. Label an issue `agent:ready` whenever it is clearly scoped and unblocked; there is no limit on
+   how many. What matters is the **order**: keep the `Agent board`'s top 5 current, because that's
+   what developers take next. If a ready issue has gone stale (the files moved, or it's already
+   fixed), refresh its description or remove `agent:ready`.
