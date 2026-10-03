@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { useState } from "react";
 import { Sparkline } from "@/components/charts";
 import { Chip } from "@/components/ui";
-import { useCloneLink } from "@/lib/api/hooks";
+import { useCloneLink, useUpdateLink } from "@/lib/api/hooks";
 import type { Link, LinkStatus } from "@/lib/api/types";
 import { cn, compact, copy, faviconFor, formatDate, relativeDate } from "@/lib/utils";
 
@@ -23,13 +23,19 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
   const cloneLink = useCloneLink();
+  const updateLink = useUpdateLink();
   const status = STATUS[link.status];
   const url = `${link.domain}/${link.slug}`;
+  const archived = link.status === "archived";
 
   async function onCopy() {
     const ok = await copy(`https://${url}`);
     setCopied(ok);
     setTimeout(() => setCopied(false), 1600);
+  }
+
+  function toggleArchived() {
+    updateLink.mutate({ id: link.id, archived: !archived });
   }
 
   const meta = [
@@ -80,6 +86,15 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
               className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
             >
               {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
+            </button>
+            <button
+              onClick={toggleArchived}
+              disabled={updateLink.isPending}
+              aria-label={archived ? `Unarchive link ${link.domain}/${link.slug}` : `Archive link ${link.domain}/${link.slug}`}
+              title={archived ? "Move this link back to your active lists" : "Archive this link — it keeps working, just moves out of your active lists"}
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
+            >
+              {updateLink.isPending ? "…" : archived ? "⤴ unarchive" : "⤵ archive"}
             </button>
             <Chip tone={status.tone} dot>
               {status.label(link)}
