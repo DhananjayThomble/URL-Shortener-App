@@ -24,11 +24,11 @@ type Aggregate = {
   outcomes: BulkLinkOutcome[];
 };
 
-/** A server row error naming a taken back-half is the approved Q1 "skip"
- *  outcome, shown apart from genuine failures. Matches the server's phrasing
- *  ("already taken" / "already asks for"). */
-function isCollision(error: string): boolean {
-  return /already taken|already asks for|already exists/i.test(error);
+/** A row the server marked `skipped: true` collided with an existing
+ *  back-half and was not written — the approved "skip" outcome, shown apart
+ *  from genuine failures. */
+function isCollision(outcome: BulkLinkOutcome): boolean {
+  return !outcome.ok && outcome.skipped === true;
 }
 
 export function ImportPanel({ onClose }: { onClose: () => void }) {
@@ -70,14 +70,15 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
     setRunError(null);
     const agg: Aggregate = { created: 0, skipped: 0, failed: 0, outcomes: [] };
     try {
-      // Sequential, ≤100 rows per batch. Each batch is all-or-nothing, so a
-      // batch that fails writes nothing and every row comes back with a reason.
+      // Sequential, ≤100 rows per batch. A batch only fails whole when it
+      // contains a genuine validation error; existing-back-half collisions
+      // are skipped per-row and the rest of the batch still writes.
       for (const group of chunk(prepared)) {
         const res = await bulk.mutateAsync(group.map((p) => p.input));
         for (const o of res.results) {
           agg.outcomes.push(o);
           if (o.ok) agg.created++;
-          else if (isCollision(o.error)) agg.skipped++;
+          else if (isCollision(o)) agg.skipped++;
           else agg.failed++;
         }
       }
@@ -197,11 +198,11 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
             <p className="text-[12.5px] text-ink-2 m-0" role="status">
               <b className="text-good">{result.created} imported.</b>{" "}
               {result.skipped > 0 ? <><b className="text-ink-2">{result.skipped} skipped</b> (slug already exists). </> : null}
-              {result.failed > 0 ? <><b className="text-bad">{result.failed} failed.</b> A batch is all or nothing — fix the flagged rows and import the same file again; imported rows won’t be duplicated.</> : null}
+              {result.failed > 0 ? <><b className="text-bad">{result.failed} failed.</b> Fix the flagged rows and import the same file again — imported and skipped rows won’t be duplicated or overwritten.</> : null}
             </p>
             <ol className="flex flex-col gap-[6px] m-0 p-0 list-none max-h-[260px] overflow-y-auto">
               {result.outcomes.map((r, i) => {
-                const collision = !r.ok && isCollision(r.error);
+                const collision = isCollision(r);
                 return (
                   <li
                     key={i}

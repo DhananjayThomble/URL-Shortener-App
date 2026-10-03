@@ -807,12 +807,16 @@ export async function fixtureRequest<T>(
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
     const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
-    /* Mirrors the server's all-or-nothing rule: one invalid row means nothing
-       is written, and every row still gets an outcome so none is silently
-       dropped. The fixture only validates what it can see — a destination that
-       is not a URL, and a back-half already used in this store. */
-    const taken = new Set(linkStore.map((l) => `${l.domain}:${l.slug.toLowerCase()}`));
+    /* Mirrors the server: a genuine validation problem (bad URL, or two rows
+       in this batch wanting the same new back-half) means nothing is written
+       and every row gets an outcome, same as the all-or-nothing rule. A row
+       whose back-half already exists in the store is a *skip*, not a
+       validation problem — it does not block the rest of the batch, which is
+       what lets re-importing the same file converge. */
+    const takenAtStart = new Set(linkStore.map((l) => `${l.domain}:${l.slug.toLowerCase()}`));
+    const seenInBatch = new Map<string, number>();
     const problems = new Map<number, string>();
+    const skipped = new Map<number, string>();
     body.links.forEach((row, i) => {
       try {
         new URL(row.destination);
@@ -820,15 +824,24 @@ export async function fixtureRequest<T>(
         problems.set(i, "That doesn't look like a URL — include https://");
         return;
       }
-      if (row.slug && taken.has(`${row.domain}:${row.slug.toLowerCase()}`)) {
-        problems.set(i, `${row.domain}/${row.slug} is already taken. Try another back-half.`);
+      if (!row.slug) return;
+      const key = `${row.domain}:${row.slug.toLowerCase()}`;
+      if (takenAtStart.has(key)) {
+        skipped.set(i, `${row.domain}/${row.slug} already exists. Skipped — existing back-halves are never overwritten.`);
+        return;
       }
-      if (row.slug) taken.add(`${row.domain}:${row.slug.toLowerCase()}`);
+      const first = seenInBatch.get(key);
+      if (first !== undefined) {
+        problems.set(i, `Row ${first + 1} already asks for /${row.slug} in this batch.`);
+      } else {
+        seenInBatch.set(key, i);
+      }
     });
 
     if (problems.size) {
       data = {
         created: 0,
+        skipped: 0,
         failed: body.links.length,
         results: body.links.map((row, index) => ({
           ok: false,
@@ -841,6 +854,9 @@ export async function fixtureRequest<T>(
       };
     } else {
       const results = body.links.map((row, index) => {
+        if (skipped.has(index)) {
+          return { ok: false as const, index, destination: row.destination, error: skipped.get(index)!, skipped: true };
+        }
         const link: Link = {
           ...LINKS[0],
           id: uid("lnk"),
@@ -859,9 +875,9 @@ export async function fixtureRequest<T>(
           createdBy: SESSION.user.name,
         };
         linkStore.unshift(link);
-        return { ok: true, index, link };
+        return { ok: true as const, index, link };
       });
-      data = { created: results.length, failed: 0, results };
+      data = { created: results.filter((r) => r.ok).length, skipped: skipped.size, failed: 0, results };
     }
   } else if (m(/^\/links\/([^/]+)\/clone$/) && method === "POST") {
     const source = findLink(m(/^\/links\/([^/]+)\/clone$/)![1]);

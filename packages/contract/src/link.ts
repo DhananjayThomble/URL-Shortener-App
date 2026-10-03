@@ -214,6 +214,15 @@ export const BulkLinkOutcome = z.discriminatedUnion("ok", [
     /** Echoed back so the UI can name the row without re-reading its input. */
     destination: z.string(),
     error: z.string(),
+    /**
+     * True when this row was not written because its requested back-half
+     * already exists in the database — distinct from a genuine validation
+     * failure. A batch containing only skipped rows (plus rows that create
+     * cleanly) still writes the creatable rows; only a row with `skipped`
+     * unset/false is a reason the whole batch is rejected. This is what lets
+     * re-importing the same file converge instead of failing forever.
+     */
+    skipped: z.boolean().optional(),
   }),
 ]);
 export type BulkLinkOutcome = z.infer<typeof BulkLinkOutcome>;
@@ -223,12 +232,15 @@ export type BulkLinkOutcome = z.infer<typeof BulkLinkOutcome>;
  *
  * `results` is always the same length as the input and in the same order, so a
  * row can never be silently dropped — the failure mode the whole feature has
- * to avoid. Either every row was written or none was: a batch with any invalid
- * row writes nothing, so fixing the bad rows and resubmitting cannot duplicate
- * the good ones.
+ * to avoid. A batch with a genuine validation error writes nothing, so fixing
+ * the bad rows and resubmitting cannot duplicate the good ones. Rows that only
+ * collide with an existing back-half (`skipped: true` in their outcome) do not
+ * trigger that all-or-nothing rejection — they are counted in `skipped`, and
+ * the rest of the batch is still written.
  */
 export const BulkCreateLinksResult = z.object({
   created: z.number().int(),
+  skipped: z.number().int(),
   failed: z.number().int(),
   results: z.array(BulkLinkOutcome),
 });
