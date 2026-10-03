@@ -30,7 +30,7 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
    Per (viewport × theme) combination (4 combinations: {desktop,mobile} ×
    {light,dark}): 11 static (app) route tests, plus one create-link-drawer
    test that walks all 6 tabs within a single Playwright test, plus one
-   dynamic /links/[id] Edit-destination Field test — 13 Playwright tests per
+   dynamic /links/[id] edit-drawer test — 13 Playwright tests per
    combination. Dark is the regression target; light is carried along as a
    regression guard per the issue's third acceptance-criteria bullet ("light
    theme is not regressed").
@@ -133,9 +133,12 @@ for (const theme of THEMES) {
         }
       });
 
-      test("/links/[id] Edit destination Field has no color-contrast violations", async ({ page }) => {
+      test("/links/[id] edit drawer has no color-contrast violations", async ({ page }) => {
         // Dynamic route: create a real link via the API, same approach as
-        // label-audit.spec.ts, so this scans the actually-rendered Field.
+        // label-audit.spec.ts, so this scans the actually-rendered drawer.
+        // The edit drawer (#644 — EditLinkDrawer) replaced the old
+        // destination-only Field; "Edit" now opens the same tabbed form the
+        // create-link drawer uses.
         const session = await registerRealUser();
         const link = await createRealLink(session);
         await seedSessionTokens(page, session);
@@ -143,7 +146,7 @@ for (const theme of THEMES) {
         await page.goto(`/links/${link.id}`);
         await page.waitForLoadState("networkidle").catch(() => {});
         await page.getByRole("button", { name: "Edit", exact: true }).first().click();
-        await expect(page.getByRole("textbox", { name: "Destination", exact: true })).toBeVisible();
+        await expect(page.getByRole("textbox", { name: "Destination URL", exact: true })).toBeVisible();
 
         const { violations } = await runAxe(page);
         const found = summarise(violations);

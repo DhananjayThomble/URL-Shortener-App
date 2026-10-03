@@ -29,17 +29,20 @@ test.describe("edit and delete a link", () => {
     // Confirm we landed on the spring-sale link's page (slug visible in header/breadcrumb).
     await expect(page.getByText(/spring-sale/, { exact: false })).toBeVisible();
 
-    // Toggle the edit form open and change the destination.
+    // "Edit" opens the full edit drawer (#644) rather than a destination-only
+    // inline form; the Destination tab is the drawer's default tab.
     const newDestination = "https://example.com/e2e/edited-destination";
     await page.getByRole("button", { name: "Edit" }).click();
-    const destination = page.getByPlaceholder("https://example.com/where-it-should-go");
+    const drawer = page.getByRole("dialog", { name: /Edit .+\/spring-sale/ });
+    await expect(drawer).toBeVisible();
+    const destination = drawer.getByPlaceholder("https://acme.com/collections/spring-2026");
     await expect(destination).toBeVisible();
     await destination.fill(newDestination);
-    await page.getByRole("button", { name: "Save destination" }).click();
+    await drawer.getByRole("button", { name: "Save changes" }).click();
 
-    // The edit card closes (Save gone) and the new destination is reflected in
-    // the page sub-heading ("→ <destination> · created ...").
-    await expect(page.getByRole("button", { name: "Save destination" })).toBeHidden();
+    // The drawer closes and the new destination is reflected in the page
+    // sub-heading ("→ <destination> · created ...").
+    await expect(drawer).toBeHidden();
     await expect(page.getByText(newDestination, { exact: false })).toBeVisible();
   });
 

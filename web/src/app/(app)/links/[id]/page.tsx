@@ -4,9 +4,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
-import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Field, Input, Skeleton, Tabs, Tile } from "@/components/ui";
-import { useAnalytics, useDeleteLink, useLink, useUpdateLink } from "@/lib/api/hooks";
-import { UpdateLinkInput, type AnalyticsRange } from "@snapurl/contract";
+import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, Tile } from "@/components/ui";
+import { EditLinkDrawer } from "@/components/links/edit-link-drawer";
+import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
+import type { AnalyticsRange } from "@snapurl/contract";
 import { formatDate, full, pct } from "@/lib/utils";
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
@@ -40,10 +41,9 @@ export default function LinkDetailPage() {
   const link = useLink(id);
   const stats = useAnalytics(range, id);
 
-  const updateLink = useUpdateLink();
   const deleteLink = useDeleteLink();
 
-  const [draft, setDraft] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -61,21 +61,6 @@ export default function LinkDetailPage() {
   const uniqueSeries = a?.series.map((p) => p.unique);
   const conversions = a?.totals.conversions;
   const cvr = a && a.totals.clicks > 0 ? (a.totals.conversions / a.totals.clicks) * 100 : null;
-
-  async function save() {
-    const parsed = UpdateLinkInput.safeParse({ destination: draft ?? "" });
-    if (!parsed.success) {
-      setProblem(parsed.error.issues[0]?.message ?? "That doesn't look like a URL.");
-      return;
-    }
-    try {
-      await updateLink.mutateAsync({ id, destination: draft ?? "" });
-      setDraft(null);
-      setProblem(null);
-    } catch (err) {
-      setProblem((err as Error).message);
-    }
-  }
 
   async function remove() {
     try {
@@ -110,9 +95,7 @@ export default function LinkDetailPage() {
         }
         actions={
           <>
-            <Button onClick={() => { setDraft(draft === null ? l.destination : null); setProblem(null); }}>
-              {draft === null ? "Edit" : "Cancel"}
-            </Button>
+            <Button onClick={() => setEditing(true)}>Edit</Button>
             {confirmingDelete ? (
               <>
                 <Button onClick={() => setConfirmingDelete(false)}>Keep it</Button>
@@ -129,6 +112,12 @@ export default function LinkDetailPage() {
         }
       />
 
+      {problem ? (
+        <p className="text-[12.5px] text-bad mb-3" role="alert">
+          {problem}
+        </p>
+      ) : null}
+
       {confirmingDelete ? (
         <Card className="mb-3.5">
           <CardBody className="text-[13px] text-ink-2 leading-[1.6]">
@@ -139,31 +128,7 @@ export default function LinkDetailPage() {
         </Card>
       ) : null}
 
-      {draft !== null ? (
-        /* G1 — the reason PATCH /links/:id exists. Changing where a printed QR
-           code points is the entire product promise, and until now the Edit
-           button did nothing at all. The slug is deliberately not editable
-           here: moving it would 404 every code already in the world. */
-        <Card className="mb-3.5">
-          <CardHeader title="Edit destination" />
-          <CardBody className="flex flex-col gap-3">
-            <Field label="Destination" help={`Visitors to ${l.domain}/${l.slug} go here. The short link itself does not change.`} error={problem ?? undefined}>
-              <Input
-                value={draft}
-                autoFocus
-                onChange={(e) => { setDraft(e.target.value); setProblem(null); }}
-                placeholder="https://example.com/where-it-should-go"
-              />
-            </Field>
-            <div className="flex gap-2">
-              <Button variant="primary" onClick={save} disabled={updateLink.isPending || draft === l.destination}>
-                {updateLink.isPending ? "Saving…" : "Save destination"}
-              </Button>
-              <Button aria-label="Cancel editing the destination" onClick={() => { setDraft(null); setProblem(null); }}>Cancel</Button>
-            </div>
-          </CardBody>
-        </Card>
-      ) : null}
+      <EditLinkDrawer open={editing} onClose={() => setEditing(false)} link={l} />
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
         <Tile label="Total clicks" value={full(l.clicks)} {...deltaFor(a?.deltas.clicks, range)}>
