@@ -213,30 +213,30 @@ export class LinksService {
    *
    * Two phases, and the split is the whole design.
    *
-   * **Phase one validates every row and writes nothing.** Destination, slug
-   * shape, routing chain, activation window, domain — all checked up front,
-   * along with the one thing a single-link create never has to think about:
-   * two rows in this batch asking for the same new back-half. If any row has
-   * a genuine validation problem, the response describes every row and the
-   * database is untouched.
+   * **Phase one validates every row and writes nothing yet.** Destination,
+   * slug shape, routing chain, activation window, domain — all checked up
+   * front, along with the one thing a single-link create never has to think
+   * about: two rows in this batch asking for the same new back-half. A row
+   * with a genuine validation problem is recorded against *its own* index and
+   * excluded from what gets written; it does not block any other row in the
+   * batch. (It used to: see #643 for why that was wrong — a single existing
+   * collision used to fail the entire batch, which meant re-importing a file
+   * that had already partially succeeded could never converge, because every
+   * previously-imported row now "collided" too. The fix generalizes beyond
+   * collisions: a bad URL on row 12 must not cost rows 1-11 and 13-100 their
+   * import either.)
    *
    * A row whose requested back-half is already taken in the database is
    * **not** a validation problem — it is a skip. It is reported as such
-   * (`skipped: true` on its outcome) and does not block the rest of the
-   * batch from writing, which is what lets resubmitting the same file after a
-   * partial import converge instead of failing on every previously-imported
-   * row forever.
+   * (`skipped: true` on its outcome), same as a genuine error, in that it
+   * does not get written — but counted separately so the UI can tell "this
+   * already exists" apart from "this was wrong".
    *
-   * **Phase two writes whatever did not error or get skipped, in one
-   * transaction.** Nothing partial survives a genuine validation failure.
-   *
-   * That combination is what makes the feature safe to retry. A partial
-   * import of *invalid* rows would leave the caller unable to resubmit —
-   * fixing three bad rows and sending the file again would duplicate the
-   * ninety-seven good ones, because generated back-halves differ every time.
-   * All-or-nothing on validation errors means resubmitting the corrected file
-   * is always the right move; skipping existing collisions means resubmitting
-   * the *same* file is too.
+   * **Phase two writes every row that neither errored nor was skipped, in one
+   * transaction.** The transaction is for atomicity of the *write itself*
+   * (so a crash mid-insert cannot leave routing rules without their link),
+   * not for all-or-nothing across rows — every row's fate was already decided
+   * in phase one, independently of every other row's.
    *
    * `results` is the same length as the input and in the same order, so no row
    * is ever silently dropped, which is the failure this feature exists to
@@ -250,11 +250,11 @@ export class LinksService {
     const rows = input.links;
     const errors = new Map<number, string>();
     /* Rows that collide with a back-half already in the database. Kept apart
-       from `errors`: a genuine validation problem (bad URL, bad routing chain,
-       two rows in this batch wanting the same new slug) still rejects the
-       whole batch, but an existing-row collision does not — it is reported as
-       skipped and the rest of the batch is written. This is what lets
-       re-importing the same file converge instead of failing forever. */
+       from `errors` only so the response can tell the two apart (`skipped:
+       true` vs. a plain error) — both are excluded from the insert the same
+       way, and neither blocks any other row. This split is what lets the UI
+       say "1 skipped (already exists)" instead of lumping it in with "1
+       failed (bad URL)". */
     const skipped = new Map<number, string>();
 
     /* Echoed back on every failure so the UI can name the row without
@@ -399,28 +399,17 @@ export class LinksService {
       if (!redrew) break;
     }
 
-    /* Nothing is written when a genuine validation problem is present. See the
-       note above: a partial import of *invalid* rows cannot be safely
-       resubmitted. Skipped rows (existing-back-half collisions) do not count
-       here — they fall through to the normal insert path below, minus the
-       skipped rows themselves. */
-    if (errors.size) {
-      return {
-        created: 0,
-        skipped: 0,
-        failed: rows.length,
-        results: rows.map((raw, index) => ({
-          ok: false as const,
-          index,
-          destination: destinationOf(raw),
-          error:
-            errors.get(index) ??
-            "Not created — another row in this batch was invalid, and a batch is all or nothing.",
-        })),
-      };
-    }
+    /* No early return here. A genuine validation problem on one row (bad URL,
+       bad routing chain, two *new* rows wanting the same back-half) is
+       recorded in `errors` against that row's own index and simply never
+       makes it into `prepared` (or is excluded via `errors.set` above) — it
+       does not reach the insert below, and it does not stop any other row
+       from being written. See #643: a per-row problem used to 400 the whole
+       batch, which is what made re-importing a partially-succeeded file fail
+       forever on every row that had already landed, not just the one that
+       collided. */
 
-    const toInsert = prepared.filter((p) => !skipped.has(p.index));
+    const toInsert = prepared.filter((p) => !skipped.has(p.index) && !errors.has(p.index));
 
     const ids = await this.db.transaction(async (tx) => {
       const inserted = toInsert.length
@@ -500,8 +489,16 @@ export class LinksService {
         skipped: true,
       };
     }
+    for (const [index, message] of errors) {
+      results[index] = {
+        ok: false,
+        index,
+        destination: destinationOf(rows[index]!),
+        error: message,
+      };
+    }
 
-    return { created: ids.length, skipped: skipped.size, failed: 0, results };
+    return { created: ids.length, skipped: skipped.size, failed: errors.size, results };
   }
 
   /**

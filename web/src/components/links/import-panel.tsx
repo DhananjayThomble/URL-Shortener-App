@@ -70,9 +70,10 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
     setRunError(null);
     const agg: Aggregate = { created: 0, skipped: 0, failed: 0, outcomes: [] };
     try {
-      // Sequential, ≤100 rows per batch. A batch only fails whole when it
-      // contains a genuine validation error; existing-back-half collisions
-      // are skipped per-row and the rest of the batch still writes.
+      // Sequential, ≤100 rows per batch. Every row's outcome is independent:
+      // a genuine validation error on one row and an existing-back-half
+      // collision on another are both reported per-row, and neither blocks
+      // an unrelated valid row elsewhere in the batch from being created.
       for (const group of chunk(prepared)) {
         const res = await bulk.mutateAsync(group.map((p) => p.input));
         for (const o of res.results) {

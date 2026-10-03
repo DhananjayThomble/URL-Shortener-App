@@ -13,15 +13,18 @@ import { toActor } from "../common/activity.js";
    used to be treated as a validation problem, which rejected the *entire*
    batch (the all-or-nothing rule) — so re-importing a file that had already
    partially succeeded could never converge, because every previously
-   imported row now "collided".
+   imported row now "collided". The acceptance criteria go further than just
+   collisions: a genuine validation error (bad URL, two rows wanting the same
+   new slug) must also fail only its own row, without blocking unrelated
+   valid rows elsewhere in the same batch.
 
    The oracle here is the import panel's own promise, echoed in the issue:
    "Existing back-halves are skipped, never overwritten" and "import the same
-   file again; imported rows won't be duplicated." A collision with an
-   existing row must be reported as a skip and must not block the rest of the
-   batch from being written. A *genuine* validation problem (bad URL, two new
-   rows wanting the same slug) must still reject the whole batch — this suite
-   checks both halves so collisions and validation errors are not conflated.
+   file again; imported rows won't be duplicated" — plus the issue's explicit
+   acceptance criterion that a genuine validation error "still fail[s] their
+   own row without blocking unrelated valid rows in the same batch". This
+   suite checks that collisions (skipped) and validation errors (failed) are
+   each independent per row and never conflated with each other.
    ============================================================ */
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -37,7 +40,7 @@ const cacheBustStub = { bust: async () => {} } as unknown as LinkCacheBustServic
 
 const actor = toActor({ userId: null, label: "test-harness" });
 
-describeDb("LinksService.bulkCreate — existing-slug collisions are skipped, not all-or-nothing", () => {
+describeDb("LinksService.bulkCreate — every row's outcome is independent, not all-or-nothing", () => {
   let handle: ReturnType<typeof createDatabase>;
   let db: Database;
   let service: LinksService;
@@ -138,7 +141,7 @@ describeDb("LinksService.bulkCreate — existing-slug collisions are skipped, no
     expect(rowsB).toHaveLength(1);
   });
 
-  it("still rejects the whole batch on a genuine validation error, and does not conflate it with a skip", async () => {
+  it("still fails only the row with a genuine validation error, without blocking unrelated rows in the same batch", async () => {
     const existingSlug = `taken2-${stamp}`;
     await db.insert(links).values({
       workspaceId,
@@ -154,40 +157,58 @@ describeDb("LinksService.bulkCreate — existing-slug collisions are skipped, no
       links: [row(existingSlug), row(newSlug), badRow],
     });
 
-    // One row has a genuine validation problem (bad URL) -> the whole batch
-    // is rejected, including the row that would otherwise have been a clean
-    // skip and the row that would otherwise have been created.
-    expect(result.created).toBe(0);
-    expect(result.failed).toBe(3);
+    // The bad URL fails only its own row (#643 acceptance criterion: genuine
+    // validation errors fail their own row without blocking unrelated valid
+    // rows). The collision is still a skip, and the fresh row is still
+    // created — neither is affected by row 2's problem.
+    expect(result.created).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.failed).toBe(1);
     expect(result.results).toHaveLength(3);
-    for (const outcome of result.results) {
-      expect(outcome.ok).toBe(false);
-      // None of these are reported as a skip — rejecting the batch for a
-      // genuine error is not the same outcome as a collision skip, even for
-      // the row that collides.
-      if (!outcome.ok) expect(outcome.skipped).toBeFalsy();
-    }
 
-    // Nothing was written for the new row — a genuine error really is
-    // all-or-nothing, unlike a plain collision.
+    const [collided, created, bad] = result.results;
+    expect(collided).toMatchObject({ ok: false, index: 0, skipped: true });
+    expect(created).toMatchObject({ ok: true, index: 1 });
+    if (created!.ok) expect(created!.link.slug).toBe(newSlug);
+    expect(bad).toMatchObject({ ok: false, index: 2 });
+    // The bad row is a genuine failure, not a skip — distinct from the
+    // collision even though both are `ok: false`.
+    if (!bad!.ok) expect(bad!.skipped).toBeFalsy();
+
+    // The fresh row really was written …
     const inDb = await db.select({ slug: links.slug }).from(links).where(eq(links.slug, newSlug));
-    expect(inDb).toHaveLength(0);
+    expect(inDb).toHaveLength(1);
+    // … and the pre-existing collision row was never duplicated or touched.
+    const existingRows = await db.select({ destination: links.destination }).from(links).where(eq(links.slug, existingSlug));
+    expect(existingRows).toHaveLength(1);
+    expect(existingRows[0]!.destination).toBe("https://example.com/already-here-2");
   });
 
-  it("two new rows asking for the same back-half is a validation error, not a skip, for either row", async () => {
+  it("two new rows asking for the same back-half: the second is a validation error, the first and an unrelated fresh row still create", async () => {
     const slug = `dupe-${stamp}`;
+    const freshSlug = `dupe-fresh-${stamp}`;
     const result = await service.bulkCreate(workspaceId, actor, {
-      links: [row(slug, "a"), row(slug, "b")],
+      links: [row(slug, "a"), row(slug, "b"), row(freshSlug)],
     });
 
-    expect(result.created).toBe(0);
-    expect(result.failed).toBe(2);
-    for (const outcome of result.results) {
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) expect(outcome.skipped).toBeFalsy();
-    }
+    // Only the *second* row to ask for a given new back-half is flagged — the
+    // first is indistinguishable from an ordinary new row until the second
+    // one collides with it, matching the per-row "Row N already asks for"
+    // message. That one failure must not cost the first row (index 0) or the
+    // unrelated fresh row (index 2) their creation.
+    expect(result.created).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.skipped).toBe(0);
+
+    const [first, second, fresh] = result.results;
+    expect(first).toMatchObject({ ok: true, index: 0 });
+    expect(second).toMatchObject({ ok: false, index: 1 });
+    if (!second!.ok) expect(second!.skipped).toBeFalsy();
+    expect(fresh).toMatchObject({ ok: true, index: 2 });
 
     const inDb = await db.select({ slug: links.slug }).from(links).where(eq(links.slug, slug));
-    expect(inDb).toHaveLength(0);
+    expect(inDb).toHaveLength(1);
+    const freshInDb = await db.select({ slug: links.slug }).from(links).where(eq(links.slug, freshSlug));
+    expect(freshInDb).toHaveLength(1);
   });
 });

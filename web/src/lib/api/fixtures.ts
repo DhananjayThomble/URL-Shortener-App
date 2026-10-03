@@ -807,12 +807,13 @@ export async function fixtureRequest<T>(
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
     const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
-    /* Mirrors the server: a genuine validation problem (bad URL, or two rows
-       in this batch wanting the same new back-half) means nothing is written
-       and every row gets an outcome, same as the all-or-nothing rule. A row
-       whose back-half already exists in the store is a *skip*, not a
-       validation problem — it does not block the rest of the batch, which is
-       what lets re-importing the same file converge. */
+    /* Mirrors the server: every row's outcome is independent. A genuine
+       validation problem (bad URL, or two rows in this batch wanting the
+       same new back-half) fails only that row, without blocking any other
+       row in the batch. A row whose back-half already exists in the store is
+       a *skip*, not a validation problem — reported separately so the UI can
+       tell "already exists" apart from "this row was invalid", but it is
+       excluded from the write the same way an error row is. */
     const takenAtStart = new Set(linkStore.map((l) => `${l.domain}:${l.slug.toLowerCase()}`));
     const seenInBatch = new Map<string, number>();
     const problems = new Map<number, string>();
@@ -838,47 +839,34 @@ export async function fixtureRequest<T>(
       }
     });
 
-    if (problems.size) {
-      data = {
-        created: 0,
-        skipped: 0,
-        failed: body.links.length,
-        results: body.links.map((row, index) => ({
-          ok: false,
-          index,
-          destination: row.destination,
-          error:
-            problems.get(index) ??
-            "Not created — another row in this batch was invalid, and a batch is all or nothing.",
-        })),
+    const results = body.links.map((row, index) => {
+      if (problems.has(index)) {
+        return { ok: false as const, index, destination: row.destination, error: problems.get(index)! };
+      }
+      if (skipped.has(index)) {
+        return { ok: false as const, index, destination: row.destination, error: skipped.get(index)!, skipped: true };
+      }
+      const link: Link = {
+        ...LINKS[0],
+        id: uid("lnk"),
+        slug: row.slug || Math.random().toString(36).slice(2, 9),
+        domain: row.domain,
+        destination: row.destination,
+        title: null,
+        comment: null,
+        tags: [],
+        status: "active",
+        clicks: 0,
+        uniqueClicks: 0,
+        rules: [],
+        sparkline: Array(15).fill(0),
+        createdAt: new Date().toISOString(),
+        createdBy: SESSION.user.name,
       };
-    } else {
-      const results = body.links.map((row, index) => {
-        if (skipped.has(index)) {
-          return { ok: false as const, index, destination: row.destination, error: skipped.get(index)!, skipped: true };
-        }
-        const link: Link = {
-          ...LINKS[0],
-          id: uid("lnk"),
-          slug: row.slug || Math.random().toString(36).slice(2, 9),
-          domain: row.domain,
-          destination: row.destination,
-          title: null,
-          comment: null,
-          tags: [],
-          status: "active",
-          clicks: 0,
-          uniqueClicks: 0,
-          rules: [],
-          sparkline: Array(15).fill(0),
-          createdAt: new Date().toISOString(),
-          createdBy: SESSION.user.name,
-        };
-        linkStore.unshift(link);
-        return { ok: true as const, index, link };
-      });
-      data = { created: results.filter((r) => r.ok).length, skipped: skipped.size, failed: 0, results };
-    }
+      linkStore.unshift(link);
+      return { ok: true as const, index, link };
+    });
+    data = { created: results.filter((r) => r.ok).length, skipped: skipped.size, failed: problems.size, results };
   } else if (m(/^\/links\/([^/]+)\/clone$/) && method === "POST") {
     const source = findLink(m(/^\/links\/([^/]+)\/clone$/)![1]);
     if (!source) throw new Error(`No fixture link ${path}`);
