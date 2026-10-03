@@ -86,7 +86,7 @@ it is no longer true.
 
 Egress is a property of the AWS profile, wired from
 `app.node.tryGetContext('natStrategy')` in `infra/bin/snapurl.ts`. Options:
-`'instance'` (default, a t4g.nano NAT instance, ~$3/mo), `'gateway'` (managed
+`'instance'` (default, a t4g.micro NAT instance, ~$6/mo), `'gateway'` (managed
 NAT, ~$32/mo), `'none'` ($0, the original zero-egress topology, where Safe
 Browsing / webhooks / OAuth / mail are non-functional by design). NAT was chosen
 over a free egress-only IPv6 IGW because arbitrary customer webhook receivers
