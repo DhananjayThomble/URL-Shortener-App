@@ -296,23 +296,27 @@ check "bulk reports no failures"            '"failed":0'   "$BODY"
 check "bulk honours an explicit back-half"  "$RUN-bulk-a"  "$BODY"
 check "each row carries its own outcome"    '"index":1'    "$BODY"
 
-# All-or-nothing: one bad row must stop the whole batch, and the good row must
-# still be reported rather than silently dropped.
+# Per-row outcomes: a genuine validation problem on one row (bad URL) must
+# fail only that row, not the rest of the batch (#643 acceptance criterion).
 BODY=$(mkbulk "[$(row https://example.com/good "$RUN-bulk-good"),$(row not-a-url)]")
-check "one bad row creates nothing"          '"created":0' "$BODY"
-check "the bad row is named"                 'not-a-url'   "$BODY"
-check "the good row is reported, not dropped" 'all or nothing' "$BODY"
+check "the good row is still created despite the bad row" '"created":1' "$BODY"
+check "the bad row is named"                               'not-a-url'   "$BODY"
+check "the bad row is reported as a failure"                '"failed":1'  "$BODY"
 
 FOUND=$(curl -s "$API/links?search=$RUN-bulk-good" -H "Authorization: Bearer $ACCESS" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).total')
-if [ "$FOUND" = "0" ]; then ok "a failed batch wrote nothing at all"; else bad "partial write" "found $FOUND rows for $RUN-bulk-good"; fi
+if [ "$FOUND" = "1" ]; then ok "the good row in a mixed batch was actually written"; else bad "good row not written" "found $FOUND rows for $RUN-bulk-good"; fi
 
-# Two rows competing for the same back-half is a batch-only failure: the unique
-# index would catch it, but only by failing without saying which rows collided.
-BODY=$(mkbulk "[$(row https://example.com/dup1 "$RUN-dup"),$(row https://example.com/dup2 "$RUN-dup")]")
-check "two rows wanting one back-half is refused" 'already asks for' "$BODY"
+# Two rows competing for the same back-half: the second one to ask for it is
+# a per-row failure (the unique index would catch it too, but only by failing
+# without saying which rows collided) — and it must not block an unrelated
+# row, or even the first of the two colliding rows, from creating.
+BODY=$(mkbulk "[$(row https://example.com/dup1 "$RUN-dup"),$(row https://example.com/dup2 "$RUN-dup"),$(row https://example.com/dup-ok "$RUN-dup-ok")]")
+check "the second row wanting a taken back-half is refused" 'already asks for' "$BODY"
+check "the first colliding row and the unrelated row both still create" '"created":2' "$BODY"
 
 BODY=$(mkbulk "[$(row https://example.com/taken "$RUN-bulk-a")]")
-check "a back-half already in use is refused" 'already taken' "$BODY"
+check "a back-half already in use is skipped, not created" '"skipped":1' "$BODY"
+check "a back-half already in use reports zero failures"   '"failed":0'  "$BODY"
 
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/links/bulk" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
   -d "$(node -e 'const l={destination:"https://example.com/x",domain:"localhost:3002",tags:[],redirectType:"302",rules:[],forwardQuery:true,deepLink:false,hideReferrer:false,publicPreview:true};process.stdout.write(JSON.stringify({links:Array(101).fill(l)}))')")

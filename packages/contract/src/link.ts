@@ -214,6 +214,15 @@ export const BulkLinkOutcome = z.discriminatedUnion("ok", [
     /** Echoed back so the UI can name the row without re-reading its input. */
     destination: z.string(),
     error: z.string(),
+    /**
+     * True when this row was not written because its requested back-half
+     * already exists in the database — distinct from a genuine validation
+     * failure so the UI can report "already exists" separately from "this
+     * row was invalid". Every `ok: false` row (skipped or not) was excluded
+     * from the write for its own reason; one row's problem never affects
+     * another row's outcome in the same batch.
+     */
+    skipped: z.boolean().optional(),
   }),
 ]);
 export type BulkLinkOutcome = z.infer<typeof BulkLinkOutcome>;
@@ -222,13 +231,15 @@ export type BulkLinkOutcome = z.infer<typeof BulkLinkOutcome>;
  * The result of a batch.
  *
  * `results` is always the same length as the input and in the same order, so a
- * row can never be silently dropped — the failure mode the whole feature has
- * to avoid. Either every row was written or none was: a batch with any invalid
- * row writes nothing, so fixing the bad rows and resubmitting cannot duplicate
- * the good ones.
+ * row can never be silently dropped. Each row's outcome — created, skipped
+ * (an existing-back-half collision), or failed (a genuine validation problem) —
+ * is independent of every other row's: a bad URL on one row does not prevent
+ * an unrelated valid row elsewhere in the same batch from being created, and
+ * does not turn a would-be skip into a failure either.
  */
 export const BulkCreateLinksResult = z.object({
   created: z.number().int(),
+  skipped: z.number().int(),
   failed: z.number().int(),
   results: z.array(BulkLinkOutcome),
 });

@@ -10,7 +10,7 @@ export const BATCH_SIZE = 100;
 export const COMMENT_MAX = 280;
 
 /** The slug shape the contract accepts. A source back-half that does not match
- *  cannot be requested verbatim; rather than fail the all-or-nothing batch, we
+ *  cannot be requested verbatim; rather than let that row fail server-side, we
  *  drop the slug and let the server generate one (surfaced as "kept, new
  *  back-half"). */
 const SLUG_RE = /^[a-zA-Z0-9._-]*$/;

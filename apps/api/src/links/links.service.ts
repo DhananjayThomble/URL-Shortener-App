@@ -213,21 +213,30 @@ export class LinksService {
    *
    * Two phases, and the split is the whole design.
    *
-   * **Phase one validates every row and writes nothing.** Destination, slug
-   * shape, routing chain, activation window, domain — all checked up front,
-   * along with the two things a single-link create never has to think about:
-   * two rows asking for the same back-half, and a requested back-half that is
-   * already taken. If any row fails, the response describes every row and the
-   * database is untouched.
+   * **Phase one validates every row and writes nothing yet.** Destination,
+   * slug shape, routing chain, activation window, domain — all checked up
+   * front, along with the one thing a single-link create never has to think
+   * about: two rows in this batch asking for the same new back-half. A row
+   * with a genuine validation problem is recorded against *its own* index and
+   * excluded from what gets written; it does not block any other row in the
+   * batch. (It used to: see #643 for why that was wrong — a single existing
+   * collision used to fail the entire batch, which meant re-importing a file
+   * that had already partially succeeded could never converge, because every
+   * previously-imported row now "collided" too. The fix generalizes beyond
+   * collisions: a bad URL on row 12 must not cost rows 1-11 and 13-100 their
+   * import either.)
    *
-   * **Phase two writes the whole batch in one transaction.** Nothing partial
-   * survives a failure.
+   * A row whose requested back-half is already taken in the database is
+   * **not** a validation problem — it is a skip. It is reported as such
+   * (`skipped: true` on its outcome), same as a genuine error, in that it
+   * does not get written — but counted separately so the UI can tell "this
+   * already exists" apart from "this was wrong".
    *
-   * That combination is what makes the feature safe to retry. A partial import
-   * would leave the caller unable to resubmit — fixing three bad rows and
-   * sending the file again would duplicate the ninety-seven good ones, because
-   * generated back-halves differ every time. All-or-nothing means resubmitting
-   * the corrected file is always the right move.
+   * **Phase two writes every row that neither errored nor was skipped, in one
+   * transaction.** The transaction is for atomicity of the *write itself*
+   * (so a crash mid-insert cannot leave routing rules without their link),
+   * not for all-or-nothing across rows — every row's fate was already decided
+   * in phase one, independently of every other row's.
    *
    * `results` is the same length as the input and in the same order, so no row
    * is ever silently dropped, which is the failure this feature exists to
@@ -240,6 +249,13 @@ export class LinksService {
   ): Promise<BulkCreateLinksResult> {
     const rows = input.links;
     const errors = new Map<number, string>();
+    /* Rows that collide with a back-half already in the database. Kept apart
+       from `errors` only so the response can tell the two apart (`skipped:
+       true` vs. a plain error) — both are excluded from the insert the same
+       way, and neither blocks any other row. This split is what lets the UI
+       say "1 skipped (already exists)" instead of lumping it in with "1
+       failed (bad URL)". */
+    const skipped = new Map<number, string>();
 
     /* Echoed back on every failure so the UI can name the row without
        re-reading its own input. Read off the raw row, because a row that
@@ -349,9 +365,14 @@ export class LinksService {
     /* Back-halves already in the database. Checked here so a taken one is
        reported against its row, and so a generated one that happens to collide
        can simply be redrawn — the in-transaction retry `create` uses is not
-       available once every row shares a transaction. */
+       available once every row shares a transaction.
+
+       A hit here is a *skip*, not an error: the row asked for a back-half a
+       prior import (or someone else) already created, which is the expected
+       shape of re-running the same file. A generated slug that collides is
+       still just redrawn, never reported at all. */
     for (let pass = 0; pass < SLUG_RETRY_LIMIT; pass++) {
-      const live = prepared.filter((p) => !errors.has(p.index));
+      const live = prepared.filter((p) => !errors.has(p.index) && !skipped.has(p.index));
       if (!live.length) break;
 
       const takenPairs = new Set<string>();
@@ -372,62 +393,59 @@ export class LinksService {
           item.slug = generateSlug();
           redrew = true;
         } else {
-          errors.set(item.index, `${item.input.domain}/${item.slug} is already taken. Try another back-half.`);
+          skipped.set(item.index, `${item.input.domain}/${item.slug} already exists. Skipped — existing back-halves are never overwritten.`);
         }
       }
       if (!redrew) break;
     }
 
-    /* Nothing is written when anything failed. See the note above: a partial
-       import cannot be safely resubmitted. */
-    if (errors.size) {
-      return {
-        created: 0,
-        failed: rows.length,
-        results: rows.map((raw, index) => ({
-          ok: false as const,
-          index,
-          destination: destinationOf(raw),
-          error:
-            errors.get(index) ??
-            "Not created — another row in this batch was invalid, and a batch is all or nothing.",
-        })),
-      };
-    }
+    /* No early return here. A genuine validation problem on one row (bad URL,
+       bad routing chain, two *new* rows wanting the same back-half) is
+       recorded in `errors` against that row's own index and simply never
+       makes it into `prepared` (or is excluded via `errors.set` above) — it
+       does not reach the insert below, and it does not stop any other row
+       from being written. See #643: a per-row problem used to 400 the whole
+       batch, which is what made re-importing a partially-succeeded file fail
+       forever on every row that had already landed, not just the one that
+       collided. */
+
+    const toInsert = prepared.filter((p) => !skipped.has(p.index) && !errors.has(p.index));
 
     const ids = await this.db.transaction(async (tx) => {
-      const inserted = await tx
-        .insert(links)
-        .values(
-          prepared.map((p) => ({
-            workspaceId,
-            domainId: p.domainId,
-            slug: p.slug,
-            destination: p.input.destination,
-            comment: p.input.comment ?? null,
-            tags: p.input.tags ?? [],
-            folder: p.input.folder ?? null,
-            redirectType: p.input.redirectType,
-            expiresAt: p.input.expiresAt ? new Date(p.input.expiresAt) : null,
-            expiresTo: p.input.expiresTo ?? null,
-            activatesAt: p.input.activatesAt ? new Date(p.input.activatesAt) : null,
-            scheduledTo: p.input.scheduledTo ?? null,
-            clickLimit: p.input.clickLimit ?? null,
-            passwordHash: p.passwordHash,
-            forwardQuery: p.input.forwardQuery,
-            deepLink: p.input.deepLink,
-            hideReferrer: p.input.hideReferrer,
-            publicPreview: p.input.publicPreview,
-            safeBrowsingStatus: p.scan.status,
-            safeBrowsingCheckedAt: p.scan.checkedAt,
-            utm: p.input.utm ?? null,
-            social: p.input.social ?? null,
-            createdBy: actor.userId,
-          })),
-        )
-        .returning({ id: links.id });
+      const inserted = toInsert.length
+        ? await tx
+            .insert(links)
+            .values(
+              toInsert.map((p) => ({
+                workspaceId,
+                domainId: p.domainId,
+                slug: p.slug,
+                destination: p.input.destination,
+                comment: p.input.comment ?? null,
+                tags: p.input.tags ?? [],
+                folder: p.input.folder ?? null,
+                redirectType: p.input.redirectType,
+                expiresAt: p.input.expiresAt ? new Date(p.input.expiresAt) : null,
+                expiresTo: p.input.expiresTo ?? null,
+                activatesAt: p.input.activatesAt ? new Date(p.input.activatesAt) : null,
+                scheduledTo: p.input.scheduledTo ?? null,
+                clickLimit: p.input.clickLimit ?? null,
+                passwordHash: p.passwordHash,
+                forwardQuery: p.input.forwardQuery,
+                deepLink: p.input.deepLink,
+                hideReferrer: p.input.hideReferrer,
+                publicPreview: p.input.publicPreview,
+                safeBrowsingStatus: p.scan.status,
+                safeBrowsingCheckedAt: p.scan.checkedAt,
+                utm: p.input.utm ?? null,
+                social: p.input.social ?? null,
+                createdBy: actor.userId,
+              })),
+            )
+            .returning({ id: links.id })
+        : [];
 
-      const rules = prepared.flatMap((p, i) =>
+      const rules = toInsert.flatMap((p, i) =>
         p.input.rules.map((rule, position) => ({
           linkId: inserted[i]!.id,
           position,
@@ -446,7 +464,7 @@ export class LinksService {
 
     /* Read back and record activity after the commit, never inside it — the
        links exist by now, so a failure here must not undo them. */
-    const results: BulkLinkOutcome[] = [];
+    const results: BulkLinkOutcome[] = new Array(rows.length);
     for (const [i, id] of ids.entries()) {
       // Primary read-back: these rows were just committed, a replica may not
       // have them yet.
@@ -460,10 +478,27 @@ export class LinksService {
         targetId: link.id,
         metadata: { slug: link.slug, domain: link.domain, destination: link.destination, bulk: true },
       });
-      results.push({ ok: true, index: prepared[i]!.index, link });
+      results[toInsert[i]!.index] = { ok: true, index: toInsert[i]!.index, link };
+    }
+    for (const [index, message] of skipped) {
+      results[index] = {
+        ok: false,
+        index,
+        destination: destinationOf(rows[index]!),
+        error: message,
+        skipped: true,
+      };
+    }
+    for (const [index, message] of errors) {
+      results[index] = {
+        ok: false,
+        index,
+        destination: destinationOf(rows[index]!),
+        error: message,
+      };
     }
 
-    return { created: results.length, failed: 0, results };
+    return { created: ids.length, skipped: skipped.size, failed: errors.size, results };
   }
 
   /**
