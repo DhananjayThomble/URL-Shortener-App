@@ -161,9 +161,38 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
 
+  // `useMutation` returns a brand-new result object on every render (its
+  // `mutate`/`mutateAsync` are wrapped per call, see @tanstack/react-query's
+  // useMutation.js), so an effect with an empty-ish dependency array that
+  // closes over `create` directly would freeze on whichever render it first
+  // ran in — exactly the staleness this effect exists to fix, just moved into
+  // the harness instead of the UI. Read it through a ref, same pattern as
+  // `onCloseRef` above, so the subscription below always sees the current
+  // mutation state without needing to resubscribe on every render.
+  const createRef = useRef(create);
+  createRef.current = create;
+
+  // Clear a previous submission's server error the moment the user changes
+  // anything, so a stale message (e.g. "…is already taken" for a back-half
+  // that was since edited) never sits alongside, or in place of, a new error
+  // for the current input (issue #640). `watch`'s callback form subscribes
+  // without forcing a render on every keystroke; the subscription is torn
+  // down on unmount/re-run via the returned `unsubscribe`.
+  useEffect(() => {
+    const { unsubscribe } = watch(() => {
+      if (createRef.current.isError) createRef.current.reset();
+    });
+    return () => unsubscribe();
+  }, [watch]);
+
   if (!open) return null;
 
   const onSubmit = handleSubmit(async (values) => {
+    // Clear any previous failure before the new attempt lands, so a slow
+    // request never leaves the old message on screen while this one is
+    // in flight, and a validation-only resubmit (same values, now passing
+    // react-hook-form's resolver) still drops the stale server error.
+    create.reset();
     try {
       await create.mutateAsync(values);
       onClose();
