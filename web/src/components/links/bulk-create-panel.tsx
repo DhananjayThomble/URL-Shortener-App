@@ -106,16 +106,20 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
         {result ? (
           <>
             {/* The point of the whole feature: every submitted row gets a line,
-                so nothing is ever silently dropped. */}
+                so nothing is ever silently dropped. Each row's outcome is
+                independent — a bad row elsewhere in the batch never prevents
+                a good row from being created, so this no longer claims
+                all-or-nothing. */}
             <p className="text-[12.5px] text-ink-2 m-0">
               {result.created > 0 ? (
                 <>
                   <b className="text-good">{result.created} created.</b> They are in the list below.
+                  {result.failed > 0 ? " Fix the flagged rows below and submit again — the rows already created won't be duplicated." : ""}
                 </>
               ) : (
                 <>
-                  <b className="text-bad">Nothing was created.</b> A batch is all or nothing, so fix the rows
-                  below and submit the same list again — the good rows cannot be duplicated by retrying.
+                  <b className="text-bad">Nothing was created.</b> Fix the rows
+                  below and submit the same list again — rows that already exist won't be duplicated.
                 </>
               )}
             </p>

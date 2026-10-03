@@ -55,8 +55,7 @@ test.describe("import links (generic CSV core)", () => {
     await openImport(page);
 
     // `spring-sale` is a seeded link on snap.to (fixtures.ts) — importing it
-    // again must be reported as skipped, and the whole batch is all-or-nothing
-    // so nothing else in that batch is created either.
+    // again must be reported as skipped, not created and not duplicated.
     const csv = "long_url,back_half\nhttps://example.com/dupe,spring-sale";
     await page.getByRole("textbox", { name: "Export contents" }).fill(csv);
     await page.getByRole("button", { name: /^Import 1 link$/ }).click();

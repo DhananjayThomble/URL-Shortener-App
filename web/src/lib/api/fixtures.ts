@@ -826,12 +826,17 @@ export async function fixtureRequest<T>(
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
     const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
-    /* Mirrors the server's all-or-nothing rule: one invalid row means nothing
-       is written, and every row still gets an outcome so none is silently
-       dropped. The fixture only validates what it can see — a destination that
-       is not a URL, and a back-half already used in this store. */
-    const taken = new Set(linkStore.map((l) => `${l.domain}:${l.slug.toLowerCase()}`));
+    /* Mirrors the server: every row's outcome is independent. A genuine
+       validation problem (bad URL, or two rows in this batch wanting the
+       same new back-half) fails only that row, without blocking any other
+       row in the batch. A row whose back-half already exists in the store is
+       a *skip*, not a validation problem — reported separately so the UI can
+       tell "already exists" apart from "this row was invalid", but it is
+       excluded from the write the same way an error row is. */
+    const takenAtStart = new Set(linkStore.map((l) => `${l.domain}:${l.slug.toLowerCase()}`));
+    const seenInBatch = new Map<string, number>();
     const problems = new Map<number, string>();
+    const skipped = new Map<number, string>();
     body.links.forEach((row, i) => {
       try {
         new URL(row.destination);
@@ -839,49 +844,48 @@ export async function fixtureRequest<T>(
         problems.set(i, "That doesn't look like a URL — include https://");
         return;
       }
-      if (row.slug && taken.has(`${row.domain}:${row.slug.toLowerCase()}`)) {
-        problems.set(i, `${row.domain}/${row.slug} is already taken. Try another back-half.`);
+      if (!row.slug) return;
+      const key = `${row.domain}:${row.slug.toLowerCase()}`;
+      if (takenAtStart.has(key)) {
+        skipped.set(i, `${row.domain}/${row.slug} already exists. Skipped — existing back-halves are never overwritten.`);
+        return;
       }
-      if (row.slug) taken.add(`${row.domain}:${row.slug.toLowerCase()}`);
+      const first = seenInBatch.get(key);
+      if (first !== undefined) {
+        problems.set(i, `Row ${first + 1} already asks for /${row.slug} in this batch.`);
+      } else {
+        seenInBatch.set(key, i);
+      }
     });
 
-    if (problems.size) {
-      data = {
-        created: 0,
-        failed: body.links.length,
-        results: body.links.map((row, index) => ({
-          ok: false,
-          index,
-          destination: row.destination,
-          error:
-            problems.get(index) ??
-            "Not created — another row in this batch was invalid, and a batch is all or nothing.",
-        })),
+    const results = body.links.map((row, index) => {
+      if (problems.has(index)) {
+        return { ok: false as const, index, destination: row.destination, error: problems.get(index)! };
+      }
+      if (skipped.has(index)) {
+        return { ok: false as const, index, destination: row.destination, error: skipped.get(index)!, skipped: true };
+      }
+      const link: Link = {
+        ...LINKS[0],
+        id: uid("lnk"),
+        slug: row.slug || Math.random().toString(36).slice(2, 9),
+        domain: row.domain,
+        destination: row.destination,
+        title: null,
+        comment: null,
+        tags: [],
+        status: "active",
+        clicks: 0,
+        uniqueClicks: 0,
+        rules: [],
+        sparkline: Array(15).fill(0),
+        createdAt: new Date().toISOString(),
+        createdBy: SESSION.user.name,
       };
-    } else {
-      const results = body.links.map((row, index) => {
-        const link: Link = {
-          ...LINKS[0],
-          id: uid("lnk"),
-          slug: row.slug || Math.random().toString(36).slice(2, 9),
-          domain: row.domain,
-          destination: row.destination,
-          title: null,
-          comment: null,
-          tags: [],
-          status: "active",
-          clicks: 0,
-          uniqueClicks: 0,
-          rules: [],
-          sparkline: Array(15).fill(0),
-          createdAt: new Date().toISOString(),
-          createdBy: SESSION.user.name,
-        };
-        linkStore.unshift(link);
-        return { ok: true, index, link };
-      });
-      data = { created: results.length, failed: 0, results };
-    }
+      linkStore.unshift(link);
+      return { ok: true as const, index, link };
+    });
+    data = { created: results.filter((r) => r.ok).length, skipped: skipped.size, failed: problems.size, results };
   } else if (m(/^\/links\/([^/]+)\/clone$/) && method === "POST") {
     const source = findLink(m(/^\/links\/([^/]+)\/clone$/)![1]);
     if (!source) throw new Error(`No fixture link ${path}`);
