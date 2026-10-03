@@ -617,9 +617,9 @@ webhooks as working features. That is the contradiction this entry resolves.
 **Decision.** Egress is now a configurable property of the stack via a
 `natStrategy: 'gateway' | 'instance' | 'none'` prop, wired from
 `app.node.tryGetContext('natStrategy')` in `bin/snapurl.ts`, **defaulting to
-`'instance'`**: a single t4g.nano NAT *instance* (`ec2.NatProvider.instanceV2`, ~$3/mo)
+`'instance'`**: a single t4g.micro NAT *instance* (`ec2.NatProvider.instanceV2`, ~$6/mo)
 rather than a managed NAT gateway. A hobby stack does not need the gateway's per-AZ
-redundancy, and $3/mo is a fraction of the ~$32/mo a gateway costs. RDS always stays in
+redundancy, and $6/mo is a fraction of the ~$32/mo a gateway costs. RDS always stays in
 `PRIVATE_ISOLATED` (it never egresses); the app Lambdas move to `PRIVATE_WITH_EGRESS`
 when NAT is on.
 
@@ -633,7 +633,7 @@ dollars a month for reaching any IPv4 endpoint a customer configures.
 
 | `natStrategy` | Cost | What it is | Egress features |
 | --- | --- | --- | --- |
-| `'instance'` (default) | ~$3/mo | t4g.nano NAT instance, single AZ (a deliberate SPOF for a hobby stack) | Function |
+| `'instance'` (default) | ~$6/mo | t4g.micro NAT instance, single AZ (a deliberate SPOF for a hobby stack) | Function |
 | `'gateway'` | ~$32/mo | Managed NAT gateway, highly available — the one-flag upgrade | Function |
 | `'none'` | $0 | The original zero-egress isolated-only topology, preserved exactly | **Non-functional** |
 
@@ -650,7 +650,47 @@ without a dedicated interface endpoint — which unblocks, but does not implemen
 
 **Revisit if** the single NAT instance's availability becomes a problem (flip to
 `'gateway'`), or if a deployment genuinely needs none of the egress features and wants
-to save the ~$3/mo (`'none'`).
+to save the ~$6/mo (`'none'`).
+
+### The NAT instance must not be a boot dependency: pinned AMI, t4g.micro, Secrets Manager endpoint
+
+**Forced by an outage (2026-10-03).** A routine deploy with no infra change replaced the
+NAT instance: its AMI was "latest Amazon Linux 2023", resolved afresh at every deploy, and
+a new AL2023 release had shipped. On the replacement t4g.nano, the NAT user data's
+`yum install iptables-services` was OOM-killed, so masquerading was never configured and
+the instance silently dropped everything routed to it. The API fetches its DB and JWT
+secrets from Secrets Manager at cold start *through that NAT*, with no SDK timeout, so it
+hung before its logger existed: every request was a 30s timeout with nothing in the logs.
+Redirects kept working only because the redirect function had already left the VPC.
+
+**Decision — three changes, each closing one link in that chain.**
+
+1. **Pin the NAT AMI per region** (`natAmiIds` in `infra/cdk.json`). cdk.json, not
+   `cdk.context.json`: the latter is gitignored, so a `cachedInContext` lookup would
+   differ between a laptop and CI and float again. A region with no pin falls back to the
+   floating image with a synth warning, so other regions and self-hosters are unaffected.
+   The NAT instance is now replaced only when someone bumps the pin.
+2. **t4g.micro instead of t4g.nano** (~$3/mo more). 512 MB is not enough for the dnf run in
+   CDK's NAT user data to be reliable; 1 GB is.
+3. **One interface endpoint: Secrets Manager** (~$7–8/mo, one AZ), whenever
+   `natStrategy != 'none'`. This reverses "only gateway endpoints, because interface
+   endpoints cost ~$7/mo each" (the stack's endpoint comment, and the deploy-time-config
+   entry above) for exactly one service: the one the API
+   cannot boot without. A NAT outage now costs the egress features (webhooks, mail, Safe
+   Browsing, OAuth JWKS) and nothing else. Plus a bounded Secrets Manager client
+   (`packages/database/src/secrets.ts`: 2 attempts, 2s connect / 5s request), so if the
+   endpoint is ever unreachable the cold start fails with a logged error rather than
+   hanging silently.
+
+**What it costs.** The default AWS profile goes from ~$3/mo to ~$14/mo of networking. That
+is still well under the ~$32/mo managed gateway, which would fix (1) and (2) but not (3).
+And the pin needs maintaining: AL2023 AMIs are deprecated about 90 days after release, so
+bump `natAmiIds` (which replaces the NAT instance and cuts egress for about a minute) at
+least that often. Pick an image that has already run cleanly.
+
+**Revisit if** CDK's NAT instance user data stops installing packages at boot (then the
+nano could come back), or if the API stops resolving secrets at runtime, which would make
+the endpoint unnecessary.
 
 ### Profile 3: the AWS serverless projection and the click pipeline
 

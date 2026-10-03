@@ -40,8 +40,19 @@ const secretCache = new Map<string, string>();
 /** Created lazily on first real fetch and reused thereafter. */
 let client: SecretsManagerClient | undefined;
 
+/** Bounded so an unreachable endpoint fails the cold start with an error in
+ *  the logs, instead of hanging silently until the Lambda times out. The SDK
+ *  default sets no socket timeout, and the API's bootstrap awaits this before
+ *  the logger exists, so a blackholed NAT once produced 30s timeouts with no
+ *  log line at all. Two attempts of at most ~5s each stay well inside the
+ *  API's 30s timeout. */
+export const SECRETS_CLIENT_CONFIG = {
+  maxAttempts: 2,
+  requestHandler: { connectionTimeout: 2_000, requestTimeout: 5_000 },
+} as const;
+
 function getClient(): SecretsManagerClient {
-  if (!client) client = new SecretsManagerClient({});
+  if (!client) client = new SecretsManagerClient(SECRETS_CLIENT_CONFIG);
   return client;
 }
 

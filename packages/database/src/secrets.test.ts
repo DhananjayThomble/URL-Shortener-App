@@ -6,8 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
    response accordingly. */
 const send = vi.fn();
 
-vi.mock("@aws-sdk/client-secrets-manager", () => ({
+const { SecretsManagerClient } = vi.hoisted(() => ({
   SecretsManagerClient: vi.fn().mockImplementation(() => ({ send })),
+}));
+
+vi.mock("@aws-sdk/client-secrets-manager", () => ({
+  SecretsManagerClient,
   GetSecretValueCommand: vi.fn().mockImplementation((input: { SecretId: string }) => ({ input })),
 }));
 
@@ -162,5 +166,34 @@ describe("resolveSecrets", () => {
       jwtRefreshSecret: "refresh-key",
     });
     expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("Secrets Manager client", () => {
+  beforeEach(() => {
+    __resetSecretCacheForTests();
+    send.mockReset();
+    SecretsManagerClient.mockClear();
+  });
+
+  /* Regression: the client was built with `{}`, so no socket timeout. With the
+     NAT instance blackholing traffic, GetSecretValue hung, the API bootstrap
+     never reached its logger, and every request was a silent 30s Lambda
+     timeout. A bounded client fails the cold start with a logged error. */
+  it("is constructed with bounded connection/request timeouts and retries", async () => {
+    respondWith({ [JWT_ARN]: "k" });
+    await resolveJwtSecret("JWT_ACCESS_SECRET_ARN", "JWT_ACCESS_SECRET", { JWT_ACCESS_SECRET_ARN: JWT_ARN });
+
+    expect(SecretsManagerClient).toHaveBeenCalledTimes(1);
+    const config = SecretsManagerClient.mock.calls[0]![0] as {
+      maxAttempts?: number;
+      requestHandler?: { connectionTimeout?: number; requestTimeout?: number };
+    };
+    expect(config.requestHandler?.connectionTimeout).toBeGreaterThan(0);
+    expect(config.requestHandler?.requestTimeout).toBeGreaterThan(0);
+    const worstCaseMs =
+      (config.maxAttempts ?? 3) * (config.requestHandler!.connectionTimeout! + config.requestHandler!.requestTimeout!);
+    // Must fail well before the API Gateway / Lambda 30s timeout so the error is logged.
+    expect(worstCaseMs).toBeLessThan(20_000);
   });
 });
