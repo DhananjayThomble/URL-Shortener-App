@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { sql, type Database } from "@snapurl/database";
+import { safePost } from "./safe-post.js";
 
 /* ============================================================
    Webhook delivery with exponential backoff.
@@ -56,8 +57,9 @@ export async function deliverWebhooks(db: Database, batchSize = 50): Promise<{ s
     const timestamp = Math.floor(Date.now() / 1000);
 
     try {
-      const response = await fetch(row.endpoint, {
-        method: "POST",
+      // Not fetch(): safePost refuses internal addresses at connect time and
+      // never follows redirects (#622). See safe-post.ts.
+      const status = await safePost(row.endpoint, {
         headers: {
           "Content-Type": "application/json",
           "X-SnapURL-Event": row.event,
@@ -67,14 +69,14 @@ export async function deliverWebhooks(db: Database, batchSize = 50): Promise<{ s
         body,
         // A receiver that takes longer than ten seconds is a receiver that
         // will take longer than ten seconds again. Retry rather than hold.
-        signal: AbortSignal.timeout(10_000),
+        timeoutMs: 10_000,
       });
 
-      if (response.ok) {
+      if (status >= 200 && status < 300) {
         await db.execute(sql`
           update webhook_deliveries
           set status = 'delivered', delivered_at = now(), attempts = attempts + 1,
-              response_code = ${response.status}, next_retry_at = null
+              response_code = ${status}, next_retry_at = null
           where id = ${row.id}::uuid
         `);
         await db.execute(sql`
@@ -86,7 +88,7 @@ export async function deliverWebhooks(db: Database, batchSize = 50): Promise<{ s
         continue;
       }
 
-      await recordFailure(db, row, `HTTP ${response.status}`, response.status);
+      await recordFailure(db, row, `HTTP ${status}`, status);
       failed++;
     } catch (err) {
       await recordFailure(db, row, String(err).slice(0, 300), null);
