@@ -113,6 +113,10 @@ new SnapUrlStack(app, "SnapUrl", {
      Google Cloud Console client's id exactly, and matching
      NEXT_PUBLIC_GOOGLE_CLIENT_ID on the frontend. */
   googleOAuthClientId: app.node.tryGetContext("googleOAuthClientId"),
+  /* Optional: the NAME of a Secrets Manager secret holding the Google Safe
+     Browsing API key, created by the operator beforehand. Unset leaves Safe
+     Browsing off. Set with `-c safeBrowsingSecretName=<name>`. */
+  safeBrowsingSecretName: app.node.tryGetContext("safeBrowsingSecretName"),
   /* The commit this deploy was built from, surfaced as the DeployedGitSha
      output. Set by CI (`-c deployedGitSha=<sha>`); omitted locally, in which
      case the output is simply not created. Answering "which commit is live?"

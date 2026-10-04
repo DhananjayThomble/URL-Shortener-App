@@ -404,6 +404,38 @@ this feature mandatory rather than optional. See the natStrategy section above
 — the JWKS fetch this depends on needs egress, so it stays non-functional
 under `natStrategy = 'none'` regardless of this flag.
 
+### Google Safe Browsing
+
+Optional — without a key, every new link is marked clean without being scanned
+(`docs/DECISIONS.md` A10), and the API logs a warning at startup saying so.
+
+The key is a secret, so it never goes in a GitHub variable, SSM plain text or a
+`-c` flag. Create it in Secrets Manager yourself, then point the stack at it by
+**name**:
+
+```bash
+# 1. Once, with the real key. Reading it from a prompt keeps it out of your
+#    shell history; it is never echoed.
+read -rs SB_KEY && aws secretsmanager create-secret --region ap-south-1 \
+  --name snapurl/prod/google-safe-browsing-api-key \
+  --description "Google Safe Browsing API key for the SnapURL API" \
+  --secret-string "$SB_KEY"; unset SB_KEY
+
+# 2. Tell the deploy which secret to read (a name, not a secret value):
+gh variable set SAFE_BROWSING_SECRET_NAME --body snapurl/prod/google-safe-browsing-api-key
+#    or, for a local deploy:  SAFE_BROWSING_SECRET_NAME=... bash infra/deploy.sh
+
+# Rotating the key later: put-secret-value on the same name, then redeploy or
+# wait for cold starts (the API caches it per execution environment).
+```
+
+The stack gives only the API read access to that one secret and passes its
+name as `GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN`; `apps/api/src/main.ts`
+resolves it at cold start. **Non-fatally**: a missing, denied or unreachable
+secret logs `Could not read the Safe Browsing API key secret: …` and the API
+starts with Safe Browsing off, rather than failing to boot. Calling Google needs
+egress, so this is ignored (with a synth warning) under `natStrategy = 'none'`.
+
 ### The redirect uses AWS SDK adapters and can leave the VPC
 
 The claim that "there is no AWS SDK anywhere in `apps/` or `packages/`" is no

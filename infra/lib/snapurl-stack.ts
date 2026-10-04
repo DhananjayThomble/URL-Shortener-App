@@ -27,6 +27,7 @@ import * as budgets from "aws-cdk-lib/aws-budgets";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 import * as path from "node:path";
 import { SnapUrlConfig } from "./config.js";
@@ -180,6 +181,22 @@ export interface SnapUrlStackProps extends StackProps {
    * initialized the SDK with.
    */
   googleOAuthClientId?: string;
+  /**
+   * NAME of an operator-created Secrets Manager secret holding the Google
+   * Safe Browsing API key, e.g. `snapurl/prod/google-safe-browsing-api-key`.
+   * Optional and opt-in, like {@link googleOAuthClientId}: unset means Safe
+   * Browsing stays off, exactly as today. Set with
+   * `-c safeBrowsingSecretName=<name>`.
+   *
+   * Referenced by name rather than created here on purpose: a CDK-created
+   * secret needs an initial value, and a generated one would be a junk "key"
+   * the API then sends to Google. The operator creates the secret with the
+   * real key first (`aws secretsmanager create-secret`), then deploys.
+   *
+   * Only meaningful with egress (`natStrategy` not `'none'`): the API both
+   * resolves the secret at cold start and calls Google over the internet.
+   */
+  safeBrowsingSecretName?: string;
 }
 
 /**
@@ -628,6 +645,21 @@ export class SnapUrlStack extends Stack {
      * lookup), false for 'none' (synth-time unwrap fallback). */
     const hasEgress = natStrategy !== "none";
 
+    /* The Safe Browsing key, when the operator has opted in (see
+       safeBrowsingSecretName). Under 'none' there is no path to Secrets
+       Manager or to Google, so the setting is ignored with a warning rather
+       than wired to a lookup that would only ever fail. */
+    if (props.safeBrowsingSecretName && !hasEgress) {
+      Annotations.of(this).addWarningV2(
+        "snapurl:safeBrowsingNoEgress",
+        "safeBrowsingSecretName is ignored under natStrategy 'none': the API cannot reach Secrets Manager or Google.",
+      );
+    }
+    const safeBrowsingSecret =
+      props.safeBrowsingSecretName && hasEgress
+        ? secretsmanager.Secret.fromSecretNameV2(this, "SafeBrowsingApiKey", props.safeBrowsingSecretName)
+        : undefined;
+
     /* 'none'-only fallback: no NAT, no route to Secrets Manager, so resolve the
        DB URL at synth time via unsafeUnwrap. This is the only path that still
        places the plaintext password in the template, by necessity. Left as a
@@ -861,6 +893,12 @@ export class SnapUrlStack extends Stack {
            "off" rather than "misconfigured". Only the API verifies OAuth ID
            tokens, so redirectFn and workerFn never get this key. */
         ...(props.googleOAuthClientId ? { GOOGLE_OAUTH_CLIENT_ID: props.googleOAuthClientId } : {}),
+        /* Same spread-only-when-set rule. A name, not an ARN: GetSecretValue
+           accepts either, and an operator-created secret's full ARN carries a
+           random suffix the stack cannot know. Resolved at cold start by
+           apps/api/src/main.ts, non-fatally — a missing or unreadable secret
+           logs a warning and leaves Safe Browsing off, never blocks the API. */
+        ...(safeBrowsingSecret ? { GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: safeBrowsingSecret.secretName } : {}),
         /* #470/#426, closing the AWS-profile gap the reviewer found on
            PR #594: LinkCacheBustService.bust() (apps/api/src/common/) calls
            CacheStore.del(linkCacheKey(host, slug)) so the redirect's hot-cache
@@ -1344,6 +1382,8 @@ export class SnapUrlStack extends Stack {
          public internet just as it reaches DynamoDB and SQS. */
       config.jwtAccessSecret.grantRead(redirectFn);
       config.jwtRefreshSecret.grantRead(apiFn);
+      // Only the API scans links, so only the API can read the key.
+      safeBrowsingSecret?.grantRead(apiFn);
     }
 
     /* ---------------------------------------------------------
