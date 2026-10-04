@@ -59,6 +59,9 @@ Actions → **Deploy (AWS)** → Run workflow:
 
 - `stack`: `SnapUrl`
 - `git_ref`: the target commit SHA
+- `version`: leave blank. With `git_ref` set, blank means no GitHub Release is
+  created: redeploying an old commit is not a new version. The release that
+  commit was originally deployed as is the one to point at.
 - `skip_smoke`: leave unchecked
 
 The `plan` job runs first. **Read its diff.** A rollback diff should be the exact
