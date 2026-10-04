@@ -900,12 +900,22 @@ export class SnapUrlStack extends Stack {
       }),
     );
 
-    /* LinkCacheBustService.bust() only ever calls CacheStore.del() (see
-       apps/api/src/common/link-cache-bust.service.ts) — a delete, never a
-       get/set — so grantWriteData is the least-privilege grant, unlike
-       redirectFn's grantReadWriteData below (which also reads/writes the
-       daily-salt cache on the same table). */
+    /* Two API consumers share this table once CACHE_DRIVER=dynamodb:
+       LinkCacheBustService.bust() only calls CacheStore.del(), and the rate
+       limiter (apps/api/src/common/cache-throttler-storage.ts) calls incr()
+       then pttl() on EVERY request — UpdateItem, then GetItem. A write-only
+       grant denied that GetItem, so every request, /health included, threw
+       and the API never passed its readiness check. So: the write grant plus
+       GetItem alone. Still no Scan/Query/BatchGetItem — nothing here reads
+       more than one known key, unlike redirectFn's grantReadWriteData below
+       (which also reads/writes the daily-salt cache on the same table). */
     cacheTable.grantWriteData(apiFn);
+    apiFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem"],
+        resources: [cacheTable.tableArn],
+      }),
+    );
 
     const httpApi = new apigw.HttpApi(this, "HttpApi", {
       // The app sets its own CORS headers; doing it here too would send two.
