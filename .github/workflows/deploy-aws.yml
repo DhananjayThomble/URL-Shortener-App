@@ -214,6 +214,8 @@ jobs:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          # Optional: unset leaves Safe Browsing off. Not in the required list.
+          SAFE_BROWSING_SECRET_NAME: ${{ vars.SAFE_BROWSING_SECRET_NAME }}
         run: |
           set -o pipefail
           # Mirror deploy.sh's flag set exactly. If these two ever drift the
@@ -223,6 +225,7 @@ jobs:
           [ -n "${DOMAIN_NAME}" ]            && ctx+=(-c "domainName=${DOMAIN_NAME}")
           [ -n "${BUDGET_EMAIL}" ]           && ctx+=(-c "budgetEmail=${BUDGET_EMAIL}")
           [ -n "${GOOGLE_OAUTH_CLIENT_ID}" ] && ctx+=(-c "googleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}")
+          [ -n "${SAFE_BROWSING_SECRET_NAME}" ] && ctx+=(-c "safeBrowsingSecretName=${SAFE_BROWSING_SECRET_NAME}")
           ctx+=(-c "deployedGitSha=${{ steps.rev.outputs.sha }}")
 
           npx cdk diff "${ctx[@]}" "${{ inputs.stack }}" 2>&1 | tee /tmp/cdk-diff.txt
@@ -392,6 +395,7 @@ jobs:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          SAFE_BROWSING_SECRET_NAME: ${{ vars.SAFE_BROWSING_SECRET_NAME }}
         run: |
           bash infra/deploy.sh "${{ inputs.stack }}" \
             -c "deployedGitSha=${{ steps.rev.outputs.sha }}"

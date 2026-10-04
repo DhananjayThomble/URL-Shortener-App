@@ -14,7 +14,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { SwaggerModule, type OpenAPIObject } from "@nestjs/swagger";
 import { Logger } from "nestjs-pino";
 import cors from "@fastify/cors";
-import { resolveSecrets } from "@snapurl/database";
+import { resolveSafeBrowsingApiKey, resolveSecrets } from "@snapurl/database";
 import { AppModule } from "./app.module.js";
 import { ENV, type Env } from "./config/env.js";
 import { resolveCorsOrigins } from "./config/cors-origins.js";
@@ -25,15 +25,22 @@ import { resolveCorsOrigins } from "./config/cors-origins.js";
    this makes no SDK call and touches nothing, so the plain-env path (local dev,
    compose, single-node, Kubernetes) is byte-identical. Nothing in the API reads
    these vars at import time, so running this first is safe. */
-async function hydrateSecretsIntoEnv(): Promise<void> {
-  const { databaseUrl, jwtAccessSecret, jwtRefreshSecret } = await resolveSecrets();
+async function hydrateSecretsIntoEnv(): Promise<{ safeBrowsingError?: Error }> {
+  const [{ databaseUrl, jwtAccessSecret, jwtRefreshSecret }, safeBrowsing] = await Promise.all([
+    resolveSecrets(),
+    /* Optional, so non-fatal: a failure leaves Safe Browsing off and is
+       reported below once the logger exists, instead of failing the boot. */
+    resolveSafeBrowsingApiKey(),
+  ]);
   if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
   if (jwtAccessSecret !== undefined) process.env.JWT_ACCESS_SECRET = jwtAccessSecret;
   if (jwtRefreshSecret !== undefined) process.env.JWT_REFRESH_SECRET = jwtRefreshSecret;
+  if (safeBrowsing.apiKey !== undefined) process.env.GOOGLE_SAFE_BROWSING_API_KEY = safeBrowsing.apiKey;
+  return { safeBrowsingError: safeBrowsing.error };
 }
 
 async function bootstrap() {
-  await hydrateSecretsIntoEnv();
+  const { safeBrowsingError } = await hydrateSecretsIntoEnv();
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
@@ -125,6 +132,10 @@ async function bootstrap() {
   const logger = app.get(Logger);
   logger.log(`SnapURL API listening on http://localhost:${env.PORT}/${env.API_PREFIX}`);
   logger.log(`API docs at http://localhost:${env.PORT}/${env.API_PREFIX}/docs`);
+  if (safeBrowsingError) {
+    // The message names the secret and the SDK error, never the key itself.
+    logger.warn(`Could not read the Safe Browsing API key secret: ${safeBrowsingError.message}`);
+  }
   if (!env.GOOGLE_SAFE_BROWSING_API_KEY) {
     logger.warn(
       "Safe Browsing is off (no GOOGLE_SAFE_BROWSING_API_KEY). Links will be marked clean without being scanned.",

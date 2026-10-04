@@ -283,6 +283,7 @@ non-secret in a secret only makes it unreadable in logs when you need it.
 | `DOMAIN_NAME` | `snapurl.in` |
 | `BUDGET_EMAIL` | the billing-alert address |
 | `GOOGLE_OAUTH_CLIENT_ID` | the **public** OAuth client id |
+| `SAFE_BROWSING_SECRET_NAME` | *optional* — the **name** of the Secrets Manager secret holding the Safe Browsing key (e.g. `snapurl/prod/google-safe-browsing-api-key`), never the key itself. Unset leaves Safe Browsing off. See DEPLOYMENT.md, "Google Safe Browsing". |
 
 > If you scope these as *environment* variables on `production` rather than
 > repository variables, `AWS_PLAN_ROLE_ARN` must still be a **repository**
