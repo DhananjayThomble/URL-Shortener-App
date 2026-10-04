@@ -305,6 +305,10 @@ registration is ever disabled in production do you add `smoke_email` /
 ## 5. First run
 
 1. Actions → **Deploy (AWS)** → Run workflow, leaving `stack` as `SnapUrl`.
+   Set `version` to the semver this deploy should be released as (e.g.
+   `2.2.0`), or leave it blank for the next patch after the latest `vX.Y.Z`
+   tag. `plan` rejects a malformed, duplicate or lower-than-latest version
+   before anything is applied.
 2. `plan` runs and writes the diff to the run summary. **Read it.** Confirm it
    contains only what you intended and no unexpected deletion.
 3. Approve the `production` environment prompt. `deploy` applies it.
@@ -312,6 +316,12 @@ registration is ever disabled in production do you add `smoke_email` /
    runs `scripts/smoke-redirect.sh` against the freshly-deployed URLs. If it
    fails, the deploy is not successful, regardless of what CloudFormation
    reported.
+5. Only if smoke passed, `release` tags the deployed commit `vX.Y.Z` and
+   creates a GitHub Release with notes generated from the merged PRs. A failed
+   deploy never creates one, so the latest release is what production runs,
+   until a rollback redeploys an older one (which creates no release). (A deploy run with `skip_smoke` still releases, and its notes
+   say the gate was skipped.) `package.json`'s `version` is not bumped: the tag
+   is the source of truth, and this workflow never commits to `main`.
 
 To roll back, dispatch the same workflow with `git_ref` set to an earlier commit
 — see `docs/ROLLBACK.md`, and read its warning about migrations first.
