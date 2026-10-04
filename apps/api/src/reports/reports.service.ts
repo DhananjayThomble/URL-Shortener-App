@@ -4,6 +4,7 @@ import type { AbuseReport, SubmitReportInput, SubmitReportResult, UpdateAbuseRep
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
+import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
 
 type AbuseReportRow = typeof abuseReports.$inferSelect;
 
@@ -12,6 +13,7 @@ export class ReportsService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly cacheBust: LinkCacheBustService,
+    private readonly projectionNudge: ProjectionNudgeService,
   ) {}
   private readonly logger = new Logger(ReportsService.name);
 
@@ -151,6 +153,15 @@ export class ReportsService {
             operation: "upsert",
             payload: { linkId: report.linkId!, operation: "upsert" },
           });
+          /* And nudge the worker to drain it now, as links.service's
+             enqueueProjection does (#394). Without this the outbox row waits
+             for the 1-minute scheduled drain, while the cacheBust below drops
+             the redirect's hot-cache entry straight away, so the redirect
+             re-reads the still-"clean" projection and keeps redirecting a link
+             an operator just flagged with no warning for up to a minute.
+             Fire-and-forget and safe inside the transaction (see
+             ProjectionNudgeService). */
+          this.projectionNudge.nudge();
 
           const [domainRow] = await tx
             .select({ domain: domains.domain })
