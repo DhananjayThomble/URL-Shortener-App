@@ -140,6 +140,33 @@ export async function resolveSecrets(env: NodeJS.ProcessEnv = process.env): Prom
   return { databaseUrl, jwtAccessSecret, jwtRefreshSecret };
 }
 
+/**
+ * Resolve the Google Safe Browsing API key, never throwing.
+ *
+ * Unlike the DB and JWT secrets, this one is optional: without it the API runs
+ * with Safe Browsing off. So a missing or unreadable secret must not fail the
+ * cold start. The error is returned for the caller to log once a logger
+ * exists, and the key is left unset.
+ *
+ * Escape hatch as above: with no GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN set,
+ * returns the plain GOOGLE_SAFE_BROWSING_API_KEY (possibly undefined) and makes
+ * no SDK call.
+ */
+export async function resolveSafeBrowsingApiKey(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ apiKey: string | undefined; error?: Error }> {
+  try {
+    const apiKey = await resolveJwtSecret(
+      "GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN",
+      "GOOGLE_SAFE_BROWSING_API_KEY",
+      env,
+    );
+    return { apiKey: apiKey?.trim() || undefined };
+  } catch (err) {
+    return { apiKey: undefined, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
 /** Test-only: clears the module-level cache and lazily-created client so each
  *  unit test starts from a clean slate. Not part of the runtime contract. */
 export function __resetSecretCacheForTests(): void {

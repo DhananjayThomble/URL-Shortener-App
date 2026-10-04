@@ -19,6 +19,7 @@ import {
   __resetSecretCacheForTests,
   resolveDatabaseUrl,
   resolveJwtSecret,
+  resolveSafeBrowsingApiKey,
   resolveSecrets,
 } from "./secrets.js";
 
@@ -195,5 +196,48 @@ describe("Secrets Manager client", () => {
       (config.maxAttempts ?? 3) * (config.requestHandler!.connectionTimeout! + config.requestHandler!.requestTimeout!);
     // Must fail well before the API Gateway / Lambda 30s timeout so the error is logged.
     expect(worstCaseMs).toBeLessThan(20_000);
+  });
+});
+
+describe("resolveSafeBrowsingApiKey", () => {
+  const SB_ARN = "snapurl/test/google-safe-browsing-api-key";
+
+  beforeEach(() => {
+    __resetSecretCacheForTests();
+    send.mockReset();
+  });
+
+  it("escape hatch: returns the plain key and makes NO SDK call when the secret ARN is unset", async () => {
+    const result = await resolveSafeBrowsingApiKey({ GOOGLE_SAFE_BROWSING_API_KEY: "plain-key" });
+    expect(result).toEqual({ apiKey: "plain-key" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns no key and no error when neither is set (Safe Browsing off)", async () => {
+    expect(await resolveSafeBrowsingApiKey({})).toEqual({ apiKey: undefined });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("fetches the key from the secret and trims surrounding whitespace", async () => {
+    respondWith({ [SB_ARN]: "  sb-key\n" });
+    const result = await resolveSafeBrowsingApiKey({ GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: SB_ARN });
+    expect(result).toEqual({ apiKey: "sb-key" });
+  });
+
+  it("treats a blank secret as no key rather than sending an empty key to Google", async () => {
+    respondWith({ [SB_ARN]: "   " });
+    expect(await resolveSafeBrowsingApiKey({ GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: SB_ARN })).toEqual({
+      apiKey: undefined,
+    });
+  });
+
+  /* The point of this resolver: the key is optional, so a secret that is
+     missing, unreadable or denied must leave Safe Browsing off, not reject and
+     take the API's cold start down with it. */
+  it("never rejects: a failed fetch returns the error and no key", async () => {
+    send.mockRejectedValue(new Error("ResourceNotFoundException: Secrets Manager can't find the specified secret."));
+    const result = await resolveSafeBrowsingApiKey({ GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: SB_ARN });
+    expect(result.apiKey).toBeUndefined();
+    expect(result.error?.message).toMatch(/ResourceNotFoundException/);
   });
 });
