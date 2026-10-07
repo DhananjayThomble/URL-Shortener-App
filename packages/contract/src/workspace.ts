@@ -170,6 +170,10 @@ export const BioBlock = z.object({
   subtitle: z.string().nullable().optional(),
   metric: z.string().nullable().optional(),
   locked: z.boolean().default(false),
+  /** Where the block goes. The editor needs it back, because PUT /bio-pages
+   *  replaces the whole page: a block whose href was not returned here would
+   *  lose it on the next save. */
+  href: z.string().nullable().optional(),
 });
 export type BioBlock = z.infer<typeof BioBlock>;
 
@@ -193,6 +197,9 @@ export type BioPage = z.infer<typeof BioPage>;
  * don't go anywhere is pointless.
  */
 export const PublicBioBlock = z.object({
+  /** Addresses the block for POST /public/bio-pages/:slug/blocks/:id/click.
+   *  Stable across saves of the page, so an open tab still counts correctly. */
+  id: z.string(),
   kind: z.enum(["header", "link", "embed", "email", "social"]),
   title: z.string(),
   subtitle: z.string().nullable().optional(),
@@ -218,10 +225,17 @@ export const UpsertBioPageInput = z.object({
   blocks: z
     .array(
       BioBlock.omit({ id: true }).extend({
+        /** An existing block's id keeps its click count across the save;
+         *  anything else is treated as a new block. */
         id: z.string().optional(),
-        href: HttpUrl.optional(),
+        // Matches the bio_blocks column widths, so an over-long value is a 400
+        // here rather than a 500 from Postgres.
+        title: z.string().trim().min(1).max(160),
+        subtitle: z.string().max(200).nullable().optional(),
+        href: HttpUrl.nullable().optional(),
       }),
     )
+    .max(50)
     .default([]),
 });
 export type UpsertBioPageInput = z.infer<typeof UpsertBioPageInput>;

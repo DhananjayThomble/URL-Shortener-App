@@ -50,6 +50,26 @@ route({
 
 route({
   method: "post",
+  path: "/public/bio-pages/{slug}/view",
+  tag,
+  summary: "Count one view of a published bio page (30/min per IP)",
+  public: true,
+  params: SlugParam,
+  responses: { 204: { description: "Counted" } },
+});
+
+route({
+  method: "post",
+  path: "/public/bio-pages/{slug}/blocks/{blockId}/click",
+  tag,
+  summary: "Count one click on a block of a published bio page (30/min per IP)",
+  public: true,
+  params: SlugParam.extend({ blockId: z.uuid() }),
+  responses: { 204: { description: "Counted" } },
+});
+
+route({
+  method: "post",
   path: "/public/forms/{slug}",
   tag,
   summary: "Submit a form response (10/min per IP)",
