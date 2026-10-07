@@ -89,6 +89,80 @@ test.describe("bio pages", () => {
     expect(await page.getByRole("row").count()).toBe(rowsBefore);
   });
 
+  /* The block editor. Before this, "Blocks — drag to reorder" was a static
+     list: nothing could be dragged, "＋ Add block" had no handler, and a block
+     could not be edited or removed — the editor was a picture of one.
+
+     Oracle: UpsertBioPageInput in packages/contract (a block's href must be an
+     absolute http(s) URL); the invariant that the order in the editor, the
+     preview and the saved page is the same order. */
+  test("add a block, drag it to the top, save, and see the order stick", async ({ page }) => {
+    await page.goto("/bio");
+    await expect(page.getByRole("row", { name: /\/acme\b/ })).toBeVisible();
+
+    const blocks = page.getByTestId("bio-block");
+    const titles = () => blocks.locator("b").allTextContents();
+    await expect(blocks).toHaveCount(6);
+
+    // Add a link block; it opens for editing at the bottom.
+    await page.getByRole("button", { name: "＋ Add block" }).click();
+    await page.getByRole("button", { name: /Link$/ }).click();
+    await expect(blocks).toHaveCount(7);
+    await page.getByLabel("Title", { exact: true }).fill("E2E docs");
+
+    // An invalid URL is refused by the contract before any request is made.
+    await page.getByLabel("URL", { exact: true }).fill("not a url");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "E2E docs" })).toContainText("URL");
+    await page.getByLabel("URL", { exact: true }).fill("https://example.com/docs");
+    await page.getByRole("button", { name: "Close block “E2E docs”" }).click();
+
+    // Drag the new block onto the first movable block (the header is locked
+    // to the top, so it lands second).
+    await blocks.filter({ hasText: "E2E docs" }).dragTo(blocks.filter({ hasText: "Shop the spring collection" }));
+    expect((await titles()).slice(0, 3)).toEqual(["Header", "E2E docs", "Shop the spring collection"]);
+
+    // The keyboard path does the same job without a mouse.
+    await page.getByRole("button", { name: "Move “Download the app” up" }).click();
+    expect((await titles()).slice(0, 4)).toEqual(["Header", "E2E docs", "Download the app", "Shop the spring collection"]);
+
+    // The locked header cannot be displaced from the top.
+    await expect(page.getByRole("button", { name: "Move “E2E docs” up" })).toBeDisabled();
+
+    // The preview follows the draft, in the same order.
+    const preview = page.locator("text=Powered by SnapURL").locator("..");
+    await expect(preview.getByText("E2E docs")).toBeVisible();
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+
+    // The saved page (re-read from the store) has the new order and block count.
+    await expect(page.getByRole("row", { name: /\/acme\b/ }).getByRole("cell").nth(1)).toHaveText("7");
+    expect((await titles()).slice(0, 4)).toEqual(["Header", "E2E docs", "Download the app", "Shop the spring collection"]);
+
+    // Remove it again.
+    await page.getByRole("button", { name: "Edit block “E2E docs”" }).click();
+    await page.getByRole("button", { name: "Remove block" }).click();
+    await expect(blocks).toHaveCount(6);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("row", { name: /\/acme\b/ }).getByRole("cell").nth(1)).toHaveText("6");
+  });
+
+  test("edit the profile and see it in the preview", async ({ page }) => {
+    await page.goto("/bio");
+    await expect(page.getByRole("row", { name: /\/acme\b/ })).toBeVisible();
+
+    await page.getByLabel("Profile name").fill("Acme Studio");
+    await page.getByLabel("Profile bio").fill("We make the tools.");
+    const preview = page.locator("text=Powered by SnapURL").locator("..");
+    await expect(preview.getByText("Acme Studio")).toBeVisible();
+    await expect(preview.getByText("We make the tools.")).toBeVisible();
+    await expect(preview.getByText("AS", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Discard" }).click();
+    await expect(page.getByLabel("Profile name")).toHaveValue("Acme");
+  });
+
   /* Regression for #497 item 1, added per PR #500 review: the phone-preview
      footer ("Powered by SnapURL") composited text-ink-3 with opacity-70 down
      to an effective 2.85:1 — an axe-core `serious` color-contrast violation

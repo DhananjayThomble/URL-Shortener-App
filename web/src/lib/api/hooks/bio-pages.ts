@@ -40,3 +40,22 @@ export function usePublicBioPage(slug: string) {
     retry: false,
   });
 }
+
+/** Counts one view of a published page. Fire-and-forget: a visitor's page must
+ *  never break because a counter could not be written. */
+export function recordBioView(slug: string) {
+  return request(`/public/bio-pages/${encodeURIComponent(slug)}/view`, z.undefined(), {
+    method: "POST",
+    anonymous: true,
+  }).catch(() => undefined);
+}
+
+/** Counts one click on a block. `keepalive`, because the visitor is navigating
+ *  away in the same instant and the browser would otherwise cancel it. */
+export function recordBioClick(slug: string, blockId: string) {
+  return request(
+    `/public/bio-pages/${encodeURIComponent(slug)}/blocks/${encodeURIComponent(blockId)}/click`,
+    z.undefined(),
+    { method: "POST", anonymous: true, keepalive: true },
+  ).catch(() => undefined);
+}

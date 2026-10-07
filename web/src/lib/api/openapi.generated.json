@@ -122,6 +122,12 @@
   "/public/bio-pages/{slug}": [
     "GET"
   ],
+  "/public/bio-pages/{slug}/blocks/{blockId}/click": [
+    "POST"
+  ],
+  "/public/bio-pages/{slug}/view": [
+    "POST"
+  ],
   "/public/forms/{slug}": [
     "GET",
     "POST"

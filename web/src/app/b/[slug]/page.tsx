@@ -1,8 +1,11 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { Card, CardBody, Skeleton } from "@/components/ui";
-import { usePublicBioPage } from "@/lib/api/hooks";
+import { recordBioClick, recordBioView, usePublicBioPage } from "@/lib/api/hooks";
+
+const BLOCK_ICON: Record<string, string> = { embed: "▶", email: "✉", social: "◈" };
 
 /* The shareable end of a bio page.
 
@@ -18,6 +21,17 @@ import { usePublicBioPage } from "@/lib/api/hooks";
 export default function PublicBioPage() {
   const { slug } = useParams<{ slug: string }>();
   const page = usePublicBioPage(slug);
+
+  /* One view per page load — not per refetch, and not twice under React's
+     dev-mode double effect. Only once the page actually resolved, so a 404
+     counts nothing. */
+  const counted = useRef<string | null>(null);
+  const loadedSlug = page.data?.slug;
+  useEffect(() => {
+    if (!loadedSlug || counted.current === loadedSlug) return;
+    counted.current = loadedSlug;
+    void recordBioView(slug);
+  }, [loadedSlug, slug]);
 
   if (page.isLoading) {
     return (
@@ -68,10 +82,13 @@ export default function PublicBioPage() {
               {links.map((block, i) =>
                 block.href ? (
                   <a
-                    key={i}
+                    key={block.id ?? i}
                     href={block.href}
+                    rel="noopener"
+                    onClick={() => void recordBioClick(slug, block.id)}
                     className="w-full px-4 py-3 rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[14px] font-medium text-ink hover:border-accent hover:bg-surface transition-colors no-underline"
                   >
+                    {BLOCK_ICON[block.kind] ? <span aria-hidden="true">{BLOCK_ICON[block.kind]} </span> : null}
                     {block.title}
                     {block.subtitle ? (
                       <span className="block text-[12px] font-normal text-ink-3 mt-0.5">{block.subtitle}</span>
@@ -79,7 +96,7 @@ export default function PublicBioPage() {
                   </a>
                 ) : (
                   <div
-                    key={i}
+                    key={block.id ?? i}
                     className="w-full px-4 py-3 rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[14px] font-medium text-ink-2"
                   >
                     {block.title}

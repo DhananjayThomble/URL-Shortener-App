@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { SubmitFormInput, SubmitReportInput, UnlockLinkInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
@@ -63,6 +63,25 @@ export class PublicController {
   @Get("bio-pages/:slug")
   bioPage(@Param("slug") slug: string) {
     return this.bio.publicPage(slug);
+  }
+
+  /* View and click counters for a published bio page. Bare increments — no
+     visitor identity, IP or cookie is stored — throttled per client IP well
+     below the global budget so one address cannot pump a page's numbers. */
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post("bio-pages/:slug/view")
+  @HttpCode(204)
+  async bioPageView(@Param("slug") slug: string) {
+    await this.bio.recordView(slug);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post("bio-pages/:slug/blocks/:blockId/click")
+  @HttpCode(204)
+  async bioBlockClick(@Param("slug") slug: string, @Param("blockId", ParseUUIDPipe) blockId: string) {
+    await this.bio.recordClick(slug, blockId);
   }
 
   /* 200 with `ok: false` rather than a 400 for a validation failure. The
