@@ -54,11 +54,6 @@ export const tokens = {
     s?.setItem(TOKEN_KEY, access);
     s?.setItem(REFRESH_KEY, refresh);
   },
-  /** Replace only the access token — accepting an invitation or switching
-   *  workspace (#668) mints a new access token and keeps the refresh token. */
-  setAccess(access: string) {
-    safeStorage()?.setItem(TOKEN_KEY, access);
-  },
   clear() {
     const s = safeStorage();
     s?.removeItem(TOKEN_KEY);
@@ -75,17 +70,7 @@ export const tokens = {
  * expired token too, which is exactly when refresh needs it.
  */
 export function currentWorkspaceId(): string | undefined {
-  const access = tokens.access;
-  if (!access) return undefined;
-  try {
-    const part = access.split(".")[1];
-    if (!part) return undefined;
-    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
-    const wid = (JSON.parse(json) as { wid?: unknown }).wid;
-    return typeof wid === "string" ? wid : undefined;
-  } catch {
-    return undefined;
-  }
+  return workspaceIdOf(tokens.access);
 }
 
 export class ApiError extends Error {
@@ -162,23 +147,57 @@ type RequestOptions = {
 
 let refreshInFlight: Promise<boolean> | null = null;
 
-async function refreshSession(): Promise<boolean> {
+/** The `wid` claim of an access token, unverified (see currentWorkspaceId). */
+export function workspaceIdOf(access: string | null | undefined): string | undefined {
+  if (!access) return undefined;
+  try {
+    const part = access.split(".")[1];
+    if (!part) return undefined;
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const wid = (JSON.parse(json) as { wid?: unknown }).wid;
+    return typeof wid === "string" ? wid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/* #699 — the workspace a tab is in can change underneath it: another tab
+   switches (tokens live in shared localStorage), or a refresh lands somewhere
+   other than where the session was because that membership is gone. Either
+   way every cached query was answered for the old workspace. This event is how
+   the client tells the app shell; WorkspaceChangeGuard (providers.tsx) clears
+   the cache and routes to /links. */
+export const WORKSPACE_CHANGED_EVENT = "snapurl:workspace-changed";
+export const ACCESS_TOKEN_STORAGE_KEY = TOKEN_KEY;
+
+function announceWorkspaceChange(from: string | undefined, to: string | undefined) {
+  if (typeof window === "undefined" || !from || !to || from === to) return;
+  window.dispatchEvent(new CustomEvent(WORKSPACE_CHANGED_EVENT, { detail: { from, to } }));
+}
+
+type RefreshOutcome = { ok: true } | { ok: false; res?: Response };
+
+/** One POST /auth/refresh, serialised with any other in this tab (a refresh
+ *  token is single-use: two concurrent rotations would trip reuse detection). */
+async function runRefresh(workspaceId: string | undefined): Promise<RefreshOutcome> {
+  while (refreshInFlight) await refreshInFlight;
   const refresh = tokens.refresh;
-  if (!refresh) return false;
-  refreshInFlight ??= (async () => {
+  if (!refresh) return { ok: false };
+  let outcome: RefreshOutcome = { ok: false };
+  const run = (async () => {
     try {
-      // Stay in the workspace this session is in; without the hint a
-      // multi-workspace user would be moved back to their default every
-      // time the access token expires (#668).
-      const workspaceId = currentWorkspaceId();
       const res = await fetch(`${API_URL}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(workspaceId ? { refreshToken: refresh, workspaceId } : { refreshToken: refresh }),
       });
-      if (!res.ok) return false;
+      if (!res.ok) {
+        outcome = { ok: false, res };
+        return false;
+      }
       const data = (await res.json()) as { accessToken: string; refreshToken: string };
       tokens.set(data.accessToken, data.refreshToken);
+      outcome = { ok: true };
       return true;
     } catch {
       return false;
@@ -186,7 +205,48 @@ async function refreshSession(): Promise<boolean> {
       refreshInFlight = null;
     }
   })();
-  return refreshInFlight;
+  refreshInFlight = run;
+  await run;
+  return outcome;
+}
+
+async function refreshSession(): Promise<boolean> {
+  if (!tokens.refresh) return false;
+  // A refresh already running answers for this caller too.
+  if (refreshInFlight) return refreshInFlight;
+  // Stay in the workspace this session is in; without the hint a
+  // multi-workspace user would be moved back to their default every
+  // time the access token expires (#668).
+  const before = currentWorkspaceId();
+  const { ok } = await runRefresh(before);
+  // #699 — the hint is honoured only while that membership is active; when it
+  // is not, the API falls back to the default workspace. That is a workspace
+  // change and must be treated as one, not silently absorbed.
+  if (ok) announceWorkspaceChange(before, currentWorkspaceId());
+  return ok;
+}
+
+/**
+ * Move this session into `workspaceId` (the switcher, or after accepting an
+ * invitation).
+ *
+ * #699 — always through POST /auth/refresh, which rotates the refresh token
+ * and refuses a revoked one. An access token alone can never buy a new one.
+ * Resolves only once the new access token is bound to `workspaceId`; the
+ * caller owns clearing the cache, since it asked for the change.
+ */
+export async function enterWorkspace(workspaceId: string): Promise<void> {
+  if (USE_FIXTURES) return;
+  const { ok, ...rest } = await runRefresh(workspaceId);
+  if (!ok) {
+    const res = "res" in rest ? rest.res : undefined;
+    if (!res || res.status === 401) tokens.clear();
+    throw res ? await toApiError(res, "/auth/refresh") : new ApiError(401, "Your session has expired. Sign in again to continue.");
+  }
+  if (currentWorkspaceId() !== workspaceId) {
+    // Refresh fell back: the membership is gone (removed meanwhile).
+    throw new ApiError(404, "You're no longer a member of that workspace.");
+  }
 }
 
 async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOptions = {}, retry = true): Promise<T> {

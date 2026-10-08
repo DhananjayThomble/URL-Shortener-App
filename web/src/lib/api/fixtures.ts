@@ -723,14 +723,15 @@ export async function fixtureRequest<T>(
     data = undefined;
   } else if (m(/^\/auth\/email\/resend$/)) data = undefined;
   /* #668 — the switcher and the invite accept. Fixtures have one workspace,
-     so the switcher lists just it and "switching" returns the same session.
+     so the switcher lists just it, and entering a workspace (#699: a hinted
+     refresh, see enterWorkspace in client.ts) is a no-op in fixtures mode.
      "fixture.invalid.token" is the sentinel invite that fails. */
   else if (m(/^\/auth\/workspaces$/)) {
     data = [{ id: WORKSPACE.id, name: WORKSPACE.name, initials: WORKSPACE.initials, role: SESSION.user.role, current: true }];
-  } else if (m(/^\/auth\/(workspace|invite\/accept)$/) && method === "POST") {
+  } else if (m(/^\/auth\/invite\/accept$/) && method === "POST") {
     const token = (opts.body as { token?: string })?.token ?? "";
     if (token === "fixture.invalid.token") throw new Error("This invitation link isn't valid.");
-    data = { accessToken: SESSION.accessToken, workspaceId: WORKSPACE.id, user: SESSION.user };
+    data = { workspaceId: WORKSPACE.id, user: SESSION.user };
   }
   else if (m(/^\/auth\/2fa\/setup$/)) {
     data = {

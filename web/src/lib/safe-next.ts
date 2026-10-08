@@ -12,18 +12,31 @@
  */
 export function safeNext(raw: string | null | undefined, fallback = "/links"): string {
   if (!raw) return fallback;
-  if (!raw.startsWith("/")) return fallback;
-  if (raw.startsWith("//") || raw.startsWith("/\\")) return fallback;
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f\\]/.test(raw)) return fallback;
+  if (!isSafePath(raw)) return fallback;
   try {
     // Resolve against a throwaway origin: if it escapes it, it isn't a path.
     const url = new URL(raw, "https://snapurl.invalid");
     if (url.origin !== "https://snapurl.invalid") return fallback;
-    return `${url.pathname}${url.search}${url.hash}`;
+    const out = `${url.pathname}${url.search}${url.hash}`;
+    /* #699 — normalising can MANUFACTURE the very prefix the raw check
+       refused: "/..//evil.example", "/.//evil.example", "/%2e%2e//evil.example"
+       and "/a/..//evil.example" all resolve to "//evil.example", which
+       router.push treats as protocol-relative and leaves the site for. So the
+       value actually returned is checked again, by the same rules. */
+    return isSafePath(out) ? out : fallback;
   } catch {
     return fallback;
   }
+}
+
+/** A same-origin absolute path: one leading "/", no "//" or "/\" prefix, no
+ *  backslash or control character anywhere. */
+function isSafePath(path: string): boolean {
+  if (!path.startsWith("/")) return false;
+  if (path.startsWith("//") || path.startsWith("/\\")) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f\\]/.test(path)) return false;
+  return true;
 }
 
 /** `/login?next=…` / `/register?next=…`, or the bare route when there is no valid next. */

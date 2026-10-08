@@ -4,6 +4,7 @@ import Script from "next/script";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { useOAuthSignIn } from "@/lib/api/hooks";
+import { safeNext } from "@/lib/safe-next";
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
@@ -58,7 +59,15 @@ function generateNonce(): string {
  * abandons the in-flight attempt and the next mount generates its own, so
  * there is nothing that needs to survive one.
  */
-export function GoogleButton({ text = "continue_with" }: { text?: "signin_with" | "signup_with" | "continue_with" }) {
+export function GoogleButton({
+  text = "continue_with",
+  next,
+}: {
+  text?: "signin_with" | "signup_with" | "continue_with";
+  /** #699 — the page's raw `?next=`; re-sanitised here so a signed-out
+   *  invitee who picks Google still lands back on the invitation. */
+  next?: string | null;
+}) {
   const router = useRouter();
   const oauthSignIn = useOAuthSignIn();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,7 +97,7 @@ export function GoogleButton({ text = "continue_with" }: { text?: "signin_with" 
             // Same union, same narrowing as password login (useLogin):
             // a 2FA challenge is not yet a session.
             if ("challenge" in result) return;
-            router.push("/links");
+            router.push(safeNext(next));
           })
           .catch((err: unknown) => setError(err instanceof Error ? err.message : "Google sign-in failed. Try again."));
       },
