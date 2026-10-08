@@ -226,9 +226,12 @@ test.describe("Journey 15 — Team invitation accept (#668)", () => {
 
     const own = menu.getByRole("menuitemradio", { name: new RegExp(`${newcomerName}'s workspace`) });
     await expect(own).toContainText("owner");
-    const switched = page.waitForResponse((r) => /\/auth\/workspace$/.test(r.url()));
+    // #699 — switching is a hinted refresh (rotation + revocation), never a
+    // token minted from the access token.
+    const switched = page.waitForResponse((r) => /\/auth\/refresh$/.test(r.url()) && r.request().method() === "POST");
     await own.click();
     expect((await switched).status()).toBe(200);
+    expect(JSON.parse((await switched).request().postData() ?? "{}")).toMatchObject({ workspaceId: expect.any(String) });
     await expect(page.getByRole("button", { name: `Workspace: ${newcomerName}'s workspace. Switch workspace` })).toBeVisible();
     expect(((await (await api(await browserToken(page), "/auth/me")).json()) as { role: string }).role).toBe("owner");
 
