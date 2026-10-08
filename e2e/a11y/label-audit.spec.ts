@@ -28,7 +28,7 @@ import { createRealLink, registerRealUser, seedSessionTokens } from "../support/
    11 static (app) routes in ROUTES below, each × 2 viewports × 2 themes = 44 checks.
    Plus per (viewport × theme):
      · the create-link drawer, walking its 6 tabs               → 4 checks
-     · the /links/[id] detail page's "Edit destination" Field   → 4 checks
+     · the /links/[id] edit drawer                              → 4 checks
    Total = 52 checks. (An earlier revision of this file said "13 routes" and
    scanned 11; that prose was wrong. The set below is the real set.)
 
@@ -262,11 +262,12 @@ for (const theme of THEMES) {
         await expect(page.getByRole("group", { name: "Conversions date range" })).toBeVisible();
       });
 
-      test("/links/[id] Edit destination Field has no label/select-name violations", async ({ page }) => {
+      test("/links/[id] edit drawer has no label/select-name violations", async ({ page }) => {
         // Dynamic route: no globalSetup seeds a link, so create one against the
         // real API as a fresh account and drive the browser as that same account.
-        // The `<Field label="Destination">` at links/[id]/page.tsx is exactly the
-        // association this issue turns on; it only mounts after clicking "Edit".
+        // The edit drawer (#644 — EditLinkDrawer) replaced the old
+        // destination-only `<Field label="Destination">`; "Edit" now opens the
+        // same tabbed form the create-link drawer uses, labeled "Destination URL".
         const session = await registerRealUser();
         const link = await createRealLink(session);
         await seedSessionTokens(page, session);
@@ -275,9 +276,9 @@ for (const theme of THEMES) {
         await page.waitForLoadState("networkidle").catch(() => {});
         await page.getByRole("button", { name: "Edit", exact: true }).first().click();
         // Field label + associated input must be present before scanning. Match
-        // the control by its exact accessible name — "Destination" as a substring
-        // also appears in the topbar search's aria-label and the Cancel button.
-        await expect(page.getByRole("textbox", { name: "Destination", exact: true })).toBeVisible();
+        // the control by its exact accessible name — "Destination URL" as a
+        // substring also appears in the topbar search's aria-label.
+        await expect(page.getByRole("textbox", { name: "Destination URL", exact: true })).toBeVisible();
 
         const { violations } = await runAxe(page);
         const found = summarise(violations);
