@@ -2,14 +2,15 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
 import { useLogin, useVerifyTotp } from "@/lib/api/hooks";
+import { safeNext, withNext } from "@/lib/safe-next";
 
 const Schema = z.object({
   email: z.string().min(1, "Enter your email address").email("That doesn't look like an email address"),
@@ -17,8 +18,22 @@ const Schema = z.object({
 });
 type Values = z.infer<typeof Schema>;
 
+// useSearchParams (for ?next=, #668) needs a Suspense boundary during static
+// prerender, same as reset-password/page.tsx.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  // Where to go once signed in — e.g. back to an /invite link (#668). Only a
+  // same-origin path is honoured; see safeNext.
+  const nextParam = useSearchParams().get("next");
+  const next = safeNext(nextParam);
   const login = useLogin();
   const verify = useVerifyTotp();
   const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
@@ -38,7 +53,7 @@ export default function LoginPage() {
         setChallengeToken(result.challengeToken);
         return;
       }
-      router.push("/links");
+      router.push(next);
     } catch {
       /* surfaced from login.error */
     }
@@ -50,7 +65,7 @@ export default function LoginPage() {
     setCodeError(null);
     try {
       await verify.mutateAsync({ challengeToken, code });
-      router.push("/links");
+      router.push(next);
     } catch (err) {
       setCodeError((err as Error).message || "That code isn't right.");
     }
@@ -114,7 +129,7 @@ export default function LoginPage() {
         </Button>
         <p className="text-[12.5px] text-ink-3 text-center m-0">
           New here?{" "}
-          <Link href="/register" className="text-accent font-semibold">
+          <Link href={withNext("/register", nextParam)} className="text-accent font-semibold">
             Create an account
           </Link>
         </p>

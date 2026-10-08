@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Post, Req } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyRequest } from "fastify";
 import {
+  AcceptInviteInput,
   LoginInput,
   LogoutInput,
   OAuthSignInInput,
@@ -11,6 +12,7 @@ import {
   EmailVerifyResendInput,
   RefreshInput,
   RegisterInput,
+  SwitchWorkspaceInput,
   TotpDisableInput,
   TotpEnableInput,
   TotpVerifyInput,
@@ -56,7 +58,38 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   refresh(@Body(zodBody(RefreshInput)) input: RefreshInput, @Req() req: FastifyRequest) {
-    return this.auth.refresh(input.refreshToken, req.headers["user-agent"]);
+    return this.auth.refresh(input.refreshToken, req.headers["user-agent"], input.workspaceId);
+  }
+
+  /* #668 — accept a team invitation. Session-only: no @Scope, so the guard
+     refuses API keys (fail-closed), and an anonymous caller gets 401 — the web
+     /invite page sends them to sign in or register first and comes back with
+     the token preserved.
+
+     Throttled like the other token-consuming auth routes. The token carries
+     256 bits, so guessing is not the threat; the limit is there so the route
+     cannot be hammered as a cheap DB probe. 10/min rather than login's 5/min:
+     this does no argon2 work, and one person legitimately retries it (verify
+     email, come back, accept). Keyed on the trustworthy IP. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post("invite/accept")
+  @HttpCode(200)
+  acceptInvite(@Actor() actor: RequestActor, @Body(zodBody(AcceptInviteInput)) input: AcceptInviteInput) {
+    return this.auth.acceptInvite(actor.userId!, input.token);
+  }
+
+  /* #668 — the workspace switcher. Access tokens are bound to one workspace,
+     so switching means a new access token for the target; the refresh token is
+     unchanged and keeps the workspace via RefreshInput.workspaceId. */
+  @Get("workspaces")
+  workspaces(@Actor() actor: RequestActor) {
+    return this.auth.listWorkspaces(actor.userId!, actor.workspaceId);
+  }
+
+  @Post("workspace")
+  @HttpCode(200)
+  switchWorkspace(@Actor() actor: RequestActor, @Body(zodBody(SwitchWorkspaceInput)) input: SwitchWorkspaceInput) {
+    return this.auth.switchWorkspace(actor.userId!, input.workspaceId);
   }
 
   /* G2 — this endpoint did not exist, so signing out left the refresh token
@@ -114,7 +147,7 @@ export class AuthController {
 
   @Get("me")
   me(@Actor() actor: RequestActor) {
-    return this.auth.me(actor.userId!);
+    return this.auth.me(actor.userId!, actor.workspaceId);
   }
 
   /* G6 — two-factor. The team page renders a 2FA column, so there has to be a

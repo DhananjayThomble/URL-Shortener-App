@@ -33,8 +33,66 @@ export const RegisterInput = z.object({
 });
 export type RegisterInput = z.infer<typeof RegisterInput>;
 
-export const RefreshInput = z.object({ refreshToken: z.string().min(1) });
+/* `workspaceId` (#668) is the workspace the caller is currently in. Access
+   tokens are bound to one workspace (the `wid` claim), and once a user belongs
+   to more than one, refresh has to know which to keep — otherwise every refresh
+   would snap the session back to the default workspace. It is a HINT: the API
+   honours it only if the user still has an active membership there, and falls
+   back to the default otherwise (so a removed member is moved out on the next
+   refresh). Optional so older clients keep working unchanged. */
+export const RefreshInput = z.object({
+  refreshToken: z.string().min(1),
+  workspaceId: z.string().uuid().optional(),
+});
 export type RefreshInput = z.infer<typeof RefreshInput>;
+
+/* ── Team invitations + workspace switching (#668) ─────────────────────────
+
+   POST /auth/invite/accept consumes the token from the invitation email.
+   POST /auth/workspace moves the current session into another workspace the
+   user is an active member of. Both answer with a fresh access token bound to
+   the target workspace; the refresh token is unchanged (refresh keeps the
+   workspace via RefreshInput.workspaceId). */
+export const AcceptInviteInput = z.object({
+  // 32 random bytes, base64url = 43 chars. The upper bound only stops an
+  // oversized body from being hashed; it is not a format check.
+  token: z.string().min(1).max(200),
+});
+export type AcceptInviteInput = z.infer<typeof AcceptInviteInput>;
+
+export const SwitchWorkspaceInput = z.object({ workspaceId: z.string().uuid() });
+export type SwitchWorkspaceInput = z.infer<typeof SwitchWorkspaceInput>;
+
+export const WorkspaceSession = z.object({
+  accessToken: z.string(),
+  workspaceId: z.string(),
+  user: AuthUser,
+});
+export type WorkspaceSession = z.infer<typeof WorkspaceSession>;
+
+/** One row of the workspace switcher: a workspace the caller is an active member of. */
+export const UserWorkspace = z.object({
+  id: z.string(),
+  name: z.string(),
+  initials: z.string(),
+  role: MemberRole,
+  current: z.boolean(),
+});
+export type UserWorkspace = z.infer<typeof UserWorkspace>;
+
+/** Machine-readable reasons POST /auth/invite/accept can refuse. Each is a
+ *  distinct HTTP status + `code` so the /invite page can say exactly what to
+ *  do. None of them reveal anything about an email address: the endpoint is
+ *  keyed on the secret token, never on an email. */
+export const InviteErrorCode = z.enum([
+  "invite_invalid", // 404 — no such token (or the invitation was revoked)
+  "invite_expired", // 410 — older than 7 days
+  "invite_used", // 409 — already accepted
+  "already_member", // 409 — the user is already active in that workspace
+  "invite_email_mismatch", // 403 — signed in as a different email than invited
+  "email_unverified", // 403 — the account's email is not verified yet
+]);
+export type InviteErrorCode = z.infer<typeof InviteErrorCode>;
 
 export const TokenPair = z.object({
   accessToken: z.string(),

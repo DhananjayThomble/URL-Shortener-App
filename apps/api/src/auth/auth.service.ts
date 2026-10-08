@@ -1,14 +1,18 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  GoneException,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { and, eq, isNull, sql } from "@snapurl/database";
+import { and, asc, eq, isNull, sql } from "@snapurl/database";
 import {
+  auditLog,
   domains,
   memberships,
   oauthIdentities,
@@ -23,8 +27,11 @@ import type {
   AuthUser,
   LoginInput,
   LoginResult,
+  InviteErrorCode,
   RegisterInput,
   TotpSetup,
+  UserWorkspace,
+  WorkspaceSession,
 } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
@@ -45,6 +52,19 @@ const ARGON_OPTIONS = { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, 
 
 /** Verifying this costs the same as verifying a real hash, which is the point.
  *  Returning early for an unknown email leaks which addresses have accounts. */
+/** The invitation email says "The link expires in 7 days" (MailService.sendInvite). */
+export const INVITE_TTL_MS = 7 * 86_400_000;
+
+/** A refusal from acceptInvite. The body carries a stable `code` alongside the
+ *  human message so the /invite page can branch without parsing prose. */
+function inviteError(
+  Exc: typeof NotFoundException | typeof GoneException | typeof ConflictException | typeof ForbiddenException,
+  code: InviteErrorCode,
+  message: string,
+) {
+  return new Exc({ message, code });
+}
+
 const DUMMY_HASH =
   "$argon2id$v=19$m=19456,t=2,p=1$c25hcHVybC1kdW1teS1zYWx0$4Xk1Yh0lPQKRZ0T0lLQKzXKXCVLuQ0dCMuoJXqLYQmY";
 
@@ -403,13 +423,18 @@ export class AuthService {
     });
   }
 
-  async refresh(refreshToken: string, userAgent?: string) {
+  async refresh(refreshToken: string, userAgent?: string, workspaceId?: string) {
     const { userId, refreshToken: next } = await this.tokens.rotate(refreshToken, userAgent);
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user) throw new UnauthorizedException();
 
-    // Rebuild claims from current data so a role change lands on next refresh.
-    const membership = await this.primaryMembership(userId);
+    /* Rebuild claims from current data so a role change lands on next refresh.
+       The workspace hint (#668) keeps a multi-workspace user where they are;
+       it is honoured only while that membership is still active, so a removal
+       or role change is picked up here too. */
+    const membership =
+      (workspaceId ? await this.activeMembership(userId, workspaceId) : null) ??
+      (await this.primaryMembership(userId));
     const accessToken = await this.tokens.signAccessToken({
       sub: user.id,
       wid: membership.workspaceId,
@@ -463,10 +488,14 @@ export class AuthService {
     await this.tokens.revokeAllForUser(userId);
   }
 
-  async me(userId: string): Promise<AuthUser> {
+  async me(userId: string, workspaceId?: string): Promise<AuthUser> {
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user) throw new UnauthorizedException();
-    const membership = await this.primaryMembership(userId);
+    // The role shown (and used to gate the UI) is the role in the workspace this
+    // session is in, not in whichever workspace happens to be the default.
+    const membership =
+      (workspaceId ? await this.activeMembership(userId, workspaceId) : null) ??
+      (await this.primaryMembership(userId));
 
     // Cheap presence signal for the team page's "last active" column.
     await this.db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, userId));
@@ -489,14 +518,201 @@ export class AuthService {
     }
   }
 
+  /* The workspace a fresh sign-in lands in.
+
+     Before #668 nobody could have two active memberships, so `.limit(1)` with
+     no ORDER BY was harmless. Accepting an invitation makes it reachable, and
+     an unordered pick could land the same person in a different workspace on
+     different sign-ins. The order is the first workspace they actually joined
+     (accepted_at), which for everyone is the personal workspace created at
+     registration; the switcher (POST /auth/workspace) reaches the others. */
   private async primaryMembership(userId: string) {
     const [membership] = await this.db
       .select({ workspaceId: memberships.workspaceId, role: memberships.role })
       .from(memberships)
       .where(and(eq(memberships.userId, userId), eq(memberships.status, "active")))
+      .orderBy(sql`${memberships.acceptedAt} asc nulls last`, asc(memberships.createdAt), asc(memberships.id))
       .limit(1);
     if (!membership) throw new UnauthorizedException("Your account isn't attached to a workspace.");
     return membership;
+  }
+
+  private async activeMembership(userId: string, workspaceId: string) {
+    const [membership] = await this.db
+      .select({ workspaceId: memberships.workspaceId, role: memberships.role })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.userId, userId),
+          eq(memberships.workspaceId, workspaceId),
+          eq(memberships.status, "active"),
+        ),
+      )
+      .limit(1);
+    return membership ?? null;
+  }
+
+  /* ── #668: team invitations ──────────────────────────────────────────────
+
+     Accepting is a session-only action (the route has no @Scope, so the guard
+     refuses API keys) and is keyed on the secret token alone — the endpoint
+     never takes an email, so it cannot be used to learn whether an address has
+     been invited. Checks, in order, each with its own status + code:
+
+       1. a membership row whose invite_token_hash matches   else 404 invite_invalid
+       2. still `invited`                                    else 409 invite_used
+       3. within 7 days of invited_at                        else 410 invite_expired
+       4. caller's email == invited email (case-insensitive) else 403 invite_email_mismatch
+       5. caller's email is verified                         else 403 email_unverified
+       6. caller not already active in that workspace        else 409 already_member
+
+     Everything after (1) is only reachable by someone holding a valid token,
+     i.e. someone the invitation was delivered to (or forwarded to).
+
+     Single use: the activating UPDATE is guarded on status = 'invited' AND the
+     same hash, so of two concurrent accepts exactly one changes a row; the
+     other gets invite_used. The hash is kept on the row rather than nulled so
+     a re-presented token can say "already accepted" instead of "not valid" —
+     the status, not the hash, is what makes it unusable, and only hashes are
+     ever stored.
+
+     Email verification (5): the token proves control of the invited inbox,
+     but the *account* presenting it must also have proven its address. That
+     stops someone who registered an unverified account under another person's
+     email from turning a leaked or forwarded invite link into membership. */
+  async acceptInvite(userId: string, rawToken: string): Promise<WorkspaceSession> {
+    const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+
+    const [invite] = await this.db
+      .select()
+      .from(memberships)
+      .where(eq(memberships.inviteTokenHash, tokenHash))
+      .limit(1);
+
+    /* The lookup is by SHA-256 of the token, which an attacker cannot steer
+       byte by byte, so the probe leaks nothing useful. The constant-time
+       comparison is still the authoritative check, so correctness never rests
+       on how Postgres compares text. */
+    if (!invite?.inviteTokenHash || !constantTimeHexEqual(invite.inviteTokenHash, tokenHash)) {
+      throw inviteError(
+        NotFoundException,
+        "invite_invalid",
+        "This invitation link isn't valid. Ask the person who invited you to send a new one.",
+      );
+    }
+
+    if (invite.status !== "invited") {
+      throw inviteError(ConflictException, "invite_used", "This invitation has already been accepted.");
+    }
+
+    const invitedAt = invite.invitedAt ?? invite.createdAt;
+    if (Date.now() - invitedAt.getTime() > INVITE_TTL_MS) {
+      throw inviteError(
+        GoneException,
+        "invite_expired",
+        "This invitation has expired. Ask the person who invited you to send a new one.",
+      );
+    }
+
+    const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) throw new UnauthorizedException();
+
+    // Neither address is named: the message goes to whoever is signed in, who
+    // is not necessarily the person the invitation was for.
+    const sameEmail = user.email.toLowerCase().trim() === invite.email.toLowerCase().trim();
+    if (!sameEmail || (invite.userId !== null && invite.userId !== user.id)) {
+      throw inviteError(
+        ForbiddenException,
+        "invite_email_mismatch",
+        "This invitation was sent to a different email address. Sign in with the address it was sent to.",
+      );
+    }
+
+    if (!user.emailVerifiedAt) {
+      throw inviteError(
+        ForbiddenException,
+        "email_unverified",
+        "Verify your email address first, then open the invitation link again.",
+      );
+    }
+
+    if (await this.activeMembership(user.id, invite.workspaceId)) {
+      throw inviteError(ConflictException, "already_member", "You're already a member of this workspace.");
+    }
+
+    const [accepted] = await this.db
+      .update(memberships)
+      .set({ status: "active", userId: user.id, acceptedAt: new Date() })
+      .where(
+        and(
+          eq(memberships.id, invite.id),
+          eq(memberships.status, "invited"),
+          eq(memberships.inviteTokenHash, tokenHash),
+        ),
+      )
+      .returning({ workspaceId: memberships.workspaceId, role: memberships.role });
+
+    // Lost a race with a concurrent accept of the same token.
+    if (!accepted) {
+      throw inviteError(ConflictException, "invite_used", "This invitation has already been accepted.");
+    }
+
+    await this.db.insert(auditLog).values({
+      workspaceId: accepted.workspaceId,
+      actorId: user.id,
+      actorLabel: user.email,
+      action: "member.joined",
+      targetType: "membership",
+      targetId: invite.id,
+      metadata: { email: user.email, role: accepted.role },
+    });
+
+    return this.workspaceSession(user, accepted.workspaceId, accepted.role);
+  }
+
+  /** Move this session into another workspace the user is an active member of. */
+  async switchWorkspace(userId: string, workspaceId: string): Promise<WorkspaceSession> {
+    const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) throw new UnauthorizedException();
+    const membership = await this.activeMembership(userId, workspaceId);
+    // 404 rather than 403: to you, a workspace you are not in is not there.
+    if (!membership) throw new NotFoundException("You're not a member of that workspace.");
+    return this.workspaceSession(user, membership.workspaceId, membership.role);
+  }
+
+  async listWorkspaces(userId: string, currentWorkspaceId: string): Promise<UserWorkspace[]> {
+    const rows = await this.db
+      .select({ id: workspaces.id, name: workspaces.name, role: memberships.role })
+      .from(memberships)
+      .innerJoin(workspaces, eq(memberships.workspaceId, workspaces.id))
+      .where(and(eq(memberships.userId, userId), eq(memberships.status, "active")))
+      .orderBy(sql`${memberships.acceptedAt} asc nulls last`, asc(memberships.createdAt), asc(memberships.id));
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      initials: initialsOf(row.name),
+      role: row.role as UserWorkspace["role"],
+      current: row.id === currentWorkspaceId,
+    }));
+  }
+
+  private async workspaceSession(
+    user: { id: string; name: string; email: string },
+    workspaceId: string,
+    role: string,
+  ): Promise<WorkspaceSession> {
+    const accessToken = await this.tokens.signAccessToken({ sub: user.id, wid: workspaceId, role, email: user.email });
+    return {
+      accessToken,
+      workspaceId,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        initials: initialsOf(user.name),
+        role: role as AuthUser["role"],
+      },
+    };
   }
 
   private async issueSession(
@@ -524,6 +740,12 @@ export class AuthService {
       },
     };
   }
+}
+
+function constantTimeHexEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
+  return left.length === right.length && left.length > 0 && timingSafeEqual(left, right);
 }
 
 function slugify(value: string): string {
