@@ -2,13 +2,15 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
 import { useRegister } from "@/lib/api/hooks";
+import { safeNext, withNext } from "@/lib/safe-next";
 
 const Schema = z.object({
   name: z.string().min(2, "What should we call you?"),
@@ -21,15 +23,27 @@ const Schema = z.object({
 });
 type Values = z.infer<typeof Schema>;
 
+// useSearchParams (for ?next=, #668) needs a Suspense boundary during static
+// prerender, same as reset-password/page.tsx.
 export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
   const router = useRouter();
+  // e.g. back to the /invite link that sent a new user here (#668).
+  const nextParam = useSearchParams().get("next");
   const signup = useRegister();
   const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
 
   const onSubmit = handleSubmit(async (values) => {
     try {
       await signup.mutateAsync(values);
-      router.push("/links");
+      router.push(safeNext(nextParam));
     } catch {
       /* surfaced from signup.error */
     }
@@ -63,7 +77,7 @@ export default function RegisterPage() {
         </Button>
         <p className="text-[12.5px] text-ink-3 text-center m-0">
           Already have an account?{" "}
-          <Link href="/login" className="text-accent font-semibold">
+          <Link href={withNext("/login", nextParam)} className="text-accent font-semibold">
             Sign in
           </Link>
         </p>

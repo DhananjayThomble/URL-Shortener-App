@@ -226,6 +226,8 @@ function describe(action: string, metadata: Record<string, unknown> | null): str
   switch (action) {
     case "member.invited":
       return `Invited ${email ?? "a teammate"}`;
+    case "member.joined":
+      return `${email ?? "A teammate"} joined as ${metadata?.role ?? "a member"}`;
     case "member.removed":
       return `Removed ${email ?? "a teammate"}`;
     case "member.role_changed":

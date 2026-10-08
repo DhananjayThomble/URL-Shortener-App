@@ -722,6 +722,16 @@ export async function fixtureRequest<T>(
     if (token === "fixture.invalid.token") throw new Error("That verification link is invalid or has expired.");
     data = undefined;
   } else if (m(/^\/auth\/email\/resend$/)) data = undefined;
+  /* #668 — the switcher and the invite accept. Fixtures have one workspace,
+     so the switcher lists just it and "switching" returns the same session.
+     "fixture.invalid.token" is the sentinel invite that fails. */
+  else if (m(/^\/auth\/workspaces$/)) {
+    data = [{ id: WORKSPACE.id, name: WORKSPACE.name, initials: WORKSPACE.initials, role: SESSION.user.role, current: true }];
+  } else if (m(/^\/auth\/(workspace|invite\/accept)$/) && method === "POST") {
+    const token = (opts.body as { token?: string })?.token ?? "";
+    if (token === "fixture.invalid.token") throw new Error("This invitation link isn't valid.");
+    data = { accessToken: SESSION.accessToken, workspaceId: WORKSPACE.id, user: SESSION.user };
+  }
   else if (m(/^\/auth\/2fa\/setup$/)) {
     data = {
       otpauthUri: `otpauth://totp/SnapURL:${SESSION.user.email}?secret=JBSWY3DPEHPK3PXP&issuer=SnapURL`,

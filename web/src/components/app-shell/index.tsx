@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui";
-import { useLinks, useLogout, useMe, useWorkspace } from "@/lib/api/hooks";
+import { useLinks, useLogout, useMe, useMyWorkspaces, useSwitchWorkspace, useWorkspace } from "@/lib/api/hooks";
 import { cn, compact } from "@/lib/utils";
 
 type Counts = { links?: number; bio?: number; domains?: number; members?: number };
@@ -101,9 +101,122 @@ function ClicksThisMonth() {
   );
 }
 
-export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => void }) {
+/**
+ * The workspace switcher (#668).
+ *
+ * This button used to be a dead control — a ▾ with no handler — because every
+ * user had exactly one workspace. Accepting a team invitation gives them a
+ * second, and an access token is bound to one workspace, so this is the only
+ * way back and forth. Picking a workspace swaps the access token and drops
+ * every cached query (useSwitchWorkspace) before navigating, so nothing from
+ * the previous workspace is shown under the new name.
+ */
+function WorkspaceSwitcher() {
   const { data: ws } = useWorkspace();
+  const { data: mine } = useMyWorkspaces();
+  const switchTo = useSwitchWorkspace();
+  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+  const menuId = React.useId();
 
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const pick = async (id: string) => {
+    if (id === ws?.id) {
+      setOpen(false);
+      return;
+    }
+    try {
+      await switchTo.mutateAsync(id);
+      setOpen(false);
+      router.push("/links");
+    } catch {
+      /* rendered from switchTo.error */
+    }
+  };
+
+  return (
+    <div className="relative mb-[14px]" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-label={ws ? `Workspace: ${ws.name}. Switch workspace` : "Switch workspace"}
+        className="w-full flex items-center gap-[9px] px-[9px] py-[7px] border border-line rounded-[var(--radius-sm)] hover:border-line-2 hover:bg-surface-2 transition-colors"
+      >
+        {/* text-accent-ink, not text-white: --violet is lightened in dark
+            theme for use as text-on-surface, which drops a literal white
+            overlay to 2.76:1 (WCAG AA fail). --accent-ink clears 4.5:1
+            against --violet in both themes (6.46:1 light, 6.62:1 dark). #462. */}
+        <span className="w-5 h-5 rounded-[5px] bg-violet text-accent-ink grid place-items-center text-[10px] font-bold shrink-0">
+          {ws?.initials ?? "··"}
+        </span>
+        <span className="flex-1 min-w-0 text-[13px] font-semibold truncate text-left">{ws?.name ?? "Loading…"}</span>
+        <span aria-hidden="true" className="text-ink-3 text-[10px]">▾</span>
+      </button>
+
+      {open ? (
+        <div
+          id={menuId}
+          role="menu"
+          aria-label="Workspaces"
+          className="absolute left-0 right-0 top-[calc(100%+5px)] bg-surface border border-line rounded-[var(--radius-sm)] shadow-lg py-[5px] z-30"
+        >
+          {(mine ?? []).map((w) => {
+            const current = w.id === ws?.id;
+            return (
+              <button
+                key={w.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={current}
+                disabled={switchTo.isPending}
+                onClick={() => pick(w.id)}
+                className="w-full flex items-center gap-[9px] text-left px-[11px] py-[6px] text-[13px] text-ink-2 hover:bg-surface-3 hover:text-ink transition-colors"
+              >
+                <span className="w-5 h-5 rounded-[5px] bg-violet text-accent-ink grid place-items-center text-[10px] font-bold shrink-0">
+                  {w.initials}
+                </span>
+                <span className="flex-1 min-w-0 truncate">{w.name}</span>
+                <span className="text-[11px] text-ink-3 capitalize">{w.role}</span>
+                {current ? <span aria-hidden="true">✓</span> : null}
+              </button>
+            );
+          })}
+          {mine && mine.length === 1 ? (
+            <p className="px-[11px] py-[6px] text-[11.5px] text-ink-3 m-0">
+              Workspaces you&apos;re invited to appear here once you accept.
+            </p>
+          ) : null}
+          {switchTo.isError ? (
+            <p className="px-[11px] py-[6px] text-[11.5px] text-bad m-0" role="alert">
+              {(switchTo.error as Error).message}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => void }) {
   return (
     <aside className="hidden lg:flex flex-col gap-[5px] bg-surface border-r border-line p-[16px_12px] sticky top-0 h-screen overflow-y-auto w-[228px] shrink-0">
       <Link href="/links" className="flex items-center gap-[9px] px-2 pt-1 pb-4">
@@ -113,19 +226,7 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
         <b className="font-display text-[16px] font-bold tracking-[-0.02em]">SnapURL</b>
       </Link>
 
-      <button className="flex items-center gap-[9px] px-[9px] py-[7px] border border-line rounded-[var(--radius-sm)] mb-[14px] hover:border-line-2 hover:bg-surface-2 transition-colors">
-        {/* text-accent-ink, not text-white: --violet is lightened in dark
-            theme for use as text-on-surface, which drops a literal white
-            overlay to 2.76:1 (WCAG AA fail). --accent-ink is the themed
-            near-black/near-white pair already used for ink-on-saturated-bg
-            elsewhere in this file; it clears 4.5:1 against --violet in both
-            themes (6.46:1 light, 6.62:1 dark). See #462. */}
-        <span className="w-5 h-5 rounded-[5px] bg-violet text-accent-ink grid place-items-center text-[10px] font-bold shrink-0">
-          {ws?.initials ?? "··"}
-        </span>
-        <span className="flex-1 min-w-0 text-[13px] font-semibold truncate text-left">{ws?.name ?? "Loading…"}</span>
-        <span aria-hidden="true" className="text-ink-3 text-[10px]">▾</span>
-      </button>
+      <WorkspaceSwitcher />
 
       <Button variant="primary" className="w-full justify-center mb-[6px]" onClick={onCreate}>
         ＋ New link
@@ -149,7 +250,6 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
  * here renders and the sidebar takes over, so the desktop layout is untouched.
  */
 function MobileNav({ counts, onCreate }: { counts: Counts; onCreate: () => void }) {
-  const { data: ws } = useWorkspace();
   const [open, setOpen] = React.useState(false);
   const pathname = usePathname();
 
@@ -210,14 +310,7 @@ function MobileNav({ counts, onCreate }: { counts: Counts; onCreate: () => void 
               </button>
             </div>
 
-            <div className="flex items-center gap-[9px] px-[9px] py-[7px] border border-line rounded-[var(--radius-sm)] mb-[14px]">
-              {/* text-accent-ink, not text-white — see #462 (same fix as the
-                  desktop sidebar badge above). */}
-              <span className="w-5 h-5 rounded-[5px] bg-violet text-accent-ink grid place-items-center text-[10px] font-bold shrink-0">
-                {ws?.initials ?? "··"}
-              </span>
-              <span className="flex-1 min-w-0 text-[13px] font-semibold truncate text-left">{ws?.name ?? "Loading…"}</span>
-            </div>
+            <WorkspaceSwitcher />
 
             <Button
               variant="primary"

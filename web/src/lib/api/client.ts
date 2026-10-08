@@ -54,12 +54,39 @@ export const tokens = {
     s?.setItem(TOKEN_KEY, access);
     s?.setItem(REFRESH_KEY, refresh);
   },
+  /** Replace only the access token — accepting an invitation or switching
+   *  workspace (#668) mints a new access token and keeps the refresh token. */
+  setAccess(access: string) {
+    safeStorage()?.setItem(TOKEN_KEY, access);
+  },
   clear() {
     const s = safeStorage();
     s?.removeItem(TOKEN_KEY);
     s?.removeItem(REFRESH_KEY);
   },
 };
+
+/**
+ * The workspace the current access token is bound to (its `wid` claim).
+ *
+ * Read without verifying the signature, which is fine: it is only ever sent
+ * back to the API as a refresh *hint*, and the API honours it only when the
+ * user really is an active member of that workspace (#668). Works on an
+ * expired token too, which is exactly when refresh needs it.
+ */
+export function currentWorkspaceId(): string | undefined {
+  const access = tokens.access;
+  if (!access) return undefined;
+  try {
+    const part = access.split(".")[1];
+    if (!part) return undefined;
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const wid = (JSON.parse(json) as { wid?: unknown }).wid;
+    return typeof wid === "string" ? wid : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export class ApiError extends Error {
   constructor(
@@ -140,10 +167,14 @@ async function refreshSession(): Promise<boolean> {
   if (!refresh) return false;
   refreshInFlight ??= (async () => {
     try {
+      // Stay in the workspace this session is in; without the hint a
+      // multi-workspace user would be moved back to their default every
+      // time the access token expires (#668).
+      const workspaceId = currentWorkspaceId();
       const res = await fetch(`${API_URL}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: refresh }),
+        body: JSON.stringify(workspaceId ? { refreshToken: refresh, workspaceId } : { refreshToken: refresh }),
       });
       if (!res.ok) return false;
       const data = (await res.json()) as { accessToken: string; refreshToken: string };

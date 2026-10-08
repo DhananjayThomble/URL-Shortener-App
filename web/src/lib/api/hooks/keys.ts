@@ -6,6 +6,7 @@
 export const qk = {
   me: ["me"] as const,
   workspace: ["workspace"] as const,
+  myWorkspaces: ["my-workspaces"] as const,
   links: (filter?: string) => ["links", filter ?? "all"] as const,
   link: (id: string) => ["link", id] as const,
   forms: () => ["forms"] as const,
