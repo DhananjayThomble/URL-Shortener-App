@@ -29,7 +29,7 @@ export default function LandingPage() {
           </h1>
           <p className="text-[17.5px] text-ink-2 max-w-[56ch] mx-auto mt-5">
             Branded links, dynamic QR codes and analytics that set no cookies — on infrastructure you can run yourself. No
-            interstitial ads. No scan caps. One quota, and it only counts clicks.
+            interstitial ads. No scan caps. Clicks are counted, never capped.
           </p>
 
           <div className="max-w-[640px] mx-auto mt-[34px] bg-surface border border-line-2 rounded-[14px] p-[9px] flex flex-col sm:flex-row gap-[9px] shadow-[var(--shadow-2)] text-left">
