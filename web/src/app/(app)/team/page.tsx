@@ -5,7 +5,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skel
 import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember, useWorkspace } from "@/lib/api/hooks";
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
 import { useState } from "react";
-import { cn, full } from "@/lib/utils";
+import { cn, full, timeAgo } from "@/lib/utils";
 
 const PERMISSIONS: { label: string; roles: [boolean, boolean, boolean, boolean] }[] = [
   { label: "View links & analytics", roles: [true, true, true, true] },
@@ -14,7 +14,6 @@ const PERMISSIONS: { label: string; roles: [boolean, boolean, boolean, boolean] 
   { label: "Manage domains", roles: [false, false, true, true] },
   { label: "Invite & remove members", roles: [false, false, true, true] },
   { label: "API keys & webhooks", roles: [false, false, true, true] },
-  { label: "Billing & plan", roles: [false, false, false, true] },
   { label: "Delete workspace", roles: [false, false, false, true] },
 ];
 
@@ -180,7 +179,7 @@ export default function TeamPage() {
                         <div className="min-w-0">
                           <b className="block text-[13px] font-semibold text-ink truncate">{m.name}</b>
                           <span className="block text-[11.5px] text-ink-3 truncate">
-                            {m.status === "invited" ? "Invited 2 days ago" : m.email}
+                            {m.status === "invited" ? (m.invitedAt ? `Invited ${timeAgo(m.invitedAt)}` : "Invitation pending") : m.email}
                           </span>
                         </div>
                       </div>
@@ -192,7 +191,7 @@ export default function TeamPage() {
                       </Chip>
                     </Td>
                     <Td className="tnum">{m.status === "invited" ? "—" : full(m.links)}</Td>
-                    <Td>{m.lastActive ?? "—"}</Td>
+                    <Td>{m.lastActive ? timeAgo(m.lastActive) : "—"}</Td>
                     <Td>
                       {m.status === "invited" ? "—" : <Chip tone={m.twoFactor ? "good" : "warn"}>{m.twoFactor ? "On" : "Off"}</Chip>}
                     </Td>
@@ -273,7 +272,7 @@ export default function TeamPage() {
             <CardBody className="flex flex-col gap-2.5 text-[12.5px]">
               {(audit ?? []).map((a) => (
                 <div key={a.id} className="flex gap-[11px] items-baseline text-ink-2 leading-[1.5]">
-                  <span className="font-mono text-ink-3 text-[11px] w-[38px] shrink-0">{a.at}</span>
+                  <span className="font-mono text-ink-3 text-[11px] w-[84px] shrink-0">{timeAgo(a.at)}</span>
                   <span>
                     <b className="text-ink font-semibold">{a.actor}</b> {a.action}
                   </span>

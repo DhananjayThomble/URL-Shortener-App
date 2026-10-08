@@ -83,6 +83,9 @@ export const Member = z.object({
   status: z.enum(["active", "invited"]),
   links: z.number(),
   lastActive: z.string().nullable(),
+  /* When the invitation was sent (ISO). Null for active members. The team page
+     renders "Invited <relative>" from this, not from a hard-coded string. */
+  invitedAt: z.string().nullable(),
   twoFactor: z.boolean(),
   initials: z.string(),
 });

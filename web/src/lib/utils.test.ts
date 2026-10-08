@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { compact, inr, pct, shortUrl, faviconFor, relativeDate, formatDate } from "./utils";
+import { compact, inr, pct, shortUrl, faviconFor, relativeDate, formatDate, timeAgo } from "./utils";
 
 /* First tests for web/ (issue #351). These are the pure formatting helpers the
    dashboard renders numbers, money and links with — worth pinning because a
@@ -65,5 +65,29 @@ describe("relativeDate / formatDate", () => {
   it("echoes an unparseable input back unchanged", () => {
     expect(relativeDate("not-a-date")).toBe("not-a-date");
     expect(formatDate("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("timeAgo (#669)", () => {
+  afterEach(() => vi.useRealTimers());
+  const NOW = new Date("2026-10-09T12:00:00.000Z");
+
+  it("renders a just-sent timestamp as 'just now', including clock skew into the future", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(timeAgo("2026-10-09T11:59:40.000Z")).toBe("just now");
+    expect(timeAgo("2026-10-09T12:03:00.000Z")).toBe("just now");
+  });
+  it("renders older ISO timestamps relative to now, never as a raw ISO string", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(timeAgo("2026-10-09T11:30:00.000Z")).toBe("30 min ago");
+    expect(timeAgo("2026-10-09T09:00:00.000Z")).toBe("3 hours ago");
+    expect(timeAgo("2026-10-07T12:00:00.000Z")).toBe("2 days ago");
+  });
+  it("passes pre-formatted (non-ISO) strings through untouched", () => {
+    expect(timeAgo("12 min ago")).toBe("12 min ago");
+    expect(timeAgo("09:42")).toBe("09:42");
+    expect(timeAgo("Yesterday")).toBe("Yesterday");
   });
 });

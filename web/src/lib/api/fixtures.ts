@@ -439,12 +439,12 @@ export const DOMAINS: Domain[] = [
 ];
 
 export const MEMBERS: Member[] = [
-  { id: "u1", name: "Dhananjay Thomble", email: "dhananjay@acme.com", role: "owner", status: "active", links: 412, lastActive: "Now", twoFactor: true, initials: "DT" },
-  { id: "u2", name: "Priya Raman", email: "priya@acme.com", role: "admin", status: "active", links: 288, lastActive: "12 min ago", twoFactor: true, initials: "PR" },
-  { id: "u3", name: "Arjun Kapoor", email: "arjun@acme.com", role: "editor", status: "active", links: 344, lastActive: "2 hours ago", twoFactor: false, initials: "AK" },
-  { id: "u4", name: "Sara Mehta", email: "sara@acme.com", role: "editor", status: "active", links: 156, lastActive: "Yesterday", twoFactor: true, initials: "SM" },
-  { id: "u5", name: "Ravi Nair", email: "ravi@acme.com", role: "viewer", status: "active", links: 0, lastActive: "3 days ago", twoFactor: true, initials: "RN" },
-  { id: "u6", name: "maya@acme.com", email: "maya@acme.com", role: "editor", status: "invited", links: 0, lastActive: null, twoFactor: false, initials: "?" },
+  { id: "u1", name: "Dhananjay Thomble", email: "dhananjay@acme.com", role: "owner", status: "active", links: 412, lastActive: "Now", invitedAt: null, twoFactor: true, initials: "DT" },
+  { id: "u2", name: "Priya Raman", email: "priya@acme.com", role: "admin", status: "active", links: 288, lastActive: "12 min ago", invitedAt: null, twoFactor: true, initials: "PR" },
+  { id: "u3", name: "Arjun Kapoor", email: "arjun@acme.com", role: "editor", status: "active", links: 344, lastActive: "2 hours ago", invitedAt: null, twoFactor: false, initials: "AK" },
+  { id: "u4", name: "Sara Mehta", email: "sara@acme.com", role: "editor", status: "active", links: 156, lastActive: "Yesterday", invitedAt: null, twoFactor: true, initials: "SM" },
+  { id: "u5", name: "Ravi Nair", email: "ravi@acme.com", role: "viewer", status: "active", links: 0, lastActive: "3 days ago", invitedAt: null, twoFactor: true, initials: "RN" },
+  { id: "u6", name: "maya@acme.com", email: "maya@acme.com", role: "editor", status: "invited", links: 0, lastActive: null, invitedAt: "2026-10-06T09:00:00.000Z", twoFactor: false, initials: "?" },
 ];
 
 export const AUDIT: AuditEntry[] = [
@@ -1005,6 +1005,7 @@ export async function fixtureRequest<T>(
       status: "invited",
       links: 0,
       lastActive: null,
+      invitedAt: new Date().toISOString(),
       twoFactor: false,
       initials: name.slice(0, 2).toUpperCase(),
     };
