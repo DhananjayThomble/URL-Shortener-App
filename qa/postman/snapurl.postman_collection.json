@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "SnapURL API — auth + link CRUD/PATCH",
-    "description": "Run against the local staging stack (pnpm staging:up). `npx -y newman@6 run qa/postman/snapurl.postman_collection.json -e qa/postman/local.postman_environment.json`. Every request carries pm.test assertions on status and body. No secrets: the account and link are created fresh per run.",
+    "description": "Run against the local staging stack (pnpm staging:up) with `bash qa/postman/run.sh` — it starts qa/postman/mail-sink.mjs (loopback-only reader of the staging mail outbox, needed by the team-invitation folder) and runs `npx -y newman@6 run qa/postman/snapurl.postman_collection.json -e qa/postman/local.postman_environment.json`. Every request carries pm.test assertions on status and body. No secrets: the account and link are created fresh per run.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -2245,6 +2245,1437 @@
             "body": {
               "mode": "raw",
               "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c8\",\"scheduledTo\":\"{{scheduledLanding}}\",\"expiresTo\":\"{{expiredLanding}}\",\"activatesAt\":\"{{futureIso}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Team invitations (#668)",
+      "description": "Owner invites → token read from the staging mail outbox via qa/postman/mail-sink.mjs (run through qa/postman/run.sh) → invitee accepts → owner sees them active with the role; every refusal code; Viewer role enforced; workspace switcher + refresh hint. already_member is not reachable through the public API (one membership row per workspace+email) and is covered by apps/api/src/auth/invite-accept.integration.test.ts.",
+      "item": [
+        {
+          "name": "Register owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get(\"invRun\")) pm.collectionVariables.set(\"invRun\", Date.now().toString(36) + Math.random().toString(16).slice(2, 8));",
+                  "pm.collectionVariables.set(\"inv_owner_email\", \"newman-inv-owner-\" + pm.collectionVariables.get(\"invRun\") + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.collectionVariables.set(\"inv_owner_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"inv_owner_refresh\", b.refreshToken);",
+                  "pm.collectionVariables.set(\"inv_owner_wid\", claims(b.accessToken).wid);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman owner\",\"email\":\"{{inv_owner_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register invitee",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get(\"invRun\")) pm.collectionVariables.set(\"invRun\", Date.now().toString(36) + Math.random().toString(16).slice(2, 8));",
+                  "pm.collectionVariables.set(\"inv_invitee_email\", \"newman-inv-invitee-\" + pm.collectionVariables.get(\"invRun\") + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.collectionVariables.set(\"inv_invitee_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"inv_invitee_refresh\", b.refreshToken);",
+                  "pm.collectionVariables.set(\"inv_invitee_wid\", claims(b.accessToken).wid);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman invitee\",\"email\":\"{{inv_invitee_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register stranger",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get(\"invRun\")) pm.collectionVariables.set(\"invRun\", Date.now().toString(36) + Math.random().toString(16).slice(2, 8));",
+                  "pm.collectionVariables.set(\"inv_stranger_email\", \"newman-inv-stranger-\" + pm.collectionVariables.get(\"invRun\") + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.collectionVariables.set(\"inv_stranger_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"inv_stranger_refresh\", b.refreshToken);",
+                  "pm.collectionVariables.set(\"inv_stranger_wid\", claims(b.accessToken).wid);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman stranger\",\"email\":\"{{inv_stranger_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Owner invites the invitee as Viewer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"pending viewer\", () => { pm.expect(b.status).to.eql(\"invited\"); pm.expect(b.role).to.eql(\"viewer\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{inv_invitee_email}}\",\"role\":\"viewer\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Mail sink: read the invitation token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"invitation mail was written\", () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json().token;",
+                  "pm.test(\"token looks like 32 random bytes, base64url\", () => pm.expect(t).to.match(/^[A-Za-z0-9_-]{43}$/));",
+                  "pm.collectionVariables.set(\"inv_token\", t);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{inv_invitee_email}}&kind=invite",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{inv_invitee_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "invite"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Accept without signing in is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Accept with an unknown token is invite_invalid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"code invite_invalid\", () => pm.expect(pm.response.json().code).to.eql(\"invite_invalid\"));",
+                  "pm.test(\"message is human-readable\", () => pm.expect(pm.response.json().message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"definitely-not-a-real-invitation-token-000\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Accept with an empty token is a 400 validation error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Accept by the invitee before verifying email is email_unverified",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"code email_unverified\", () => pm.expect(pm.response.json().code).to.eql(\"email_unverified\"));",
+                  "pm.test(\"message is human-readable\", () => pm.expect(pm.response.json().message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Accept by a different account is invite_email_mismatch (no address leaked)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"code invite_email_mismatch\", () => pm.expect(pm.response.json().code).to.eql(\"invite_email_mismatch\"));",
+                  "pm.test(\"message is human-readable\", () => pm.expect(pm.response.json().message).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"response names neither address\", () => { const t = pm.response.text().toLowerCase(); pm.expect(t).to.not.include(pm.collectionVariables.get(\"inv_invitee_email\")); pm.expect(t).to.not.include(pm.collectionVariables.get(\"inv_stranger_email\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_stranger_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Mail sink: read the invitee's verification token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"verification mail was written\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"inv_verify_token\", pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{inv_invitee_email}}&kind=verify",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{inv_invitee_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "verify"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invitee verifies their email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/email/verify",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "email",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_verify_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Invitee accepts: session in the owner's workspace as Viewer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.test(\"joined the owner's workspace\", () => pm.expect(b.workspaceId).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")));",
+                  "pm.test(\"with the invited role\", () => pm.expect(b.user.role).to.eql(\"viewer\"));",
+                  "pm.test(\"access token bound to it\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")); pm.expect(c.role).to.eql(\"viewer\"); });",
+                  "pm.collectionVariables.set(\"inv_joined_token\", b.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Re-using the accepted token is invite_used",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"code invite_used\", () => pm.expect(pm.response.json().code).to.eql(\"invite_used\"));",
+                  "pm.test(\"message is human-readable\", () => pm.expect(pm.response.json().message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Owner's GET /members shows the invitee active as Viewer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().find((x) => x.email === pm.collectionVariables.get(\"inv_invitee_email\"));",
+                  "pm.test(\"member present\", () => pm.expect(m).to.be.an(\"object\"));",
+                  "pm.test(\"active viewer\", () => { pm.expect(m.status).to.eql(\"active\"); pm.expect(m.role).to.eql(\"viewer\"); });",
+                  "pm.test(\"two members\", () => pm.expect(pm.response.json()).to.have.length(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Joined session reads the owner's workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"it is the owner's workspace\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /auth/me reports the Viewer role in the joined workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"viewer\", () => pm.expect(pm.response.json().role).to.eql(\"viewer\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/me",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Viewer cannot create a link (role enforced)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"https://example.com/viewer-should-not-create\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer cannot invite (role enforced)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"newman-nope-{{invRun}}@example.com\",\"role\":\"viewer\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer can read the workspace's members",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Switcher lists both workspaces, current = joined",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const list = pm.response.json();",
+                  "pm.test(\"two workspaces\", () => pm.expect(list).to.have.length(2));",
+                  "const own = list.find((w) => w.id === pm.collectionVariables.get(\"inv_invitee_wid\"));",
+                  "const joined = list.find((w) => w.id === pm.collectionVariables.get(\"inv_owner_wid\"));",
+                  "pm.test(\"own workspace as owner, not current\", () => { pm.expect(own.role).to.eql(\"owner\"); pm.expect(own.current).to.eql(false); });",
+                  "pm.test(\"joined workspace as viewer, current\", () => { pm.expect(joined.role).to.eql(\"viewer\"); pm.expect(joined.current).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/workspaces",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "workspaces"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Refresh with the workspace hint stays in the joined workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.test(\"still the joined workspace as viewer\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")); pm.expect(c.role).to.eql(\"viewer\"); });",
+                  "pm.collectionVariables.set(\"inv_invitee_refresh\", b.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/refresh",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refreshToken\":\"{{inv_invitee_refresh}}\",\"workspaceId\":\"{{inv_owner_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Refresh hinting a workspace the user is not in falls back to their own",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.test(\"own workspace, owner\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"inv_invitee_wid\")); pm.expect(c.role).to.eql(\"owner\"); });",
+                  "pm.collectionVariables.set(\"inv_invitee_refresh\", b.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/refresh",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refreshToken\":\"{{inv_invitee_refresh}}\",\"workspaceId\":\"{{inv_stranger_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Switch into a workspace the user is not in is 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/workspace",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "workspace"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"workspaceId\":\"{{inv_stranger_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Switch back to the own workspace restores the Owner role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"own workspace as owner\", () => { pm.expect(b.workspaceId).to.eql(pm.collectionVariables.get(\"inv_invitee_wid\")); pm.expect(b.user.role).to.eql(\"owner\"); });",
+                  "pm.collectionVariables.set(\"inv_own_token\", b.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/workspace",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "workspace"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"workspaceId\":\"{{inv_invitee_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Own workspace does not show the owner's team",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"only the invitee\", () => { const m = pm.response.json(); pm.expect(m).to.have.length(1); pm.expect(m[0].email).to.eql(pm.collectionVariables.get(\"inv_invitee_email\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_own_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Owner invites a second address (for the expiry case)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"newman-inv-expired-{{invRun}}@example.com\",\"role\":\"editor\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Mail sink: read the second invitation token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"inv_expired_token\", pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to=newman-inv-expired-{{invRun}}@example.com&kind=invite",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "newman-inv-expired-{{invRun}}@example.com"
+                },
+                {
+                  "key": "kind",
+                  "value": "invite"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fixture: backdate that invitation by 8 days",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"one row backdated\", () => { pm.response.to.have.status(200); pm.expect(pm.response.json().updated).to.eql(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/backdate-invite?email=newman-inv-expired-{{invRun}}@example.com&days=8",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "backdate-invite"
+              ],
+              "query": [
+                {
+                  "key": "email",
+                  "value": "newman-inv-expired-{{invRun}}@example.com"
+                },
+                {
+                  "key": "days",
+                  "value": "8"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Accepting an 8-day-old invitation is invite_expired",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 410\", () => pm.response.to.have.status(410));",
+                  "pm.test(\"code invite_expired\", () => pm.expect(pm.response.json().code).to.eql(\"invite_expired\"));",
+                  "pm.test(\"message is human-readable\", () => pm.expect(pm.response.json().message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_stranger_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_expired_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Owner creates an API key (links:write)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"inv_api_key\", pm.response.json().key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/api-keys",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "api-keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"newman-inv\",\"scopes\":[\"links:read\",\"links:write\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "An API key cannot accept an invitation (session-only route)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_expired_token}}\"}",
               "options": {
                 "raw": {
                   "language": "json"
