@@ -158,11 +158,22 @@ export const memberships = pgTable(
     inviteTokenHash: text("invite_token_hash"),
     invitedAt: timestamp("invited_at", { withTimezone: true }),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    /** #699 — when this member was last active IN THIS workspace (GET /auth/me
+     *  stamps the session's workspace). The team page reads this rather than
+     *  users.last_active_at, which is account-wide and would reveal activity in
+     *  the person's other workspaces. */
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("memberships_workspace_email_key").on(t.workspaceId, sql`lower(${t.email})`),
     index("memberships_user_idx").on(t.userId),
+    /* #699 — accepting an invitation looks the row up by token hash; without
+       this every accept scanned the whole table. Partial: only invitation rows
+       carry a hash. */
+    index("memberships_invite_token_hash_idx")
+      .on(t.inviteTokenHash)
+      .where(sql`${t.inviteTokenHash} is not null`),
   ],
 );
 

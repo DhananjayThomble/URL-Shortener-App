@@ -111,16 +111,19 @@ describeDb("AuthService.acceptInvite (#668)", () => {
     await handle.close?.();
   });
 
-  it("happy path: activates the row, binds the user, issues a session in the joined workspace with the invited role", async () => {
+  it("happy path: activates the row, binds the user, reports the joined workspace with the invited role — and mints no token", async () => {
     const invitee = await newUser("happy");
     const token = await invite(invitee.email, "viewer");
     expect((await row(invitee.email)).status).toBe("invited");
 
-    const session = await auth.acceptInvite(invitee.user.id, token);
+    const accepted = await auth.acceptInvite(invitee.user.id, token);
 
-    expect(session.workspaceId).toBe(ownerWid);
-    expect(session.user.role).toBe("viewer");
-    expect(claims(session.accessToken)).toMatchObject({ sub: invitee.user.id, wid: ownerWid, role: "viewer" });
+    expect(accepted.workspaceId).toBe(ownerWid);
+    expect(accepted.user.role).toBe("viewer");
+    // #699 — entering the workspace is a refresh, never a token from accept.
+    expect(JSON.stringify(accepted)).not.toMatch(/eyJ[\w-]+\.[\w-]+\.[\w-]+/);
+    const entered = await auth.refresh(invitee.refreshToken, undefined, accepted.workspaceId);
+    expect(claims(entered.accessToken)).toMatchObject({ sub: invitee.user.id, wid: ownerWid, role: "viewer" });
 
     const r = await row(invitee.email);
     expect(r).toMatchObject({ status: "active", userId: invitee.user.id, role: "viewer" });
@@ -252,7 +255,7 @@ describeDb("AuthService.acceptInvite (#668)", () => {
     expect(claims(removed.accessToken).wid).toBe(invitee.wid);
   });
 
-  it("the switcher lists active workspaces, switches between them, and refuses one the user is not in", async () => {
+  it("the switcher lists active workspaces, and switching is a hinted refresh that refuses one the user is not in", async () => {
     const invitee = await newUser("switch");
     const token = await invite(invitee.email, "admin");
     await auth.acceptInvite(invitee.user.id, token);
@@ -263,20 +266,23 @@ describeDb("AuthService.acceptInvite (#668)", () => {
       [ownerWid, "admin", false],
     ]);
 
-    const switched = await auth.switchWorkspace(invitee.user.id, ownerWid);
+    // #699 — switching goes through refresh (rotation + revocation).
+    const switched = await auth.refresh(invitee.refreshToken, undefined, ownerWid);
     expect(claims(switched.accessToken)).toMatchObject({ wid: ownerWid, role: "admin" });
-    expect(switched.user.role).toBe("admin");
-    expect((await auth.me(invitee.user.id, ownerWid)).role).toBe("admin");
-    expect((await auth.me(invitee.user.id, invitee.wid)).role).toBe("owner");
+    expect((await auth.me(invitee.user.id, ownerWid, "admin")).role).toBe("admin");
+    expect((await auth.me(invitee.user.id, invitee.wid, "owner")).role).toBe("owner");
 
+    // A workspace the user is not in is not honoured: the claims stay in their own.
     const stranger = await newUser("switch-stranger");
-    await expect(auth.switchWorkspace(invitee.user.id, stranger.wid)).rejects.toBeInstanceOf(NotFoundException);
+    const refused = await auth.refresh(switched.refreshToken, undefined, stranger.wid);
+    expect(claims(refused.accessToken).wid).toBe(invitee.wid);
   });
 
   it("a still-pending invitation is not a membership: it cannot be switched into", async () => {
     const invitee = await newUser("pending");
     await invite(invitee.email);
-    await expect(auth.switchWorkspace(invitee.user.id, ownerWid)).rejects.toBeInstanceOf(NotFoundException);
+    const hinted = await auth.refresh(invitee.refreshToken, undefined, ownerWid);
+    expect(claims(hinted.accessToken).wid).toBe(invitee.wid);
     expect((await auth.listWorkspaces(invitee.user.id, invitee.wid)).map((w) => w.id)).toEqual([invitee.wid]);
   });
 });
