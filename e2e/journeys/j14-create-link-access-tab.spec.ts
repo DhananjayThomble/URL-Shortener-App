@@ -19,7 +19,7 @@
  * on :3000 — see playwright.journeys.config.ts.
  */
 
-import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
 import { API_URL, REDIRECT_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
 
 const DEST = "https://example.com/j14-destination";
@@ -80,9 +80,22 @@ async function visit(slug: string) {
 }
 
 test.describe("Journey 14 — Create link after visiting the Access tab", () => {
-  test("(a) visit Access, type nothing, Create -> POST is sent, link listed and redirects", async ({ page }) => {
-    const session = await registerUser(makeEmail("j14a"));
+  /* One real sign-in for the whole journey: the API rate-limits POST /auth/login
+     per IP, and four logins per run (x desktop reruns) trips it. The four tests
+     are serial and independent otherwise — each starts from a fresh /links load. */
+  test.describe.configure({ mode: "serial" });
+  let session: Session;
+  let page: Page;
+  test.beforeAll(async ({ browser }: { browser: Browser }) => {
+    session = await registerUser(makeEmail("j14"));
+    page = await browser.newPage();
     await signIn(page, session);
+  });
+  test.afterAll(async () => {
+    await page.close();
+  });
+
+  test("(a) visit Access, type nothing, Create -> POST is sent, link listed and redirects", async () => {
     const drawer = await openCreate(page);
     const slug = slugFor("a");
     await fillBasics(drawer, slug);
@@ -107,9 +120,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     expect(hit.location).toBe(DEST);
   });
 
-  test("(b) Cancel, reopen without touching Access -> Create still works, and the form was reset", async ({ page }) => {
-    const session = await registerUser(makeEmail("j14b"));
-    await signIn(page, session);
+  test("(b) Cancel, reopen without touching Access -> Create still works, and the form was reset", async () => {
 
     let drawer = await openCreate(page);
     await fillBasics(drawer, slugFor("b0"));
@@ -137,9 +148,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     expect((await visit(slug)).location).toBe(DEST);
   });
 
-  test("(c) an invalid fallback URL on Access shows an error on that tab and sends no POST", async ({ page }) => {
-    const session = await registerUser(makeEmail("j14c"));
-    await signIn(page, session);
+  test("(c) an invalid fallback URL on Access shows an error on that tab and sends no POST", async () => {
     const drawer = await openCreate(page);
     const slug = slugFor("c");
     await fillBasics(drawer, slug);
@@ -179,9 +188,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     await expect(drawer).toBeHidden({ timeout: 15_000 });
   });
 
-  test("(d) valid scheduled / expiry values on Access are carried by the created link", async ({ page }) => {
-    const session = await registerUser(makeEmail("j14d"));
-    await signIn(page, session);
+  test("(d) valid scheduled / expiry values on Access are carried by the created link", async () => {
     const drawer = await openCreate(page);
     const slug = slugFor("d");
     await fillBasics(drawer, slug);
