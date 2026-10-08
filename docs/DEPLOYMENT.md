@@ -282,7 +282,7 @@ refresh token and never expire. That is $0.80/month in Secrets Manager, about
 
 | | |
 | --- | --- |
-| VPC | 2 AZs, public + isolated subnets. Egress is parameterised by `natStrategy` (default `'instance'`: a t4g.nano NAT instance, ~$3/mo, with the app Lambdas in `PRIVATE_WITH_EGRESS`). `'gateway'` is a managed NAT (~$32/mo); `'none'` keeps the original zero-egress topology. See the natStrategy section below. |
+| VPC | 2 AZs, public + isolated subnets. Egress is parameterised by `natStrategy` (default `'instance'`: a t4g.micro NAT instance, ~$6/mo, with the app Lambdas in `PRIVATE_WITH_EGRESS`). `'gateway'` is a managed NAT (~$32/mo); `'none'` keeps the original zero-egress topology. See the natStrategy section below. |
 | RDS | PostgreSQL 18, `db.t4g.micro`, single-AZ, 20 GB gp3, always `PRIVATE_ISOLATED` (it never egresses) |
 | DynamoDB | `LinkProjectionTable` (PAY_PER_REQUEST, PITR, `linkId` GSI) read by the redirect's `DynamoLinkResolver`; a separate `CacheTable` (TTL on `expiresAt`) backing the shared `CacheStore` — `CACHE_DRIVER=dynamodb` + `CACHE_DYNAMO_TABLE` are set on `redirectFn` |
 | SQS | `ClickQueue` for the redirect's `SqsClickSink`, plus a `ClickDlq` dead-letter queue |
@@ -299,7 +299,7 @@ valid 12 months, and **no 750-hour RDS allowance** — that was part of the old
 
 At this workload Lambda, CloudFront, DynamoDB, SQS and SSM sit inside
 always-free tiers that never expire. **Postgres is roughly 92% of the bill**,
-and with the default `natStrategy = 'instance'` (a ~$3/month NAT instance) the
+and with the default `natStrategy = 'instance'` (a ~$6/month NAT instance) the
 total is about **$15.50/month**. The credits are valid for 12 months, but that
 is the *validity window*, not how long they last: at ~$15.50/month the $100
 balance is exhausted in about **6.5 months** (100 / 15.5 ≈ 6.5), well before the
@@ -311,7 +311,7 @@ changing anything:
 **Egress is configurable via `natStrategy`, defaulting to a NAT instance.** A
 managed NAT *gateway* costs ~$32/month before a byte moves — more than
 everything else in this stack combined, including the database — so it is not
-the default. The default is a single t4g.nano NAT *instance* (~$3/month), which
+the default. The default is a single t4g.micro NAT *instance* (~$6/month), which
 gives the app Lambdas egress for a fraction of the gateway's cost; `'gateway'`
 is the one-flag upgrade to per-AZ redundancy, and `'none'` preserves the
 original zero-egress topology at $0. RDS always stays `PRIVATE_ISOLATED` (it
@@ -328,7 +328,7 @@ in `infra/bin/snapurl.ts`, defaulting to `'instance'`.
 
 | `natStrategy` | Cost | What it is | Egress features |
 | --- | --- | --- | --- |
-| `'instance'` (default) | ~$3/mo | t4g.nano NAT instance, single AZ | Function |
+| `'instance'` (default) | ~$6/mo | t4g.micro NAT instance, single AZ | Function |
 | `'gateway'` | ~$32/mo | Managed NAT gateway, highly available | Function |
 | `'none'` | $0 | The original zero-egress isolated-only topology | Non-functional |
 
@@ -403,6 +403,38 @@ a missing parameter, which is correct for required stage config but would make
 this feature mandatory rather than optional. See the natStrategy section above
 — the JWKS fetch this depends on needs egress, so it stays non-functional
 under `natStrategy = 'none'` regardless of this flag.
+
+### Google Safe Browsing
+
+Optional — without a key, every new link is marked clean without being scanned
+(`docs/DECISIONS.md` A10), and the API logs a warning at startup saying so.
+
+The key is a secret, so it never goes in a GitHub variable, SSM plain text or a
+`-c` flag. Create it in Secrets Manager yourself, then point the stack at it by
+**name**:
+
+```bash
+# 1. Once, with the real key. Reading it from a prompt keeps it out of your
+#    shell history; it is never echoed.
+read -rs SB_KEY && aws secretsmanager create-secret --region ap-south-1 \
+  --name snapurl/prod/google-safe-browsing-api-key \
+  --description "Google Safe Browsing API key for the SnapURL API" \
+  --secret-string "$SB_KEY"; unset SB_KEY
+
+# 2. Tell the deploy which secret to read (a name, not a secret value):
+gh variable set SAFE_BROWSING_SECRET_NAME --body snapurl/prod/google-safe-browsing-api-key
+#    or, for a local deploy:  SAFE_BROWSING_SECRET_NAME=... bash infra/deploy.sh
+
+# Rotating the key later: put-secret-value on the same name, then redeploy or
+# wait for cold starts (the API caches it per execution environment).
+```
+
+The stack gives only the API read access to that one secret and passes its
+name as `GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN`; `apps/api/src/main.ts`
+resolves it at cold start. **Non-fatally**: a missing, denied or unreachable
+secret logs `Could not read the Safe Browsing API key secret: …` and the API
+starts with Safe Browsing off, rather than failing to boot. Calling Google needs
+egress, so this is ignored (with a synth warning) under `natStrategy = 'none'`.
 
 ### The redirect uses AWS SDK adapters and can leave the VPC
 
@@ -540,7 +572,7 @@ The reasoning and the cost constraints that dictate the shape are recorded in
 > Lambda, DynamoDB, CloudFront, SQS and SSM Parameter Store all sit inside
 > AWS's always-free tiers at this workload. **Postgres is roughly 92% of the
 > bill.** A managed NAT gateway costs about $32/month before a byte moves — more
-> than everything else combined — which is why `natStrategy` defaults to a ~$3/mo
+> than everything else combined — which is why `natStrategy` defaults to a ~$6/mo
 > NAT instance instead.
 
 The stack is written and synthesises cleanly; what has not happened is a real

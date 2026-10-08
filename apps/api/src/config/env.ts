@@ -26,6 +26,7 @@ export const EnvSchema = z.object({
   DATABASE_SECRET_ARN: z.string().optional(),
   JWT_ACCESS_SECRET_ARN: z.string().optional(),
   JWT_REFRESH_SECRET_ARN: z.string().optional(),
+  GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: z.string().optional(),
   DATABASE_HOST: z.string().optional(),
   DATABASE_PORT: z.string().optional(),
   DATABASE_NAME: z.string().optional(),

@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, apiKeys, desc, eq, isNull, webhooks, type Database } from "@snapurl/database";
 import type { ApiKey, CreateApiKeyInput, CreateWebhookInput, CreatedApiKey, Webhook } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 
 @Injectable()
 export class DevelopersService {
@@ -93,6 +94,11 @@ export class DevelopersService {
   }
 
   async createWebhook(workspaceId: string, input: CreateWebhookInput): Promise<Webhook & { secret: string }> {
+    // The worker sends requests to this URL from inside our network, so a name
+    // that resolves to an internal address is refused here (#622). The worker
+    // checks again when it connects, because DNS can change after today.
+    await assertNoSsrfDnsTarget([input.endpoint]);
+
     // Shown once, like an API key. The receiver uses it to verify our signature.
     const secret = `whsec_${randomBytes(24).toString("base64url")}`;
 

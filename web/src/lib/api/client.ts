@@ -181,9 +181,19 @@ async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOp
   }
 
   if (!res.ok) throw await toApiError(res, path);
-  if (res.status === 204) return schema.parse(undefined);
 
-  const json = await res.json();
+  // 204 is the only status that can *never* carry a body per HTTP semantics,
+  // but it is not the only one this API actually sends bodyless: password-reset
+  // request and email/resend both return 202 with an empty body (anti-enumeration
+  // — see hooks/auth.ts). Checking the status code allowlist here previously
+  // missed 202, so `res.json()` threw "Unexpected end of JSON input" and the
+  // enumeration-safe confirmation never rendered. Read as text and only parse
+  // JSON if something was actually sent, so any current or future bodyless
+  // status works without having to be enumerated here.
+  const text = await res.text();
+  if (text.length === 0) return schema.parse(undefined);
+
+  const json = JSON.parse(text);
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
     // A contract drift is a bug worth seeing loudly in dev, not a silent

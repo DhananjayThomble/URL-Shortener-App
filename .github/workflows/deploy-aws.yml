@@ -34,6 +34,10 @@
 #   migrate-> optional; migrations are NOT automatic on deploy. RDS is
 #             unreachable from outside the VPC, so the only path is invoking the
 #             worker with {"task":"migrate"}.
+#   release-> after smoke passes, tags the deployed commit vX.Y.Z and creates a
+#             GitHub Release with notes generated from the merged PRs. So a
+#             release means "this is live and proved itself"; a failed deploy
+#             never produces one. See the `version` input.
 #   smoke  -> calls the existing reusable smoke-deployed.yml against the URLs
 #             this deploy just produced. A deploy is not successful until the
 #             real create-link-then-follow-redirect journey passes: production
@@ -84,6 +88,15 @@ on:
         required: false
         type: string
         default: ""
+      version:
+        description: >-
+          Semver for the GitHub Release this deploy creates, e.g. 2.2.0.
+          Blank = the next patch after the latest vX.Y.Z tag. Blank with
+          git_ref set (a rollback) = no release. Must be higher than the latest
+          tag and not already exist; checked before anything is deployed.
+        required: false
+        type: string
+        default: ""
       skip_smoke:
         description: "Skip the post-deploy smoke gate. Leave false: unchecked means the deploy must prove itself."
         required: false
@@ -131,6 +144,8 @@ jobs:
     permissions:
       contents: read
       id-token: write # to assume the AWS role via OIDC
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       # Pin to an explicit commit rather than the branch tip, and use the SAME
       # one in the plan and deploy jobs. Two reasons: main advancing between the
@@ -139,6 +154,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git_ref || github.sha }}
+
+      # Decide the release version FIRST, so a typo'd, duplicate or
+      # lower-than-latest version fails in seconds, before a 20-minute plan and
+      # long before anything is applied. Tags are read from the remote, not the
+      # shallow checkout, which has none.
+      - name: Resolve release version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+          GIT_REF: ${{ inputs.git_ref }}
+        run: |
+          set -euo pipefail
+          latest="$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/v##' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          latest="${latest:-0.0.0}"
+          requested="${REQUESTED#v}"
+          if [ -z "$requested" ]; then
+            if [ -n "$GIT_REF" ]; then
+              echo "Rollback/redeploy of '$GIT_REF' with no version given: no release will be created."
+              echo "version=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            IFS=. read -r major minor patch <<< "$latest"
+            requested="$major.$minor.$((patch + 1))"
+            echo "No version given: next patch after v$latest is v$requested."
+          fi
+          if ! [[ "$requested" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid version::'$REQUESTED' is not semver X.Y.Z (a leading v is allowed)."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$requested" >/dev/null; then
+            echo "::error title=Version already released::v$requested already exists. Pick a higher version."
+            exit 1
+          fi
+          if [ "$(printf '%s\n%s\n' "$latest" "$requested" | sort -V | tail -1)" != "$requested" ]; then
+            echo "::error title=Version not higher than latest::v$requested is lower than the latest release v$latest."
+            exit 1
+          fi
+          echo "version=v$requested" >> "$GITHUB_OUTPUT"
+          echo "### Release on success: \`v$requested\` (latest was v$latest)" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
@@ -214,6 +269,8 @@ jobs:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          # Optional: unset leaves Safe Browsing off. Not in the required list.
+          SAFE_BROWSING_SECRET_NAME: ${{ vars.SAFE_BROWSING_SECRET_NAME }}
         run: |
           set -o pipefail
           # Mirror deploy.sh's flag set exactly. If these two ever drift the
@@ -223,6 +280,7 @@ jobs:
           [ -n "${DOMAIN_NAME}" ]            && ctx+=(-c "domainName=${DOMAIN_NAME}")
           [ -n "${BUDGET_EMAIL}" ]           && ctx+=(-c "budgetEmail=${BUDGET_EMAIL}")
           [ -n "${GOOGLE_OAUTH_CLIENT_ID}" ] && ctx+=(-c "googleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}")
+          [ -n "${SAFE_BROWSING_SECRET_NAME}" ] && ctx+=(-c "safeBrowsingSecretName=${SAFE_BROWSING_SECRET_NAME}")
           ctx+=(-c "deployedGitSha=${{ steps.rev.outputs.sha }}")
 
           npx cdk diff "${ctx[@]}" "${{ inputs.stack }}" 2>&1 | tee /tmp/cdk-diff.txt
@@ -324,6 +382,7 @@ jobs:
       api_url: ${{ steps.stack_outputs.outputs.api_url }}
       redirect_url: ${{ steps.stack_outputs.outputs.redirect_url }}
       worker_function_name: ${{ steps.stack_outputs.outputs.worker_function_name }}
+      sha: ${{ steps.rev.outputs.sha }}
     steps:
       # Pin to an explicit commit rather than the branch tip, and use the SAME
       # one in the plan and deploy jobs. Two reasons: main advancing between the
@@ -392,6 +451,7 @@ jobs:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          SAFE_BROWSING_SECRET_NAME: ${{ vars.SAFE_BROWSING_SECRET_NAME }}
         run: |
           bash infra/deploy.sh "${{ inputs.stack }}" \
             -c "deployedGitSha=${{ steps.rev.outputs.sha }}"
@@ -502,3 +562,53 @@ jobs:
     with:
       redirect_base_url: ${{ needs.deploy.outputs.redirect_url }}
       api_base_url: ${{ needs.deploy.outputs.api_url }}
+
+  # ---------------------------------------------------------------------------
+  # 5. RELEASE — only once the deploy has proved itself.
+  # ---------------------------------------------------------------------------
+  # Tags the commit that was ACTUALLY deployed (deploy's resolved sha, not
+  # github.sha, which differs on a rollback) and creates the GitHub Release
+  # with notes generated from the PRs merged since the previous tag. Runs only
+  # if smoke passed, or was deliberately skipped, in which case the notes say
+  # so. A failed or cancelled deploy creates nothing, so "latest release"
+  # names what production runs, until a rollback (which creates no release)
+  # redeploys an older one. The version was validated in
+  # `plan`, before anything was applied.
+  release:
+    name: GitHub Release
+    needs: [plan, deploy, migrate, smoke]
+    if: >-
+      ${{ always()
+          && needs.plan.outputs.version != ''
+          && needs.deploy.result == 'success'
+          && needs.migrate.result == 'success'
+          && (needs.smoke.result == 'success'
+              || (inputs.skip_smoke && needs.smoke.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The only job in this workflow that writes to the repository, and it can
+    # only create a tag and a release — no AWS credentials, no id-token.
+    permissions:
+      contents: write
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          SMOKE_SKIPPED: ${{ inputs.skip_smoke }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          note="Deployed to production by [this run]($RUN_URL) at \`${SHA:0:12}\`."
+          if [ "$SMOKE_SKIPPED" = "true" ]; then
+            note="$note **The post-deploy smoke gate was skipped for this deploy.**"
+          fi
+          gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "$VERSION" \
+            --generate-notes \
+            --notes "$note" \
+            --latest
+          echo "### Released [$VERSION]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$VERSION)" >> "$GITHUB_STEP_SUMMARY"

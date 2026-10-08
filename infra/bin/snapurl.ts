@@ -87,11 +87,15 @@ new SnapUrlStack(app, "SnapUrl", {
   webOrigin: app.node.tryGetContext("webOrigin"),
   redirectOrigin: app.node.tryGetContext("redirectOrigin"),
   /* A topology/synth-time choice (it shapes the VPC), not deploy-time config,
-     so it lives here and not in SSM. Defaults to 'instance' (t4g.nano NAT
-     instance, ~$3/mo) inside the stack; override with `-c natStrategy=gateway`
+     so it lives here and not in SSM. Defaults to 'instance' (t4g.micro NAT
+     instance, ~$6/mo) inside the stack; override with `-c natStrategy=gateway`
      (managed NAT, ~$32/mo) or `-c natStrategy=none` (free, no egress). Context
      is untyped, so the stack validates it and throws on anything else. */
   natStrategy: app.node.tryGetContext("natStrategy"),
+  /* Per-region NAT instance AMI pin, committed in cdk.json so every deploy
+     machine (laptop or CI) resolves the same image. Bump it deliberately: a
+     new id replaces the NAT instance and cuts egress for about a minute. */
+  natAmiIds: app.node.tryGetContext("natAmiIds"),
   /* Where AWS Budgets alarms are delivered. Optional and deploy-time (a per-
      deploy destination, not stage config), so it lives here rather than SSM.
      Left unset, the budget + SNS topic are not created and the stack still
@@ -109,6 +113,10 @@ new SnapUrlStack(app, "SnapUrl", {
      Google Cloud Console client's id exactly, and matching
      NEXT_PUBLIC_GOOGLE_CLIENT_ID on the frontend. */
   googleOAuthClientId: app.node.tryGetContext("googleOAuthClientId"),
+  /* Optional: the NAME of a Secrets Manager secret holding the Google Safe
+     Browsing API key, created by the operator beforehand. Unset leaves Safe
+     Browsing off. Set with `-c safeBrowsingSecretName=<name>`. */
+  safeBrowsingSecretName: app.node.tryGetContext("safeBrowsingSecretName"),
   /* The commit this deploy was built from, surfaced as the DeployedGitSha
      output. Set by CI (`-c deployedGitSha=<sha>`); omitted locally, in which
      case the output is simply not created. Answering "which commit is live?"

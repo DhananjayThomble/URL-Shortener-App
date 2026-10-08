@@ -45,8 +45,9 @@ export class BioPagesService {
           kind: b.kind as BioPage["blocks"][number]["kind"],
           title: b.title,
           subtitle: b.subtitle,
-          metric: b.clicks > 0 ? `${b.clicks.toLocaleString()} clicks` : null,
+          metric: b.clicks > 0 ? `${b.clicks.toLocaleString()} ${b.clicks === 1 ? "click" : "clicks"}` : null,
           locked: Boolean(b.locked),
+          href: b.href,
         })),
         views: page.views,
         // Null rather than 0 when there is nothing to divide — a 0% CTR on a
@@ -110,19 +111,37 @@ export class BioPagesService {
 
          Position is a unique key, so an in-place reorder would collide with
          itself halfway through unless every update ran in a specific order.
-         Delete-and-reinsert inside the transaction is simpler and correct. */
+         Delete-and-reinsert inside the transaction is simpler and correct.
+
+         A block the client sends back with its id is the same block: it is
+         reinserted under that id with its click count, so reordering or
+         renaming a block does not reset its analytics, and a visitor's open
+         tab still addresses it. Only ids already on THIS page are honoured —
+         an id from anywhere else is a new block. */
+      const previous = await tx
+        .select({ id: bioBlocks.id, clicks: bioBlocks.clicks, linkId: bioBlocks.linkId })
+        .from(bioBlocks)
+        .where(eq(bioBlocks.bioPageId, id));
+      const kept = new Map(previous.map((b) => [b.id, b]));
+      const seen = new Set<string>();
+
       await tx.delete(bioBlocks).where(eq(bioBlocks.bioPageId, id));
       if (input.blocks.length) {
         await tx.insert(bioBlocks).values(
-          input.blocks.map((block, position) => ({
-            bioPageId: id,
-            position,
-            kind: block.kind,
-            title: block.title,
-            subtitle: block.subtitle ?? null,
-            href: block.href ?? null,
-            locked: block.locked ?? false,
-          })),
+          input.blocks.map((block, position) => {
+            const prior = block.id && !seen.has(block.id) ? kept.get(block.id) : undefined;
+            if (prior) seen.add(prior.id);
+            return {
+              ...(prior ? { id: prior.id, clicks: prior.clicks, linkId: prior.linkId } : {}),
+              bioPageId: id,
+              position,
+              kind: block.kind,
+              title: block.title,
+              subtitle: block.subtitle ?? null,
+              href: block.href ?? null,
+              locked: block.locked ?? false,
+            };
+          }),
         );
       }
 
@@ -147,14 +166,7 @@ export class BioPagesService {
    * profile and the blocks a visitor is meant to click do.
    */
   async publicPage(slug: string): Promise<PublicBioPage> {
-    const [page] = await this.db
-      .select()
-      .from(bioPages)
-      .where(and(sql`lower(${bioPages.slug}) = ${slug.toLowerCase()}`, eq(bioPages.status, "live")))
-      .orderBy(asc(bioPages.createdAt))
-      .limit(1);
-
-    if (!page) throw new NotFoundException("There's no page at that address.");
+    const page = await this.livePage(slug);
 
     const blocks = await this.db
       .select()
@@ -170,12 +182,50 @@ export class BioPagesService {
         initials: initialsOf(page.profileName),
       },
       blocks: blocks.map((b) => ({
+        id: b.id,
         kind: b.kind as PublicBioPage["blocks"][number]["kind"],
         title: b.title,
         subtitle: b.subtitle,
         href: b.href,
       })),
     };
+  }
+
+  /** One visit to a published page. A bare counter: no visitor identity, no
+   *  IP and no cookie is involved, so this stays inside the cookieless
+   *  analytics promise. */
+  async recordView(slug: string): Promise<void> {
+    const page = await this.livePage(slug);
+    await this.db
+      .update(bioPages)
+      .set({ views: sql`${bioPages.views} + 1` })
+      .where(eq(bioPages.id, page.id));
+  }
+
+  /** One click on a block of a published page. The block must belong to the
+   *  page the slug resolves to — a block id alone counts nothing. */
+  async recordClick(slug: string, blockId: string): Promise<void> {
+    const page = await this.livePage(slug);
+    const result = await this.db
+      .update(bioBlocks)
+      .set({ clicks: sql`${bioBlocks.clicks} + 1` })
+      .where(and(eq(bioBlocks.id, blockId), eq(bioBlocks.bioPageId, page.id)))
+      .returning({ id: bioBlocks.id });
+    if (result.length === 0) throw new NotFoundException("That block isn't on this page.");
+  }
+
+  /** The page a visitor at /b/<slug> sees. Every public route resolves through
+   *  here so a view or click can only ever land on the page that was shown. */
+  private async livePage(slug: string) {
+    const [page] = await this.db
+      .select()
+      .from(bioPages)
+      .where(and(sql`lower(${bioPages.slug}) = ${slug.toLowerCase()}`, eq(bioPages.status, "live")))
+      .orderBy(asc(bioPages.createdAt))
+      .limit(1);
+
+    if (!page) throw new NotFoundException("There's no page at that address.");
+    return page;
   }
 
   async remove(workspaceId: string, id: string): Promise<void> {

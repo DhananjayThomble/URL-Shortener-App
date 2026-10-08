@@ -477,11 +477,11 @@ export const BIO_PAGES: BioPage[] = [
     profile: { name: "Acme", bio: "Tools for people who make things.", initials: "AC" },
     blocks: [
       { id: "b1", kind: "header", title: "Header", subtitle: "Logo, name and one-line bio", metric: null, locked: true },
-      { id: "b2", kind: "link", title: "Shop the spring collection", subtitle: "→ snap.to/spring-sale", metric: "12.4k clicks", locked: false },
-      { id: "b3", kind: "link", title: "Download the app", subtitle: "→ snap.to/app", metric: "8.1k clicks", locked: false },
-      { id: "b4", kind: "embed", title: "Embed — product video", subtitle: "YouTube, plays inline", metric: "2.2k plays", locked: false },
-      { id: "b5", kind: "email", title: "Email capture", subtitle: "Sends to Mailchimp", metric: "408 signups", locked: false },
-      { id: "b6", kind: "social", title: "Social row", subtitle: "Instagram, LinkedIn, X, YouTube", metric: "1.9k clicks", locked: false },
+      { id: "b2", kind: "link", title: "Shop the spring collection", subtitle: "→ snap.to/spring-sale", metric: "12.4k clicks", locked: false, href: "https://snap.to/spring-sale" },
+      { id: "b3", kind: "link", title: "Download the app", subtitle: "→ snap.to/app", metric: "8.1k clicks", locked: false, href: "https://snap.to/app" },
+      { id: "b4", kind: "embed", title: "Embed — product video", subtitle: "YouTube, plays inline", metric: "2.2k plays", locked: false, href: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+      { id: "b5", kind: "email", title: "Email capture", subtitle: "Sends to Mailchimp", metric: "408 signups", locked: false, href: "https://acme.example.com/newsletter" },
+      { id: "b6", kind: "social", title: "Social row", subtitle: "Instagram, LinkedIn, X, YouTube", metric: "1.9k clicks", locked: false, href: "https://www.instagram.com/acme" },
     ],
   },
   { id: "bio_priya", domain: "snap.to", slug: "priya", status: "live", views: 8904, clickThrough: 44.1, profile: { name: "Priya Raman", bio: "Growth at Acme.", initials: "PR" }, blocks: [] },
@@ -622,6 +622,10 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["POST"], pattern: /^\/auth\/(login|register|oauth)$/ },
   { methods: ["GET"], pattern: /^\/auth\/me$/ },
   { methods: ["POST"], pattern: /^\/auth\/logout$/ },
+  { methods: ["POST"], pattern: /^\/auth\/password-reset\/request$/ },
+  { methods: ["POST"], pattern: /^\/auth\/password-reset\/confirm$/ },
+  { methods: ["POST"], pattern: /^\/auth\/email\/verify$/ },
+  { methods: ["POST"], pattern: /^\/auth\/email\/resend$/ },
   { methods: ["POST"], pattern: /^\/auth\/2fa\/setup$/ },
   { methods: ["POST"], pattern: /^\/auth\/2fa\/enable$/ },
   { methods: ["POST"], pattern: /^\/auth\/2fa\/verify$/ },
@@ -652,6 +656,8 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["GET"], pattern: /^\/reports$/ },
   { methods: ["GET", "POST"], pattern: /^\/public\/forms\/([^/]+)$/ },
   { methods: ["GET"], pattern: /^\/public\/bio-pages\/([^/]+)$/ },
+  { methods: ["POST"], pattern: /^\/public\/bio-pages\/([^/]+)\/view$/ },
+  { methods: ["POST"], pattern: /^\/public\/bio-pages\/([^/]+)\/blocks\/([^/]+)\/click$/ },
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/unlock$/ },
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/report$/ },
   { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/preview$/ },
@@ -701,6 +707,21 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/auth\/(register|oauth)$/)) data = SESSION;
   else if (m(/^\/auth\/me$/)) data = SESSION.user;
   else if (m(/^\/auth\/logout$/)) data = undefined;
+  // Request/resend give the SAME response for any email (no enumeration) —
+  // the real anti-enumeration shape, so there is nothing to branch on here.
+  else if (m(/^\/auth\/password-reset\/request$/)) data = undefined;
+  else if (m(/^\/auth\/password-reset\/confirm$/)) {
+    // "fixture.invalid.token" is the one sentinel that fails, so the
+    // expired/invalid-token path is exercisable in fixtures mode; any other
+    // token (e.g. the one a reset email would contain) succeeds.
+    const token = (opts.body as { token?: string })?.token ?? "";
+    if (token === "fixture.invalid.token") throw new Error("That reset link is invalid or has expired.");
+    data = undefined;
+  } else if (m(/^\/auth\/email\/verify$/)) {
+    const token = (opts.body as { token?: string })?.token ?? "";
+    if (token === "fixture.invalid.token") throw new Error("That verification link is invalid or has expired.");
+    data = undefined;
+  } else if (m(/^\/auth\/email\/resend$/)) data = undefined;
   else if (m(/^\/auth\/2fa\/setup$/)) {
     data = {
       otpauthUri: `otpauth://totp/SnapURL:${SESSION.user.email}?secret=JBSWY3DPEHPK3PXP&issuer=SnapURL`,
@@ -1042,14 +1063,21 @@ export async function fixtureRequest<T>(
     const body = opts.body as UpsertBioPageInput;
     // Keyed on (domain, slug), so save-existing and create are one call.
     const existing = bioStore.find((b) => b.domain === body.domain && b.slug === body.slug);
-    const blocks = body.blocks.map((b, i) => ({
-      id: b.id ?? uid(`blk${i}`),
-      kind: b.kind,
-      title: b.title,
-      subtitle: b.subtitle ?? null,
-      metric: b.metric ?? null,
-      locked: b.locked,
-    }));
+    // Mirrors the server: a block sent back with an id already on this page
+    // keeps that id and its metric; anything else is a new block.
+    const prior = new Map((existing?.blocks ?? []).map((b) => [b.id, b]));
+    const blocks = body.blocks.map((b, i) => {
+      const kept = b.id ? prior.get(b.id) : undefined;
+      return {
+        id: kept?.id ?? uid(`blk${i}`),
+        kind: b.kind,
+        title: b.title,
+        subtitle: b.subtitle ?? null,
+        metric: kept?.metric ?? null,
+        locked: b.locked,
+        href: b.href ?? null,
+      };
+    });
     if (existing) {
       Object.assign(existing, { status: body.status, blocks });
       existing.profile = { ...existing.profile, name: body.profile.name, bio: body.profile.bio };
@@ -1077,7 +1105,18 @@ export async function fixtureRequest<T>(
     data = undefined;
   } else if (m(/^\/bio-pages$/)) data = bioStore;
   /* ---- public bio page (#457) ---- */
-  else if (m(/^\/public\/bio-pages\/([^/]+)$/)) {
+  else if (m(/^\/public\/bio-pages\/([^/]+)\/view$/) && method === "POST") {
+    const slug = m(/^\/public\/bio-pages\/([^/]+)\/view$/)![1];
+    const page = bioStore.find((b) => b.slug === slug && b.status === "live");
+    if (!page) throw new Error(`No fixture bio page ${path}`);
+    page.views += 1;
+    data = undefined;
+  } else if (m(/^\/public\/bio-pages\/([^/]+)\/blocks\/([^/]+)\/click$/) && method === "POST") {
+    const [, slug, blockId] = m(/^\/public\/bio-pages\/([^/]+)\/blocks\/([^/]+)\/click$/)!;
+    const page = bioStore.find((b) => b.slug === slug && b.status === "live");
+    if (!page?.blocks.some((b) => b.id === blockId)) throw new Error(`No fixture bio block ${path}`);
+    data = undefined;
+  } else if (m(/^\/public\/bio-pages\/([^/]+)$/)) {
     const slug = m(/^\/public\/bio-pages\/([^/]+)$/)![1];
     // Mirrors the server: only a LIVE page resolves; a draft or missing slug
     // 404s rather than leaking that it exists.
@@ -1087,10 +1126,11 @@ export async function fixtureRequest<T>(
       slug: page.slug,
       profile: { name: page.profile.name, bio: page.profile.bio, initials: page.profile.initials },
       blocks: page.blocks.map((b) => ({
+        id: b.id,
         kind: b.kind,
         title: b.title,
         subtitle: b.subtitle ?? null,
-        href: (b as { href?: string | null }).href ?? null,
+        href: b.href ?? null,
       })),
     };
   }

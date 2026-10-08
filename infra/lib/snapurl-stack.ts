@@ -1,9 +1,11 @@
 import {
+  Annotations,
   CfnOutput,
   Duration,
   RemovalPolicy,
   Stack,
   Token,
+  Validations,
   type StackProps,
 } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
@@ -25,6 +27,7 @@ import * as budgets from "aws-cdk-lib/aws-budgets";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 import * as path from "node:path";
 import { SnapUrlConfig } from "./config.js";
@@ -56,8 +59,8 @@ import { SnapUrlConfig } from "./config.js";
 /**
  * How the private subnets reach the internet.
  *
- * - `'instance'` (default): a single t4g.nano NAT *instance* via
- *   `ec2.NatProvider.instanceV2`, ~$3/month. Gives full IPv4 egress so Safe
+ * - `'instance'` (default): a single t4g.micro NAT *instance* via
+ *   `ec2.NatProvider.instanceV2`, ~$6/month. Gives full IPv4 egress so Safe
  *   Browsing, customer webhooks, Google OAuth (JWKS) and mail actually work.
  *   Single point of failure (one instance, one AZ) — acceptable for a hobby
  *   stack, and the reason this is an instance rather than a managed gateway.
@@ -75,6 +78,23 @@ import { SnapUrlConfig } from "./config.js";
  * VPC block below and docs/DECISIONS.md.
  */
 export type NatStrategy = "gateway" | "instance" | "none";
+
+/**
+ * The NAT instance's AMI. Pinned so a deploy only replaces the NAT instance
+ * when someone bumps the pin on purpose (see `natAmiIds`). A token region (an
+ * env-agnostic stack) or no entry for this region falls back to the floating
+ * latest AL2023 image; the stack warns when that happens.
+ */
+export function natInstanceMachineImage(
+  region: string,
+  natAmiIds: Record<string, string> | undefined,
+): { image: ec2.IMachineImage; pinnedAmi: string | undefined } {
+  const pinnedAmi = Token.isUnresolved(region) ? undefined : natAmiIds?.[region];
+  const image = pinnedAmi
+    ? ec2.MachineImage.genericLinux({ [region]: pinnedAmi })
+    : ec2.MachineImage.latestAmazonLinux2023({ cpuType: ec2.AmazonLinuxCpuType.ARM_64 });
+  return { image, pinnedAmi };
+}
 
 export interface SnapUrlStackProps extends StackProps {
   /**
@@ -94,7 +114,7 @@ export interface SnapUrlStackProps extends StackProps {
   redirectOrigin?: string;
   /**
    * How the backend reaches the internet. Defaults to `'instance'` (a
-   * t4g.nano NAT instance, ~$3/month) so Safe Browsing, webhooks, OAuth and
+   * t4g.micro NAT instance, ~$6/month) so Safe Browsing, webhooks, OAuth and
    * mail work out of the box. `'gateway'` is the one-flag ~$32/month managed
    * upgrade; `'none'` preserves the original free, no-egress isolated-only
    * topology at the cost of those features. See {@link NatStrategy}.
@@ -108,6 +128,15 @@ export interface SnapUrlStackProps extends StackProps {
    * `-c budgetEmail=you@example.com`. See the Budgets block below.
    */
   budgetEmail?: string;
+  /**
+   * The NAT instance's AMI, pinned per region (`natStrategy: 'instance'`
+   * only). Without a pin, CDK resolves "latest Amazon Linux 2023" at every
+   * deploy, so any deploy after an AL2023 release *replaces* the NAT instance
+   * and the replacement re-runs its iptables user data from scratch. A region
+   * with no entry falls back to the floating latest image and synth warns.
+   * Set in `cdk.json` context as `natAmiIds`.
+   */
+  natAmiIds?: Record<string, string>;
   /**
    * The git commit this deploy was built from, surfaced as the
    * `DeployedGitSha` output.
@@ -152,6 +181,22 @@ export interface SnapUrlStackProps extends StackProps {
    * initialized the SDK with.
    */
   googleOAuthClientId?: string;
+  /**
+   * NAME of an operator-created Secrets Manager secret holding the Google
+   * Safe Browsing API key, e.g. `snapurl/prod/google-safe-browsing-api-key`.
+   * Optional and opt-in, like {@link googleOAuthClientId}: unset means Safe
+   * Browsing stays off, exactly as today. Set with
+   * `-c safeBrowsingSecretName=<name>`.
+   *
+   * Referenced by name rather than created here on purpose: a CDK-created
+   * secret needs an initial value, and a generated one would be a junk "key"
+   * the API then sends to Google. The operator creates the secret with the
+   * real key first (`aws secretsmanager create-secret`), then deploys.
+   *
+   * Only meaningful with egress (`natStrategy` not `'none'`): the API both
+   * resolves the secret at cold start and calls Google over the internet.
+   */
+  safeBrowsingSecretName?: string;
 }
 
 /**
@@ -184,8 +229,8 @@ export class SnapUrlStack extends Stack {
        Network
        --------------------------------------------------------- */
 
-    /* How the backend reaches the internet. Default 'instance': a t4g.nano NAT
-       instance (~$3/month) rather than a managed NAT gateway (~$32/month),
+    /* How the backend reaches the internet. Default 'instance': a t4g.micro NAT
+       instance (~$6/month) rather than a managed NAT gateway (~$32/month),
        because a hobby stack does not need the gateway's per-AZ redundancy.
        'gateway' is the one-flag upgrade to that redundancy; 'none' keeps the
        original zero-egress topology. See NatStrategy above. A value that is
@@ -216,8 +261,8 @@ export class SnapUrlStack extends Stack {
                      subnet group. Nothing in a private subnet reaches the
                      internet — the original free topology. Safe Browsing,
                      webhooks, OAuth and mail stay dead; the operator's choice.
-         'instance'  natGateways: 1 through a t4g.nano NAT *instance*
-                     (NatProvider.instanceV2, ~$3/month). Full IPv4 egress.
+         'instance'  natGateways: 1 through a t4g.micro NAT *instance*
+                     (NatProvider.instanceV2, ~$6/month). Full IPv4 egress.
                      Single instance in a single AZ — a single point of
                      failure, which is why it is an instance and not a gateway;
                      acceptable for a hobby stack, the default.
@@ -232,9 +277,19 @@ export class SnapUrlStack extends Stack {
        a PRIVATE_ISOLATED group ('isolated') for the DB, which never egresses.
        The exhaustive switch below leaves no unhandled strategy, so synth is
        valid by construction for all three values. */
+    /* MICRO, not NANO: the NAT instance's user data runs `yum install
+       iptables-services`, and on a 512 MB nano dnf's metadata load gets the
+       install OOM-killed. iptables never arrives, the masquerade rule is never
+       written, and the instance silently blackholes everything routed to it.
+       Earlier nano instances had booted fine, which is why this went unnoticed
+       until a replacement (2026-10-03) was killed. 1 GB is ~$3/month more. */
     const egressAz = ec2.InstanceType.of(
       ec2.InstanceClass.BURSTABLE4_GRAVITON,
-      ec2.InstanceSize.NANO,
+      ec2.InstanceSize.MICRO,
+    );
+    const { image: natMachineImage, pinnedAmi: pinnedNatAmi } = natInstanceMachineImage(
+      this.region,
+      props.natAmiIds,
     );
     let vpcProps: ec2.VpcProps;
     /* Held outside the switch so the inbound rule the NAT instance needs can be
@@ -272,8 +327,16 @@ export class SnapUrlStack extends Stack {
            internet stays blocked, which was the point of OUTBOUND_ONLY. */
         natInstanceProvider = ec2.NatProvider.instanceV2({
           instanceType: egressAz,
+          machineImage: natMachineImage,
           defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
         });
+        if (!pinnedNatAmi) {
+          Annotations.of(this).addWarningV2(
+            "snapurl:natAmiUnpinned",
+            "NAT instance AMI is not pinned for this region (natAmiIds in cdk.json), so any deploy " +
+              "after an Amazon Linux 2023 release replaces the NAT instance and briefly cuts egress.",
+          );
+        }
         vpcProps = {
           maxAzs: 2,
           natGateways: 1, // One instance, not one per AZ — the hobby-stack SPOF tradeoff.
@@ -307,6 +370,17 @@ export class SnapUrlStack extends Stack {
 
     const vpc = new ec2.Vpc(this, "Vpc", vpcProps);
 
+    /* A hardcoded ImageId is the point of natAmiIds, so the validator's
+       portability warning about it is acknowledged rather than "fixed". */
+    if (pinnedNatAmi) {
+      for (const instance of natInstanceProvider?.gatewayInstances ?? []) {
+        Validations.of(instance).acknowledge({
+          id: "CloudFormation-Validate::W9010",
+          reason: "NAT AMI is pinned per region on purpose (natAmiIds in cdk.json)",
+        });
+      }
+    }
+
     /* The ingress rule OUTBOUND_ONLY leaves out (see the 'instance' case
        above). Scoped to the VPC CIDR, not 0.0.0.0/0: the private subnets can
        reach the NAT instance to be forwarded, the internet cannot reach it
@@ -335,9 +409,26 @@ export class SnapUrlStack extends Stack {
     };
 
     /* Gateway endpoints are free. Interface endpoints are ~$7/month each, so
-       only S3 and DynamoDB get one — the two that happen to be gateways. */
+       S3 and DynamoDB (the two that happen to be gateways) get one, plus
+       exactly one interface endpoint — Secrets Manager — below. */
     vpc.addGatewayEndpoint("S3Endpoint", { service: ec2.GatewayVpcEndpointAwsService.S3 });
     vpc.addGatewayEndpoint("DynamoEndpoint", { service: ec2.GatewayVpcEndpointAwsService.DYNAMODB });
+
+    /* Secrets Manager is the one interface endpoint worth paying for. With
+       egress on, every app Lambda fetches its DB and JWT secrets at cold start
+       (packages/database/src/secrets.ts); routing that through the NAT made the
+       single NAT instance a hard dependency of the API *booting at all*, and
+       when the instance stopped forwarding, the API never came up. Through the
+       endpoint, a NAT outage costs the egress features (webhooks, mail, Safe
+       Browsing, OAuth JWKS) and nothing else. One AZ, not two: ~$7/month, and
+       Lambdas in the other AZ reach it cross-AZ. Not under 'none', which
+       never sets the *_SECRET_ARN vars. */
+    if (natStrategy !== "none") {
+      vpc.addInterfaceEndpoint("SecretsManagerEndpoint", {
+        service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+        subnets: { ...appLambdaSubnets, availabilityZones: [vpc.availabilityZones[0]] },
+      });
+    }
 
     /* ---------------------------------------------------------
        Link projection table (Phase 7, #288)
@@ -553,6 +644,21 @@ export class SnapUrlStack extends Stack {
      * `hasEgress` is the switch: true for 'instance'/'gateway' (ARN + runtime
      * lookup), false for 'none' (synth-time unwrap fallback). */
     const hasEgress = natStrategy !== "none";
+
+    /* The Safe Browsing key, when the operator has opted in (see
+       safeBrowsingSecretName). Under 'none' there is no path to Secrets
+       Manager or to Google, so the setting is ignored with a warning rather
+       than wired to a lookup that would only ever fail. */
+    if (props.safeBrowsingSecretName && !hasEgress) {
+      Annotations.of(this).addWarningV2(
+        "snapurl:safeBrowsingNoEgress",
+        "safeBrowsingSecretName is ignored under natStrategy 'none': the API cannot reach Secrets Manager or Google.",
+      );
+    }
+    const safeBrowsingSecret =
+      props.safeBrowsingSecretName && hasEgress
+        ? secretsmanager.Secret.fromSecretNameV2(this, "SafeBrowsingApiKey", props.safeBrowsingSecretName)
+        : undefined;
 
     /* 'none'-only fallback: no NAT, no route to Secrets Manager, so resolve the
        DB URL at synth time via unsafeUnwrap. This is the only path that still
@@ -787,6 +893,12 @@ export class SnapUrlStack extends Stack {
            "off" rather than "misconfigured". Only the API verifies OAuth ID
            tokens, so redirectFn and workerFn never get this key. */
         ...(props.googleOAuthClientId ? { GOOGLE_OAUTH_CLIENT_ID: props.googleOAuthClientId } : {}),
+        /* Same spread-only-when-set rule. A name, not an ARN: GetSecretValue
+           accepts either, and an operator-created secret's full ARN carries a
+           random suffix the stack cannot know. Resolved at cold start by
+           apps/api/src/main.ts, non-fatally — a missing or unreadable secret
+           logs a warning and leaves Safe Browsing off, never blocks the API. */
+        ...(safeBrowsingSecret ? { GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: safeBrowsingSecret.secretName } : {}),
         /* #470/#426, closing the AWS-profile gap the reviewer found on
            PR #594: LinkCacheBustService.bust() (apps/api/src/common/) calls
            CacheStore.del(linkCacheKey(host, slug)) so the redirect's hot-cache
@@ -826,12 +938,22 @@ export class SnapUrlStack extends Stack {
       }),
     );
 
-    /* LinkCacheBustService.bust() only ever calls CacheStore.del() (see
-       apps/api/src/common/link-cache-bust.service.ts) — a delete, never a
-       get/set — so grantWriteData is the least-privilege grant, unlike
-       redirectFn's grantReadWriteData below (which also reads/writes the
-       daily-salt cache on the same table). */
+    /* Two API consumers share this table once CACHE_DRIVER=dynamodb:
+       LinkCacheBustService.bust() only calls CacheStore.del(), and the rate
+       limiter (apps/api/src/common/cache-throttler-storage.ts) calls incr()
+       then pttl() on EVERY request — UpdateItem, then GetItem. A write-only
+       grant denied that GetItem, so every request, /health included, threw
+       and the API never passed its readiness check. So: the write grant plus
+       GetItem alone. Still no Scan/Query/BatchGetItem — nothing here reads
+       more than one known key, unlike redirectFn's grantReadWriteData below
+       (which also reads/writes the daily-salt cache on the same table). */
     cacheTable.grantWriteData(apiFn);
+    apiFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem"],
+        resources: [cacheTable.tableArn],
+      }),
+    );
 
     const httpApi = new apigw.HttpApi(this, "HttpApi", {
       // The app sets its own CORS headers; doing it here too would send two.
@@ -1260,6 +1382,8 @@ export class SnapUrlStack extends Stack {
          public internet just as it reaches DynamoDB and SQS. */
       config.jwtAccessSecret.grantRead(redirectFn);
       config.jwtRefreshSecret.grantRead(apiFn);
+      // Only the API scans links, so only the API can read the key.
+      safeBrowsingSecret?.grantRead(apiFn);
     }
 
     /* ---------------------------------------------------------

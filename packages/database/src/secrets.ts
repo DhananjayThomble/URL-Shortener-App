@@ -40,8 +40,19 @@ const secretCache = new Map<string, string>();
 /** Created lazily on first real fetch and reused thereafter. */
 let client: SecretsManagerClient | undefined;
 
+/** Bounded so an unreachable endpoint fails the cold start with an error in
+ *  the logs, instead of hanging silently until the Lambda times out. The SDK
+ *  default sets no socket timeout, and the API's bootstrap awaits this before
+ *  the logger exists, so a blackholed NAT once produced 30s timeouts with no
+ *  log line at all. Two attempts of at most ~5s each stay well inside the
+ *  API's 30s timeout. */
+export const SECRETS_CLIENT_CONFIG = {
+  maxAttempts: 2,
+  requestHandler: { connectionTimeout: 2_000, requestTimeout: 5_000 },
+} as const;
+
 function getClient(): SecretsManagerClient {
-  if (!client) client = new SecretsManagerClient({});
+  if (!client) client = new SecretsManagerClient(SECRETS_CLIENT_CONFIG);
   return client;
 }
 
@@ -127,6 +138,33 @@ export async function resolveSecrets(env: NodeJS.ProcessEnv = process.env): Prom
     resolveJwtSecret("JWT_REFRESH_SECRET_ARN", "JWT_REFRESH_SECRET", env),
   ]);
   return { databaseUrl, jwtAccessSecret, jwtRefreshSecret };
+}
+
+/**
+ * Resolve the Google Safe Browsing API key, never throwing.
+ *
+ * Unlike the DB and JWT secrets, this one is optional: without it the API runs
+ * with Safe Browsing off. So a missing or unreadable secret must not fail the
+ * cold start. The error is returned for the caller to log once a logger
+ * exists, and the key is left unset.
+ *
+ * Escape hatch as above: with no GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN set,
+ * returns the plain GOOGLE_SAFE_BROWSING_API_KEY (possibly undefined) and makes
+ * no SDK call.
+ */
+export async function resolveSafeBrowsingApiKey(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ apiKey: string | undefined; error?: Error }> {
+  try {
+    const apiKey = await resolveJwtSecret(
+      "GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN",
+      "GOOGLE_SAFE_BROWSING_API_KEY",
+      env,
+    );
+    return { apiKey: apiKey?.trim() || undefined };
+  } catch (err) {
+    return { apiKey: undefined, error: err instanceof Error ? err : new Error(String(err)) };
+  }
 }
 
 /** Test-only: clears the module-level cache and lazily-created client so each

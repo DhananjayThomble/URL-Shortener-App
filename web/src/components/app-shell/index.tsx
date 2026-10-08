@@ -77,23 +77,25 @@ function NavLinks({ counts, onNavigate }: { counts: Counts; onNavigate?: () => v
   );
 }
 
-/** The monthly-clicks quota meter, shared by the desktop sidebar and mobile drawer. */
-function QuotaMeter() {
+/**
+ * This month's click count, shared by the desktop sidebar and mobile drawer.
+ *
+ * A plain count, not a meter (#657). `clicksIncluded` is a column nothing
+ * enforces (docs/DECISIONS.md, Billing), so drawing `clicksUsed / clicksIncluded`
+ * as a filling bar advertised a cap that does not exist — and contradicted
+ * /pricing ("Clicks · counted, never capped") and Settings → Usage, which
+ * already show the bare number.
+ */
+function ClicksThisMonth() {
   const { data: ws } = useWorkspace();
-  const usedPct = ws ? Math.min(100, Math.round((ws.clicksUsed / ws.clicksIncluded) * 100)) : 0;
   return (
     <div className="px-[10px] py-[9px]">
-      <div className="flex justify-between text-[11.5px] text-ink-3 mb-[6px]">
+      <div className="flex justify-between items-baseline text-[11.5px] text-ink-3">
         <span>Clicks this month</span>
-        <b className="text-ink-2 font-mono tnum">
-          {ws ? `${compact(ws.clicksUsed)} / ${compact(ws.clicksIncluded)}` : "—"}
-        </b>
-      </div>
-      <div className="h-1 bg-surface-4 rounded-full overflow-hidden">
-        <i className="block h-full bg-accent rounded-full" style={{ width: `${usedPct}%` }} />
+        <b className="text-ink-2 font-mono tnum">{ws ? ws.clicksUsed.toLocaleString() : "—"}</b>
       </div>
       <p className="text-[10.5px] text-ink-3 mt-[7px] leading-[1.45]">
-        One quota, clicks only. Links, QR codes and edits are never metered.
+        Counted, never capped. Links, QR codes and edits are never metered.
       </p>
     </div>
   );
@@ -132,7 +134,7 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
       <NavLinks counts={counts} />
 
       <div className="mt-auto pt-[14px] border-t border-line">
-        <QuotaMeter />
+        <ClicksThisMonth />
       </div>
     </aside>
   );
@@ -141,7 +143,7 @@ export function Sidebar({ counts, onCreate }: { counts: Counts; onCreate: () => 
 /**
  * Primary navigation for viewports below `lg`, where the desktop {@link Sidebar}
  * is `hidden`. A hamburger button in the {@link Topbar} opens a full-height
- * drawer that reuses the same {@link NavLinks}/{@link QuotaMeter} as the sidebar,
+ * drawer that reuses the same {@link NavLinks}/{@link ClicksThisMonth} as the sidebar,
  * so a phone user can reach every section — the gap DC1 flagged (nav unreachable
  * below 1024px with no replacement). It is `lg:hidden`; at `lg` and up nothing
  * here renders and the sidebar takes over, so the desktop layout is untouched.
@@ -231,7 +233,7 @@ function MobileNav({ counts, onCreate }: { counts: Counts; onCreate: () => void 
             <NavLinks counts={counts} onNavigate={() => setOpen(false)} />
 
             <div className="mt-auto pt-[14px] border-t border-line">
-              <QuotaMeter />
+              <ClicksThisMonth />
             </div>
           </nav>
         </div>

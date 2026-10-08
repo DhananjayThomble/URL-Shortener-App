@@ -96,15 +96,16 @@ describe("SnapUrlStack — API/redirect CacheStore pairing for immediate cache i
     expect(redirectEnv.CACHE_DYNAMO_TABLE).toEqual({ Ref: cacheTableLogicalId });
   });
 
-  it("grants ApiFn IAM write access to the cache table (least-privilege: no read/scan)", () => {
+  it("grants ApiFn IAM write access to the cache table", () => {
     // grantWriteData's action set for a DynamoDB table (aws-cdk-lib's Table
     // construct) — PutItem/UpdateItem/DeleteItem/BatchWriteItem, the same
     // actions RedirectFn's grantReadWriteData includes for its write half.
     // Asserting the write actions are present (Match.arrayWith, not an exact
     // array) rather than the full read+write set is what actually
     // distinguishes "ApiFn can bust a key" from "ApiFn accidentally got the
-    // broader grant redirectFn has" — the service only ever calls
-    // CacheStore.del(), never get()/set().
+    // broader grant redirectFn has" — bust() only ever calls
+    // CacheStore.del(). (The single read the rate limiter needs is pinned by
+    // the GetItem test below.)
     //
     // Scoped to ApiFn's OWN role (via Roles: Match.arrayWith([{ Ref:
     // apiRoleLogicalId }])) rather than "any IAM::Policy in the stack has a
@@ -130,11 +131,49 @@ describe("SnapUrlStack — API/redirect CacheStore pairing for immediate cache i
     });
   });
 
-  it("does not grant ApiFn dynamodb:Scan or dynamodb:GetItem on the cache table", () => {
-    // Least-privilege check for the grant added above: bust() only deletes,
-    // so a broad read grant here would be unused surface, not a feature —
-    // this pins grantWriteData (not grantReadWriteData) as the intended
-    // shape rather than something a future edit could widen unnoticed.
+  /* ApiFn's statements that reference the cache table, flattened to their
+     action lists. Scoped to ApiFn's own role, for the reason given above. */
+  function apiFnCacheTableActions(): string[][] {
+    const policies = template.findResources("AWS::IAM::Policy");
+    const cacheTables = template.findResources("AWS::DynamoDB::Table", {
+      Properties: { KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }] },
+    });
+    const cacheTableLogicalId = Object.keys(cacheTables)[0]!;
+    const apiFnEntry = Object.entries(template.findResources("AWS::Lambda::Function")).find(
+      ([id]) => id.startsWith("ApiFn"),
+    )!;
+    const apiRoleLogicalId = apiFnEntry[1].Properties.Role["Fn::GetAtt"][0];
+    const result: string[][] = [];
+    for (const [, policy] of Object.entries(policies)) {
+      const onApiRole = (policy.Properties.Roles ?? []).some(
+        (r: unknown) => typeof r === "object" && r !== null && "Ref" in r && (r as { Ref: string }).Ref === apiRoleLogicalId,
+      );
+      if (!onApiRole) continue;
+      const statements = Array.isArray(policy.Properties.PolicyDocument.Statement)
+        ? policy.Properties.PolicyDocument.Statement
+        : [policy.Properties.PolicyDocument.Statement];
+      for (const statement of statements) {
+        if (!JSON.stringify(statement).includes(cacheTableLogicalId)) continue;
+        result.push(Array.isArray(statement.Action) ? statement.Action : [statement.Action]);
+      }
+    }
+    return result;
+  }
+
+  it("grants ApiFn dynamodb:GetItem on the cache table, for the rate limiter", () => {
+    // Regression: with CACHE_DRIVER=dynamodb the API's throttler storage
+    // (apps/api/src/common/cache-throttler-storage.ts) runs incr() then pttl()
+    // on every request, and DynamoDbCacheStore.pttl() is a GetItem. The
+    // write-only grant denied it, every request threw, /health never passed
+    // the Lambda Web Adapter's readiness check, and the API 503'd in prod.
+    expect(apiFnCacheTableActions().flat()).toContain("dynamodb:GetItem");
+  });
+
+  it("does not grant ApiFn dynamodb:Scan, Query or BatchGetItem on the cache table", () => {
+    // Least-privilege check: every API read is one known key (GetItem), so a
+    // broader read grant would be unused surface, not a feature. This pins
+    // the shape so a future edit cannot widen it to grantReadWriteData
+    // unnoticed.
     const policies = template.findResources("AWS::IAM::Policy");
 
     const cacheTables = template.findResources("AWS::DynamoDB::Table", {
@@ -148,14 +187,14 @@ describe("SnapUrlStack — API/redirect CacheStore pairing for immediate cache i
     const apiRoleLogicalId = apiFnEntry[1].Properties.Role["Fn::GetAtt"][0];
 
     // Find the policy attached to ApiFn's role and confirm its statements
-    // referencing the cache table never include a read action.
+    // referencing the cache table never include a multi-item read action.
     const apiFnPolicies = Object.entries(policies).filter(([, res]) =>
       (res.Properties.Roles ?? []).some(
         (r: unknown) => typeof r === "object" && r !== null && "Ref" in r && (r as { Ref: string }).Ref === apiRoleLogicalId,
       ),
     );
 
-    const readActions = ["dynamodb:GetItem", "dynamodb:Scan", "dynamodb:Query"];
+    const readActions = ["dynamodb:Scan", "dynamodb:Query", "dynamodb:BatchGetItem"];
     for (const [, policy] of apiFnPolicies) {
       const statements = Array.isArray(policy.Properties.PolicyDocument.Statement)
         ? policy.Properties.PolicyDocument.Statement

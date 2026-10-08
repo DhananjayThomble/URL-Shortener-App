@@ -101,6 +101,10 @@ There is **no v1**. The Express + Mongoose backend, the Vite frontend and the
 Chrome extension were deleted, along with `backend/swagger.yml`. If you find a
 reference to any of them, it is stale — report it rather than following it.
 
-There is no SSO, no billing, no password reset and no email verification. The
-only mail the system sends is a team invitation
-(`apps/api/src/mail/mail.service.ts`), written to `logs/outbox/` by default.
+There is no SSO and no billing. Password reset and email verification exist
+end to end — `POST /auth/password-reset/{request,confirm}`,
+`POST /auth/email/{verify,resend}`, and the matching
+`web/src/app/(auth)/{forgot-password,reset-password,verify-email}` pages.
+Mail (invitations, password reset, email verification) is written to
+`os.tmpdir()/snapurl-outbox` by default (`MAIL_OUTBOX_DIR`) rather than sent —
+see `apps/api/src/mail/mail.service.ts`.

@@ -7,7 +7,11 @@
     "_comment_checkSecretUsage": "Off deliberately: the DB password is passed to the Lambdas as an environment variable. See the reasoning in lib/snapurl-stack.ts.",
     "@aws-cdk/core:checkSecretUsage": false,
     "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true,
-    "_comment_natStrategy": "Pinned default (issue #348). A deploy that omits -c natStrategy must NOT fall back to a topology that kills Lambda egress. 'instance' is the ~$3/mo t4g.nano NAT with full IPv4 egress. deploy.sh still requires NAT_STRATEGY explicitly; this is the belt-and-suspenders floor for a raw `cdk deploy`. Non-secret.",
-    "natStrategy": "instance"
+    "_comment_natStrategy": "Pinned default (issue #348). A deploy that omits -c natStrategy must NOT fall back to a topology that kills Lambda egress. 'instance' is the ~$6/mo t4g.micro NAT with full IPv4 egress. deploy.sh still requires NAT_STRATEGY explicitly; this is the belt-and-suspenders floor for a raw `cdk deploy`. Non-secret.",
+    "natStrategy": "instance",
+    "_comment_natAmiIds": "NAT instance AMI pinned per region (AL2023 arm64, public Amazon AMI ids, non-secret). Unpinned, every deploy after an AL2023 release replaced the NAT instance; one such replacement failed its iptables setup and took the API down. A new id here replaces the instance on the next deploy, so bump it on purpose, and before the pinned image's deprecation date.",
+    "natAmiIds": {
+      "ap-south-1": "ami-08bef17211a2dff19"
+    }
   }
 }

@@ -47,6 +47,7 @@ ctx=(-c "account=$CDK_DEFAULT_ACCOUNT" -c "region=$CDK_DEFAULT_REGION" -c "natSt
 [ -n "${REDIRECT_ORIGIN:-}" ]        && ctx+=(-c "redirectOrigin=$REDIRECT_ORIGIN")
 [ -n "${BUDGET_EMAIL:-}" ]           && ctx+=(-c "budgetEmail=$BUDGET_EMAIL")
 [ -n "${GOOGLE_OAUTH_CLIENT_ID:-}" ] && ctx+=(-c "googleOAuthClientId=$GOOGLE_OAUTH_CLIENT_ID")
+[ -n "${SAFE_BROWSING_SECRET_NAME:-}" ] && ctx+=(-c "safeBrowsingSecretName=$SAFE_BROWSING_SECRET_NAME")
 
 echo "deploy.sh: cdk deploy ${ctx[*]}"
 npx cdk deploy --require-approval never "${ctx[@]}" "$@"

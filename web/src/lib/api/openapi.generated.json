@@ -24,6 +24,12 @@
   "/auth/2fa/verify": [
     "POST"
   ],
+  "/auth/email/resend": [
+    "POST"
+  ],
+  "/auth/email/verify": [
+    "POST"
+  ],
   "/auth/login": [
     "POST"
   ],
@@ -34,6 +40,12 @@
     "GET"
   ],
   "/auth/oauth": [
+    "POST"
+  ],
+  "/auth/password-reset/confirm": [
+    "POST"
+  ],
+  "/auth/password-reset/request": [
     "POST"
   ],
   "/auth/refresh": [
@@ -109,6 +121,12 @@
   ],
   "/public/bio-pages/{slug}": [
     "GET"
+  ],
+  "/public/bio-pages/{slug}/blocks/{blockId}/click": [
+    "POST"
+  ],
+  "/public/bio-pages/{slug}/view": [
+    "POST"
   ],
   "/public/forms/{slug}": [
     "GET",

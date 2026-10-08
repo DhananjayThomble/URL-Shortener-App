@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { abuseReports, createDatabase, domains, eq, links, projectionOutbox, workspaces, type Database } from "@snapurl/database";
 import { ReportsService } from "./reports.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
+import type { ProjectionNudgeService } from "../links/projection-nudge.service.js";
 
 /* ============================================================
    ReportsService.submitReport against a real Postgres (#291).
@@ -19,6 +20,7 @@ const describeDb = DATABASE_URL ? describe : describe.skip;
 /** This suite (submitReport only) never flags a link, so bust() is never
  *  called — a no-op stub is all the constructor needs. */
 const cacheBustStub = { bust: async () => {} } as unknown as LinkCacheBustService;
+const nudgeStub = { nudge: () => {} } as unknown as ProjectionNudgeService;
 
 describeDb("ReportsService.submitReport", () => {
   let handle: ReturnType<typeof createDatabase>;
@@ -33,7 +35,7 @@ describeDb("ReportsService.submitReport", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new ReportsService(db, cacheBustStub);
+    service = new ReportsService(db, cacheBustStub, nudgeStub);
 
     const [ws] = await db
       .insert(workspaces)
@@ -137,6 +139,7 @@ describeDb("ReportsService.list / review", () => {
   let db: Database;
   let service: ReportsService;
   let cacheBust: { bust: ReturnType<typeof vi.fn> };
+  let projectionNudge: { nudge: ReturnType<typeof vi.fn> };
 
   const stamp = Date.now();
   let wsA: string;
@@ -158,7 +161,12 @@ describeDb("ReportsService.list / review", () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
     cacheBust = { bust: vi.fn(async () => {}) };
-    service = new ReportsService(db, cacheBust as unknown as LinkCacheBustService);
+    projectionNudge = { nudge: vi.fn() };
+    service = new ReportsService(
+      db,
+      cacheBust as unknown as LinkCacheBustService,
+      projectionNudge as unknown as ProjectionNudgeService,
+    );
 
     // Two independent workspaces, each with a domain and a link.
     const [a] = await db
@@ -274,6 +282,14 @@ describeDb("ReportsService.list / review", () => {
       .where(eq(projectionOutbox.linkId, linkA));
     expect(outbox.some((r) => r.op === "upsert")).toBe(true);
 
+    // ...and the worker must be nudged to drain that row NOW, as every
+    // links.service write does (#394). Without the nudge the row waits for the
+    // 1-minute scheduled drain while the bust below has already dropped the
+    // hot-cache entry, so the redirect re-reads the stale "clean" projection
+    // and keeps redirecting the flagged link with no warning (seen in the
+    // production post-deploy smoke, 2026-10-04).
+    expect(projectionNudge.nudge).toHaveBeenCalledTimes(1);
+
     // #426: the redirect's hot-cache entry for exactly this (host, slug) must
     // be busted once the flag has committed — not deferred to the worker's
     // scheduled outbox drain (see LinkCacheBustService's header for why that
@@ -312,6 +328,7 @@ describeDb("ReportsService.list / review", () => {
     // UPDATE is scoped to links.workspaceId = wsA, so it matches zero rows. The
     // report must NOT be marked 'actioned' and wsB's link must NOT be flagged —
     // otherwise the report claims an enforcement that never happened.
+    projectionNudge.nudge.mockClear();
     const dto = await service.review(wsA, reportMovedLink, reviewer, { flagLink: true });
     expect(dto.status).not.toBe("actioned");
     expect(dto.status).toBe("open");
@@ -328,5 +345,7 @@ describeDb("ReportsService.list / review", () => {
     // (host, slug) to invalidate. This call must not be confused with the
     // one the passing "flags the resolved link" test above already made.
     expect(cacheBust.bust).not.toHaveBeenCalledWith(domainBHost, expect.anything());
+    // Nor a nudge: nothing was enqueued, so there is nothing to drain.
+    expect(projectionNudge.nudge).not.toHaveBeenCalled();
   });
 });

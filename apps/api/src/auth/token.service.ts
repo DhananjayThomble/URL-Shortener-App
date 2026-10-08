@@ -40,24 +40,48 @@ export class TokenService {
     return createHash("sha256").update(token).digest("hex");
   }
 
+  /* Three kinds of token share JWT_ACCESS_SECRET: access tokens, the 2FA challenge
+     token (purpose "totp") and the link-unlock token (purpose "unlock"). A valid
+     signature therefore only proves *we* issued a token, not what it is for.
+
+     So every token names its purpose, and each verifier accepts only its own. Without
+     this check, the challenge token handed out after the password step, before the
+     second factor, was accepted here as a full session: 2FA could be skipped (#629). */
   async signAccessToken(claims: AccessTokenClaims): Promise<string> {
-    return this.jwt.signAsync(claims, {
-      secret: this.env.JWT_ACCESS_SECRET,
-      // @nestjs/jwt types expiresIn against ms's StringValue union, which a
-      // config string cannot satisfy statically. The value is validated by
-      // EnvSchema and by jsonwebtoken at sign time.
-      expiresIn: this.env.JWT_ACCESS_TTL as unknown as number,
-    });
+    return this.jwt.signAsync(
+      { ...claims, purpose: "access" },
+      {
+        secret: this.env.JWT_ACCESS_SECRET,
+        // @nestjs/jwt types expiresIn against ms's StringValue union, which a
+        // config string cannot satisfy statically. The value is validated by
+        // EnvSchema and by jsonwebtoken at sign time.
+        expiresIn: this.env.JWT_ACCESS_TTL as unknown as number,
+      },
+    );
   }
 
   async verifyAccessToken(token: string): Promise<AccessTokenClaims> {
+    const rejected = new UnauthorizedException("Your session has expired. Sign in again to continue.");
+
+    let claims: Record<string, unknown>;
     try {
-      return await this.jwt.verifyAsync<AccessTokenClaims>(token, {
+      claims = await this.jwt.verifyAsync<Record<string, unknown>>(token, {
         secret: this.env.JWT_ACCESS_SECRET,
       });
     } catch {
-      throw new UnauthorizedException("Your session has expired. Sign in again to continue.");
+      throw rejected;
     }
+
+    /* Access tokens issued before this change have no purpose at all. They live
+       JWT_ACCESS_TTL (15 minutes by default), so they are still accepted, and the
+       shape check below keeps that path narrow. Any *other* purpose is refused. */
+    if (claims.purpose !== undefined && claims.purpose !== "access") throw rejected;
+
+    const { sub, wid, role, email } = claims;
+    if (typeof sub !== "string" || typeof wid !== "string" || typeof role !== "string" || typeof email !== "string") {
+      throw rejected;
+    }
+    return { sub, wid, role, email };
   }
 
   async issueRefreshToken(userId: string, familyId: string = randomUUID(), userAgent?: string): Promise<string> {
