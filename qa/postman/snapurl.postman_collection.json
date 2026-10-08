@@ -3685,6 +3685,195 @@
           }
         }
       ]
+    },
+    {
+      "name": "Team timestamps (#669)",
+      "description": "Pins the data the /team page renders times from: invitedAt on a pending member (the page used to hard-code 'Invited 2 days ago'), and ISO `at` on audit entries. The UI formatting itself is covered by e2e/journeys/j16-team-display.spec.ts.",
+      "item": [
+        {
+          "name": "Register owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"ts_owner_email\", \"newman-ts-owner-\" + Date.now().toString(36) + Math.random().toString(16).slice(2, 8) + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set(\"ts_owner_token\", b.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman ts owner\",\"email\":\"{{ts_owner_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Owner invites a teammate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ISO = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/;",
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"invite response carries invitedAt = now (ISO)\", () => { pm.expect(b.invitedAt).to.be.a(\"string\").and.match(ISO); pm.expect(Math.abs(Date.now() - new Date(b.invitedAt).getTime())).to.be.below(60000); });",
+                  "pm.test(\"not yet active so lastActive is null\", () => pm.expect(b.lastActive).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ts_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"newman-ts-invitee-{{$timestamp}}@example.com\",\"role\":\"viewer\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /members: pending row has invitedAt ~ now, active row has none",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ISO = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/;",
+                  "const rows = pm.response.json();",
+                  "const pending = rows.find((m) => m.status === \"invited\");",
+                  "const owner = rows.find((m) => m.status === \"active\");",
+                  "pm.test(\"two members\", () => pm.expect(rows).to.have.length(2));",
+                  "pm.test(\"pending invitedAt is the real send time, not a stale value\", () => { pm.expect(pending.invitedAt).to.match(ISO); pm.expect(Math.abs(Date.now() - new Date(pending.invitedAt).getTime())).to.be.below(60000); });",
+                  "pm.test(\"active member has invitedAt null\", () => pm.expect(owner.invitedAt).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ts_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /audit: entries carry an ISO timestamp the UI can format",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ISO = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/;",
+                  "const rows = pm.response.json();",
+                  "pm.test(\"has the member.invited entry\", () => pm.expect(rows.length).to.be.above(0));",
+                  "pm.test(\"every entry.at is ISO-8601\", () => rows.forEach((a) => pm.expect(a.at).to.match(ISO)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ts_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/audit",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "audit"
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
