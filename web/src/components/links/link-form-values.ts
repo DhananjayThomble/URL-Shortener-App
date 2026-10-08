@@ -20,7 +20,7 @@
  * empty back-half of either field is treated as "not set".
  */
 export function blankOptionalUrlsToUndefined<
-  T extends { expiresTo?: unknown; scheduledTo?: unknown; utm?: unknown; social?: unknown },
+  T extends { expiresTo?: unknown; scheduledTo?: unknown; password?: unknown; utm?: unknown; social?: unknown },
 >(values: T): T {
   /* utm.* and social.* are text inputs too, so a field the user cleared reads
      back as "". Dropping the blank keys is what lets a UTM/preview value be
@@ -34,9 +34,40 @@ export function blankOptionalUrlsToUndefined<
     ...values,
     expiresTo: values.expiresTo === "" ? undefined : values.expiresTo,
     scheduledTo: values.scheduledTo === "" ? undefined : values.scheduledTo,
+    /* An untouched password input reads "" too. On create that must mean "no
+       password", never a password of "" riding along in the POST body. */
+    password: values.password === "" ? undefined : values.password,
     utm: withoutBlanks(values.utm),
     social: withoutBlanks(values.social),
   };
+}
+
+/** The tab ids of the link form (kept here, UI-free, so `tabsWithErrors` unit-tests cheaply). */
+export type LinkFormTab = "dest" | "route" | "access" | "utm" | "social" | "qr";
+
+/** Which tab renders each top-level form field. Anything unlisted falls back to "dest". */
+const FIELD_TAB: Record<string, LinkFormTab> = {
+  destination: "dest", domain: "dest", slug: "dest", folder: "dest", tags: "dest", comment: "dest",
+  rules: "route", redirectType: "route", forwardQuery: "route", deepLink: "route",
+  expiresAt: "access", expiresTo: "access", activatesAt: "access", scheduledTo: "access",
+  clickLimit: "access", password: "access", hideReferrer: "access", publicPreview: "access",
+  utm: "utm", social: "social",
+};
+
+/**
+ * The tabs (in tab order) that currently hold a validation error. The create
+ * drawer shows one field at a time, so an error on a tab the user is not
+ * looking at is invisible; this is what lets the dialog say which tab to open.
+ */
+export function tabsWithErrors(
+  errors: Record<string, unknown>,
+  order: readonly LinkFormTab[] = ["dest", "route", "access", "utm", "social", "qr"],
+): LinkFormTab[] {
+  const bad = new Set<LinkFormTab>();
+  for (const key of Object.keys(errors)) {
+    if (errors[key]) bad.add(FIELD_TAB[key] ?? "dest");
+  }
+  return order.filter((t) => bad.has(t));
 }
 
 /* A native <input type="date"> only understands "YYYY-MM-DD". The link holds a

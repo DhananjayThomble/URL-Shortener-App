@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "SnapURL API \u2014 auth + link CRUD/PATCH",
+    "name": "SnapURL API — auth + link CRUD/PATCH",
     "description": "Run against the local staging stack (pnpm staging:up). `npx -y newman@6 run qa/postman/snapurl.postman_collection.json -e qa/postman/local.postman_environment.json`. Every request carries pm.test assertions on status and body. No secrets: the account and link are created fresh per run.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -1837,6 +1837,423 @@
           }
         }
       ]
+    },
+    {
+      "name": "Links: create with optional Access fields (#645)",
+      "item": [
+        {
+          "name": "c1: optional Access fields absent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"no Access override is stored: no expiry, schedule, landing pages or password\", () => {",
+                  "  pm.expect(b.expiresAt).to.eql(null); pm.expect(b.activatesAt).to.eql(null);",
+                  "  pm.expect(b.expiresTo).to.eql(null); pm.expect(b.scheduledTo).to.eql(null);",
+                  "  pm.expect(b.clickLimit).to.eql(null); pm.expect(b.passwordProtected).to.eql(false);",
+                  "  pm.expect(b.status).to.eql(\"active\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c2: optional Access fields null",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"no Access override is stored: no expiry, schedule, landing pages or password\", () => {",
+                  "  pm.expect(b.expiresAt).to.eql(null); pm.expect(b.activatesAt).to.eql(null);",
+                  "  pm.expect(b.expiresTo).to.eql(null); pm.expect(b.scheduledTo).to.eql(null);",
+                  "  pm.expect(b.clickLimit).to.eql(null); pm.expect(b.passwordProtected).to.eql(false);",
+                  "  pm.expect(b.status).to.eql(\"active\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c2\",\"expiresTo\":null,\"scheduledTo\":null,\"activatesAt\":null,\"expiresAt\":null,\"clickLimit\":null,\"password\":null}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c3: blank password is no password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"no Access override is stored: no expiry, schedule, landing pages or password\", () => {",
+                  "  pm.expect(b.expiresAt).to.eql(null); pm.expect(b.activatesAt).to.eql(null);",
+                  "  pm.expect(b.expiresTo).to.eql(null); pm.expect(b.scheduledTo).to.eql(null);",
+                  "  pm.expect(b.clickLimit).to.eql(null); pm.expect(b.passwordProtected).to.eql(false);",
+                  "  pm.expect(b.status).to.eql(\"active\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c3\",\"password\":\"\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c4: blank expiresTo is rejected with a field error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"the error names the offending field (what the form needs to render it)\", () => {",
+                  "  pm.expect(b.issues).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(b.issues.map(i => i.path)).to.include(\"expiresTo\");",
+                  "  pm.expect(b.issues.find(i => i.path === \"expiresTo\").message).to.include(\"absolute http(s) URL\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c4\",\"expiresTo\":\"\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c5: blank scheduledTo is rejected with a field error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"the error names the offending field (what the form needs to render it)\", () => {",
+                  "  pm.expect(b.issues).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(b.issues.map(i => i.path)).to.include(\"scheduledTo\");",
+                  "  pm.expect(b.issues.find(i => i.path === \"scheduledTo\").message).to.include(\"absolute http(s) URL\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c5\",\"scheduledTo\":\"\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c6: invalid scheduledTo (not a URL) is rejected with a field error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"the error names the offending field (what the form needs to render it)\", () => {",
+                  "  pm.expect(b.issues).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(b.issues.map(i => i.path)).to.include(\"scheduledTo\");",
+                  "  pm.expect(b.issues.find(i => i.path === \"scheduledTo\").message).to.include(\"absolute http(s) URL\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c6\",\"scheduledTo\":\"not a url\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c7: invalid expiresTo (javascript:) is rejected with a field error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"the error names the offending field (what the form needs to render it)\", () => {",
+                  "  pm.expect(b.issues).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(b.issues.map(i => i.path)).to.include(\"expiresTo\");",
+                  "  pm.expect(b.issues.find(i => i.path === \"expiresTo\").message).to.include(\"absolute http(s) URL\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c7\",\"expiresTo\":\"javascript:alert(1)\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "c8: valid scheduledTo/expiresTo are stored",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"both landing pages and the go-live date are stored\", () => {",
+                  "  pm.expect(b.scheduledTo).to.eql(pm.collectionVariables.get(\"scheduledLanding\"));",
+                  "  pm.expect(b.expiresTo).to.eql(pm.collectionVariables.get(\"expiredLanding\"));",
+                  "  pm.expect(b.activatesAt).to.be.a(\"string\");",
+                  "  pm.expect(b.status).to.eql(\"scheduled\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"a645-{{runId}}-c8\",\"scheduledTo\":\"{{scheduledLanding}}\",\"expiresTo\":\"{{expiredLanding}}\",\"activatesAt\":\"{{futureIso}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
@@ -1871,6 +2288,10 @@
     {
       "key": "futureIso",
       "value": "2099-01-01T00:00:00.000Z"
+    },
+    {
+      "key": "scheduledLanding",
+      "value": "https://example.com/j-coming-soon"
     }
   ],
   "event": [

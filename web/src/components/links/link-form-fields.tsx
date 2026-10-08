@@ -227,7 +227,11 @@ export function LinkFormFields({
                 )}
               />
             </Field>
-            <Field label="Until then, send visitors to" help="Leave blank and they get a plain 'not live yet' page.">
+            <Field
+              label="Until then, send visitors to"
+              help="Leave blank and they get a plain 'not live yet' page."
+              error={formState.errors.scheduledTo?.message}
+            >
               <Input {...register("scheduledTo")} placeholder="acme.com/coming-soon" className="font-mono text-[12.5px]" />
             </Field>
           </div>
@@ -258,7 +262,7 @@ export function LinkFormFields({
                 )}
               />
             </Field>
-            <Field label="Then send visitors to">
+            <Field label="Then send visitors to" error={formState.errors.expiresTo?.message}>
               <Input {...register("expiresTo")} placeholder="acme.com/offers" className="font-mono text-[12.5px]" />
             </Field>
           </div>
@@ -274,7 +278,7 @@ export function LinkFormFields({
               />
             )}
           />
-          <Field label="Click limit" controlId={`${idPrefix}-click-limit`}>
+          <Field label="Click limit" controlId={`${idPrefix}-click-limit`} error={formState.errors.clickLimit?.message}>
             <Controller
               control={control}
               name="clickLimit"
@@ -284,6 +288,7 @@ export function LinkFormFields({
                   type="number"
                   min={1}
                   step={1}
+                  aria-invalid={formState.errors.clickLimit ? true : undefined}
                   disabled={field.value == null}
                   value={field.value ?? ""}
                   onChange={(e) => field.onChange(e.target.value === "" ? 1 : Math.max(1, Math.floor(Number(e.target.value))))}
@@ -293,7 +298,7 @@ export function LinkFormFields({
               )}
             />
           </Field>
-          <Field label="Password" help="Visitors enter it before the redirect happens.">
+          <Field label="Password" help="Visitors enter it before the redirect happens." error={formState.errors.password?.message}>
             <Input type="password" {...register("password")} placeholder={passwordPlaceholder} className="font-mono text-[12.5px]" />
           </Field>
           {passwordSlot}

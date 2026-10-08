@@ -178,6 +178,7 @@ export function Field({
       const props = child.props as Record<string, unknown>;
       return React.cloneElement(child as React.ReactElement<Record<string, unknown>>, {
         id: props.id ?? fieldId,
+        ...(error ? { 'aria-invalid': true } : {}),
         ...(helpId && !props['aria-describedby'] ? { 'aria-describedby': helpId } : {}),
       });
     });
