@@ -50,14 +50,46 @@ export type LinkFormTabId = (typeof EDIT_TABS)[number]["id"];
  * real contract schema (CreateLinkInput / UpdateLinkInput, untouched), so an
  * empty back-half of either field is treated as "not set".
  */
-export function blankOptionalUrlsToUndefined<T extends { expiresTo?: unknown; scheduledTo?: unknown }>(
-  values: T,
-): T {
+export function blankOptionalUrlsToUndefined<
+  T extends { expiresTo?: unknown; scheduledTo?: unknown; utm?: unknown; social?: unknown },
+>(values: T): T {
+  /* utm.* and social.* are text inputs too, so a field the user cleared reads
+     back as "". Dropping the blank keys is what lets a UTM/preview value be
+     REMOVED on edit (the object is replaced wholesale by PATCH) and keeps
+     social.image — an HttpUrl — from rejecting an empty string. */
+  const withoutBlanks = <O,>(obj: O): O =>
+    (obj && typeof obj === "object"
+      ? Object.fromEntries(Object.entries(obj as Record<string, unknown>).filter(([, v]) => v !== "" && v != null))
+      : obj) as O;
   return {
     ...values,
     expiresTo: values.expiresTo === "" ? undefined : values.expiresTo,
     scheduledTo: values.scheduledTo === "" ? undefined : values.scheduledTo,
+    utm: withoutBlanks(values.utm),
+    social: withoutBlanks(values.social),
   };
+}
+
+/* A native <input type="date"> only understands "YYYY-MM-DD". The link holds a
+   full ISO timestamp, so binding the input straight to the form value (as a
+   plain register() does) renders blank for every link that already has a date
+   — and, worse, hands the user an empty field to "edit". These two convert at
+   the boundary, in the viewer's local calendar, and only on change, so an
+   untouched date is submitted exactly as the server returned it. */
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+export function isoToDateInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+/** `endOfDay` for expiry ("stops working after the date you pick"), start of day for go-live. */
+export function dateInputToIso(value: string, endOfDay: boolean): string | null {
+  if (!value) return null;
+  const d = new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 export function LinkFormFields({
@@ -69,6 +101,8 @@ export function LinkFormFields({
   formState,
   qrValue,
   showBackHalf,
+  passwordPlaceholder = "Leave blank for no password",
+  passwordSlot,
 }: {
   tab: LinkFormTabId;
   /** Namespaces tabpanel/tab ids so create and edit drawers never collide if ever mounted together. */
@@ -81,6 +115,10 @@ export function LinkFormFields({
   qrValue: string;
   /** Renders the back-half (domain + slug) fields on the Destination tab. Off in edit mode — see module doc. */
   showBackHalf?: React.ReactNode;
+  /** Placeholder for the password input (edit mode: the stored password is never echoed back). */
+  passwordPlaceholder?: string;
+  /** Rendered under the password input (edit mode: "remove password"). */
+  passwordSlot?: React.ReactNode;
 }) {
   const destination = watch("destination");
   const utm = watch("utm");
@@ -233,8 +271,19 @@ export function LinkFormFields({
             )}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Go live on">
-              <Input type="date" {...register("activatesAt")} />
+            <Field label="Go live on" controlId={`${idPrefix}-activates-at`}>
+              <Controller
+                control={control}
+                name="activatesAt"
+                render={({ field }) => (
+                  <Input
+                    type="date"
+                    id={`${idPrefix}-activates-at`}
+                    value={isoToDateInput(field.value)}
+                    onChange={(e) => field.onChange(dateInputToIso(e.target.value, false))}
+                  />
+                )}
+              />
             </Field>
             <Field label="Until then, send visitors to" help="Leave blank and they get a plain 'not live yet' page.">
               <Input {...register("scheduledTo")} placeholder="acme.com/coming-soon" className="font-mono text-[12.5px]" />
@@ -253,8 +302,19 @@ export function LinkFormFields({
             )}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Expiry date">
-              <Input type="date" {...register("expiresAt")} />
+            <Field label="Expiry date" controlId={`${idPrefix}-expires-at`}>
+              <Controller
+                control={control}
+                name="expiresAt"
+                render={({ field }) => (
+                  <Input
+                    type="date"
+                    id={`${idPrefix}-expires-at`}
+                    value={isoToDateInput(field.value)}
+                    onChange={(e) => field.onChange(dateInputToIso(e.target.value, true))}
+                  />
+                )}
+              />
             </Field>
             <Field label="Then send visitors to">
               <Input {...register("expiresTo")} placeholder="acme.com/offers" className="font-mono text-[12.5px]" />
@@ -272,9 +332,29 @@ export function LinkFormFields({
               />
             )}
           />
-          <Field label="Password" help="Visitors enter it before the redirect happens.">
-            <Input type="password" {...register("password")} placeholder="Leave blank for no password" className="font-mono text-[12.5px]" />
+          <Field label="Click limit" controlId={`${idPrefix}-click-limit`}>
+            <Controller
+              control={control}
+              name="clickLimit"
+              render={({ field }) => (
+                <Input
+                  id={`${idPrefix}-click-limit`}
+                  type="number"
+                  min={1}
+                  step={1}
+                  disabled={field.value == null}
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value === "" ? 1 : Math.max(1, Math.floor(Number(e.target.value))))}
+                  placeholder="Turn on the click limit above"
+                  className="font-mono text-[12.5px]"
+                />
+              )}
+            />
           </Field>
+          <Field label="Password" help="Visitors enter it before the redirect happens.">
+            <Input type="password" {...register("password")} placeholder={passwordPlaceholder} className="font-mono text-[12.5px]" />
+          </Field>
+          {passwordSlot}
 
           <SectionLabel>Privacy</SectionLabel>
           <Controller
@@ -362,6 +442,13 @@ export function LinkFormFields({
           </Field>
           <Field label="Description">
             <Input {...register("social.description")} placeholder="Everything in the spring collection." />
+          </Field>
+          <Field
+            label="Image URL"
+            help="An absolute http(s) link to the picture shown in the preview."
+            error={formState.errors.social?.image?.message}
+          >
+            <Input {...register("social.image")} placeholder="https://acme.com/og/spring.png" className="font-mono text-[12.5px]" spellCheck={false} />
           </Field>
         </div>
       )}
