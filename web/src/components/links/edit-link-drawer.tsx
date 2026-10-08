@@ -43,6 +43,9 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
   });
   const { register, handleSubmit, control, watch, reset, formState, setError } = form;
   const [archived, setArchived] = useState(link.status === "archived");
+  // The server only reports `passwordProtected`, never the password. Clearing
+  // it is therefore an explicit choice, not "left the field blank".
+  const [removePassword, setRemovePassword] = useState(false);
 
   // Re-seed the form whenever a different link opens, or the same link's
   // server data changes underneath an open drawer (e.g. a background
@@ -51,6 +54,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
     if (open) {
       reset(toFormValues(link));
       setArchived(link.status === "archived");
+      setRemovePassword(false);
       setTab("dest");
       update.reset();
     }
@@ -117,7 +121,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
 
   const onSubmit = handleSubmit(async (values) => {
     update.reset();
-    const patch = { ...toUpdateInput(blankOptionalUrlsToUndefined(values)), archived };
+    const patch = { ...toUpdateInput(blankOptionalUrlsToUndefined(values), removePassword), archived };
     // UpdateLinkInput validates every field this patch can carry (it is
     // CreateLinkInput minus domain/slug, which toUpdateInput never sends).
     // Checked here, not via a zodResolver, because the resolver's inferred
@@ -216,6 +220,17 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               watch={watch}
               formState={formState}
               qrValue={`https://${link.domain}/${link.slug}`}
+              passwordPlaceholder={link.passwordProtected ? "Type a new password to replace the current one" : "Leave blank for no password"}
+              passwordSlot={
+                link.passwordProtected ? (
+                  <Toggle
+                    checked={removePassword}
+                    onChange={setRemovePassword}
+                    title="Remove password"
+                    description="This link is password protected. Turn this on and save to let visitors through without one. A password typed above replaces it instead."
+                  />
+                ) : null
+              }
             />
           </div>
 
@@ -287,13 +302,17 @@ function toFormValues(link: Link): CreateLinkFormValues {
 /**
  * Form values back into the PATCH body.
  *
- * `password` is dropped unless the user actually typed something: an empty
- * string here means "the field was left blank", not "clear the password" —
- * that tri-state (omit = leave alone, null = clear, string = set) belongs to
- * an explicit action, not to a form field that starts out empty because the
- * server never echoes the password back.
+ * `password` follows the contract's tri-state (omit = leave alone, null =
+ * clear, string = set). A blank field means "leave alone": the server never
+ * echoes the password back, so the field always starts empty. Clearing is the
+ * explicit `removePassword` switch, and a typed password wins over it.
+ *
+ * `expiresTo` / `scheduledTo` are sent as `null` when blank so emptying them
+ * actually removes the override (omitting would leave the old URL in place).
  */
-function toUpdateInput(values: CreateLinkFormValues) {
+function toUpdateInput(values: CreateLinkFormValues, removePassword: boolean) {
   const { domain: _domain, slug: _slug, password, ...rest } = values;
-  return password ? { ...rest, password } : rest;
+  const withUrls = { ...rest, expiresTo: rest.expiresTo ?? null, scheduledTo: rest.scheduledTo ?? null };
+  if (password) return { ...withUrls, password };
+  return removePassword ? { ...withUrls, password: null } : withUrls;
 }

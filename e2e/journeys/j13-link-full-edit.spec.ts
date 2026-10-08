@@ -202,7 +202,7 @@ test.describe("Journey 13 — Full link edit and archive", () => {
         tags: ["gone"],
         utm: { source: "gone" },
         social: { title: "gone", image: IMAGE },
-        rules: [{ when: { country: "US" }, then: RULE_DEST }],
+        rules: [{ id: "j13-seed-rule", when: { country: "US" }, then: RULE_DEST }],
         expiresAt: new Date(Date.now() + 5 * 864e5).toISOString(),
         expiresTo: EXPIRES_TO,
         password: PASSWORD,
