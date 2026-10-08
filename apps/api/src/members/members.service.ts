@@ -40,6 +40,7 @@ export class MembersService {
       status: membership.status as Member["status"],
       links: linkCount,
       lastActive: user?.lastActiveAt?.toISOString() ?? null,
+      invitedAt: membership.status === "invited" ? (membership.invitedAt?.toISOString() ?? null) : null,
       /* G6 — this column is why the whole TOTP module exists. It was rendered
          by the team page with nothing behind it. */
       twoFactor: Boolean(user?.totpEnabledAt),
@@ -105,6 +106,7 @@ export class MembersService {
       status: "invited",
       links: 0,
       lastActive: null,
+      invitedAt: row!.invitedAt?.toISOString() ?? null,
       twoFactor: false,
       initials: initialsOf(email),
     };

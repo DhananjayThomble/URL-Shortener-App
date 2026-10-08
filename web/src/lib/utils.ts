@@ -41,6 +41,19 @@ export function relativeDate(iso: string): string {
   return `${Math.round(months / 12)} year${Math.abs(months) >= 24 ? "s" : ""} ago`;
 }
 
+/* Human-relative time for an API timestamp. Unlike relativeDate it (a) clamps a
+   timestamp slightly in the future (browser/server clock skew, e.g. an invite
+   sent a moment ago) to "just now" instead of "-3 min ago", and (b) passes
+   anything that is not an ISO-8601 timestamp (fixture strings such as "12 min
+   ago") through untouched rather than letting Date's lenient parser guess. */
+export function timeAgo(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  if (then >= Date.now() - 60_000) return "just now";
+  return relativeDate(iso);
+}
+
 export function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
