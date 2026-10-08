@@ -160,11 +160,13 @@ test.describe("Journey 17 — cross-tab workspace coherence + safe post-login re
   test("(c) ?next= dot-segment bypass cannot send a signed-in user off-site", async ({ browser }) => {
     const c = await browser.newContext();
     const page = await c.newPage();
-    // Never actually reach the outside world.
-    await page.route(/evil\.example/, (route) => route.abort());
+    // Never actually reach the outside world. Match the HOST: the /login URL
+    // itself carries "evil.example" in its query string.
+    const offHost = (u: string | URL) => new URL(String(u)).hostname.endsWith("evil.example");
+    await page.route((u) => offHost(u), (route) => route.abort());
     const offsite: string[] = [];
     page.on("request", (r) => {
-      if (/evil\.example/.test(r.url())) offsite.push(r.url());
+      if (offHost(r.url())) offsite.push(r.url());
     });
     try {
       await page.goto("/login?next=" + encodeURIComponent("/..//evil.example/login"));
