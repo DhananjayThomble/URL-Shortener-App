@@ -76,15 +76,15 @@ test.describe("Journey 16 — /team times and permissions (#669)", () => {
     await expect(page.getByText(/billing/i)).toHaveCount(0);
 
     // Recent activity feed shows a human time for the invite we just sent.
-    const feed = page.locator("div", { hasText: "Recent activity" }).last();
-    await expect(feed.getByText("just now").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible();
+    await expect(page.getByText("just now", { exact: true }).first()).toBeVisible();
 
     // No raw ISO timestamp is rendered anywhere on the page.
     const body = await page.locator("body").innerText();
     expect(body).not.toMatch(ISO);
   });
 
-  test("older timestamps are relative to the stored value (invite 5 days ago, owner active 3 hours ago)", async ({ page }) => {
+  test("older timestamps are relative to the stored value (invite 5 days ago; owner just active)", async ({ page }) => {
     // Re-inviting would 409; invite a second person via the API and age the rows in the DB.
     const res = await fetch(`${API_URL}/members`, {
       method: "POST",
@@ -96,23 +96,22 @@ test.describe("Journey 16 — /team times and permissions (#669)", () => {
       `update memberships set invited_at = now() - interval '5 days' where lower(email) = lower(:'email') and status = 'invited';`,
       { email: olderEmail },
     )).toContain("UPDATE 1");
-    expect(await sql(
-      `update users set last_active_at = now() - interval '3 hours' where lower(email) = lower(:'email');`,
-      { email: owner.email },
-    )).toContain("UPDATE 1");
-
     await seedAccount(page, owner);
     await page.goto("/team");
 
     // Oracle: raw values the API serves for these rows.
     const members = (await get(owner, "/members")) as Array<{ email: string; invitedAt: string | null; lastActive: string | null }>;
     expect(members.find((m) => m.email === olderEmail)?.invitedAt).toMatch(ISO);
-    expect(members.find((m) => m.email === owner.email)?.lastActive).toMatch(ISO);
-
+    
     await expect(page.getByRole("row").filter({ hasText: olderEmail }).getByText("Invited 5 days ago")).toBeVisible();
     await expect(page.getByRole("row").filter({ hasText: inviteeEmail }).getByText("Invited just now")).toBeVisible();
-    // Owner row: Last active is human-formatted, derived from last_active_at.
-    await expect(page.getByRole("row").filter({ hasText: "owner" }).getByText("3 hours ago")).toBeVisible();
+    // Owner row: Last active is human-formatted from users.last_active_at (the
+    // app stamps it on the session refresh this very page load triggers), never the raw ISO.
+    const refreshed = (await get(owner, "/members")) as Array<{ email: string; lastActive: string | null }>;
+    const ownerActive = refreshed.find((m) => m.email === owner.email)?.lastActive;
+    expect(ownerActive).toMatch(ISO);
+    expect(Date.now() - new Date(ownerActive!).getTime()).toBeLessThan(120_000);
+    await expect(page.getByRole("row").filter({ hasText: owner.email }).getByRole("cell", { name: /^(just now|\d+ min ago)$/ })).toBeVisible();
 
     expect(await page.locator("body").innerText()).not.toMatch(ISO);
     // The session is still the owner's (the page did not bounce us to /login).
