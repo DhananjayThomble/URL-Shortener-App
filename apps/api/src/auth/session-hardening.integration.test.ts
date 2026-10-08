@@ -11,6 +11,7 @@ import {
   domains,
   eq,
   inArray,
+  isNull,
   links,
   memberships,
   sql,
@@ -236,7 +237,8 @@ describeDb("#699 — session revocation, membership drift, team scoping, accept 
   it("the team page's link count and last-active are scoped to the workspace", async () => {
     const m = await newUser("scoped");
     await auth.acceptInvite(m.user.id, await inviteToken(m.email));
-    const [domain] = await db.select({ id: domains.id }).from(domains).limit(1);
+    // A system domain: never one another test file owns (and must delete).
+    const [domain] = await db.select({ id: domains.id }).from(domains).where(isNull(domains.workspaceId)).limit(1);
     // Three links in their personal workspace, one in the shared one.
     await db.insert(links).values([
       ...[1, 2, 3].map((i) => ({
