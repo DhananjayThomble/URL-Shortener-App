@@ -1,0 +1,1887 @@
+{
+  "info": {
+    "name": "SnapURL API \u2014 auth + link CRUD/PATCH",
+    "description": "Run against the local staging stack (pnpm staging:up). `npx -y newman@6 run qa/postman/snapurl.postman_collection.json -e qa/postman/local.postman_environment.json`. Every request carries pm.test assertions on status and body. No secrets: the account and link are created fresh per run.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const stamp = Date.now().toString(36) + Math.random().toString(16).slice(2, 8);",
+                  "pm.collectionVariables.set(\"email\", \"newman-\" + stamp + \"@example.com\");",
+                  "pm.collectionVariables.set(\"runId\", stamp);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201 or 200\", () => pm.expect([200,201]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"session tokens issued\", () => { pm.expect(b.accessToken).to.be.a(\"string\").and.not.empty; pm.expect(b.refreshToken).to.be.a(\"string\").and.not.empty; });",
+                  "pm.collectionVariables.set(\"accessToken\", b.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman Tester\",\"email\":\"{{email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 201\", () => pm.expect([200,201]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"login issues a fresh access token\", () => pm.expect(b.accessToken).to.be.a(\"string\").and.not.empty);",
+                  "pm.collectionVariables.set(\"accessToken\", b.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/login",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Wrong password is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/login",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{email}}\",\"password\":\"definitely-not-the-password\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Current workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"workspace has a default domain\", () => pm.expect(b.defaultDomain).to.be.a(\"string\").and.not.empty);",
+                  "pm.collectionVariables.set(\"domain\", b.defaultDomain);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Links: create, edit every field, archive",
+      "item": [
+        {
+          "name": "Create link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"link echoes destination and slug\", () => {",
+                  "  pm.expect(b.destination).to.eql(pm.collectionVariables.get(\"destDefault\"));",
+                  "  pm.expect(b.slug).to.eql(\"nm-\" + pm.collectionVariables.get(\"runId\"));",
+                  "});",
+                  "pm.test(\"starts active, unprotected, unarchived\", () => { pm.expect(b.status).to.eql(\"active\"); pm.expect(b.passwordProtected).to.eql(false); });",
+                  "pm.collectionVariables.set(\"linkId\", b.id);",
+                  "pm.collectionVariables.set(\"slug\", b.slug);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{domain}}\",\"slug\":\"nm-{{runId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH destination",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"destination changed\", () => pm.expect(b.destination).to.eql(pm.collectionVariables.get(\"destChanged\")));",
+                  "pm.test(\"slug and domain untouched\", () => { pm.expect(b.slug).to.eql(pm.collectionVariables.get(\"slug\")); pm.expect(b.id).to.eql(pm.collectionVariables.get(\"linkId\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destination\": \"{{destChanged}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH tags, folder, comment, redirect type, flags",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"tags\", () => pm.expect(b.tags).to.eql([\"nm-a\",\"nm-b\"]));",
+                  "pm.test(\"folder + comment\", () => { pm.expect(b.folder).to.eql(\"nm-folder\"); pm.expect(b.comment).to.eql(\"newman comment\"); });",
+                  "pm.test(\"redirect type\", () => pm.expect(b.redirectType).to.eql(\"301\"));",
+                  "pm.test(\"flags\", () => { pm.expect(b.forwardQuery).to.eql(false); pm.expect(b.deepLink).to.eql(true); pm.expect(b.hideReferrer).to.eql(true); pm.expect(b.publicPreview).to.eql(false); });",
+                  "pm.test(\"click limit\", () => pm.expect(b.clickLimit).to.eql(42));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tags\": [\n    \"nm-a\",\n    \"nm-b\"\n  ],\n  \"folder\": \"nm-folder\",\n  \"comment\": \"newman comment\",\n  \"redirectType\": \"301\",\n  \"forwardQuery\": false,\n  \"deepLink\": true,\n  \"hideReferrer\": true,\n  \"publicPreview\": false,\n  \"clickLimit\": 42\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET reflects the previous PATCH",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"persisted: tags/folder/comment/redirectType/clickLimit\", () => {",
+                  "  pm.expect(b.tags).to.eql([\"nm-a\",\"nm-b\"]); pm.expect(b.folder).to.eql(\"nm-folder\");",
+                  "  pm.expect(b.comment).to.eql(\"newman comment\"); pm.expect(b.redirectType).to.eql(\"301\"); pm.expect(b.clickLimit).to.eql(42);",
+                  "});",
+                  "pm.test(\"destination from the earlier PATCH survived\", () => pm.expect(b.destination).to.eql(pm.collectionVariables.get(\"destChanged\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH clear folder, comment, click limit, tags",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"cleared\", () => { pm.expect(b.tags).to.eql([]); pm.expect(b.folder || \"\").to.eql(\"\"); pm.expect(b.comment || \"\").to.eql(\"\"); pm.expect(b.clickLimit == null).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tags\": [],\n  \"folder\": \"\",\n  \"comment\": \"\",\n  \"clickLimit\": null,\n  \"redirectType\": \"302\",\n  \"forwardQuery\": true,\n  \"deepLink\": false,\n  \"hideReferrer\": false,\n  \"publicPreview\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH routing rule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"one rule stored with its condition and target\", () => {",
+                  "  pm.expect(b.rules).to.have.length(1);",
+                  "  pm.expect(b.rules[0].when.country).to.eql(\"US\");",
+                  "  pm.expect(b.rules[0].then).to.eql(pm.collectionVariables.get(\"destRule\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rules\": [\n    {\n      \"id\": \"nm-rule-1\",\n      \"when\": {\n        \"country\": \"US\"\n      },\n      \"then\": \"{{destRule}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET shows the rule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"rule persisted\", () => { pm.expect(b.rules).to.have.length(1); pm.expect(b.rules[0].then).to.eql(pm.collectionVariables.get(\"destRule\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH remove rules",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"rules cleared\", () => pm.expect(pm.response.json().rules).to.eql([]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rules\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH utm",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"utm stored\", () => pm.expect(b.utm).to.include({source:\"nm-src\",medium:\"nm-med\",campaign:\"nm-camp\",content:\"nm-cont\"}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"utm\": {\n    \"source\": \"nm-src\",\n    \"medium\": \"nm-med\",\n    \"campaign\": \"nm-camp\",\n    \"content\": \"nm-cont\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH utm replaced (partial set drops the rest)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"utm replaced wholesale\", () => { pm.expect(b.utm.source).to.eql(\"only-src\"); pm.expect(b.utm.medium == null).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"utm\": {\n    \"source\": \"only-src\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH utm cleared with {}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"no utm values remain\", () => pm.expect(Object.values(b.utm || {}).filter(Boolean)).to.have.length(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"utm\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH social preview",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"social stored\", () => pm.expect(b.social).to.include({title:\"nm title\",description:\"nm description\",image:pm.collectionVariables.get(\"imageUrl\")}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"social\": {\n    \"title\": \"nm title\",\n    \"description\": \"nm description\",\n    \"image\": \"{{imageUrl}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH social cleared with {}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"no social values remain\", () => pm.expect(Object.values(b.social || {}).filter(Boolean)).to.have.length(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"social\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH set password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"passwordProtected true\", () => pm.expect(b.passwordProtected).to.eql(true));",
+                  "pm.test(\"the password itself is never returned\", () => pm.expect(JSON.stringify(b)).to.not.include(pm.collectionVariables.get(\"linkPassword\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{linkPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect: password-protected link sends the visitor to the unlock page",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the redirect service caches a resolved link for LINK_CACHE_TTL_SECONDS (default 10s)",
+                  "setTimeout(function () {}, Number(pm.environment.get(\"redirectSettleMs\") || 11000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 302\", () => pm.response.to.have.status(302));",
+                  "pm.test(\"Location is the unlock page, not the destination\", () => {",
+                  "  const loc = pm.response.headers.get(\"Location\") || \"\";",
+                  "  pm.expect(loc).to.include(\"/p/\" + pm.collectionVariables.get(\"slug\"));",
+                  "  pm.expect(loc).to.not.include(\"example.com\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{redirectUrl}}/{{slug}}",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                "{{slug}}"
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH omit password leaves it alone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"still protected\", () => pm.expect(pm.response.json().passwordProtected).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"touch\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH password null clears it AND expiry in the past + landing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"no longer protected\", () => pm.expect(b.passwordProtected).to.eql(false));",
+                  "pm.test(\"expiry + landing stored\", () => { pm.expect(new Date(b.expiresAt).toISOString()).to.eql(pm.collectionVariables.get(\"pastIso\")); pm.expect(b.expiresTo).to.eql(pm.collectionVariables.get(\"expiredLanding\")); });",
+                  "pm.test(\"status is expired\", () => pm.expect(b.status).to.eql(\"expired\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": null,\n  \"expiresAt\": \"{{pastIso}}\",\n  \"expiresTo\": \"{{expiredLanding}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect: expired link sends the visitor to the expiry landing",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the redirect service caches a resolved link for LINK_CACHE_TTL_SECONDS (default 10s)",
+                  "setTimeout(function () {}, Number(pm.environment.get(\"redirectSettleMs\") || 11000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"not the destination\", () => pm.expect(pm.response.headers.get(\"Location\") || \"\").to.not.include(\"j-destination-changed\"));",
+                  "pm.test(\"goes to the expiry landing\", () => { pm.expect([301,302,307]).to.include(pm.response.code); pm.expect(pm.response.headers.get(\"Location\")).to.eql(pm.collectionVariables.get(\"expiredLanding\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{redirectUrl}}/{{slug}}",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                "{{slug}}"
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH remove expiry landing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"landing cleared\", () => pm.expect(pm.response.json().expiresTo == null).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expiresTo\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect: expired link with no landing is 410",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the redirect service caches a resolved link for LINK_CACHE_TTL_SECONDS (default 10s)",
+                  "setTimeout(function () {}, Number(pm.environment.get(\"redirectSettleMs\") || 11000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 410 Gone\", () => pm.response.to.have.status(410));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{redirectUrl}}/{{slug}}",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                "{{slug}}"
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH expiry null makes the link live again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"expiry cleared and active\", () => { pm.expect(b.expiresAt == null).to.be.true; pm.expect(b.status).to.eql(\"active\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expiresAt\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect: live again",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the redirect service caches a resolved link for LINK_CACHE_TTL_SECONDS (default 10s)",
+                  "setTimeout(function () {}, Number(pm.environment.get(\"redirectSettleMs\") || 11000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"redirects to the destination\", () => { pm.expect([301,302,307]).to.include(pm.response.code); pm.expect(pm.response.headers.get(\"Location\")).to.include(\"j-destination-changed\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{redirectUrl}}/{{slug}}",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                "{{slug}}"
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH schedule: go live in the future",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"scheduled status\", () => pm.expect(b.status).to.eql(\"scheduled\"));",
+                  "pm.test(\"activatesAt stored\", () => pm.expect(new Date(b.activatesAt).toISOString()).to.eql(pm.collectionVariables.get(\"futureIso\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activatesAt\": \"{{futureIso}}\",\n  \"scheduledTo\": \"{{expiredLanding}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH clear schedule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"active again\", () => { pm.expect(b.activatesAt == null).to.be.true; pm.expect(b.status).to.eql(\"active\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activatesAt\": null,\n  \"scheduledTo\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH archived=true",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status archived\", () => pm.expect(pm.response.json().status).to.eql(\"archived\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"archived\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List status=archived contains the link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().items.map(l => l.id);",
+                  "pm.test(\"archived list has the link\", () => pm.expect(ids).to.include(pm.collectionVariables.get(\"linkId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links?status=archived",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "archived"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List default excludes the archived link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().items.map(l => l.id);",
+                  "pm.test(\"default list omits the link\", () => pm.expect(ids).to.not.include(pm.collectionVariables.get(\"linkId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links?status=all",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "all"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH archived=false",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status active\", () => pm.expect(pm.response.json().status).to.eql(\"active\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"archived\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List status=archived no longer contains the link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().items.map(l => l.id);",
+                  "pm.test(\"archived list omits the link\", () => pm.expect(ids).to.not.include(pm.collectionVariables.get(\"linkId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links?status=archived",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "archived"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Full UpdateLinkInput in one PATCH (what the edit drawer sends)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"every field applied\", () => {",
+                  "  pm.expect(b.redirectType).to.eql(\"307\"); pm.expect(b.rules[0].when.device).to.eql(\"ios\"); pm.expect(b.clickLimit).to.eql(10);",
+                  "  pm.expect(b.passwordProtected).to.eql(true); pm.expect(b.utm.source).to.eql(\"s\"); pm.expect(b.social.title).to.eql(\"t\");",
+                  "  pm.expect(b.tags).to.eql([\"full\"]); pm.expect(b.folder).to.eql(\"full\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destination\": \"{{destChanged}}\",\n  \"tags\": [\n    \"full\"\n  ],\n  \"folder\": \"full\",\n  \"comment\": \"full\",\n  \"redirectType\": \"307\",\n  \"rules\": [\n    {\n      \"id\": \"nm-rule-2\",\n      \"when\": {\n        \"device\": \"ios\"\n      },\n      \"then\": \"{{destRule}}\"\n    }\n  ],\n  \"expiresAt\": \"{{futureIso}}\",\n  \"expiresTo\": \"{{expiredLanding}}\",\n  \"clickLimit\": 10,\n  \"password\": \"{{linkPassword}}\",\n  \"forwardQuery\": true,\n  \"deepLink\": false,\n  \"hideReferrer\": false,\n  \"publicPreview\": true,\n  \"utm\": {\n    \"source\": \"s\",\n    \"medium\": \"m\"\n  },\n  \"social\": {\n    \"title\": \"t\",\n    \"image\": \"{{imageUrl}}\"\n  },\n  \"archived\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects a javascript: destination",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destination\": \"javascript:alert(1)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects a javascript: social image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"social\": {\n    \"image\": \"javascript:alert(1)\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects an unknown redirect type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"redirectType\": \"200\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH without a token is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH unknown link is 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/00000000-0000-4000-8000-000000000000",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "00000000-0000-4000-8000-000000000000"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete link (cleanup)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 204\", () => pm.expect([200,204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/{{linkId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "{{linkId}}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "destDefault",
+      "value": "https://example.com/j-destination"
+    },
+    {
+      "key": "destChanged",
+      "value": "https://example.com/j-destination-changed"
+    },
+    {
+      "key": "destRule",
+      "value": "https://example.com/j-rule-target"
+    },
+    {
+      "key": "expiredLanding",
+      "value": "https://example.com/j-expired-landing"
+    },
+    {
+      "key": "imageUrl",
+      "value": "https://example.com/og.png"
+    },
+    {
+      "key": "linkPassword",
+      "value": "newman-link-password"
+    },
+    {
+      "key": "pastIso",
+      "value": "2020-01-01T00:00:00.000Z"
+    },
+    {
+      "key": "futureIso",
+      "value": "2099-01-01T00:00:00.000Z"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// pastIso/futureIso are fixed instants so assertions are exact."
+        ]
+      }
+    }
+  ]
+}
