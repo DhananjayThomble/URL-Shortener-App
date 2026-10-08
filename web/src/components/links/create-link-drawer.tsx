@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
 import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { tabsWithErrors } from "@/components/links/link-form-values";
 import { useCreateLink, useDomains } from "@/lib/api/hooks";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,11 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   const { register, handleSubmit, control, watch, reset, setValue, formState } = form;
   const domain = watch("domain");
   const slug = watch("slug");
+
+  // Only one tab's fields are mounted at a time, so a validation error on a
+  // tab the user is not looking at would otherwise be invisible (#645: the
+  // submit just did nothing). Surface which tabs hold errors.
+  const invalidTabs = tabsWithErrors(formState.errors as Record<string, unknown>) as TabId[];
 
   // Default the back-half domain to the workspace's own first domain once the
   // list loads, unless the user has already picked one. Avoids hardcoding a
@@ -143,12 +149,14 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     };
   }, [open]);
 
+  // Reset on BOTH transitions. Resetting only on open left a closed drawer
+  // holding the abandoned attempt (typed values, errors, a stale server
+  // error) until the next open; clearing at close means nothing from one
+  // attempt can leak into the next, whichever way the drawer was dismissed.
   useEffect(() => {
-    if (open) {
-      reset();
-      setTab("dest");
-      create.reset();
-    }
+    reset();
+    setTab("dest");
+    create.reset();
     // `create` is a stable mutation object; re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
@@ -191,7 +199,15 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     } catch {
       /* surfaced below via create.error */
     }
-  });
+  }, (errors) => onInvalid(errors as Record<string, unknown>));
+
+  // Submit rejected by validation: land the user on the first tab that holds
+  // an error instead of leaving them on a tab where nothing looks wrong.
+  const onInvalid = (errors: Record<string, unknown>) => {
+    const bad = tabsWithErrors(errors) as TabId[];
+    if (bad.length > 0 && !bad.includes(tab)) setTab(bad[0]);
+  };
+  const tabLabel = (id: TabId) => TABS.find((t) => t.id === id)?.label ?? id;
 
   return (
     <>
@@ -222,6 +238,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
               type="button"
               role="tab"
               aria-selected={tab === t.id}
+              data-invalid={invalidTabs.includes(t.id) ? "true" : undefined}
               aria-controls={`create-link-tabpanel-${t.id}`}
               tabIndex={tab === t.id ? 0 : -1}
               onClick={() => setTab(t.id)}
@@ -244,11 +261,35 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
               )}
             >
               {t.label}
+              {invalidTabs.includes(t.id) ? (
+                <>
+                  <span aria-hidden="true" className="ml-[6px] inline-block w-[6px] h-[6px] rounded-full bg-bad align-middle" />
+                  <span className="sr-only"> (has an error)</span>
+                </>
+              ) : null}
             </button>
           ))}
         </div>
 
         <form onSubmit={onSubmit} className="flex-1 flex flex-col min-h-0">
+          {invalidTabs.length > 0 ? (
+            <div
+              role="alert"
+              className="px-5 py-[10px] border-b border-line bg-wash-bad text-[12.5px] text-bad flex flex-wrap items-center gap-x-2 gap-y-1"
+            >
+              <span>Can&apos;t create the link yet — fix the highlighted field on:</span>
+              {invalidTabs.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  className="font-semibold underline underline-offset-2 hover:no-underline"
+                >
+                  {tabLabel(id)}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-[18px]">
             <LinkFormFields
               tab={tab}
