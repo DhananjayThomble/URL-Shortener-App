@@ -4786,6 +4786,71 @@
           }
         }
       ]
+    },
+    {
+      "name": "API reference behind Read the docs (#706)",
+      "item": [
+        {
+          "name": "GET /docs serves the Swagger UI page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is an HTML page\", () => pm.expect(pm.response.headers.get(\"content-type\")).to.include(\"text/html\"));",
+                  "pm.test(\"is Swagger UI\", () => pm.expect(pm.response.text().toLowerCase()).to.include(\"swagger\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/docs",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "docs"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /docs/json is the generated OpenAPI document",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json();",
+                  "pm.test(\"OpenAPI 3 document\", () => pm.expect(d.openapi).to.match(/^3\\./));",
+                  "pm.test(\"documents the links and audit routes\", () => { const keys = Object.keys(d.paths || {}); pm.expect(keys.some((k) => /\\/links$/.test(k))).to.equal(true); pm.expect(keys.some((k) => /\\/audit$/.test(k))).to.equal(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/docs/json",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "docs",
+                "json"
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
