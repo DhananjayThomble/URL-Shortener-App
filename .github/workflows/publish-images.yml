@@ -47,7 +47,7 @@ jobs:
       # arm64 layers are built under emulation on the amd64 runner.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # GHCR login with the built-in token. github.actor is the user/bot that
       # triggered the run; GITHUB_TOKEN already carries packages:write from the
