@@ -14,6 +14,11 @@ import type { ImportSource } from "./types";
  */
 export const IMPORT_SOURCES: ImportSource[] = [genericCsv, bitly, yourls, kutt, dub];
 
+/** Deep link that opens the Import panel on /links with a source preselected
+ *  (the top bar and Settings "Import from Bitly" buttons use it, #661). */
+export const IMPORT_QUERY_PARAM = "import";
+export const importHref = (sourceId: string) => `/links?${IMPORT_QUERY_PARAM}=${encodeURIComponent(sourceId)}`;
+
 export function getImportSource(id: string): ImportSource | undefined {
   return IMPORT_SOURCES.find((s) => s.id === id);
 }
