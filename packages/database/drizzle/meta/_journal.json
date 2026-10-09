@@ -127,6 +127,13 @@
       "when": 1788890802539,
       "tag": "0017_sleepy_miss_america",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791494187697,
+      "tag": "0018_membership_activity_invite_idx",
+      "breakpoints": true
     }
   ]
 }

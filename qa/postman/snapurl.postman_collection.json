@@ -2837,7 +2837,7 @@
           }
         },
         {
-          "name": "Invitee accepts: session in the owner's workspace as Viewer",
+          "name": "Invitee accepts: joined the owner's workspace as Viewer, no token minted (#699)",
           "event": [
             {
               "listen": "test",
@@ -2846,11 +2846,10 @@
                 "exec": [
                   "pm.test(\"200\", () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
-                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
                   "pm.test(\"joined the owner's workspace\", () => pm.expect(b.workspaceId).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")));",
                   "pm.test(\"with the invited role\", () => pm.expect(b.user.role).to.eql(\"viewer\"));",
-                  "pm.test(\"access token bound to it\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")); pm.expect(c.role).to.eql(\"viewer\"); });",
-                  "pm.collectionVariables.set(\"inv_joined_token\", b.accessToken);"
+                  "pm.test(\"no accessToken field\", () => pm.expect(b).to.not.have.property(\"accessToken\"));",
+                  "pm.test(\"no token in the body\", () => pm.expect(pm.response.text()).to.not.match(/eyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+/));"
                 ]
               }
             }
@@ -2881,6 +2880,53 @@
             "body": {
               "mode": "raw",
               "raw": "{\"token\":\"{{inv_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Invitee enters the joined workspace via refresh (#699)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.test(\"access token bound to the joined workspace as viewer\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")); pm.expect(c.role).to.eql(\"viewer\"); });",
+                  "pm.collectionVariables.set(\"inv_joined_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"inv_invitee_refresh\", b.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/refresh",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refreshToken\":\"{{inv_invitee_refresh}}\",\"workspaceId\":\"{{inv_owner_wid}}\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3295,14 +3341,15 @@
           }
         },
         {
-          "name": "Switch into a workspace the user is not in is 404",
+          "name": "POST /auth/workspace no longer exists: an access token cannot mint another (#699)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"404\", () => pm.response.to.have.status(404));"
+                  "pm.test(\"404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"no token in the body\", () => pm.expect(pm.response.text()).to.not.match(/eyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+/));"
                 ]
               }
             }
@@ -3331,7 +3378,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"workspaceId\":\"{{inv_stranger_wid}}\"}",
+              "raw": "{\"workspaceId\":\"{{inv_owner_wid}}\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3341,7 +3388,7 @@
           }
         },
         {
-          "name": "Switch back to the own workspace restores the Owner role",
+          "name": "Switch back to the own workspace (hinted refresh) restores the Owner role",
           "event": [
             {
               "listen": "test",
@@ -3350,8 +3397,10 @@
                 "exec": [
                   "pm.test(\"200\", () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
-                  "pm.test(\"own workspace as owner\", () => { pm.expect(b.workspaceId).to.eql(pm.collectionVariables.get(\"inv_invitee_wid\")); pm.expect(b.user.role).to.eql(\"owner\"); });",
-                  "pm.collectionVariables.set(\"inv_own_token\", b.accessToken);"
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.test(\"own workspace as owner\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"inv_invitee_wid\")); pm.expect(c.role).to.eql(\"owner\"); });",
+                  "pm.collectionVariables.set(\"inv_own_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"inv_invitee_refresh\", b.refreshToken);"
                 ]
               }
             }
@@ -3362,25 +3411,21 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{inv_joined_token}}"
               }
             ],
             "url": {
-              "raw": "{{apiUrl}}/auth/workspace",
+              "raw": "{{apiUrl}}/auth/refresh",
               "host": [
                 "{{apiUrl}}"
               ],
               "path": [
                 "auth",
-                "workspace"
+                "refresh"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"workspaceId\":\"{{inv_invitee_wid}}\"}",
+              "raw": "{\"refreshToken\":\"{{inv_invitee_refresh}}\",\"workspaceId\":\"{{inv_invitee_wid}}\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3419,6 +3464,239 @@
               "path": [
                 "members"
               ]
+            }
+          }
+        },
+        {
+          "name": "Removed member's stale token: GET /auth/me is 401 (#699) — setup: owner lists members",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().find((x) => x.email === pm.collectionVariables.get(\"inv_invitee_email\"));",
+                  "pm.test(\"invitee row present\", () => pm.expect(m).to.be.an(\"object\"));",
+                  "pm.collectionVariables.set(\"inv_invitee_membership\", m.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Owner removes the invitee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members/{{inv_invitee_membership}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members",
+                "{{inv_invitee_membership}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Removed member's still-unexpired joined token: GET /auth/me is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/me",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invitee signs out on all devices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/logout",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refreshToken\":\"{{inv_invitee_refresh}}\",\"allDevices\":true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "After sign-out everywhere, refresh is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"no token in the body\", () => pm.expect(pm.response.text()).to.not.match(/eyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/refresh",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refreshToken\":\"{{inv_invitee_refresh}}\",\"workspaceId\":\"{{inv_invitee_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "After sign-out everywhere, the old access token cannot buy a new one",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"not 2xx\", () => pm.expect(pm.response.code).to.not.be.within(200, 299));",
+                  "pm.test(\"no token in the body\", () => pm.expect(pm.response.text()).to.not.match(/eyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_own_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/workspace",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "workspace"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"workspaceId\":\"{{inv_invitee_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },

@@ -23,6 +23,7 @@ import {
   type Executor,
 } from "@snapurl/database";
 import type {
+  AcceptedInvite,
   AuthSession,
   AuthUser,
   LoginInput,
@@ -31,7 +32,6 @@ import type {
   RegisterInput,
   TotpSetup,
   UserWorkspace,
-  WorkspaceSession,
 } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
@@ -488,17 +488,41 @@ export class AuthService {
     await this.tokens.revokeAllForUser(userId);
   }
 
-  async me(userId: string, workspaceId?: string): Promise<AuthUser> {
+  async me(userId: string, workspaceId?: string, tokenRole?: string): Promise<AuthUser> {
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user) throw new UnauthorizedException();
     // The role shown (and used to gate the UI) is the role in the workspace this
     // session is in, not in whichever workspace happens to be the default.
-    const membership =
-      (workspaceId ? await this.activeMembership(userId, workspaceId) : null) ??
-      (await this.primaryMembership(userId));
+    let membership: { workspaceId: string; role: string };
+    if (workspaceId) {
+      const current = await this.activeMembership(userId, workspaceId);
+      /* #699 — the guard trusts the token's claims until it expires. If the
+         membership behind them is gone, or the role changed, answering with a
+         different workspace's role would hide that. 401 instead: the client
+         refreshes, and refresh rebuilds the claims from current data. */
+      if (!current || (tokenRole !== undefined && current.role !== tokenRole)) {
+        throw new UnauthorizedException("Your access to this workspace has changed.");
+      }
+      membership = current;
+    } else {
+      membership = await this.primaryMembership(userId);
+    }
 
-    // Cheap presence signal for the team page's "last active" column.
-    await this.db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, userId));
+    // Cheap presence signals for the team page's "last active" column: the
+    // account-wide one, and (#699) the one for this workspace, which is what
+    // teammates are shown.
+    const now = new Date();
+    await this.db.update(users).set({ lastActiveAt: now }).where(eq(users.id, userId));
+    await this.db
+      .update(memberships)
+      .set({ lastActiveAt: now })
+      .where(
+        and(
+          eq(memberships.userId, userId),
+          eq(memberships.workspaceId, membership.workspaceId),
+          eq(memberships.status, "active"),
+        ),
+      );
 
     return {
       id: user.id,
@@ -525,7 +549,7 @@ export class AuthService {
      an unordered pick could land the same person in a different workspace on
      different sign-ins. The order is the first workspace they actually joined
      (accepted_at), which for everyone is the personal workspace created at
-     registration; the switcher (POST /auth/workspace) reaches the others. */
+     registration; the switcher (POST /auth/refresh with a workspaceId) reaches the others. */
   private async primaryMembership(userId: string) {
     const [membership] = await this.db
       .select({ workspaceId: memberships.workspaceId, role: memberships.role })
@@ -580,7 +604,7 @@ export class AuthService {
      but the *account* presenting it must also have proven its address. That
      stops someone who registered an unverified account under another person's
      email from turning a leaked or forwarded invite link into membership. */
-  async acceptInvite(userId: string, rawToken: string): Promise<WorkspaceSession> {
+  async acceptInvite(userId: string, rawToken: string): Promise<AcceptedInvite> {
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
     const [invite] = await this.db
@@ -640,44 +664,69 @@ export class AuthService {
       throw inviteError(ConflictException, "already_member", "You're already a member of this workspace.");
     }
 
-    const [accepted] = await this.db
-      .update(memberships)
-      .set({ status: "active", userId: user.id, acceptedAt: new Date() })
-      .where(
-        and(
-          eq(memberships.id, invite.id),
-          eq(memberships.status, "invited"),
-          eq(memberships.inviteTokenHash, tokenHash),
-        ),
-      )
-      .returning({ workspaceId: memberships.workspaceId, role: memberships.role });
+    /* #699 — activation and its audit row commit together: if the audit insert
+       failed after a committed activation, the person would already be a
+       member but be told the accept failed. */
+    const accepted = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(memberships)
+        .set({ status: "active", userId: user.id, acceptedAt: new Date() })
+        .where(
+          and(
+            eq(memberships.id, invite.id),
+            eq(memberships.status, "invited"),
+            eq(memberships.inviteTokenHash, tokenHash),
+          ),
+        )
+        .returning({ workspaceId: memberships.workspaceId, role: memberships.role });
 
-    // Lost a race with a concurrent accept of the same token.
-    if (!accepted) {
-      throw inviteError(ConflictException, "invite_used", "This invitation has already been accepted.");
-    }
+      if (!row) {
+        /* The guarded UPDATE matched nothing, so the row changed since it was
+           read. Say what actually happened: a concurrent accept leaves it
+           active ("already accepted"); an admin revoking the invitation in the
+           meantime deletes it, which is the same as a link that isn't valid. */
+        const [now] = await tx
+          .select({ status: memberships.status, inviteTokenHash: memberships.inviteTokenHash })
+          .from(memberships)
+          .where(eq(memberships.id, invite.id))
+          .limit(1);
+        if (now && now.status !== "invited" && now.inviteTokenHash === tokenHash) {
+          throw inviteError(ConflictException, "invite_used", "This invitation has already been accepted.");
+        }
+        throw inviteError(
+          NotFoundException,
+          "invite_invalid",
+          "This invitation link isn't valid. Ask the person who invited you to send a new one.",
+        );
+      }
 
-    await this.db.insert(auditLog).values({
-      workspaceId: accepted.workspaceId,
-      actorId: user.id,
-      actorLabel: user.email,
-      action: "member.joined",
-      targetType: "membership",
-      targetId: invite.id,
-      metadata: { email: user.email, role: accepted.role },
+      await tx.insert(auditLog).values({
+        workspaceId: row.workspaceId,
+        actorId: user.id,
+        actorLabel: user.email,
+        action: "member.joined",
+        targetType: "membership",
+        targetId: invite.id,
+        metadata: { email: user.email, role: row.role },
+      });
+      return row;
     });
 
-    return this.workspaceSession(user, accepted.workspaceId, accepted.role);
-  }
-
-  /** Move this session into another workspace the user is an active member of. */
-  async switchWorkspace(userId: string, workspaceId: string): Promise<WorkspaceSession> {
-    const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
-    if (!user) throw new UnauthorizedException();
-    const membership = await this.activeMembership(userId, workspaceId);
-    // 404 rather than 403: to you, a workspace you are not in is not there.
-    if (!membership) throw new NotFoundException("You're not a member of that workspace.");
-    return this.workspaceSession(user, membership.workspaceId, membership.role);
+    /* #699 — no access token here. Accepting is authorised by an access token,
+       and minting a new one from it would extend a session that may already
+       have been revoked. The client enters the workspace with
+       POST /auth/refresh {refreshToken, workspaceId}, which checks the
+       refresh-token family. */
+    return {
+      workspaceId: accepted.workspaceId,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        initials: initialsOf(user.name),
+        role: accepted.role as AuthUser["role"],
+      },
+    };
   }
 
   async listWorkspaces(userId: string, currentWorkspaceId: string): Promise<UserWorkspace[]> {
@@ -694,25 +743,6 @@ export class AuthService {
       role: row.role as UserWorkspace["role"],
       current: row.id === currentWorkspaceId,
     }));
-  }
-
-  private async workspaceSession(
-    user: { id: string; name: string; email: string },
-    workspaceId: string,
-    role: string,
-  ): Promise<WorkspaceSession> {
-    const accessToken = await this.tokens.signAccessToken({ sub: user.id, wid: workspaceId, role, email: user.email });
-    return {
-      accessToken,
-      workspaceId,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        initials: initialsOf(user.name),
-        role: role as AuthUser["role"],
-      },
-    };
   }
 
   private async issueSession(

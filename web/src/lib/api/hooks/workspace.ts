@@ -1,21 +1,37 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { z } from "zod";
 import {
+  AcceptedInvite,
   UserWorkspace,
   Workspace,
-  WorkspaceSession,
   type AcceptInviteInput,
+  type AuthUser,
   type UpdateWorkspaceInput,
 } from "@snapurl/contract";
-import { request, tokens } from "../client";
+import {
+  ACCESS_TOKEN_STORAGE_KEY,
+  WORKSPACE_CHANGED_EVENT,
+  checkWorkspaceCoherence,
+  enterWorkspace,
+  noteRenderedWorkspace,
+  request,
+  workspaceIdOf,
+} from "../client";
 import { qk } from "./keys";
 
 export function useWorkspace() {
   return useQuery({
     queryKey: qk.workspace,
-    queryFn: () => request("/workspaces/current", Workspace),
+    queryFn: async () => {
+      const workspace = await request("/workspaces/current", Workspace);
+      // #699 — this answer is what the sidebar and settings render from.
+      noteRenderedWorkspace(workspace.id);
+      return workspace;
+    },
     staleTime: 5 * 60_000,
   });
 }
@@ -25,12 +41,59 @@ export function useWorkspace() {
    an invitation, or picking it in the switcher) swaps the access token and
    throws away every cached query — each one was answered for the old
    workspace, and showing it under the new name would be a cross-tenant leak
-   on screen even though the API itself never mixes them. */
+   on screen even though the API itself never mixes them.
 
-function enterWorkspace(qc: ReturnType<typeof useQueryClient>, session: WorkspaceSession) {
-  tokens.setAccess(session.accessToken);
+   #699: the new access token comes from POST /auth/refresh with the target
+   workspace (enterWorkspace in client.ts), never from an access token alone,
+   so a revoked session cannot use this to stay alive. Other tabs, and a
+   refresh that falls back elsewhere, are handled by WorkspaceChangeGuard. */
+
+async function moveInto(qc: ReturnType<typeof useQueryClient>, workspaceId: string, user?: AuthUser) {
+  await enterWorkspace(workspaceId);
   qc.clear();
-  qc.setQueryData(qk.me, session.user);
+  if (user) qc.setQueryData(qk.me, user);
+}
+
+/**
+ * #699 — keep this tab's screen in the workspace its token is actually in.
+ *
+ * Tokens live in localStorage, shared by every tab, and each request reads the
+ * token when it is sent. So when another tab switches workspace (or accepts an
+ * invitation), this tab's next request already goes to the NEW workspace while
+ * its sidebar and cached lists still show the OLD one — a save on the Settings
+ * page would write the old workspace's values into the new one. The same
+ * happens in this tab when a refresh falls back to the default workspace
+ * because the membership it was in has gone.
+ *
+ * On either signal, every cached query is reset (data dropped, active ones
+ * refetched with the current token) and the tab is routed to /links.
+ *
+ * The comparison is against the workspace this tab RENDERED (see
+ * noteRenderedWorkspace in client.ts), not the token's previous value: a
+ * sign-out then sign-in in another tab arrives here as two events, A → none
+ * and none → B, and neither one alone carries both workspaces.
+ */
+export function useWorkspaceChangeGuard() {
+  const qc = useQueryClient();
+  const router = useRouter();
+  useEffect(() => {
+    const moved = () => {
+      void qc.resetQueries();
+      router.replace("/links");
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea && typeof window !== "undefined" && event.storageArea !== window.localStorage) return;
+      if (event.key !== ACCESS_TOKEN_STORAGE_KEY && event.key !== null) return;
+      // Dispatches WORKSPACE_CHANGED_EVENT (handled below) on a mismatch.
+      checkWorkspaceCoherence(workspaceIdOf(event.oldValue));
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(WORKSPACE_CHANGED_EVENT, moved);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(WORKSPACE_CHANGED_EVENT, moved);
+    };
+  }, [qc, router]);
 }
 
 /** Workspaces the signed-in user is an active member of, for the switcher. */
@@ -45,9 +108,7 @@ export function useMyWorkspaces() {
 export function useSwitchWorkspace() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (workspaceId: string) =>
-      request("/auth/workspace", WorkspaceSession, { method: "POST", body: { workspaceId } }),
-    onSuccess: (session) => enterWorkspace(qc, session),
+    mutationFn: (workspaceId: string) => moveInto(qc, workspaceId),
   });
 }
 
@@ -55,9 +116,11 @@ export function useSwitchWorkspace() {
 export function useAcceptInvite() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: AcceptInviteInput) =>
-      request("/auth/invite/accept", WorkspaceSession, { method: "POST", body }),
-    onSuccess: (session) => enterWorkspace(qc, session),
+    mutationFn: async (body: AcceptInviteInput) => {
+      const accepted = await request("/auth/invite/accept", AcceptedInvite, { method: "POST", body });
+      await moveInto(qc, accepted.workspaceId, accepted.user);
+      return accepted;
+    },
   });
 }
 

@@ -12,7 +12,6 @@ import {
   EmailVerifyResendInput,
   RefreshInput,
   RegisterInput,
-  SwitchWorkspaceInput,
   TotpDisableInput,
   TotpEnableInput,
   TotpVerifyInput,
@@ -78,18 +77,12 @@ export class AuthController {
     return this.auth.acceptInvite(actor.userId!, input.token);
   }
 
-  /* #668 — the workspace switcher. Access tokens are bound to one workspace,
-     so switching means a new access token for the target; the refresh token is
-     unchanged and keeps the workspace via RefreshInput.workspaceId. */
+  /* #668 — the workspace switcher lists these; entering one is
+     POST /auth/refresh with `workspaceId` (#699: never from an access token
+     alone — see AcceptedInvite in the contract). */
   @Get("workspaces")
   workspaces(@Actor() actor: RequestActor) {
     return this.auth.listWorkspaces(actor.userId!, actor.workspaceId);
-  }
-
-  @Post("workspace")
-  @HttpCode(200)
-  switchWorkspace(@Actor() actor: RequestActor, @Body(zodBody(SwitchWorkspaceInput)) input: SwitchWorkspaceInput) {
-    return this.auth.switchWorkspace(actor.userId!, input.workspaceId);
   }
 
   /* G2 — this endpoint did not exist, so signing out left the refresh token
@@ -147,7 +140,7 @@ export class AuthController {
 
   @Get("me")
   me(@Actor() actor: RequestActor) {
-    return this.auth.me(actor.userId!, actor.workspaceId);
+    return this.auth.me(actor.userId!, actor.workspaceId, actor.role);
   }
 
   /* G6 — two-factor. The team page renders a 2FA column, so there has to be a
