@@ -4447,6 +4447,345 @@
           }
         }
       ]
+    },
+    {
+      "name": "Links CSV export (#661)",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const s = Date.now().toString(36) + Math.random().toString(16).slice(2, 8);",
+                  "pm.collectionVariables.set(\"ex_email\", \"newman-ex-\" + s + \"@example.com\");",
+                  "pm.collectionVariables.set(\"ex_slug\", \"x661-\" + s);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"ex_token\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman ex\",\"email\":\"{{ex_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Current workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"ex_domain\", pm.response.json().defaultDomain);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ex_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create a link to export",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ex_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{ex_domain}}\",\"slug\":\"{{ex_slug}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Export from the web origin: 200 text/csv attachment, readable cross-origin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"content-type is text/csv\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/^text\\/csv/));",
+                  "pm.test(\"served as an attachment so the browser downloads it\", () => pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.match(/^attachment; filename=\".+\\.csv\"$/));",
+                  "pm.test(\"CORS: the web origin may read the body (#636)\", () => pm.expect(pm.response.headers.get(\"Access-Control-Allow-Origin\")).to.eql(\"http://localhost:3000\"));",
+                  "const lines = pm.response.text().trim().split(\"\\n\");",
+                  "pm.test(\"first row is the header\", () => { pm.expect(lines[0]).to.include(\"short_url\"); pm.expect(lines[0]).to.include(\"destination\"); pm.expect(lines[0]).to.include(\"clicks\"); });",
+                  "pm.test(\"the created link is a row with its destination\", () => { const row = lines.find((l) => l.includes(pm.collectionVariables.get(\"ex_slug\"))); pm.expect(row, \"row for the created slug\").to.be.a(\"string\"); pm.expect(row).to.include(pm.collectionVariables.get(\"destDefault\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ex_token}}"
+              },
+              {
+                "key": "Origin",
+                "value": "http://localhost:3000"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/export",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "export"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Export with status=archived leaves the active link out (filter is honoured)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const lines = pm.response.text().trim().split(\"\\n\");",
+                  "pm.test(\"still a CSV with a header\", () => pm.expect(lines[0]).to.include(\"short_url\"));",
+                  "pm.test(\"the active link is not in the archived export\", () => pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get(\"ex_slug\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ex_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/export?status=archived",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "archived"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Export without a token is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"no CSV body\", () => pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.not.match(/^text\\/csv/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Origin",
+                "value": "http://localhost:3000"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/export",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "export"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Preflight from the web origin allows GET with Authorization",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"preflight succeeds (2xx)\", () => pm.expect(pm.response.code).to.be.within(200, 204));",
+                  "pm.test(\"allow-origin is the web origin\", () => pm.expect(pm.response.headers.get(\"Access-Control-Allow-Origin\")).to.eql(\"http://localhost:3000\"));",
+                  "pm.test(\"allow-methods includes GET\", () => pm.expect(pm.response.headers.get(\"Access-Control-Allow-Methods\")).to.include(\"GET\"));",
+                  "pm.test(\"allow-headers includes Authorization\", () => pm.expect((pm.response.headers.get(\"Access-Control-Allow-Headers\") || \"\").toLowerCase()).to.include(\"authorization\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "OPTIONS",
+            "header": [
+              {
+                "key": "Origin",
+                "value": "http://localhost:3000"
+              },
+              {
+                "key": "Access-Control-Request-Method",
+                "value": "GET"
+              },
+              {
+                "key": "Access-Control-Request-Headers",
+                "value": "authorization"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/export",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "export"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Export from a foreign origin carries no allow-origin (a hostile page cannot read it)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"no Access-Control-Allow-Origin for an origin outside the allowlist\", () => pm.expect(pm.response.headers.has(\"Access-Control-Allow-Origin\")).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ex_token}}"
+              },
+              {
+                "key": "Origin",
+                "value": "https://evil.example"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links/export",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links",
+                "export"
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
