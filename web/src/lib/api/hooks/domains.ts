@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Domain, type AddDomainInput } from "@snapurl/contract";
+import { Domain, type AddDomainInput, type UpdateDomainInput } from "@snapurl/contract";
 import { request } from "../client";
 import { qk } from "./keys";
 
@@ -29,6 +29,16 @@ export function useVerifyDomain() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request(`/domains/${id}/verify`, Domain, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.domains }),
+  });
+}
+
+/** Set, change or clear a domain's root / 404 redirects (#648). `null` clears. */
+export function useUpdateDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateDomainInput }) =>
+      request(`/domains/${id}`, Domain, { method: "PATCH", body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.domains }),
   });
 }

@@ -270,6 +270,7 @@ export class DomainsService {
       links: linkCount,
       rootRedirect: row.rootRedirect,
       notFoundRedirect: row.notFoundRedirect,
+      shared: row.isSystem,
       dns: row.verificationToken
         ? { type: "TXT", name: `_snapurl.${row.domain}`, value: row.verificationToken, ttl: 300 }
         : null,

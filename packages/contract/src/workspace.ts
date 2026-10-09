@@ -58,6 +58,10 @@ export const Domain = z.object({
   links: z.number(),
   rootRedirect: z.string().nullable(),
   notFoundRedirect: z.string().nullable(),
+  /** True for the built-in short domain every workspace shares. Its root and
+   *  404 redirects cannot be changed by any one workspace (#648), and it cannot
+   *  be disconnected. Optional so older payloads still parse; absent = false. */
+  shared: z.boolean().optional(),
   dns: z
     .object({ type: z.string(), name: z.string(), value: z.string(), ttl: z.number() })
     .nullable()

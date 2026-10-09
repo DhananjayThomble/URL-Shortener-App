@@ -1,11 +1,96 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
-import { useAddDomain, useDeleteDomain, useDomains, useVerifyDomain } from "@/lib/api/hooks";
-import { AddDomainInput } from "@snapurl/contract";
+import { useAddDomain, useDeleteDomain, useDomains, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
+import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { formatDate, full } from "@/lib/utils";
+import { parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
+
+/**
+ * Edit a domain's root and 404 redirects (#648).
+ *
+ * Validated with the contract's UpdateDomainInput before anything is sent, so
+ * the per-field messages here are the same rules the API enforces (http(s)
+ * only, no private / loopback / link-local hosts). A blank field is sent as
+ * `null`, which clears that redirect.
+ */
+function RedirectsEditor({ domain, onClose }: { domain: Domain; onClose: (saved: boolean) => void }) {
+  const update = useUpdateDomain();
+  const [root, setRoot] = useState(domain.rootRedirect ?? "");
+  const [notFound, setNotFound] = useState(domain.notFoundRedirect ?? "");
+  const [errors, setErrors] = useState<RedirectErrors>({});
+
+  async function save() {
+    const result = parseRedirectDraft(root, notFound);
+    if (!result.ok) {
+      setErrors(result.errors);
+      return;
+    }
+    try {
+      await update.mutateAsync({ id: domain.id, input: result.input });
+      onClose(true);
+    } catch (err) {
+      setErrors({ form: (err as Error).message });
+    }
+  }
+
+  return (
+    <Card className="mb-3.5" role="region" aria-label={`Redirects for ${domain.domain}`}>
+      <CardHeader title={`Redirects for ${domain.domain}`} />
+      <CardBody>
+        <form
+          className="flex flex-col gap-3"
+          noValidate
+          onSubmit={(e) => { e.preventDefault(); void save(); }}
+          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(false); } }}
+        >
+          <Field
+            label="Root redirect"
+            help={`Where a visitor to ${domain.domain}/ with no slug goes. Leave blank to clear.`}
+            error={errors.rootRedirect}
+          >
+            <Input
+              name="rootRedirect"
+              type="url"
+              inputMode="url"
+              autoFocus
+              value={root}
+              placeholder="https://example.com/"
+              className="font-mono text-[12.5px]"
+              onChange={(e) => { setRoot(e.target.value); setErrors((x) => ({ ...x, rootRedirect: undefined, form: undefined })); }}
+            />
+          </Field>
+          <Field
+            label="404 redirect"
+            help="Where a slug that doesn't exist on this domain goes. Leave blank to clear."
+            error={errors.notFoundRedirect}
+          >
+            <Input
+              name="notFoundRedirect"
+              type="url"
+              inputMode="url"
+              value={notFound}
+              placeholder="https://example.com/not-found"
+              className="font-mono text-[12.5px]"
+              onChange={(e) => { setNotFound(e.target.value); setErrors((x) => ({ ...x, notFoundRedirect: undefined, form: undefined })); }}
+            />
+          </Field>
+          {errors.form ? (
+            <p role="alert" className="m-0 text-[12.5px] text-bad">{errors.form}</p>
+          ) : null}
+          <div className="flex gap-2">
+            <Button variant="primary" type="submit" disabled={update.isPending}>
+              {update.isPending ? "Saving…" : "Save redirects"}
+            </Button>
+            <Button type="button" onClick={() => onClose(false)}>Cancel</Button>
+          </div>
+        </form>
+      </CardBody>
+    </Card>
+  );
+}
 
 export default function DomainsPage() {
   const { data, isLoading } = useDomains();
@@ -17,9 +102,19 @@ export default function DomainsPage() {
   const [name, setName] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const editButtons = useRef(new Map<string, HTMLButtonElement>());
 
   const domains = data ?? [];
   const pending = domains.find((d) => d.status === "verifying");
+  const editingDomain = domains.find((d) => d.id === editing && !d.shared);
+
+  function closeEditor() {
+    const id = editing;
+    setEditing(null);
+    // Return focus to the control that opened the editor.
+    if (id) requestAnimationFrame(() => editButtons.current.get(id)?.focus());
+  }
 
   async function add() {
     const parsed = AddDomainInput.safeParse({ domain: name.trim() });
@@ -127,7 +222,12 @@ export default function DomainsPage() {
               <tbody>
                 {domains.map((d) => (
                   <tr key={d.id}>
-                    <Td className="text-ink font-medium font-mono">{d.domain}</Td>
+                    <Td className="text-ink font-medium font-mono">
+                      {d.domain}
+                      {d.shared ? (
+                        <Chip className="ml-2 font-sans">Shared</Chip>
+                      ) : null}
+                    </Td>
                     <Td>
                       <Chip tone={d.status === "live" ? "good" : "warn"} dot>
                         {d.status === "live" ? "Live" : "Verifying DNS"}
@@ -146,6 +246,18 @@ export default function DomainsPage() {
                       {d.notFoundRedirect ?? <span className="text-ink-3">— not set</span>}
                     </Td>
                     <Td className="text-right whitespace-nowrap">
+                      {!d.shared ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          ref={(el) => { if (el) editButtons.current.set(d.id, el); else editButtons.current.delete(d.id); }}
+                          aria-label={`Edit redirects for ${d.domain}`}
+                          aria-expanded={editing === d.id}
+                          onClick={() => { setEditing((cur) => (cur === d.id ? null : d.id)); setProblem(null); }}
+                        >
+                          Edit redirects
+                        </Button>
+                      ) : null}
                       {d.status !== "live" ? (
                         <Button size="sm" variant="ghost" onClick={() => verify(d.id)} disabled={verifyDomain.isPending}>
                           {verifyDomain.isPending ? "Checking…" : "Check DNS"}
@@ -173,6 +285,10 @@ export default function DomainsPage() {
           </TableWrap>
         )}
       </Card>
+
+      {editingDomain ? (
+        <RedirectsEditor key={editingDomain.id} domain={editingDomain} onClose={closeEditor} />
+      ) : null}
 
       {confirming ? (
         <Card className="mb-3.5">

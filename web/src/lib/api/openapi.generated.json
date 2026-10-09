@@ -70,7 +70,8 @@
     "POST"
   ],
   "/domains/{id}": [
-    "DELETE"
+    "DELETE",
+    "PATCH"
   ],
   "/domains/{id}/verify": [
     "POST"
