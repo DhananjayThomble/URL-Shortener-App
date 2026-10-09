@@ -833,8 +833,36 @@ export async function fixtureRequest<T>(
         ),
       ].filter((k, i, a) => a.indexOf(k) === i),
     };
+  } else if (m(/^\/forms\/([^/]+)$/) && method === "PATCH") {
+    // Mirrors the server: slug is not editable, fields are replaced wholesale,
+    // and a field arriving without a key gets one.
+    const form = FORMS.find((f) => f.id === m(/^\/forms\/([^/]+)$/)![1]);
+    if (!form) throw new Error(`No fixture form ${path}`);
+    const { slug: _slug, fields, ...rest } = opts.body as Partial<Form>;
+    Object.assign(form, rest, { updatedAt: new Date().toISOString() });
+    if (fields) form.fields = fields.map((f, i) => ({ ...f, key: f.key || `field_${Date.now().toString(36)}_${i}` }));
+    data = form;
+  } else if (m(/^\/forms\/([^/]+)$/) && method === "DELETE") {
+    removeById(FORMS, m(/^\/forms\/([^/]+)$/)![1]);
+    data = undefined;
   } else if (m(/^\/forms\/([^/]+)$/)) {
     data = FORMS.find((f) => f.id === m(/^\/forms\/([^/]+)$/)![1]) ?? FORMS[0];
+  } else if (m(/^\/forms$/) && method === "POST") {
+    const body = opts.body as Partial<Form> & { title: string };
+    const now = new Date().toISOString();
+    const form: Form = {
+      id: `frm_${Date.now().toString(36)}`,
+      slug: body.slug || `f${Date.now().toString(36)}`,
+      title: body.title,
+      description: body.description ?? "",
+      status: body.status ?? "draft",
+      fields: (body.fields ?? []).map((f, i) => ({ ...f, key: f.key || `field_${i}` })),
+      responseCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    FORMS.unshift(form);
+    data = form;
   } else if (m(/^\/forms$/)) {
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {

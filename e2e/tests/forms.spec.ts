@@ -3,9 +3,9 @@ import { seedSession } from "../support/session";
 
 /* E2E journey: an authenticated user opens /forms, sees their forms listed,
    and expands a form's responses to read the response table and reach the CSV
-   export. The Forms surface is read-only in the dashboard — creating, editing
-   or deleting a form is not exposed in the UI; the page only lists forms and
-   renders each one's responses — so the "primary journey" here is
+   export. Creating, editing, closing and deleting a form (#649) is covered
+   against the REAL stack by e2e/journeys/j22-forms-manage.spec.ts; this file
+   stays on the read path, so the "primary journey" here is
    view -> expand -> read.
 
    Builds on the #353 harness: fixtures mode (no API/DB), accessible-name
