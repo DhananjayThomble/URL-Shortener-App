@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BulkCreatePanel } from "@/components/links/bulk-create-panel";
 import { ImportPanel } from "@/components/links/import-panel";
@@ -8,6 +9,7 @@ import { LinkRow } from "@/components/links/link-row";
 import { Button, Card, EmptyState, ErrorState, Input, Skeleton, Tabs } from "@/components/ui";
 import { useDomains, useExportLinks, useLinks } from "@/lib/api/hooks";
 import type { ListLinksQuery } from "@snapurl/contract";
+import { IMPORT_QUERY_PARAM } from "@/lib/import";
 import { cn, full } from "@/lib/utils";
 
 const FILTERS = [
@@ -22,10 +24,36 @@ const FILTERS = [
 const SELECT_CLASS =
   "inline-flex items-center px-[10px] py-[5px] bg-surface border border-line-2 rounded-full text-[12.5px] text-ink-2 hover:border-ink-3 hover:text-ink";
 
+/**
+ * Opens the Import panel when the URL says `?import=<source>` (the top bar and
+ * Settings "Import from Bitly" buttons navigate here, #661), then drops the
+ * param so a refresh or a later click behaves the same way. Renders nothing.
+ * Lives in its own component because useSearchParams needs a Suspense boundary.
+ */
+function ImportDeepLink({ onOpen }: { onOpen: (sourceId: string) => void }) {
+  const params = useSearchParams();
+  const router = useRouter();
+  const requested = params.get(IMPORT_QUERY_PARAM);
+  useEffect(() => {
+    if (requested === null) return;
+    onOpen(requested);
+    router.replace("/links");
+  }, [requested, onOpen, router]);
+  return null;
+}
+
 export default function LinksPage() {
   const [filter, setFilter] = useState<ListLinksQuery["status"]>("all");
   const [bulkOpen, setBulkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  /* Source the panel was last opened with by a deep link. Keyed on, so a link
+     for a different source remounts the panel; the same source leaves what the
+     user already pasted alone. */
+  const [importSource, setImportSource] = useState("");
+  const openImport = useCallback((sourceId: string) => {
+    setImportSource(sourceId);
+    setImportOpen(true);
+  }, []);
   const exportLinks = useExportLinks();
   const [view, setView] = useState<"list" | "grid">("list");
 
@@ -110,7 +138,13 @@ export default function LinksPage() {
 
       {bulkOpen ? <BulkCreatePanel onClose={() => setBulkOpen(false)} /> : null}
 
-      {importOpen ? <ImportPanel onClose={() => setImportOpen(false)} /> : null}
+      <Suspense fallback={null}>
+        <ImportDeepLink onOpen={openImport} />
+      </Suspense>
+
+      {importOpen ? (
+        <ImportPanel key={importSource} initialSourceId={importSource} onClose={() => setImportOpen(false)} />
+      ) : null}
 
       {exportLinks.error ? (
         <p className="text-[12.5px] text-bad mb-2" role="alert">
