@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
-import { useBioPages, useDeleteBioPage, useDomains, useUpsertBioPage } from "@/lib/api/hooks";
+import { useBioPages, useDeleteBioPage, useDomains, useUpsertBioPage, useWorkspace } from "@/lib/api/hooks";
+import { defaultDomainFor, domainOptionLabel } from "@/lib/domain-choice";
 import { UpsertBioPageInput, type BioBlock, type BioPage } from "@snapurl/contract";
 import { full } from "@/lib/utils";
 
@@ -142,6 +143,7 @@ function move(blocks: DraftBlock[], from: number, to: number): DraftBlock[] {
 export default function BioPagesPage() {
   const { data, isLoading } = useBioPages();
   const { data: domains } = useDomains();
+  const { data: workspace } = useWorkspace();
   const upsert = useUpsertBioPage();
   const remove = useDeleteBioPage();
 
@@ -154,6 +156,8 @@ export default function BioPagesPage() {
   const [problem, setProblem] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // #651: start on a live domain, not whichever the list happens to open with.
+  const pickedDomain = newPage.domain || defaultDomainFor(domains, workspace?.defaultDomain);
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [draftOf, setDraftOf] = useState<string | null>(null);
@@ -248,7 +252,7 @@ export default function BioPagesPage() {
   }
 
   async function create() {
-    const domain = newPage.domain || domains?.[0]?.domain || "";
+    const domain = pickedDomain;
     if (!domain || !newPage.slug.trim() || !newPage.name.trim()) {
       setProblem("A page needs a domain, a back-half and a display name.");
       return;
@@ -315,12 +319,15 @@ export default function BioPagesPage() {
               <Field label="Domain">
                 <select
                   className={SELECT}
-                  value={newPage.domain || domains?.[0]?.domain || ""}
+                  value={pickedDomain}
                   onChange={(e) => setNewPage((d) => ({ ...d, domain: e.target.value }))}
                 >
                   {(domains ?? []).map((d) => (
+                    // Marked, not disabled: whether a bio page may be created
+                    // or published on an unverified domain is the open product
+                    // decision in #650; this only stops it being the default.
                     <option key={d.id} value={d.domain}>
-                      {d.domain}
+                      {domainOptionLabel(d)}
                     </option>
                   ))}
                 </select>
