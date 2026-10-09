@@ -4820,7 +4820,7 @@
           }
         },
         {
-          "name": "GET /docs/json is the generated OpenAPI document",
+          "name": "GET /docs-json is the generated OpenAPI document",
           "event": [
             {
               "listen": "test",
@@ -4839,13 +4839,12 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{apiUrl}}/docs/json",
+              "raw": "{{apiUrl}}/docs-json",
               "host": [
                 "{{apiUrl}}"
               ],
               "path": [
-                "docs",
-                "json"
+                "docs-json"
               ]
             }
           }
