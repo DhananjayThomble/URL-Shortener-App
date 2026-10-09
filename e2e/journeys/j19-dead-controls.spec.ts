@@ -38,7 +38,7 @@ const REMOVED_BUTTONS = [
 async function expectImportPanelOpenOnBitly(page: Page, where: string) {
   await expect(page, `${where}: lands on /links`).toHaveURL(/\/links(\?|$)/, { timeout: 15_000 });
   const main = page.locator("main");
-  await expect(main.getByText("Import links", { exact: true }), `${where}: import panel is open`).toBeVisible({
+  await expect(main.getByRole("heading", { name: "Import links" }), `${where}: import panel is open`).toBeVisible({
     timeout: 15_000,
   });
   await expect(main.getByLabel("Import source"), `${where}: Bitly preselected`).toHaveValue("bitly");
@@ -116,12 +116,12 @@ test.describe("Journey 19 — dead controls (#661)", () => {
     await page.goto("/links");
     const main = page.locator("main");
     await expect(main.getByRole("button", { name: "Import", exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(main.getByText("Import links", { exact: true })).toHaveCount(0);
+    await expect(main.getByRole("heading", { name: "Import links" })).toHaveCount(0);
     await page.getByRole("banner").getByRole("button", { name: "Import from Bitly" }).click();
     await expectImportPanelOpenOnBitly(page, "top bar on /links");
     // Close and use it again: it must open a second time, not toggle or stick.
     await main.getByRole("button", { name: "Cancel import" }).click();
-    await expect(main.getByText("Import links", { exact: true })).toHaveCount(0);
+    await expect(main.getByRole("heading", { name: "Import links" })).toHaveCount(0);
     await page.getByRole("banner").getByRole("button", { name: "Import from Bitly" }).click();
     await expectImportPanelOpenOnBitly(page, "top bar on /links, second time");
   });
@@ -154,6 +154,6 @@ test.describe("Journey 19 — dead controls (#661)", () => {
     await main.getByRole("link", { name: /Self-host this workspace/ }).click();
     await expect(page).toHaveURL(/\/self-host$/, { timeout: 15_000 });
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByText("Export everything, always")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Export everything, always" })).toBeVisible();
   });
 });
