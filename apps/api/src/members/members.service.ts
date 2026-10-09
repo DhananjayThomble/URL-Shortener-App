@@ -250,6 +250,8 @@ function describe(action: string, metadata: Record<string, unknown> | null): str
       return `Connected ${metadata?.domain ?? "a domain"}`;
     case "domain.verified":
       return `Verified ${metadata?.domain ?? "a domain"}`;
+    case "domain.updated":
+      return `Changed redirects on ${metadata?.domain ?? "a domain"}`;
     case "apikey.created":
       return `Created an API key`;
     case "apikey.revoked":

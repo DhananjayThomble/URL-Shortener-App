@@ -30,6 +30,16 @@ route({
 });
 
 route({
+  method: "patch",
+  path: "/domains/{id}",
+  tag,
+  summary: "Set, change or clear a domain's root and 404 redirects (null clears)",
+  params: IdParam,
+  body: refs.UpdateDomainInput,
+  responses: { 200: { description: "The updated domain", schema: refs.Domain } },
+});
+
+route({
   method: "delete",
   path: "/domains/{id}",
   tag,
