@@ -6,7 +6,7 @@ import { BarList, Sparkline, TrafficChart } from "@/components/charts";
 import { Button, Card, CardBody, CardHeader, ErrorState, Segmented, Skeleton, Tabs, Tile } from "@/components/ui";
 import { useAnalytics } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
-import { compact, full, pct } from "@/lib/utils";
+import { compact, formatDelta, full } from "@/lib/utils";
 
 export default function AnalyticsPage() {
   const [range, setRange] = useState<AnalyticsRange>("30d");
@@ -53,23 +53,23 @@ export default function AnalyticsPage() {
       ) : (
         <>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
-            <Tile label="Clicks" value={full(data.totals.clicks)} delta={`▲ ${pct(data.deltas.clicks)}`} deltaTone="up">
+            <Tile label="Clicks" value={full(data.totals.clicks)} delta={formatDelta(data.deltas.clicks).text} deltaTone={formatDelta(data.deltas.clicks).tone}>
               <Sparkline values={data.series.map((s) => s.clicks)} width={160} height={26} />
             </Tile>
             {/* Uniques are an approximate HyperLogLog estimate (about 0.8% error),
                 not an exact distinct count - the label says so rather than
                 implying a precision the number does not have. */}
-            <Tile label="Unique visitors (approx.)" value={full(data.totals.unique)} delta={`▲ ${pct(data.deltas.unique)}`} deltaTone="up">
+            <Tile label="Unique visitors (approx.)" value={full(data.totals.unique)} delta={formatDelta(data.deltas.unique).text} deltaTone={formatDelta(data.deltas.unique).tone}>
               <Sparkline values={data.series.map((s) => s.unique)} width={160} height={26} />
             </Tile>
-            <Tile label="QR scans" value={full(data.totals.scans)} delta={`▲ ${pct(data.deltas.scans)}`} deltaTone="up">
+            <Tile label="QR scans" value={full(data.totals.scans)} delta={formatDelta(data.deltas.scans).text} deltaTone={formatDelta(data.deltas.scans).tone}>
               <Sparkline values={data.series.map((s) => s.scans ?? 0)} width={160} height={26} />
             </Tile>
             <Tile
               label="Conversions"
               value={full(data.totals.conversions)}
-              delta={`▼ ${pct(Math.abs(data.deltas.conversions))}`}
-              deltaTone="down"
+              delta={formatDelta(data.deltas.conversions).text}
+              deltaTone={formatDelta(data.deltas.conversions).tone}
             />
             <Tile label="Blocked / unsafe" value={full(data.totals.blocked)} delta="Safe Browsing" deltaTone="flat" />
           </div>

@@ -9,8 +9,8 @@ import { seedSession } from "../support/session";
    render + interaction STABILITY (the funnel/tiles/tables/events render, the
    range Segmented control is live and mutually exclusive, and no error state
    appears) rather than range-specific numbers. The page's "Define an event",
-   "Install tracking" and "＋ Add" buttons have no handlers, so we do not drive
-   them — testing them would assert nothing.
+   "Install tracking" and "＋ Add" buttons were dead and have been removed
+   (#662, following #217); this asserts they stay gone.
 
    Accessible-name selectors only (getByRole / getByText); no CSS, no
    data-testid. Conversions is an authenticated /(app) route, so seedSession
@@ -53,8 +53,16 @@ test.describe("conversions dashboard", () => {
     await expect(page.getByText("Subscription started")).toBeVisible();
     await expect(page.getByText("Spring 2026")).toBeVisible();
 
-    // The server-side-attribution note (unique copy) confirms the events card body.
-    await expect(page.getByText("Attribution is server-side.")).toBeVisible();
+    // The false click-ID / "Attribution is server-side" note is gone (#662): no
+    // click ID exists, so the events card must not claim one.
+    await expect(page.getByText("Attribution is server-side.")).toHaveCount(0);
+    await expect(page.getByText(/click id/i)).toHaveCount(0);
+    // The three dead buttons were removed rather than faked (#217 precedent).
+    for (const name of ["Define an event", "Install tracking", "＋ Add"]) {
+      await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+    }
+    // Fixtures carry real numbers: no NaN/Infinity anywhere in the report.
+    await expect(page.locator("main")).not.toContainText(/NaN|Infinity/);
 
     // No error state on first load.
     await expect(page.getByText("That didn't load")).toHaveCount(0);

@@ -3,6 +3,7 @@ import { and, clickDaily, conversions, desc, eq, gte, linkCounters, links, lt, s
 import type { ConversionsReport, RecordConversionInput } from "@snapurl/contract";
 import { DB, READ_DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
+import { percentChange } from "../common/percent-change.js";
 
 const RANGE_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
 
@@ -257,9 +258,4 @@ function minorToMajor(minor: string | number): number {
 
 function isoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-function percentChange(before: number, after: number): number {
-  if (before === 0) return after === 0 ? 0 : 100;
-  return Math.round(((after - before) / before) * 1000) / 10;
 }
