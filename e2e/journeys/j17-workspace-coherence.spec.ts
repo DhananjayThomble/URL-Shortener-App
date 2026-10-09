@@ -180,3 +180,151 @@ test.describe("Journey 17 — cross-tab workspace coherence + safe post-login re
     }
   });
 });
+
+/* ── (x) and (z): token changes the earlier guard did not see ──────────────
+   Independent tests (own users, not serial with the block above) so a failure
+   here never skips (a)–(c). Oracle for both: what the tab SHOWS (sidebar
+   workspace button) must be the workspace its writes land in — read back
+   through GET /links with the token the tab really holds. */
+
+const widOf = (t: string) => JSON.parse(Buffer.from(t.split(".")[1]!, "base64url").toString()).wid as string;
+
+/** Make `member` a verified, accepted `role` member of each owner's workspace. */
+async function joinAll(member: Session, owners: Session[], role: "editor" | "admin") {
+  const verify = await mailToken(member.email, "/verify-email");
+  expect((await fetch(`${API_URL}/auth/email/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: verify }) })).status).toBe(200);
+  for (const o of owners) {
+    expect((await api(o.accessToken, "/members", { method: "POST", body: JSON.stringify({ email: member.email, role }) })).status).toBe(201);
+    const invite = await mailToken(member.email, "/invite");
+    expect((await api(member.accessToken, "/auth/invite/accept", { method: "POST", body: JSON.stringify({ token: invite }) })).status).toBe(200);
+  }
+}
+
+/** A session for `s` entered into `workspaceId` (through refresh, like the switcher). */
+async function sessionIn(s: Session, workspaceId: string) {
+  const res = await fetch(`${API_URL}/auth/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refreshToken: s.refreshToken, workspaceId }),
+  });
+  expect(res.status).toBe(200);
+  const b = (await res.json()) as { accessToken: string; refreshToken: string };
+  expect(widOf(b.accessToken)).toBe(workspaceId);
+  return { ...s, accessToken: b.accessToken, refreshToken: b.refreshToken, workspaceId };
+}
+
+/** Create a link through the real drawer; returns the POST status. */
+async function createLinkInUi(page: Page, dest: string) {
+  await page.getByRole("button", { name: /New link/ }).first().click();
+  await page.getByLabel("Destination URL").fill(dest);
+  const created = page.waitForResponse((r) => /\/links$/.test(r.url()) && r.request().method() === "POST", { timeout: 10_000 });
+  await page.getByRole("button", { name: "Create link" }).click();
+  return (await created).status();
+}
+
+async function linkLandedIn(token: string, dest: string) {
+  return JSON.stringify(await (await api(token, "/links")).json()).includes(dest);
+}
+
+test("(x) sign-out + sign-in in tab 1 moves tab 2 off the old workspace; its writes land where it shows", async ({ browser }) => {
+  const tag = RUN_ID.slice(-4) + "x";
+  const ownerName = `J17x Owner ${tag}`;
+  const memberName = `J17x Member ${tag}`;
+  const ownerWs = `${ownerName}'s workspace`;
+  const memberWs = `${memberName}'s workspace`;
+  const owner = await register(ownerName, makeEmail("j17x-owner"));
+  const member = await register(memberName, makeEmail("j17x-member"));
+  await joinAll(member, [owner], "admin");
+  const inOwner = await sessionIn(member, owner.workspaceId);
+
+  const c = await browser.newContext();
+  try {
+    const tab1 = await c.newPage();
+    const tab2 = await c.newPage();
+    await signInBySeed(tab1, inOwner);
+    await tab1.goto("/links");
+    await tab2.goto("/settings");
+    await expect(workspaceButton(tab1, ownerWs)).toBeVisible({ timeout: 20_000 });
+    await expect(workspaceButton(tab2, ownerWs)).toBeVisible({ timeout: 20_000 });
+    await expect(tab2.getByRole("heading", { name: "Settings" })).toBeVisible();
+    // A pending edit on tab 2's owner-workspace form.
+    await tab2.getByRole("group", { name: "Default redirect type" }).locator('button:not([aria-pressed="true"])').first().click();
+    const tab2Writes: string[] = [];
+    tab2.on("request", (r) => {
+      if (r.method() !== "GET" && /\/workspaces\/current$/.test(r.url())) tab2Writes.push(`${r.method()} ${r.url()}`);
+    });
+
+    // Tab 1: real sign-out, real sign-in -> lands in the member's own workspace.
+    await tab1.getByRole("button", { name: `Account menu for ${memberName}` }).click();
+    await tab1.getByRole("menuitem", { name: "Sign out" }).click();
+    await expect(tab1).toHaveURL(/\/login/, { timeout: 15_000 });
+    await tab1.getByPlaceholder("you@company.com").fill(member.email);
+    await tab1.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
+    await tab1.getByRole("button", { name: "Sign in" }).click();
+    await expect(tab1).toHaveURL(/\/links$/, { timeout: 20_000 });
+    await expect(workspaceButton(tab1, memberWs)).toBeVisible({ timeout: 20_000 });
+
+    // Tab 2 now holds a token for the member's workspace. Its screen must follow.
+    const held = await heldToken(tab2);
+    expect(widOf(held), "tab 2 shares the new session").toBe(member.workspaceId);
+    await expect(tab2, "tab 2 left the stale settings form").toHaveURL(/\/links$/, { timeout: 10_000 });
+    await expect(workspaceButton(tab2, memberWs)).toBeVisible({ timeout: 10_000 });
+    await expect(workspaceButton(tab2, ownerWs)).toHaveCount(0);
+    expect(tab2Writes, "the stale owner-workspace form never reached the API").toEqual([]);
+
+    // A link created in tab 2 lands in the workspace tab 2 shows.
+    const dest = `https://example.com/j17x-${tag}`;
+    expect(await createLinkInUi(tab2, dest)).toBe(201);
+    expect(await linkLandedIn(held, dest), "link is in the workspace on screen (member's own)").toBe(true);
+    expect(await linkLandedIn(owner.accessToken, dest), "link is not in the owner's workspace").toBe(false);
+  } finally {
+    await c.close();
+  }
+});
+
+test("(z) switching into a workspace you were just removed from moves the tab to where its session really is", async ({ browser }) => {
+  const tag = RUN_ID.slice(-4) + "z";
+  const o1Name = `J17z O1 ${tag}`;
+  const o2Name = `J17z O2 ${tag}`;
+  const mName = `J17z Member ${tag}`;
+  const o1Ws = `${o1Name}'s workspace`;
+  const o2Ws = `${o2Name}'s workspace`;
+  const mWs = `${mName}'s workspace`;
+  const o1 = await register(o1Name, makeEmail("j17z-o1"));
+  const o2 = await register(o2Name, makeEmail("j17z-o2"));
+  const m = await register(mName, makeEmail("j17z-member"));
+  await joinAll(m, [o1, o2], "editor");
+  const inO1 = await sessionIn(m, o1.workspaceId);
+
+  const c = await browser.newContext();
+  try {
+    const tab = await c.newPage();
+    await signInBySeed(tab, inO1);
+    await tab.goto("/links");
+    await expect(workspaceButton(tab, o1Ws)).toBeVisible({ timeout: 20_000 });
+    await workspaceButton(tab, o1Ws).click();
+    const item = tab.getByRole("menu", { name: "Workspaces" }).getByRole("menuitemradio", { name: new RegExp(o2Ws) });
+    await expect(item).toBeVisible();
+
+    // Owner 2 removes the member while the switcher menu is open; then they pick O2.
+    const rows = (await (await api(o2.accessToken, "/members")).json()) as Array<{ id: string; email: string }>;
+    const mid = rows.find((r) => r.email.toLowerCase() === m.email.toLowerCase())!.id;
+    expect((await api(o2.accessToken, `/members/${mid}`, { method: "DELETE" })).status).toBe(204);
+    await item.click();
+
+    // The refresh fell back to the member's own workspace; the screen must say so.
+    await expect.poll(async () => widOf(await heldToken(tab)), { timeout: 10_000 }).toBe(m.workspaceId);
+    await expect(tab).toHaveURL(/\/links$/, { timeout: 10_000 });
+    await expect(workspaceButton(tab, mWs), "sidebar names the workspace the token is in").toBeVisible({ timeout: 10_000 });
+    await expect(workspaceButton(tab, o1Ws), "sidebar no longer shows O1").toHaveCount(0);
+
+    await tab.keyboard.press("Escape");
+    const dest = `https://example.com/j17z-${tag}`;
+    expect(await createLinkInUi(tab, dest)).toBe(201);
+    const held = await heldToken(tab);
+    expect(await linkLandedIn(held, dest), "link is in the workspace on screen (member's own)").toBe(true);
+    expect(await linkLandedIn(o1.accessToken, dest), "link is not in O1").toBe(false);
+  } finally {
+    await c.close();
+  }
+});
