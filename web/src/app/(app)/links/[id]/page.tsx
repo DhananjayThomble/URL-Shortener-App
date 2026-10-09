@@ -8,7 +8,7 @@ import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, T
 import { EditLinkDrawer } from "@/components/links/edit-link-drawer";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
-import { formatDate, formatDelta, full, NO_VALUE, pct } from "@/lib/utils";
+import { copy, formatDate, formatDelta, full, NO_VALUE, pct } from "@/lib/utils";
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
   "24h": "prev 24h",
@@ -46,6 +46,7 @@ export default function LinkDetailPage() {
   const [editing, setEditing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   if (link.isError) return <Card><ErrorState message={(link.error as Error).message} onRetry={() => link.refetch()} /></Card>;
   if (link.isLoading || !link.data) return <Skeleton className="h-[420px]" />;
@@ -61,6 +62,18 @@ export default function LinkDetailPage() {
   const uniqueSeries = a?.series.map((p) => p.unique);
   const conversions = a?.totals.conversions;
   const cvr = a && a.totals.clicks > 0 ? (a.totals.conversions / a.totals.clicks) * 100 : null;
+
+  /* The link's public short URL, the same https://<domain>/<slug> the QR studio
+     encodes. */
+  async function copyShortUrl() {
+    if (await copy(`https://${l.domain}/${l.slug}`)) {
+      setProblem(null);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      setProblem("Couldn't copy to the clipboard from this browser. Select the short URL in the title and copy it manually.");
+    }
+  }
 
   async function remove() {
     try {
@@ -106,8 +119,9 @@ export default function LinkDetailPage() {
             ) : (
               <Button aria-label="Delete this link" onClick={() => setConfirmingDelete(true)}>Delete</Button>
             )}
-            <Button>Share report</Button>
-            <Button variant="primary">Copy link</Button>
+            <Button variant="primary" onClick={copyShortUrl}>
+              {copied ? "Copied ✓" : "Copy link"}
+            </Button>
           </>
         }
       />
@@ -237,7 +251,7 @@ export default function LinkDetailPage() {
           ] as const
         ).map(([title, rows]) => (
           <Card key={title}>
-            <CardHeader title={title} right={<Button size="sm" variant="ghost">All</Button>} />
+            <CardHeader title={title} />
             <CardBody>{rows ? <BarList rows={rows} /> : <Skeleton className="h-[180px]" />}</CardBody>
           </Card>
         ))}

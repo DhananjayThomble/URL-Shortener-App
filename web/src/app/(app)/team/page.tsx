@@ -92,7 +92,6 @@ export default function TeamPage() {
         sub={`${members?.length ?? "—"} members in ${workspace?.name ?? "this workspace"} · every action is written to the audit log`}
         actions={
           <>
-            <Button>Audit log</Button>
             <Button variant="primary" onClick={() => { setInviting((v) => !v); setProblem(null); }}>
               {inviting ? "Cancel" : "＋ Invite"}
             </Button>
@@ -268,7 +267,7 @@ export default function TeamPage() {
 
         <div className="flex flex-col gap-3.5">
           <Card>
-            <CardHeader title="Recent activity" right={<Button size="sm" variant="ghost">Full log</Button>} />
+            <CardHeader title="Recent activity" />
             <CardBody className="flex flex-col gap-2.5 text-[12.5px]">
               {(audit ?? []).map((a) => (
                 <div key={a.id} className="flex gap-[11px] items-baseline text-ink-2 leading-[1.5]">
