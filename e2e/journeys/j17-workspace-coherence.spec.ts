@@ -217,6 +217,10 @@ async function sessionIn(s: Session, workspaceId: string) {
 async function createLinkInUi(page: Page, dest: string) {
   await page.getByRole("button", { name: /New link/ }).first().click();
   await page.getByLabel("Destination URL").fill(dest);
+  // The drawer fills the short-link domain once the workspace's domains have
+  // loaded (they are refetched right after a workspace change); a person
+  // sees the empty select and waits, so do the same.
+  await expect(page.getByLabel("Short-link domain")).not.toHaveValue("", { timeout: 10_000 });
   const created = page.waitForResponse((r) => /\/links$/.test(r.url()) && r.request().method() === "POST", { timeout: 10_000 });
   await page.getByRole("button", { name: "Create link" }).click();
   return (await created).status();
@@ -324,6 +328,34 @@ test("(z) switching into a workspace you were just removed from moves the tab to
     const held = await heldToken(tab);
     expect(await linkLandedIn(held, dest), "link is in the workspace on screen (member's own)").toBe(true);
     expect(await linkLandedIn(o1.accessToken, dest), "link is not in O1").toBe(false);
+  } finally {
+    await c.close();
+  }
+});
+
+test("(w) after the guard resets the cache, the create-link drawer still defaults its domain", async ({ browser }) => {
+  // Found while writing (x)/(z): once WorkspaceChangeGuard had reset the
+  // query cache, the drawer opened with a blank domain select and Create link
+  // failed validation on "Destination". Same-tab trigger: the app's own event.
+  const tag = RUN_ID.slice(-4) + "w";
+  const s = await register(`J17w ${tag}`, makeEmail("j17w"));
+  const c = await browser.newContext();
+  try {
+    const page = await c.newPage();
+    await signInBySeed(page, s);
+    await page.goto("/links");
+    await expect(workspaceButton(page, `J17w ${tag}'s workspace`)).toBeVisible({ timeout: 20_000 });
+    const domainSelect = page.getByLabel("Short-link domain");
+    await page.getByRole("button", { name: /New link/ }).first().click();
+    await expect(domainSelect).not.toHaveValue("");
+    await page.getByRole("button", { name: "Cancel" }).click();
+
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("snapurl:workspace-changed", { detail: {} })));
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByType("resource").filter((e) => e.name.endsWith("/domains")).length)).toBeGreaterThan(1);
+
+    const dest = `https://example.com/j17w-${tag}`;
+    expect(await createLinkInUi(page, dest)).toBe(201);
+    expect(await linkLandedIn(s.accessToken, dest)).toBe(true);
   } finally {
     await c.close();
   }
