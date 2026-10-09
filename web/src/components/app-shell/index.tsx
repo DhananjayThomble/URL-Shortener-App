@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui";
 import { useLinks, useLogout, useMe, useMyWorkspaces, useSwitchWorkspace, useWorkspace } from "@/lib/api/hooks";
+import { importHref } from "@/lib/import";
 import { cn, compact } from "@/lib/utils";
 
 type Counts = { links?: number; bio?: number; domains?: number; members?: number };
@@ -336,6 +337,7 @@ function MobileNav({ counts, onCreate }: { counts: Counts; onCreate: () => void 
 }
 
 export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => void }) {
+  const router = useRouter();
   // A <header> here (rather than a plain <div>) is the document's `banner` —
   // per the HTML AAM, any <header> not nested in article/aside/main/nav/section
   // maps to role=banner, and this one isn't. That's safe because no (app) route
@@ -355,7 +357,14 @@ export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => v
       </button>
       <TopbarSearch />
       <div className="ml-auto flex items-center gap-[9px]">
-        <Button size="sm" variant="ghost" className="hidden sm:inline-flex">
+        {/* Opens the Import panel on /links with Bitly preselected (#661). It was
+            an inert button; the importer it points at already parses Bitly CSV. */}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden sm:inline-flex"
+          onClick={() => router.push(importHref("bitly"))}
+        >
           Import from Bitly
         </Button>
         <AccountMenu />

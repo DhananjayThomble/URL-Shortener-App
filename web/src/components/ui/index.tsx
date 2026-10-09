@@ -1,6 +1,7 @@
 "use client";
 
 import { cva, type VariantProps } from "class-variance-authority";
+import Link from "next/link";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,18 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ),
 );
 Button.displayName = "Button";
+
+/** A navigation that looks like a Button. Use this (a real <a>) rather than a
+ *  Button with a router.push when the target is just a page, so it can be
+ *  opened in a new tab and is announced as a link. */
+export function ButtonLink({
+  className,
+  variant,
+  size,
+  ...props
+}: React.ComponentProps<typeof Link> & VariantProps<typeof button>) {
+  return <Link className={cn(button({ variant, size }), className)} {...props} />;
+}
 
 /* ---------------- Card ---------------- */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {

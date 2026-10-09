@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
-import { Button, Card, CardBody, CardHeader, ErrorState, Segmented, Skeleton, Tabs, Tile } from "@/components/ui";
-import { useAnalytics } from "@/lib/api/hooks";
+import { Button, ButtonLink, Card, CardBody, CardHeader, ErrorState, Segmented, Skeleton, Tabs, Tile } from "@/components/ui";
+import { useAnalytics, useExportLinks } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { compact, formatDelta, full } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ export default function AnalyticsPage() {
   const [range, setRange] = useState<AnalyticsRange>("30d");
   const [series, setSeries] = useState<"clicks" | "both">("both");
   const { data, isLoading, isError, error, refetch } = useAnalytics(range);
+  const exportLinks = useExportLinks();
 
   return (
     <>
@@ -34,11 +35,27 @@ export default function AnalyticsPage() {
                   { value: "12m", label: "12m" },
               ]}
             />
-            <Button>Schedule report</Button>
-            <Button variant="primary">Export CSV</Button>
+            {/* "Schedule report" was removed: no scheduling backend exists (#661,
+                docs/DECISIONS.md "removed rather than faked"). "Export CSV" calls
+                the same links-export endpoint as the Links page: every link with
+                its click totals, not limited to the date range above. */}
+            <Button
+              variant="primary"
+              onClick={() => void exportLinks.run()}
+              disabled={exportLinks.exporting}
+              title="Downloads every link with its click totals (all time, not limited to the date range)"
+            >
+              {exportLinks.exporting ? "Preparing…" : "Export CSV"}
+            </Button>
           </>
         }
       />
+
+      {exportLinks.error ? (
+        <p className="text-[12.5px] text-bad mb-2" role="alert">
+          {exportLinks.error}
+        </p>
+      ) : null}
 
       {isError ? (
         <Card>
@@ -94,7 +111,11 @@ export default function AnalyticsPage() {
               </CardBody>
             </Card>
             <Card>
-              <CardHeader title="Top links" right={<Button size="sm" variant="ghost">View all</Button>} />
+              <CardHeader title="Top links" right={
+                  <ButtonLink href="/links" size="sm" variant="ghost">
+                    View all
+                  </ButtonLink>
+                } />
               <CardBody>
                 <BarList rows={data.topLinks} mono />
               </CardBody>

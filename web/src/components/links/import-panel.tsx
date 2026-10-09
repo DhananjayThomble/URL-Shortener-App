@@ -31,12 +31,12 @@ function isCollision(outcome: BulkLinkOutcome): boolean {
   return !outcome.ok && outcome.skipped === true;
 }
 
-export function ImportPanel({ onClose }: { onClose: () => void }) {
+export function ImportPanel({ onClose, initialSourceId }: { onClose: () => void; initialSourceId?: string }) {
   const { data: domains } = useDomains();
   const bulk = useBulkCreateLinks();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [sourceId, setSourceId] = useState(IMPORT_SOURCES[0]!.id);
+  const [sourceId, setSourceId] = useState(getImportSource(initialSourceId ?? "")?.id ?? IMPORT_SOURCES[0]!.id);
   const [domain, setDomain] = useState("");
   const [text, setText] = useState("");
   const [result, setResult] = useState<Aggregate | null>(null);

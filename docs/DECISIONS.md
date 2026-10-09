@@ -1234,6 +1234,29 @@ if it only reads, `grantWriteData` if it only busts, `grantReadWriteData` if
 both), and the CDK test above should gain an assertion for it rather than
 trusting a new function to have copied the pattern correctly by eye.
 
+### Inert export, import and danger-zone controls: wired where the backend is real, removed where it is not (#661)
+
+**Same rule as the billing controls above** ("removed rather than faked", #217): a button is
+either connected to something that exists or it is not shown. What each of the dead controls
+on Analytics, Settings and the top bar turned out to be:
+
+| Control | Decision | Why (where it was checked) |
+| --- | --- | --- |
+| Analytics **Export CSV** | **Wired** to `GET /links/export` (the Links page's hook) | Endpoint exists (`links.controller.ts`), and #636 made it CORS-readable. It exports links with click totals, all time - not the analytics date range - and the button's tooltip says so. |
+| **Import from Bitly** (top bar, Settings) | **Wired**: opens the Import panel on `/links` with Bitly preselected (`/links?import=bitly`) | `web/src/lib/import/sources/bitly.ts` parses Bitly CSV exports. The "or API" hint was dropped: there is no API importer. |
+| **Import from Short.io** | **Removed** | `IMPORT_SOURCES` is generic CSV, Bitly, YOURLS, Kutt, Dub. No Short.io source exists; offering it would fake support. |
+| **Self-host this workspace** | **Linked** to `/self-host` | A real page (`web/src/app/self-host/page.tsx`) with the repo link and the self-hosting pitch. |
+| **Read the guarantee** | **Removed** | The guarantee copy is the "Link permanence" card directly above it; there is no other page for the button to open. |
+| **Export everything** | **Removed** | No full-workspace export exists. `/links/export` is links only - no clicks, settings or domains. The link export stays reachable from Links and Analytics. |
+| **Delete workspace** (and the whole Danger zone card) | **Removed** | `workspaces.controller.ts` has only `GET /current` and `PATCH /current`. There is no delete endpoint and no 7-day hold, so the copy promising "type the workspace name and wait 7 days" was removed with the button. Building it needs its own ADR and an owner decision (it deletes customer data and breaks printed QR codes) - not something to slip in under a UI fix. |
+| **Schedule report** | **Removed** | No scheduled-report model, job or endpoint exists. |
+| Analytics **View all** (Top links) | **Linked** to `/links` | Found while checking "every `<Button>` in the three files"; it was also inert. |
+
+**Mechanical guard.** `web/src/components/dead-controls.test.ts` parses the screens' JSX and fails
+on any `<Button>`/`<button>` with no `onClick`, `href`, `type="submit"` or forwarded props. The
+three named files must be clean; every other screen is held to a ratchet of the seven that were
+found (#706), so the class cannot grow while those are worked off.
+
 ---
 
 ## Part 5 — Open questions for you

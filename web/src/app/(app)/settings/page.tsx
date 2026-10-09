@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { ACCENTS, useAppearance, type Mode } from "@/components/theme/theme-provider";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
+import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
 import { useUpdateWorkspace, useWorkspace } from "@/lib/api/hooks";
+import { importHref } from "@/lib/import";
 import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn, compact } from "@/lib/utils";
 import { TwoFactorCard } from "./two-factor-card";
@@ -32,6 +34,7 @@ const draftOf = (ws: Workspace): Draft => ({
 });
 
 export default function SettingsPage() {
+  const router = useRouter();
   const { data: ws, isLoading } = useWorkspace();
   const appearance = useAppearance();
   const save = useUpdateWorkspace();
@@ -332,39 +335,26 @@ export default function SettingsPage() {
                   <span>{line}</span>
                 </div>
               ))}
-              <Button size="sm" className="self-start mt-0.5">
-                Read the guarantee
-              </Button>
             </CardBody>
           </Card>
 
+          {/* Removed rather than faked (#661, docs/DECISIONS.md): "Export everything"
+              (no full-workspace export exists - only the links CSV, which lives on
+              Links and Analytics), "Import from Short.io" (the importer has no
+              Short.io source), "Read the guarantee" (the guarantee copy is the
+              card above; there is no other page), and the Danger zone /
+              "Delete workspace" (no delete-workspace endpoint, no 7-day hold). */}
           <Card>
-            <CardHeader title="Export & portability" />
+            <CardHeader title="Import & portability" />
             <CardBody className="flex flex-col gap-2">
-              {[
-                ["Export everything", "links · clicks · settings"],
-                ["Import from Bitly", "CSV or API"],
-                ["Import from Short.io", "API"],
-                ["Self-host this workspace", "docker compose up"],
-              ].map(([label, hint], i) => (
-                <Button key={label} className="justify-between">
-                  {label}
-                  <span className={cn("font-mono text-[11px]", i === 3 ? "text-good" : "text-ink-3")}>{hint}</span>
-                </Button>
-              ))}
-            </CardBody>
-          </Card>
-
-          <Card className="border-bad">
-            <CardHeader title={<span className="text-bad">Danger zone</span>} className="border-b-bad" />
-            <CardBody className="flex flex-col gap-2.5">
-              <div className="text-[12.5px] text-ink-2 leading-[1.55]">
-                Deleting a workspace breaks every link in it, including printed QR codes. We&apos;ll make you type the
-                workspace name and wait 7 days first.
-              </div>
-              <Button variant="danger" className="justify-center">
-                Delete workspace
+              <Button className="justify-between" onClick={() => router.push(importHref("bitly"))}>
+                Import from Bitly
+                <span className="font-mono text-[11px] text-ink-3">CSV</span>
               </Button>
+              <ButtonLink href="/self-host" className="justify-between">
+                Self-host this workspace
+                <span className="font-mono text-[11px] text-good">docker compose up</span>
+              </ButtonLink>
             </CardBody>
           </Card>
         </div>
