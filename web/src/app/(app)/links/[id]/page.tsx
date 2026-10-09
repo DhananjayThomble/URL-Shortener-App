@@ -8,7 +8,7 @@ import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, T
 import { EditLinkDrawer } from "@/components/links/edit-link-drawer";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
-import { formatDate, full, pct } from "@/lib/utils";
+import { formatDate, formatDelta, full, NO_VALUE, pct } from "@/lib/utils";
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
   "24h": "prev 24h",
@@ -25,12 +25,12 @@ const RANGE_LABEL: Record<AnalyticsRange, string> = {
  * nothing rather than a number that was never measured — every one of these
  * used to be a hardcoded string that moved for no reason.
  */
-function deltaFor(value: number | undefined, range: AnalyticsRange) {
+function deltaFor(value: number | null | undefined, range: AnalyticsRange) {
   if (value === undefined) return { delta: undefined, deltaTone: "flat" as const };
-  const arrow = value > 0 ? "▲" : value < 0 ? "▼" : "■";
+  const d = formatDelta(value);
   return {
-    delta: `${arrow} ${pct(Math.abs(value))} vs ${RANGE_LABEL[range]}`,
-    deltaTone: value > 0 ? ("up" as const) : value < 0 ? ("down" as const) : ("flat" as const),
+    delta: d.text === NO_VALUE ? d.text : `${d.text} vs ${RANGE_LABEL[range]}`,
+    deltaTone: d.tone,
   };
 }
 

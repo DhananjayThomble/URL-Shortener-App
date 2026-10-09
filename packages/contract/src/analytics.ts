@@ -26,11 +26,12 @@ export const Analytics = z.object({
     conversions: z.number(),
     blocked: z.number(),
   }),
+  /** Percent change vs the previous window; null when that window was zero (nothing to compare against). */
   deltas: z.object({
-    clicks: z.number(),
-    unique: z.number(),
-    scans: z.number(),
-    conversions: z.number(),
+    clicks: z.number().nullable(),
+    unique: z.number().nullable(),
+    scans: z.number().nullable(),
+    conversions: z.number().nullable(),
   }),
   series: z.array(TimeseriesPoint),
   countries: z.array(Breakdown),
@@ -91,12 +92,13 @@ export const ConversionsReport = z.object({
     paid: z.number(),
     revenue: z.number(),
   }),
+  /** Percent change vs the previous window; null when that window was zero (nothing to compare against). */
   deltas: z.object({
-    clicks: z.number(),
-    leads: z.number(),
-    signups: z.number(),
-    paid: z.number(),
-    revenue: z.number(),
+    clicks: z.number().nullable(),
+    leads: z.number().nullable(),
+    signups: z.number().nullable(),
+    paid: z.number().nullable(),
+    revenue: z.number().nullable(),
   }),
   events: z.array(ConversionEvent),
   byLink: z.array(

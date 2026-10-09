@@ -2,7 +2,7 @@
 
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import type { Breakdown, TimeseriesPoint } from "@/lib/api/types";
-import { cn, compact, full } from "@/lib/utils";
+import { cn, compact, dropOffLabel, full, NO_VALUE, pct } from "@/lib/utils";
 
 /* ---------------- Sparkline ----------------
    Hand-rolled rather than Recharts: these render dozens per page in
@@ -159,18 +159,17 @@ export function BarList({ rows, mono = false }: { rows: Breakdown[]; mono?: bool
 }
 
 /* ---------------- Funnel ---------------- */
-export function Funnel({ steps }: { steps: { label: string; value: number; pct?: number }[] }) {
+export function Funnel({ steps }: { steps: { label: string; value: number; pct?: number | null }[] }) {
   const top = steps[0]?.value || 1;
   return (
     <div className="flex flex-col">
       {steps.map((s, i) => {
         const width = Math.max(8, (s.value / top) * 100);
         const prev = steps[i - 1];
-        const drop = prev ? (1 - s.value / prev.value) * 100 : null;
         return (
           <div key={s.label}>
-            {drop !== null ? (
-              <div className="text-[11px] text-ink-3 pl-[13px] font-mono py-[2px]">▼ {drop.toFixed(1)}% drop off</div>
+            {prev ? (
+              <div className="text-[11px] text-ink-3 pl-[13px] font-mono py-[2px]">{dropOffLabel(prev.value, s.value)}</div>
             ) : null}
             <div className="relative py-[11px]">
               <div
@@ -181,7 +180,7 @@ export function Funnel({ steps }: { steps: { label: string; value: number; pct?:
                 <span>{s.label}</span>
                 <span className="tnum opacity-85">
                   {compact(s.value)}
-                  {s.pct !== undefined ? ` · ${s.pct.toFixed(1)}%` : ""}
+                  {s.pct === undefined ? "" : ` · ${s.pct === null ? NO_VALUE : pct(s.pct)}`}
                 </span>
               </div>
             </div>
