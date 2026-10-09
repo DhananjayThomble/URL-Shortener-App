@@ -58,6 +58,8 @@ export const tokens = {
     const s = safeStorage();
     s?.removeItem(TOKEN_KEY);
     s?.removeItem(REFRESH_KEY);
+    // Signed out in this tab: nothing on screen belongs to a workspace any more.
+    renderedWorkspace = undefined;
   },
 };
 
@@ -170,9 +172,34 @@ export function workspaceIdOf(access: string | null | undefined): string | undef
 export const WORKSPACE_CHANGED_EVENT = "snapurl:workspace-changed";
 export const ACCESS_TOKEN_STORAGE_KEY = TOKEN_KEY;
 
-function announceWorkspaceChange(from: string | undefined, to: string | undefined) {
-  if (typeof window === "undefined" || !from || !to || from === to) return;
-  window.dispatchEvent(new CustomEvent(WORKSPACE_CHANGED_EVENT, { detail: { from, to } }));
+/* #699 — the workspace THIS tab's screen was rendered for. Per tab and in
+   memory on purpose: localStorage is shared, so it cannot say what one tab is
+   showing. Set from every GET /workspaces/current answer (the sidebar's data),
+   and when this tab itself enters a workspace. */
+let renderedWorkspace: string | undefined;
+
+/** Record which workspace this tab's screen now shows. */
+export function noteRenderedWorkspace(workspaceId: string | undefined) {
+  renderedWorkspace = workspaceId;
+}
+
+/**
+ * Compare the workspace on screen with the one the held access token is
+ * bound to. On a mismatch, announce it (WorkspaceChangeGuard drops the cache
+ * and routes to /links) and return true.
+ *
+ * Called after EVERY token change this tab can see: its own refreshes, a
+ * storage event from another tab (including sign-out then sign-in, which
+ * arrives as A → none, none → B), and before every workspace-scoped write.
+ * `fallbackShown` is used only before the screen has loaded its workspace.
+ */
+export function checkWorkspaceCoherence(fallbackShown?: string): boolean {
+  if (typeof window === "undefined") return false;
+  const shown = renderedWorkspace ?? fallbackShown;
+  const held = currentWorkspaceId();
+  if (!shown || !held || shown === held) return false;
+  window.dispatchEvent(new CustomEvent(WORKSPACE_CHANGED_EVENT, { detail: { from: shown, to: held } }));
+  return true;
 }
 
 type RefreshOutcome = { ok: true } | { ok: false; res?: Response };
@@ -222,7 +249,7 @@ async function refreshSession(): Promise<boolean> {
   // #699 — the hint is honoured only while that membership is active; when it
   // is not, the API falls back to the default workspace. That is a workspace
   // change and must be treated as one, not silently absorbed.
-  if (ok) announceWorkspaceChange(before, currentWorkspaceId());
+  if (ok) checkWorkspaceCoherence(before);
   return ok;
 }
 
@@ -237,6 +264,7 @@ async function refreshSession(): Promise<boolean> {
  */
 export async function enterWorkspace(workspaceId: string): Promise<void> {
   if (USE_FIXTURES) return;
+  const before = currentWorkspaceId();
   const { ok, ...rest } = await runRefresh(workspaceId);
   if (!ok) {
     const res = "res" in rest ? rest.res : undefined;
@@ -244,12 +272,29 @@ export async function enterWorkspace(workspaceId: string): Promise<void> {
     throw res ? await toApiError(res, "/auth/refresh") : new ApiError(401, "Your session has expired. Sign in again to continue.");
   }
   if (currentWorkspaceId() !== workspaceId) {
-    // Refresh fell back: the membership is gone (removed meanwhile).
+    // Refresh fell back: the membership is gone (removed meanwhile). The
+    // token is now for a THIRD workspace, neither the one on screen nor the
+    // one asked for — announce it before failing, or the screen stays on the
+    // old workspace while every request goes to the fallback.
+    checkWorkspaceCoherence(before);
     throw new ApiError(404, "You're no longer a member of that workspace.");
   }
+  // The caller clears the cache and re-renders for this workspace.
+  noteRenderedWorkspace(workspaceId);
 }
 
 async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOptions = {}, retry = true): Promise<T> {
+  // #699 — never send a write with a token for a different workspace than the
+  // one this tab is showing: it would save into a workspace the person cannot
+  // see. Refuse, and let the guard move the screen to the real workspace.
+  // /auth/* is user-scoped (sign-out, 2FA, accepting an invitation), not
+  // workspace-scoped, so it is exempt.
+  if ((opts.method ?? "GET") !== "GET" && !opts.anonymous && !path.startsWith("/auth/") && checkWorkspaceCoherence()) {
+    throw new ApiError(
+      409,
+      "This tab was showing a different workspace, so nothing was saved. It has been reloaded — check and try again.",
+    );
+  }
   // Only set Content-Type when there is actually a body to send. Fastify's
   // JSON parser rejects Content-Type: application/json with an empty body
   // (status 400), breaking every bodyless DELETE and any bodyless POST.

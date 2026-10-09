@@ -15,7 +15,9 @@ import {
 import {
   ACCESS_TOKEN_STORAGE_KEY,
   WORKSPACE_CHANGED_EVENT,
+  checkWorkspaceCoherence,
   enterWorkspace,
+  noteRenderedWorkspace,
   request,
   workspaceIdOf,
 } from "../client";
@@ -24,7 +26,12 @@ import { qk } from "./keys";
 export function useWorkspace() {
   return useQuery({
     queryKey: qk.workspace,
-    queryFn: () => request("/workspaces/current", Workspace),
+    queryFn: async () => {
+      const workspace = await request("/workspaces/current", Workspace);
+      // #699 — this answer is what the sidebar and settings render from.
+      noteRenderedWorkspace(workspace.id);
+      return workspace;
+    },
     staleTime: 5 * 60_000,
   });
 }
@@ -60,6 +67,11 @@ async function moveInto(qc: ReturnType<typeof useQueryClient>, workspaceId: stri
  *
  * On either signal, every cached query is reset (data dropped, active ones
  * refetched with the current token) and the tab is routed to /links.
+ *
+ * The comparison is against the workspace this tab RENDERED (see
+ * noteRenderedWorkspace in client.ts), not the token's previous value: a
+ * sign-out then sign-in in another tab arrives here as two events, A → none
+ * and none → B, and neither one alone carries both workspaces.
  */
 export function useWorkspaceChangeGuard() {
   const qc = useQueryClient();
@@ -71,10 +83,9 @@ export function useWorkspaceChangeGuard() {
     };
     const onStorage = (event: StorageEvent) => {
       if (event.storageArea && typeof window !== "undefined" && event.storageArea !== window.localStorage) return;
-      if (event.key !== ACCESS_TOKEN_STORAGE_KEY) return;
-      const from = workspaceIdOf(event.oldValue);
-      const to = workspaceIdOf(event.newValue);
-      if (from && to && from !== to) moved();
+      if (event.key !== ACCESS_TOKEN_STORAGE_KEY && event.key !== null) return;
+      // Dispatches WORKSPACE_CHANGED_EVENT (handled below) on a mismatch.
+      checkWorkspaceCoherence(workspaceIdOf(event.oldValue));
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener(WORKSPACE_CHANGED_EVENT, moved);

@@ -130,3 +130,88 @@ describe("workspaceIdOf", () => {
     expect(workspaceIdOf("not.a.jwt")).toBeUndefined();
   });
 });
+
+/* #699 follow-up (review of #701, M1/M2): the comparison must be against the
+   workspace the tab RENDERED, after every token change, and a write must never
+   leave with a token for another workspace than the one on screen. */
+describe("rendered-workspace coherence (#699)", () => {
+  const C = "33333333-3333-4333-8333-333333333333";
+
+  async function load() {
+    const client = await import("./client");
+    const seen: Array<{ from: string; to: string }> = [];
+    win.addEventListener(client.WORKSPACE_CHANGED_EVENT, (e) => seen.push((e as CustomEvent).detail));
+    return { ...client, seen };
+  }
+
+  it("sign-out then sign-in elsewhere (A → none → B) is a change for a tab that rendered A", async () => {
+    const { noteRenderedWorkspace, checkWorkspaceCoherence, seen } = await load();
+    noteRenderedWorkspace(A);
+    win.localStorage.removeItem(ACCESS); // other tab: tokens.clear()
+    expect(checkWorkspaceCoherence(A)).toBe(false); // no token yet — nothing to compare
+    win.localStorage.setItem(ACCESS, jwt(B)); // other tab: tokens.set() after sign-in
+    expect(checkWorkspaceCoherence(undefined)).toBe(true); // oldValue was null
+    expect(seen).toEqual([{ from: A, to: B }]);
+  });
+
+  it("a same-workspace rotation stays silent", async () => {
+    const { noteRenderedWorkspace, checkWorkspaceCoherence, seen } = await load();
+    noteRenderedWorkspace(A);
+    win.localStorage.setItem(ACCESS, jwt(A));
+    expect(checkWorkspaceCoherence(A)).toBe(false);
+    expect(seen).toEqual([]);
+  });
+
+  it("enterWorkspace that falls back to a third workspace announces it before throwing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(200, { accessToken: jwt(C), refreshToken: "refresh-2" }));
+    const { noteRenderedWorkspace, enterWorkspace, seen } = await load();
+    noteRenderedWorkspace(A);
+    await expect(enterWorkspace(B)).rejects.toMatchObject({ status: 404 });
+    expect(seen).toEqual([{ from: A, to: C }]);
+  });
+
+  it("a successful enterWorkspace records the new workspace as rendered (no spurious change)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(200, { accessToken: jwt(B), refreshToken: "refresh-2" }));
+    const { noteRenderedWorkspace, enterWorkspace, checkWorkspaceCoherence, seen } = await load();
+    noteRenderedWorkspace(A);
+    await enterWorkspace(B);
+    expect(checkWorkspaceCoherence()).toBe(false);
+    expect(seen).toEqual([]);
+  });
+
+  it("refuses a workspace-scoped write whose token is for another workspace than the one on screen", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(201, { ok: true }));
+    const { noteRenderedWorkspace, request, seen } = await load();
+    const { z } = await import("zod");
+    noteRenderedWorkspace(A);
+    win.localStorage.setItem(ACCESS, jwt(B));
+    await expect(
+      request("/links", z.object({ ok: z.boolean() }), { method: "POST", body: { url: "https://example.com" } }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(seen).toEqual([{ from: A, to: B }]);
+  });
+
+  it("still sends reads, /auth/* and anonymous calls on a mismatch, and writes once coherent", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(200, { ok: true }));
+    const { noteRenderedWorkspace, request } = await load();
+    const { z } = await import("zod");
+    const ok = z.object({ ok: z.boolean() });
+    noteRenderedWorkspace(A);
+    win.localStorage.setItem(ACCESS, jwt(B));
+    await request("/workspaces/current", ok);
+    await request("/auth/2fa/disable", ok, { method: "POST", body: {} });
+    await request("/public/x", ok, { method: "POST", body: {}, anonymous: true });
+    noteRenderedWorkspace(B);
+    await request("/links", ok, { method: "POST", body: {} });
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it("signing out in this tab forgets the rendered workspace", async () => {
+    const { noteRenderedWorkspace, tokens, checkWorkspaceCoherence } = await load();
+    noteRenderedWorkspace(A);
+    tokens.clear();
+    tokens.set(jwt(B), "refresh-2");
+    expect(checkWorkspaceCoherence()).toBe(false);
+  });
+});
