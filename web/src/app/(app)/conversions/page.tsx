@@ -2,11 +2,23 @@
 
 import { PageHead } from "@/components/app-shell";
 import { Funnel, Sparkline } from "@/components/charts";
-import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Segmented, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
+import { Card, CardBody, CardHeader, Chip, ErrorState, Segmented, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
 import { useConversions } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { useState } from "react";
-import { full, inr, pct } from "@/lib/utils";
+import { formatDelta, full, inr, NO_VALUE, ratioPct } from "@/lib/utils";
+
+/** A tile's delta line: the period change, plus the rate against clicks when there is one. */
+function tileDelta(delta: number | null, rate?: string) {
+  const d = formatDelta(delta);
+  const text = rate && rate !== NO_VALUE ? `${d.text} · ${rate}` : d.text;
+  return { delta: text, deltaTone: d.tone };
+}
+
+/** Share of clicks as a number, or null (rendered as a dash) when there were no clicks. */
+function shareOf(n: number, clicks: number): number | null {
+  return clicks > 0 ? (n / clicks) * 100 : null;
+}
 
 export default function ConversionsPage() {
   const [range, setRange] = useState<AnalyticsRange>("30d");
@@ -31,8 +43,6 @@ export default function ConversionsPage() {
                   { value: "12m", label: "12m" },
               ]}
             />
-            <Button>Define an event</Button>
-            <Button variant="primary">Install tracking</Button>
           </>
         }
       />
@@ -46,26 +56,11 @@ export default function ConversionsPage() {
       ) : (
         <>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
-            <Tile label="Clicks" value={full(data.totals.clicks)} delta={`▲ ${pct(data.deltas.clicks)}`} deltaTone="up" />
-            <Tile
-              label="Leads"
-              value={full(data.totals.leads)}
-              delta={`▲ ${pct(data.deltas.leads)} · ${((data.totals.leads / data.totals.clicks) * 100).toFixed(1)}%`}
-              deltaTone="up"
-            />
-            <Tile
-              label="Signups"
-              value={full(data.totals.signups)}
-              delta={`▼ ${pct(Math.abs(data.deltas.signups))} · ${((data.totals.signups / data.totals.clicks) * 100).toFixed(1)}%`}
-              deltaTone="down"
-            />
-            <Tile
-              label="Paid"
-              value={full(data.totals.paid)}
-              delta={`▲ ${pct(data.deltas.paid)} · ${((data.totals.paid / data.totals.clicks) * 100).toFixed(2)}%`}
-              deltaTone="up"
-            />
-            <Tile label="Revenue" value={inr(data.totals.revenue)} delta={`▲ ${pct(data.deltas.revenue)}`} deltaTone="up">
+            <Tile label="Clicks" value={full(data.totals.clicks)} {...tileDelta(data.deltas.clicks)} />
+            <Tile label="Leads" value={full(data.totals.leads)} {...tileDelta(data.deltas.leads, ratioPct(data.totals.leads, data.totals.clicks))} />
+            <Tile label="Signups" value={full(data.totals.signups)} {...tileDelta(data.deltas.signups, ratioPct(data.totals.signups, data.totals.clicks))} />
+            <Tile label="Paid" value={full(data.totals.paid)} {...tileDelta(data.deltas.paid, ratioPct(data.totals.paid, data.totals.clicks, 2))} />
+            <Tile label="Revenue" value={inr(data.totals.revenue)} {...tileDelta(data.deltas.revenue)}>
               <Sparkline values={data.revenueSeries} width={160} height={26} />
             </Tile>
           </div>
@@ -77,16 +72,16 @@ export default function ConversionsPage() {
                 <Funnel
                   steps={[
                     { label: "Clicks", value: data.totals.clicks },
-                    { label: "Leads", value: data.totals.leads, pct: (data.totals.leads / data.totals.clicks) * 100 },
-                    { label: "Signups", value: data.totals.signups, pct: (data.totals.signups / data.totals.clicks) * 100 },
-                    { label: "Paid", value: data.totals.paid, pct: (data.totals.paid / data.totals.clicks) * 100 },
+                    { label: "Leads", value: data.totals.leads, pct: shareOf(data.totals.leads, data.totals.clicks) },
+                    { label: "Signups", value: data.totals.signups, pct: shareOf(data.totals.signups, data.totals.clicks) },
+                    { label: "Paid", value: data.totals.paid, pct: shareOf(data.totals.paid, data.totals.clicks) },
                   ]}
                 />
               </CardBody>
             </Card>
 
             <Card>
-              <CardHeader title="Tracked events" right={<Button size="sm">＋ Add</Button>} />
+              <CardHeader title="Tracked events" />
               <CardBody className="flex flex-col gap-[9px]">
                 {data.events.map((e) => (
                   <div key={e.id} className="flex items-center gap-[11px] px-[11px] py-[9px] border border-line rounded-[var(--radius-sm)]">
@@ -98,13 +93,6 @@ export default function ConversionsPage() {
                     <span className="font-mono text-[12.5px] font-semibold tnum">{full(e.count)}</span>
                   </div>
                 ))}
-                <div className="px-[13px] py-[11px] bg-wash-teal rounded-[var(--radius-sm)] text-[12.5px] text-teal leading-[1.5] mt-1">
-                  <b>Attribution is server-side.</b>{" "}
-                  <span className="text-ink-2">
-                    The click ID travels in the redirect, not in a cookie — so it survives Safari, ad blockers and
-                    cross-device.
-                  </span>
-                </div>
               </CardBody>
             </Card>
           </div>
@@ -133,7 +121,7 @@ export default function ConversionsPage() {
                       <Td className="tnum">{full(r.signups)}</Td>
                       <Td className="tnum">{r.cvr}%</Td>
                       <Td className="tnum text-ink font-medium">{inr(r.revenue)}</Td>
-                      <Td className="tnum">₹{Math.round(r.revenue / r.clicks)}</Td>
+                      <Td className="tnum">{r.clicks > 0 ? `₹${Math.round(r.revenue / r.clicks)}` : NO_VALUE}</Td>
                     </tr>
                   ))}
                 </tbody>
