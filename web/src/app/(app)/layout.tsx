@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar, Topbar } from "@/components/app-shell";
 import { CreateLinkDrawer } from "@/components/links/create-link-drawer";
-import { useBioPages, useDomains, useLinks, useMe, useMembers } from "@/lib/api/hooks";
+import { useBioPages, useDomains, useLinks, useMe, useMembers, useWorkspaceChangeGuard } from "@/lib/api/hooks";
 
 /**
  * The gate for every authenticated route.
@@ -20,6 +20,9 @@ import { useBioPages, useDomains, useLinks, useMe, useMembers } from "@/lib/api/
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { data: me, isPending, isError } = useMe();
+  // #699 — another tab (or a refresh fallback) moved the token to a different
+  // workspace: drop everything cached for the old one.
+  useWorkspaceChangeGuard();
 
   useEffect(() => {
     // `replace`, not `push` — a signed-out visitor should not be able to press

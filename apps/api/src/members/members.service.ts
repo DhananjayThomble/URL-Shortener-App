@@ -24,7 +24,10 @@ export class MembersService {
       .select({
         membership: memberships,
         user: users,
-        linkCount: sql<number>`(select count(*) from ${links} where ${links.createdBy} = ${memberships.userId})::int`,
+        /* #699 — counted within THIS workspace only. Counting every link the
+           person ever created would show teammates their activity in their
+           personal or other workspaces. */
+        linkCount: sql<number>`(select count(*) from ${links} where ${links.createdBy} = ${memberships.userId} and ${links.workspaceId} = ${memberships.workspaceId})::int`,
       })
       .from(memberships)
       .leftJoin(users, eq(memberships.userId, users.id))
@@ -39,7 +42,10 @@ export class MembersService {
       role: membership.role as Member["role"],
       status: membership.status as Member["status"],
       links: linkCount,
-      lastActive: user?.lastActiveAt?.toISOString() ?? null,
+      /* #699 — last seen in THIS workspace (GET /auth/me stamps the workspace
+         the session is in), not the account-wide users.last_active_at, which
+         would reveal activity in the person's other workspaces. */
+      lastActive: membership.status === "active" ? (membership.lastActiveAt?.toISOString() ?? null) : null,
       invitedAt: membership.status === "invited" ? (membership.invitedAt?.toISOString() ?? null) : null,
       /* G6 — this column is why the whole TOTP module exists. It was rendered
          by the team page with nothing behind it. */

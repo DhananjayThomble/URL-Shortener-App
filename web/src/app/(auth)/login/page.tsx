@@ -105,7 +105,7 @@ function LoginForm() {
     <AuthShell title="Welcome back" sub="Sign in to your SnapURL workspace.">
       {hasGoogleAuth ? (
         <>
-          <GoogleButton text="signin_with" />
+          <GoogleButton text="signin_with" next={nextParam} />
           <div className="flex items-center gap-3 my-4">
             <span className="h-px flex-1 bg-line" />
             <span className="text-[11.5px] text-ink-3">or</span>

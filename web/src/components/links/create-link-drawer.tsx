@@ -56,7 +56,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     },
   });
 
-  const { register, handleSubmit, control, watch, reset, setValue, formState } = form;
+  const { register, handleSubmit, control, watch, reset, setValue, getValues, formState } = form;
   const domain = watch("domain");
   const slug = watch("slug");
 
@@ -65,14 +65,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   // submit just did nothing). Surface which tabs hold errors.
   const invalidTabs = tabsWithErrors(formState.errors as Record<string, unknown>) as TabId[];
 
-  // Default the back-half domain to the workspace's own first domain once the
-  // list loads, unless the user has already picked one. Avoids hardcoding a
-  // domain the workspace may not own.
-  useEffect(() => {
-    if (!domain && domains?.length) {
-      setValue("domain", domains[0].domain);
-    }
-  }, [domains, domain, setValue]);
+  // (The back-half domain default lives below the reset effect — see there.)
 
   // Escape closes; body scroll locks; focus is trapped inside the drawer while
   // it is open — Tab/Shift+Tab cycle within it, never leaking to content behind.
@@ -160,6 +153,22 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     // `create` is a stable mutation object; re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
+
+  // Default the back-half domain to the workspace's own first domain once the
+  // list loads, unless the user has already picked one. Avoids hardcoding a
+  // domain the workspace may not own.
+  //
+  // Declared AFTER the reset effect and keyed on `open`, and reads the form's
+  // live value rather than the last-rendered `watch` result: the reset above
+  // empties the domain on open, and when nothing else re-rendered afterwards
+  // (e.g. the domains list had just been refetched after a workspace change,
+  // #699) the old version saw the stale non-empty `domain`, skipped, and left
+  // the select blank, so Create link failed validation on "Destination".
+  useEffect(() => {
+    if (!getValues("domain") && domains?.length) {
+      setValue("domain", domains[0].domain);
+    }
+  }, [open, domains, domain, getValues, setValue]);
 
   // `useMutation` returns a brand-new result object on every render (its
   // `mutate`/`mutateAsync` are wrapped per call, see @tanstack/react-query's

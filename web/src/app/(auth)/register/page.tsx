@@ -53,7 +53,7 @@ function RegisterForm() {
     <AuthShell title="Start free" sub="No card. Links, QR codes and edits are never metered.">
       {hasGoogleAuth ? (
         <>
-          <GoogleButton text="signup_with" />
+          <GoogleButton text="signup_with" next={nextParam} />
           <div className="flex items-center gap-3 my-4">
             <span className="h-px flex-1 bg-line" />
             <span className="text-[11.5px] text-ink-3">or</span>

@@ -48,11 +48,15 @@ export type RefreshInput = z.infer<typeof RefreshInput>;
 
 /* ── Team invitations + workspace switching (#668) ─────────────────────────
 
-   POST /auth/invite/accept consumes the token from the invitation email.
-   POST /auth/workspace moves the current session into another workspace the
-   user is an active member of. Both answer with a fresh access token bound to
-   the target workspace; the refresh token is unchanged (refresh keeps the
-   workspace via RefreshInput.workspaceId). */
+   POST /auth/invite/accept consumes the token from the invitation email and
+   answers with the joined workspace — deliberately NOT a token.
+
+   Entering a workspace (after accepting, or from the switcher) is
+   POST /auth/refresh with RefreshInput.workspaceId. #699: an earlier
+   POST /auth/workspace minted a fresh access token from an access token
+   alone, which let a session that had been signed out everywhere (or outlived
+   a password reset) renew itself forever. Only the refresh path checks the
+   refresh-token family for revocation, so it is the only way in. */
 export const AcceptInviteInput = z.object({
   // 32 random bytes, base64url = 43 chars. The upper bound only stops an
   // oversized body from being hashed; it is not a format check.
@@ -60,15 +64,12 @@ export const AcceptInviteInput = z.object({
 });
 export type AcceptInviteInput = z.infer<typeof AcceptInviteInput>;
 
-export const SwitchWorkspaceInput = z.object({ workspaceId: z.string().uuid() });
-export type SwitchWorkspaceInput = z.infer<typeof SwitchWorkspaceInput>;
-
-export const WorkspaceSession = z.object({
-  accessToken: z.string(),
+export const AcceptedInvite = z.object({
   workspaceId: z.string(),
+  /** The caller as they are in the joined workspace (role = the invited role). */
   user: AuthUser,
 });
-export type WorkspaceSession = z.infer<typeof WorkspaceSession>;
+export type AcceptedInvite = z.infer<typeof AcceptedInvite>;
 
 /** One row of the workspace switcher: a workspace the caller is an active member of. */
 export const UserWorkspace = z.object({
