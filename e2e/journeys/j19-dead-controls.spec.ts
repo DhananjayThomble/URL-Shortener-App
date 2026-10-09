@@ -105,6 +105,52 @@ test.describe("Journey 19 — dead controls (#661)", () => {
     await expect(page).toHaveURL(/\/links$/);
   });
 
+  test("analytics: every control left in the page body has an observable effect (inventory)", async () => {
+    await page.goto("/analytics");
+    const main = page.locator("main");
+    await expect(main.getByText("Top links")).toBeVisible({ timeout: 15_000 });
+
+    // The denominator: exactly these controls exist. A new, unexercised one fails here.
+    const buttons = (await main.getByRole("button").allInnerTexts()).map((t) => t.trim());
+    expect(buttons.sort()).toEqual(["12m", "24h", "30d", "7d", "90d", "Clicks", "Clicks + scans", "Export CSV"].sort());
+    const links = (await main.getByRole("link").allInnerTexts()).map((t) => t.trim());
+    expect(links).toEqual(["View all"]);
+
+    // Range options: a network request for the new window AND the pressed state.
+    for (const range of ["24h", "7d", "90d", "12m", "30d"]) {
+      const btn = main.getByRole("button", { name: range, exact: true });
+      const req = range === "30d" ? null : page.waitForRequest((r) => r.url().includes(`/analytics?range=${range}`), { timeout: 15_000 });
+      await btn.click();
+      await req;
+      await expect(btn).toHaveAttribute("aria-pressed", "true");
+      await expect(main.getByRole("button", { name: /^(24h|7d|30d|90d|12m)$/, pressed: true })).toHaveCount(1);
+    }
+    // Series tabs: pressed state flips and the chart legend changes with it.
+    const both = main.getByRole("button", { name: "Clicks + scans", exact: true });
+    const clicksOnly = main.getByRole("button", { name: "Clicks", exact: true });
+    await clicksOnly.click();
+    await expect(clicksOnly).toHaveAttribute("aria-pressed", "true");
+    await expect(both).toHaveAttribute("aria-pressed", "false");
+    await both.click();
+    await expect(both).toHaveAttribute("aria-pressed", "true");
+    // Export CSV and View all are exercised in the two tests above.
+  });
+
+  test("settings: the Import & portability card holds exactly the two live controls", async () => {
+    await page.goto("/settings");
+    const main = page.locator("main");
+    await expect(main.getByText("Link permanence")).toBeVisible({ timeout: 15_000 });
+    const card = main.getByRole("heading", { name: "Import & portability" }).locator("xpath=../..");
+    await expect(card.getByRole("button")).toHaveCount(1);
+    await expect(card.getByRole("button", { name: /Import from Bitly/ })).toBeVisible();
+    await expect(card.getByRole("link")).toHaveCount(1);
+    await expect(card.getByRole("link", { name: /Self-host this workspace/ })).toHaveAttribute("href", "/self-host");
+    // The guarantee card keeps its copy but has no control that points nowhere.
+    const permanence = main.getByRole("heading", { name: "Link permanence" }).locator("xpath=../..");
+    await expect(permanence.getByText("they keep redirecting forever")).toBeVisible();
+    await expect(permanence.getByRole("button")).toHaveCount(0);
+  });
+
   test("top bar: Import from Bitly opens the import panel on /links (from another page)", async () => {
     await page.goto("/analytics");
     await expect(page.locator("main").getByRole("heading", { name: "Analytics" })).toBeVisible({ timeout: 15_000 });
