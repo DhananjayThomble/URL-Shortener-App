@@ -145,4 +145,18 @@ describe("CachingLinkResolver", () => {
     expect(result).toEqual(domain);
     expect(resolveDomain).toHaveBeenCalledWith("snap.to");
   });
+
+  it("never caches resolveDomain: a changed root/404 redirect is seen on the next request (#648)", async () => {
+    /* PATCH /domains/:id relies on this: on the Postgres profiles there is no
+       domain-config cache to invalidate. If someone adds one, this fails and
+       the PATCH path needs a matching bust. */
+    const { resolver, resolveDomain } = spyInner(null);
+    const caching = new CachingLinkResolver(resolver, cache, TTL);
+    resolveDomain.mockResolvedValueOnce({ id: "d", rootRedirect: "https://example.com/old", notFoundRedirect: null });
+    resolveDomain.mockResolvedValueOnce({ id: "d", rootRedirect: "https://example.com/new", notFoundRedirect: null });
+
+    expect((await caching.resolveDomain("acme.test"))?.rootRedirect).toBe("https://example.com/old");
+    expect((await caching.resolveDomain("acme.test"))?.rootRedirect).toBe("https://example.com/new");
+    expect(resolveDomain).toHaveBeenCalledTimes(2);
+  });
 });

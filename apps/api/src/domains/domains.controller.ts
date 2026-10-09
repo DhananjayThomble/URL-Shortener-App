@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post } from "@nestjs/common";
-import { AddDomainInput } from "@snapurl/contract";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post } from "@nestjs/common";
+import { AddDomainInput, UpdateDomainInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, Scope, type RequestActor } from "../auth/auth.guard.js";
 import { DomainsService } from "./domains.service.js";
@@ -28,6 +28,19 @@ export class DomainsController {
   @HttpCode(200)
   verify(@Actor() actor: RequestActor, @Param("id") id: string) {
     return this.domains.verify(actor.workspaceId, id, toActor(actor));
+  }
+
+  /* #648: set / change / clear root and 404 redirects after creation.
+     Same role + scope gate as every other domain mutation. */
+  @Patch(":id")
+  @Roles("admin")
+  @Scope("domains:write")
+  update(
+    @Actor() actor: RequestActor,
+    @Param("id") id: string,
+    @Body(zodBody(UpdateDomainInput)) input: UpdateDomainInput,
+  ) {
+    return this.domains.update(actor.workspaceId, id, input, toActor(actor));
   }
 
   @Delete(":id")

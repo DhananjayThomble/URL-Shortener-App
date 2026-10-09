@@ -58,6 +58,10 @@ export const Domain = z.object({
   links: z.number(),
   rootRedirect: z.string().nullable(),
   notFoundRedirect: z.string().nullable(),
+  /** True for the built-in short domain every workspace shares. Its root and
+   *  404 redirects cannot be changed by any one workspace (#648), and it cannot
+   *  be disconnected. Optional so older payloads still parse; absent = false. */
+  shared: z.boolean().optional(),
   dns: z
     .object({ type: z.string(), name: z.string(), value: z.string(), ttl: z.number() })
     .nullable()
@@ -74,6 +78,29 @@ export const AddDomainInput = z.object({
   notFoundRedirect: HttpUrl.nullable().optional(),
 });
 export type AddDomainInput = z.infer<typeof AddDomainInput>;
+
+/* PATCH /domains/:id (#648).
+
+   Both fields reuse HttpUrl, so the same scheme/host guard that protects
+   AddDomainInput applies to a change after creation. Semantics per field:
+     - omitted  -> left as it is
+     - null     -> cleared (the redirect service falls back to its own 404)
+     - a URL    -> set / replaced
+
+   `.strict()` because the only things this route may change are these two
+   fields: a body carrying `domain`, `workspaceId` or `isSystem` is a client
+   bug or a probe, and silently ignoring it would hide either. At least one
+   field is required so an empty PATCH is a 400, not a no-op 200. */
+export const UpdateDomainInput = z
+  .object({
+    rootRedirect: HttpUrl.nullable().optional(),
+    notFoundRedirect: HttpUrl.nullable().optional(),
+  })
+  .strict()
+  .refine((v) => v.rootRedirect !== undefined || v.notFoundRedirect !== undefined, {
+    error: "Provide rootRedirect and/or notFoundRedirect (null clears one)",
+  });
+export type UpdateDomainInput = z.infer<typeof UpdateDomainInput>;
 
 export const Member = z.object({
   id: z.string(),

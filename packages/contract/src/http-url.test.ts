@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HttpUrl, isDeniedHost } from "./http-url.js";
 import { CreateLinkInput, RoutingRule } from "./link.js";
-import { AddDomainInput, CreateWebhookInput, UpsertBioPageInput } from "./workspace.js";
+import { AddDomainInput, CreateWebhookInput, UpdateDomainInput, UpsertBioPageInput } from "./workspace.js";
 
 /* Issue #280: every URL-bearing field goes through HttpUrl, which rejects
    dangerous schemes and internal hosts before anything can emit them as a
@@ -144,6 +144,19 @@ describe("every contract field routes through HttpUrl", () => {
     expect(AddDomainInput.safeParse({ domain: "acme.com", notFoundRedirect: metadata }).success).toBe(false);
     expect(AddDomainInput.safeParse({ domain: "acme.com", rootRedirect: good }).success).toBe(true);
     expect(AddDomainInput.safeParse({ domain: "acme.com", rootRedirect: null }).success).toBe(true);
+  });
+
+  it("UpdateDomainInput (#648) reuses the same guard and allows null to clear", () => {
+    expect(UpdateDomainInput.safeParse({ rootRedirect: bad }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ notFoundRedirect: metadata }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: "data:text/html,hi" }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: good }).success).toBe(true);
+    expect(UpdateDomainInput.safeParse({ notFoundRedirect: good }).success).toBe(true);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: null, notFoundRedirect: null }).success).toBe(true);
+    // Nothing to change, or something this route may not change.
+    expect(UpdateDomainInput.safeParse({}).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ domain: "acme.com" }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: null, isSystem: true }).success).toBe(false);
   });
 
   it("CreateWebhookInput.endpoint rejects dangerous URLs", () => {
