@@ -35,7 +35,7 @@ export default function ReportsPage() {
     <>
       <PageHead
         title="Abuse reports"
-        sub="Reports filed against links in this workspace. Flagging a link blocks its redirect immediately."
+        sub="Reports filed against links in this workspace. Flagging a link puts a warning page in front of its redirect; visitors can still choose to continue."
       />
 
       {reports.isLoading ? (
