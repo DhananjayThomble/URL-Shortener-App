@@ -107,23 +107,15 @@ describe("dead controls (#661)", () => {
     expect(describeDead(dead)).toEqual([]);
   });
 
-  /* Known debt, tracked in #706 - NOT a licence to add more. A ratchet: the set
-     below may only shrink. Fixing a button means deleting its line here; a new
-     dead button anywhere under src/app fails this test. Keyed by file + label
-     (not line number) so unrelated edits do not churn it. */
-  const KNOWN_DEAD_706 = [
-    'app/(app)/developers/page.tsx "Read the docs"',
-    'app/(app)/links/[id]/page.tsx "Share report"',
-    'app/(app)/links/[id]/page.tsx "Copy link"',
-    'app/(app)/links/[id]/page.tsx "All"',
-    'app/(app)/qr/page.tsx "Bulk generate"',
-    'app/(app)/team/page.tsx "Audit log"',
-    'app/(app)/team/page.tsx "Full log"',
-  ];
+  /* Known debt ratchet (#706 cleared it). The set may only shrink, and it is
+     now empty: a new dead button anywhere under src/app fails this test. Wire
+     it to a real effect or remove it ("removed rather than faked",
+     docs/DECISIONS.md) - do not add an entry. */
+  const KNOWN_DEAD: string[] = [];
 
-  it("no screen under src/app gains a dead <Button> beyond the known debt (#706), and the debt list stays honest", () => {
+  it("no screen under src/app gains a dead <Button> (the #706 debt list is empty)", () => {
     const dead = walk(resolve(SRC, "app")).flatMap((f) => findDeadButtons(f, readFileSync(f, "utf8")).dead);
     const found = dead.map((d) => `${relative(SRC, d.file)} "${d.text}"`).sort();
-    expect(found).toEqual([...KNOWN_DEAD_706].sort());
+    expect(found).toEqual([...KNOWN_DEAD].sort());
   });
 });

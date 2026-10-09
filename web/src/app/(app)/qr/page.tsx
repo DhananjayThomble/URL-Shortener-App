@@ -66,7 +66,6 @@ export default function QrStudioPage() {
         sub="Every code is dynamic — re-point it after it is printed, and the printed code keeps working."
         actions={
           <>
-            <Button>Bulk generate</Button>
             <Button variant="primary" disabled={busy || !value} onClick={() => download("png")}>
               {busy ? "Preparing…" : "Download"}
             </Button>
