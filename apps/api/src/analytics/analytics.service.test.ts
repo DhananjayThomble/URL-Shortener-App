@@ -40,14 +40,18 @@ describe("windowFor", () => {
 });
 
 describe("percentChange", () => {
-  it("reports growth from zero as +100%, not infinity", () => {
-    // The zero baseline is the case that would otherwise render "Infinity%"
-    // on a brand-new workspace's first day.
-    expect(percentChange(0, 500)).toBe(100);
+  it("reports growth from a zero baseline as null, not +100% or infinity", () => {
+    // A zero baseline has nothing to compare against. Reporting 100 made it
+    // indistinguishable from a genuine doubling, so the UI drew "▲ 100.0%".
+    expect(percentChange(0, 500)).toBeNull();
   });
 
-  it("reports no change from zero as 0%", () => {
-    expect(percentChange(0, 0)).toBe(0);
+  it("reports zero-to-zero as null, not 0%", () => {
+    expect(percentChange(0, 0)).toBeNull();
+  });
+
+  it("still reports a genuine +100% (doubling) as 100", () => {
+    expect(percentChange(50, 100)).toBe(100);
   });
 
   it("computes ordinary growth and decline", () => {

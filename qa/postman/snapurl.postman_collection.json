@@ -4152,6 +4152,301 @@
           }
         }
       ]
+    },
+    {
+      "name": "Zero-baseline period deltas (#662)",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"zb_email\", \"newman-zb-\" + Date.now().toString(36) + Math.random().toString(16).slice(2, 8) + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"zb_token\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman zb\",\"email\":\"{{zb_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Empty workspace: /conversions deltas are all null",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "const d = r.deltas;",
+                  "pm.test(\"totals are all zero\", () => pm.expect(Object.values(r.totals).every((v) => v === 0)).to.eql(true));",
+                  "pm.test(\"deltas.clicks is null (no baseline), not 0 or 100\", () => pm.expect(d.clicks).to.eql(null));",
+                  "pm.test(\"deltas.leads is null (no baseline), not 0 or 100\", () => pm.expect(d.leads).to.eql(null));",
+                  "pm.test(\"deltas.signups is null (no baseline), not 0 or 100\", () => pm.expect(d.signups).to.eql(null));",
+                  "pm.test(\"deltas.paid is null (no baseline), not 0 or 100\", () => pm.expect(d.paid).to.eql(null));",
+                  "pm.test(\"deltas.revenue is null (no baseline), not 0 or 100\", () => pm.expect(d.revenue).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{zb_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions?range=30d",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30d"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Empty workspace: /analytics deltas are all null",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().deltas;",
+                  "pm.test(\"deltas.clicks is null (no baseline), not 0 or 100\", () => pm.expect(d.clicks).to.eql(null));",
+                  "pm.test(\"deltas.unique is null (no baseline), not 0 or 100\", () => pm.expect(d.unique).to.eql(null));",
+                  "pm.test(\"deltas.scans is null (no baseline), not 0 or 100\", () => pm.expect(d.scans).to.eql(null));",
+                  "pm.test(\"deltas.conversions is null (no baseline), not 0 or 100\", () => pm.expect(d.conversions).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{zb_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/analytics?range=30d",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "analytics"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30d"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record a sale with no earlier leads or signups",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"recorded\", () => { pm.expect(pm.response.code).to.be.below(300); pm.expect(pm.response.json().recorded).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{zb_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\":\"sale\",\"name\":\"Newman zb sale\",\"valueMinor\":1000,\"currency\":\"INR\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "After the sale: totals moved but a zero previous window is still null (not +100%)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "const d = r.deltas;",
+                  "pm.test(\"paid = 1, leads = 0, signups = 0\", () => { pm.expect(r.totals.paid).to.eql(1); pm.expect(r.totals.leads).to.eql(0); pm.expect(r.totals.signups).to.eql(0); });",
+                  "pm.test(\"deltas.clicks is null (no baseline), not 0 or 100\", () => pm.expect(d.clicks).to.eql(null));",
+                  "pm.test(\"deltas.leads is null (no baseline), not 0 or 100\", () => pm.expect(d.leads).to.eql(null));",
+                  "pm.test(\"deltas.signups is null (no baseline), not 0 or 100\", () => pm.expect(d.signups).to.eql(null));",
+                  "pm.test(\"deltas.paid is null (no baseline), not 0 or 100\", () => pm.expect(d.paid).to.eql(null));",
+                  "pm.test(\"deltas.revenue is null (no baseline), not 0 or 100\", () => pm.expect(d.revenue).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{zb_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions?range=30d",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30d"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "After the sale: /analytics conversions delta is null too",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "const d = r.deltas;",
+                  "pm.test(\"1 conversion this window\", () => pm.expect(r.totals.conversions).to.eql(1));",
+                  "pm.test(\"deltas.conversions is null (no baseline), not 0 or 100\", () => pm.expect(d.conversions).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{zb_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/analytics?range=30d",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "analytics"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30d"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [

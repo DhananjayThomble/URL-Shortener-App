@@ -25,6 +25,54 @@ export function pct(n: number, digits = 1): string {
   return `${n > 0 ? "" : ""}${n.toFixed(digits)}%`;
 }
 
+/** Shown wherever a percentage has nothing meaningful to be computed from. */
+export const NO_VALUE = "—";
+
+/**
+ * `num / den` as a percentage string, or a dash when the denominator is zero
+ * (or not a finite number). Never "NaN%" / "Infinity%".
+ */
+export function ratioPct(num: number, den: number, digits = 1): string {
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return NO_VALUE;
+  return pct((num / den) * 100, digits);
+}
+
+/**
+ * Fraction of the previous funnel step that did not make it to this one, as a
+ * percentage. null when the previous step is zero (or either value is not a
+ * finite number): there was nothing to drop off from. A negative result means
+ * this step is larger than the previous one.
+ */
+export function dropOff(prev: number, curr: number): number | null {
+  if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev <= 0) return null;
+  return (1 - curr / prev) * 100;
+}
+
+/** The funnel's between-steps caption. A dash, never NaN/Infinity, for a zero previous step. */
+export function dropOffLabel(prev: number, curr: number): string {
+  const drop = dropOff(prev, curr);
+  if (drop === null) return `${NO_VALUE} drop off`;
+  if (drop < 0) return `▲ ${pct(Math.abs(drop))} more than the step before`;
+  return `▼ ${pct(drop)} drop off`;
+}
+
+/**
+ * A period-over-period change as it should be shown on a tile.
+ *
+ * One rule for every tile: if there is no comparison to make (the API sends
+ * null for a zero baseline, or the change is exactly zero) show a dash with a
+ * neutral tone — no arrow, because there is no direction. Otherwise show the
+ * signed magnitude with an arrow that matches the sign.
+ */
+export function formatDelta(delta: number | null | undefined): { text: string; tone: "up" | "down" | "flat" } {
+  if (delta === null || delta === undefined || !Number.isFinite(delta) || pct(Math.abs(delta)) === "0.0%") {
+    return { text: NO_VALUE, tone: "flat" };
+  }
+  return delta > 0
+    ? { text: `▲ ${pct(delta)}`, tone: "up" }
+    : { text: `▼ ${pct(Math.abs(delta))}`, tone: "down" };
+}
+
 export function relativeDate(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return iso;

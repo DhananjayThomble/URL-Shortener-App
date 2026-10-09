@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { Analytics, AnalyticsQuery, Breakdown, TimeseriesPoint } from "@snapurl/contract";
+import { percentChange } from "../common/percent-change.js";
 import { ANALYTICS_READER, type AnalyticsReader } from "./analytics.reader.js";
 
 const RANGE_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
@@ -174,11 +175,7 @@ export function windowFor(days: number) {
   return { start, previousStart };
 }
 
-/** Growing from zero is reported as +100%, not as infinity. */
-export function percentChange(before: number, after: number): number {
-  if (before === 0) return after === 0 ? 0 : 100;
-  return Math.round(((after - before) / before) * 1000) / 10;
-}
+export { percentChange };
 
 /** Zero-fill missing days so the chart's x-axis is continuous — a gap would
  *  otherwise be drawn as a straight line between two distant points. */
