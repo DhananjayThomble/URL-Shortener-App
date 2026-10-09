@@ -104,10 +104,13 @@ test.describe("Journey 18 — Conversions page (#662)", () => {
     expect(labels.map((l) => l.trim())).toEqual(["24h", "7d", "30d", "90d", "12m"]);
     for (const range of ["24h", "7d", "90d", "12m", "30d"]) {
       const btn = main.getByRole("button", { name: range, exact: true });
-      const req = page.waitForRequest((r) => r.url().includes(`/conversions?range=${range}`), { timeout: 15_000 });
+      // 30d was already fetched on load and is cached client-side (staleTime), so
+      // returning to it is a DOM-only effect; every other window must hit the API.
+      const req = range === "30d" ? null : page.waitForRequest((r) => r.url().includes(`/conversions?range=${range}`), { timeout: 15_000 });
       await btn.click();
       await req; // network effect
       await expect(btn).toHaveAttribute("aria-pressed", "true"); // DOM effect
+      await expect(main.getByRole("button", { pressed: true })).toHaveCount(1);
       await expect(main.getByText("Funnel", { exact: true })).toBeVisible({ timeout: 15_000 });
       await expectNoNumericArtifacts(page, `range ${range}`);
     }
@@ -127,12 +130,9 @@ test.describe("Journey 18 — Conversions page (#662)", () => {
     expect(sale.status, "record the sale").toBeLessThan(300);
     expect(((await sale.json()) as { recorded: boolean }).recorded).toBe(true);
 
-    // Re-fetch through a real click (24h -> 30d) so the page shows the new state.
-    for (const range of ["24h", "30d"]) {
-      const done = page.waitForResponse((r) => r.url().includes(`/conversions?range=${range}`) && r.ok());
-      await main.getByRole("button", { name: range, exact: true }).click();
-      await done;
-    }
+    // The person refreshes the page (the client caches each window for 30s).
+    await page.reload();
+    await expect(main.getByText("Funnel", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(main.getByText(`J18-Sale-${RUN_ID.slice(0, 8)}`)).toBeVisible({ timeout: 15_000 });
 
     // Paid = 1 with Signups = 0: the old code drew "▼ -Infinity% drop off" here.
