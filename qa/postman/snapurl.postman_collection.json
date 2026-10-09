@@ -4850,6 +4850,972 @@
           }
         }
       ]
+    },
+    {
+      "name": "Forms CRUD + status (#649)",
+      "item": [
+        {
+          "name": "Register owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const s = Date.now().toString(36) + Math.random().toString(16).slice(2, 8);",
+                  "pm.collectionVariables.set(\"fm_email\", \"newman-fm-\" + s + \"@example.com\");",
+                  "pm.collectionVariables.set(\"fm_email2\", \"newman-fm2-\" + s + \"@example.com\");",
+                  "pm.collectionVariables.set(\"fm_slug\", \"fm649-\" + s);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"fm_token\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman forms\",\"email\":\"{{fm_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register outsider (other workspace)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"fm_token2\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman outsider\",\"email\":\"{{fm_email2}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create refuses an empty title (contract: CreateFormInput.title min 1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"\",\"status\":\"live\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create refuses a bad status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"x\",\"status\":\"archived\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create a live form with one required field",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const f = pm.response.json();",
+                  "pm.test(\"echoes title/slug/status\", () => { pm.expect(f.title).to.eql(\"Newman form\"); pm.expect(f.slug).to.eql(pm.collectionVariables.get(\"fm_slug\")); pm.expect(f.status).to.eql(\"live\"); });",
+                  "pm.test(\"field got a key and kept its label\", () => { pm.expect(f.fields).to.have.length(1); pm.expect(f.fields[0].key).to.be.a(\"string\").and.not.empty; pm.expect(f.fields[0].label).to.eql(\"Your name\"); pm.expect(f.fields[0].required).to.eql(true); });",
+                  "pm.test(\"responseCount starts at 0\", () => pm.expect(f.responseCount).to.eql(0));",
+                  "pm.collectionVariables.set(\"fm_id\", f.id);",
+                  "pm.collectionVariables.set(\"fm_key\", f.fields[0].key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"Newman form\",\"description\":\"d\",\"slug\":\"{{fm_slug}}\",\"status\":\"live\",\"fields\":[{\"label\":\"Your name\",\"type\":\"text\",\"required\":true}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create with a taken address is a conflict",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"Dup\",\"slug\":\"{{fm_slug}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List includes the form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"listed\", () => pm.expect(pm.response.json().some((f) => f.id === pm.collectionVariables.get(\"fm_id\"))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Public page serves the live form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"public shape, title\", () => { const f = pm.response.json(); pm.expect(f.title).to.eql(\"Newman form\"); pm.expect(f).to.not.have.property(\"responseCount\"); pm.expect(f).to.not.have.property(\"id\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/public/forms/{{fm_slug}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "forms",
+                "{{fm_slug}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Public submit is accepted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"ok\", () => pm.expect(pm.response.json().ok).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/public/forms/{{fm_slug}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "forms",
+                "{{fm_slug}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"answers\":{\"{{fm_key}}\":\"newman-answer\"}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Outsider cannot read the form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Outsider cannot edit the form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token2}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"hijacked\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Outsider cannot delete the form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Edit title + relabel field; key is frozen; slug is not editable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const f = pm.response.json();",
+                  "pm.test(\"title changed\", () => pm.expect(f.title).to.eql(\"Newman form renamed\"));",
+                  "pm.test(\"slug unchanged (UpdateFormInput omits slug)\", () => pm.expect(f.slug).to.eql(pm.collectionVariables.get(\"fm_slug\")));",
+                  "pm.test(\"existing key kept, label changed\", () => { pm.expect(f.fields[0].key).to.eql(pm.collectionVariables.get(\"fm_key\")); pm.expect(f.fields[0].label).to.eql(\"Full name\"); });",
+                  "pm.test(\"new field got a distinct key and its options\", () => { pm.expect(f.fields[1].key).to.be.a(\"string\").and.not.eql(pm.collectionVariables.get(\"fm_key\")); pm.expect(f.fields[1].options).to.eql([\"Free\", \"Pro\"]); });",
+                  "pm.test(\"responseCount is 1\", () => pm.expect(f.responseCount).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"Newman form renamed\",\"slug\":\"moved-{{fm_slug}}\",\"fields\":[{\"key\":\"{{fm_key}}\",\"label\":\"Full name\",\"type\":\"text\",\"required\":true},{\"label\":\"Plan\",\"type\":\"select\",\"options\":[\"Free\",\"Pro\"]}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Status change refuses an unknown status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"archived\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Close the form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"closed\", () => pm.expect(pm.response.json().status).to.eql(\"closed\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"closed\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Closed form is not found publicly",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/public/forms/{{fm_slug}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "forms",
+                "{{fm_slug}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Closed form rejects a submission",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/public/forms/{{fm_slug}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "forms",
+                "{{fm_slug}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"answers\":{\"{{fm_key}}\":\"late\"}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Draft form is not found publicly either",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"draft\", () => pm.expect(pm.response.json().status).to.eql(\"draft\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"draft\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Draft public GET is 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/public/forms/{{fm_slug}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "forms",
+                "{{fm_slug}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Responses still hold exactly the one accepted answer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"one response\", () => { pm.expect(r.total).to.eql(1); pm.expect(r.items).to.have.length(1); });",
+                  "pm.test(\"answer under the frozen key\", () => pm.expect(r.items[0].answers[pm.collectionVariables.get(\"fm_key\")]).to.eql(\"newman-answer\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}/responses",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}",
+                "responses"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete the form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deleted form is gone (GET by id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms/{{fm_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms",
+                "{{fm_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deleted form is gone from the list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"not listed\", () => pm.expect(pm.response.json().some((f) => f.id === pm.collectionVariables.get(\"fm_id\"))).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{fm_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/forms",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "forms"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deleted form's address is not found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/public/forms/{{fm_slug}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "forms",
+                "{{fm_slug}}"
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
