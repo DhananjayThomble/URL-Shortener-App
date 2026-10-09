@@ -105,6 +105,43 @@ const AUTH_CREDENTIAL_PATHS = new Set([
   "/auth/email/resend",
 ]);
 
+/* Credential checks that are not under /auth/ literally or carry a slug, so the
+   exact-match set above cannot hold them (#646). Both are called with
+   `anonymous: true`: there is no session to have expired, so a 401 here only
+   ever means "that credential is wrong". */
+const ANONYMOUS_CREDENTIAL_PATH = /^\/(auth\/2fa\/verify|public\/links\/[^/]+\/unlock)$/;
+
+/* POST /auth/2fa/disable is the odd one out: it is authenticated AND checks a
+   password, so a 401 can mean either "wrong password" or "your access token
+   expired". The API tells them apart only by message: the guard and a bare
+   UnauthorizedException send these generic strings, the password check sends a
+   specific one. Only a specific message counts as a credential rejection; the
+   generic ones keep the existing refresh-and-retry and session-expired text. */
+const CREDENTIAL_CHECK_WITH_SESSION = "/auth/2fa/disable";
+const GENERIC_401_MESSAGES = new Set(["", "Unauthorized", "Sign in to continue."]);
+
+function isCredentialRejection(path: string, message: string): boolean {
+  if (AUTH_CREDENTIAL_PATHS.has(path) || ANONYMOUS_CREDENTIAL_PATH.test(path)) return true;
+  return path === CREDENTIAL_CHECK_WITH_SESSION && !GENERIC_401_MESSAGES.has(message.trim());
+}
+
+function messageOf(detail: unknown, fallback: string): string {
+  const d = detail as { message?: string | string[] } | null;
+  if (Array.isArray(d?.message)) return d.message.join(", ");
+  if (typeof d?.message === "string") return d.message;
+  return fallback;
+}
+
+/** True when this 401 is the server rejecting a credential the person typed,
+ *  so a refresh-and-retry cannot help and would only repeat the request. */
+async function isCredentialRejectionResponse(res: Response, path: string): Promise<boolean> {
+  try {
+    return isCredentialRejection(path, messageOf(await res.clone().json(), ""));
+  } catch {
+    return isCredentialRejection(path, "");
+  }
+}
+
 /** Turns a failed response into a message a person can act on.
  *
  * @param path  The API path (without base URL), used to decide whether a 401
@@ -122,7 +159,7 @@ export async function toApiError(res: Response, path: string): Promise<ApiError>
   } catch {
     /* body wasn't JSON — keep the status text */
   }
-  if (res.status === 401 && !AUTH_CREDENTIAL_PATHS.has(path))
+  if (res.status === 401 && !isCredentialRejection(path, message))
     message = "Your session has expired. Sign in again to continue.";
   if (res.status === 403) message = "You don't have permission to do that.";
   if (res.status === 429) message = "Too many requests. Wait a moment and try again.";
@@ -311,7 +348,7 @@ async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOp
   });
 
   // One transparent refresh-and-retry on expiry.
-  if (res.status === 401 && retry && !opts.anonymous && tokens.refresh) {
+  if (res.status === 401 && retry && !opts.anonymous && tokens.refresh && !(await isCredentialRejectionResponse(res, path))) {
     if (await refreshSession()) return rawRequest(path, schema, opts, false);
     tokens.clear();
   }
