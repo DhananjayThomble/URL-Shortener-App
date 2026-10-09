@@ -123,7 +123,9 @@ test.describe.serial("Journey 22 — manage forms from the dashboard (#649)", ()
     const row = page.getByRole("row", { name: new RegExp(TITLE) });
     await expect(row).toBeVisible();
     await expect(row.getByText(`/f/${slug}`)).toBeVisible();
-    await expect(row.getByText("Live", { exact: true })).toBeVisible();
+    // The status chip (a <span>) and the row's status picker both say so.
+    await expect(row.locator("span", { hasText: /^Live$/ })).toBeVisible();
+    await expect(row.getByLabel(`Status of ${TITLE}`)).toHaveValue("live");
 
     const created = (await listForms()).find((f) => f.slug === slug);
     expect(created?.title).toBe(TITLE);
@@ -186,7 +188,7 @@ test.describe.serial("Journey 22 — manage forms from the dashboard (#649)", ()
       row.getByLabel(`Status of ${TITLE_2}`).selectOption("closed"),
     ]);
     expect(res.status()).toBe(200);
-    await expect(row.getByText("Closed", { exact: true })).toBeVisible();
+    await expect(row.locator("span", { hasText: /^Closed$/ })).toBeVisible();
     expect((await listForms()).find((f) => f.slug === slug)?.status).toBe("closed");
 
     const pub = await context.newPage();
