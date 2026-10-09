@@ -96,7 +96,7 @@ test.describe("Journey 21 — dead buttons (#706)", () => {
     await main.getByRole("button", { name: "Edit", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.keyboard.press("Escape");
-    await main.getByRole("button", { name: "Delete", exact: true }).click();
+    await main.getByRole("button", { name: "Delete this link" }).click();
     await expect(main.getByText(/cannot be undone/)).toBeVisible();
     await main.getByRole("button", { name: "Keep it" }).click();
     await expect(main.getByText(/cannot be undone/)).toHaveCount(0);
