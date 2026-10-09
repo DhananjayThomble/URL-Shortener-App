@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Tabs, Td, Th } from "@/components/ui";
+import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Tabs, Td, Th } from "@/components/ui";
 import {
   useApiKeys,
   useCreateApiKey,
@@ -92,7 +92,11 @@ export default function DevelopersPage() {
         sub="Scoped API keys, real-time webhooks, and an MCP server so agents can create links directly."
         actions={
           <>
-            <Button>Read the docs</Button>
+            {/* The API reference the API itself serves (Swagger UI generated from
+                packages/contract, mounted at <API_URL>/docs by apps/api/src/main.ts). */}
+            <ButtonLink href={`${API_URL}/docs`} target="_blank" rel="noopener noreferrer">
+              Read the docs
+            </ButtonLink>
             <Button variant="primary" onClick={() => { setNamingKey((v) => !v); setProblem(null); }}>
               {namingKey ? "Cancel" : "＋ New API key"}
             </Button>
