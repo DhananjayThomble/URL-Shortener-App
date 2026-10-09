@@ -26,8 +26,8 @@ test.describe("Journey 7 — Form", () => {
     const session = await registerUser(makeEmail("j7"));
 
     /* ---- 1. Create a form via the API ---- */
-    // The forms dashboard is read-only (per forms.spec.ts); creating via API
-    // follows the same contract path.
+    // Created via the API on purpose: this journey covers the public-submit
+    // path. Creating through the dashboard UI is j22 (#649).
     const formSlug = `j7form${RUN_ID.replace(/[^a-z0-9]/gi, "")}`.slice(0, 30).toLowerCase();
     const createRes = await fetch(`${API_URL}/forms`, {
       method: "POST",

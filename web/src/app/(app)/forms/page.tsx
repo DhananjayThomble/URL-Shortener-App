@@ -16,7 +16,17 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { useExportResponses, useForm, useFormResponses, useForms } from "@/lib/api/hooks";
+import { FormDrawer } from "@/components/forms/form-drawer";
+import { STATUSES } from "@/components/forms/form-values";
+import type { Form, FormStatus } from "@snapurl/contract";
+import {
+  useDeleteForm,
+  useExportResponses,
+  useForm,
+  useFormResponses,
+  useForms,
+  useUpdateForm,
+} from "@/lib/api/hooks";
 import { formatDate, full } from "@/lib/utils";
 
 const TONE = { live: "good", draft: "warn", closed: "default" } as const;
@@ -24,6 +34,12 @@ const TONE = { live: "good", draft: "warn", closed: "default" } as const;
 export default function FormsPage() {
   const forms = useForms();
   const [openId, setOpenId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const update = useUpdateForm();
+  const remove = useDeleteForm();
 
   if (forms.isError) {
     return (
@@ -34,13 +50,67 @@ export default function FormsPage() {
   }
 
   const items = forms.data ?? [];
+  const editingForm = items.find((f) => f.id === editingId);
+  const confirming = items.find((f) => f.id === confirmingId);
+
+  const setStatus = async (f: Form, status: FormStatus) => {
+    setProblem(null);
+    try {
+      await update.mutateAsync({ id: f.id, status });
+    } catch (err) {
+      setProblem(`Couldn't change ${f.title}: ${(err as Error).message}`);
+    }
+  };
+
+  const destroy = async (f: Form) => {
+    setProblem(null);
+    try {
+      await remove.mutateAsync(f.id);
+      if (openId === f.id) setOpenId(null);
+      setConfirmingId(null);
+    } catch (err) {
+      setProblem(`Couldn't delete ${f.title}: ${(err as Error).message}`);
+    }
+  };
 
   return (
     <>
       <PageHead
         title="Forms"
         sub="Shareable forms with a response table and CSV export. Each one lives at /f/its-address."
+        actions={
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            New form
+          </Button>
+        }
       />
+
+      <FormDrawer open={creating} onClose={() => setCreating(false)} />
+      {editingForm ? <FormDrawer open onClose={() => setEditingId(null)} form={editingForm} /> : null}
+
+      {problem ? (
+        <p role="alert" className="text-[12.5px] text-bad mb-3">
+          {problem}
+        </p>
+      ) : null}
+
+      {confirming ? (
+        <Card className="mb-3.5">
+          <CardBody className="flex flex-wrap items-center gap-3 text-[13px] text-ink-2 leading-[1.6]">
+            <span className="min-w-0 flex-1">
+              <b className="text-ink">Deleting {confirming.title} cannot be undone.</b> /f/{confirming.slug} stops
+              working immediately, and its {full(confirming.responseCount)}{" "}
+              {confirming.responseCount === 1 ? "response goes" : "responses go"} with it.
+            </span>
+            <span className="flex gap-2">
+              <Button onClick={() => setConfirmingId(null)}>Keep it</Button>
+              <Button variant="danger" onClick={() => void destroy(confirming)} disabled={remove.isPending}>
+                {remove.isPending ? "Deleting…" : "Delete for good"}
+              </Button>
+            </span>
+          </CardBody>
+        </Card>
+      ) : null}
 
       {forms.isLoading ? (
         <Skeleton className="h-[220px]" />
@@ -50,6 +120,11 @@ export default function FormsPage() {
             icon="▧"
             title="No forms yet"
             body="A form collects what people type and stores it against this workspace — unlike click analytics, which deliberately store as little as possible."
+            action={
+              <Button variant="primary" onClick={() => setCreating(true)}>
+                Create a form
+              </Button>
+            }
           />
         </Card>
       ) : (
@@ -73,15 +148,41 @@ export default function FormsPage() {
                       <Td className="text-ink font-medium">{f.title}</Td>
                       <Td className="font-mono text-[12px] text-accent">/f/{f.slug}</Td>
                       <Td>
-                        <Chip tone={TONE[f.status]} dot>
-                          {f.status[0]!.toUpperCase() + f.status.slice(1)}
-                        </Chip>
+                        <div className="flex items-center gap-2">
+                          <Chip tone={TONE[f.status]} dot>
+                            {f.status[0]!.toUpperCase() + f.status.slice(1)}
+                          </Chip>
+                          <select
+                            aria-label={`Status of ${f.title}`}
+                            value={f.status}
+                            disabled={update.isPending && update.variables?.id === f.id}
+                            onChange={(e) => void setStatus(f, e.target.value as FormStatus)}
+                            className="tap-target px-[6px] py-[3px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[12px] text-ink-2 focus:outline-none focus:border-accent"
+                          >
+                            {STATUSES.map((s) => (
+                              <option key={s.value} value={s.value}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </Td>
                       <Td className="tnum">{full(f.responseCount)}</Td>
                       <Td className="text-[12px] text-ink-3">{formatDate(f.updatedAt)}</Td>
-                      <Td className="text-right">
+                      <Td className="text-right whitespace-nowrap">
                         <Button size="sm" variant="ghost" onClick={() => setOpenId(openId === f.id ? null : f.id)}>
                           {openId === f.id ? "Hide" : "Responses"}
+                        </Button>
+                        <Button size="sm" variant="ghost" aria-label={`Edit ${f.title}`} onClick={() => setEditingId(f.id)}>
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Delete ${f.title}`}
+                          onClick={() => setConfirmingId(f.id)}
+                        >
+                          Delete
                         </Button>
                       </Td>
                     </tr>
