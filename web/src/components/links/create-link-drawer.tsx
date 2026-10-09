@@ -6,7 +6,8 @@ import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
 import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
 import { tabsWithErrors } from "@/components/links/link-form-values";
-import { useCreateLink, useDomains } from "@/lib/api/hooks";
+import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
+import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ type TabId = LinkFormTabId;
 export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<TabId>("dest");
   const { data: domains } = useDomains();
+  const { data: workspace, isPending: workspacePending } = useWorkspace();
   const create = useCreateLink();
   const drawerRef = useRef<HTMLElement>(null);
 
@@ -154,9 +156,14 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
 
-  // Default the back-half domain to the workspace's own first domain once the
-  // list loads, unless the user has already picked one. Avoids hardcoding a
-  // domain the workspace may not own.
+  // Default the back-half domain once the workspace's domains load, unless the
+  // user has already picked one: the workspace's defaultDomain if it is live,
+  // else the first live domain (defaultDomainFor, #651). Never `domains[0]` — a
+  // custom domain that is still verifying sorts first, and the API refuses
+  // links on it. Avoids hardcoding a domain the workspace may not own.
+  //
+  // Waits for the workspace query to settle (success OR error) so the default
+  // is chosen once, not first-live and then silently swapped.
   //
   // Declared AFTER the reset effect and keyed on `open`, and reads the form's
   // live value rather than the last-rendered `watch` result: the reset above
@@ -165,10 +172,10 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   // #699) the old version saw the stale non-empty `domain`, skipped, and left
   // the select blank, so Create link failed validation on "Destination".
   useEffect(() => {
-    if (!getValues("domain") && domains?.length) {
-      setValue("domain", domains[0].domain);
-    }
-  }, [open, domains, domain, getValues, setValue]);
+    if (workspacePending || getValues("domain")) return;
+    const chosen = defaultDomainFor(domains, workspace?.defaultDomain);
+    if (chosen) setValue("domain", chosen);
+  }, [open, domains, domain, workspace, workspacePending, getValues, setValue]);
 
   // `useMutation` returns a brand-new result object on every render (its
   // `mutate`/`mutateAsync` are wrapped per call, see @tanstack/react-query's
@@ -322,8 +329,8 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
                       className="px-[11px] py-[9px] bg-surface-3 border border-line-2 border-r-0 rounded-l-[var(--radius-sm)] font-mono text-[12.5px] text-ink-2 focus:outline-none"
                     >
                       {(domains ?? []).map((d) => (
-                        <option key={d.id} value={d.domain}>
-                          {d.domain}
+                        <option key={d.id} value={d.domain} disabled={!isUsableForLinks(d)}>
+                          {domainOptionLabel(d)}
                         </option>
                       ))}
                     </select>
