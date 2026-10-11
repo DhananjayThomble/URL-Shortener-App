@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HttpUrl, isDeniedHost } from "./http-url.js";
 import { CreateLinkInput, RoutingRule } from "./link.js";
-import { AddDomainInput, CreateWebhookInput, UpsertBioPageInput } from "./workspace.js";
+import { AddDomainInput, CreateWebhookInput, UpdateDomainInput, UpsertBioPageInput } from "./workspace.js";
 
 /* Issue #280: every URL-bearing field goes through HttpUrl, which rejects
    dangerous schemes and internal hosts before anything can emit them as a
@@ -82,6 +82,53 @@ describe("isDeniedHost", () => {
   });
 });
 
+/* #711 review, Minor-2: WHATWG URL silently strips tab/CR/LF while parsing,
+   so `z.url()` accepted a value whose ORIGINAL string (the one persisted and
+   later emitted as a Location header) still carried them. The redirect then
+   threw ERR_INVALID_CHAR on every hit. No length cap either: a 200 KB value
+   became a 200 KB Location header. */
+describe("HttpUrl — control characters and length", () => {
+  const controls = [
+    ["CR LF (header-splitting shape)", "https://example.org/\r\nSet-Cookie: pwn=1"],
+    ["LF", "https://example.org/a\nb"],
+    ["CR", "https://example.org/a\rb"],
+    ["TAB", "https://example.org/a\tb"],
+    ["NUL", "https://example.org/\u0000"],
+    ["BEL (other C0)", "https://example.org/a\u0007b"],
+    ["unit separator (last C0)", "https://example.org/a\u001fb"],
+    ["DEL", "https://example.org/a\u007fb"],
+    ["leading control", "\u0001https://example.org/"],
+  ] as const;
+  it.each(controls)("rejects %s", (_label, url) => {
+    expect(HttpUrl.safeParse(url).success).toBe(false);
+  });
+
+  it("accepts printable non-ASCII and percent-encoded controls", () => {
+    expect(HttpUrl.safeParse("https://example.org/caf\u00e9").success).toBe(true);
+    expect(HttpUrl.safeParse("https://example.org/a%0D%0Ab").success).toBe(true);
+    expect(HttpUrl.safeParse("https://example.org/a b").success).toBe(true); // space is not C0
+  });
+
+  it("caps length at 2048 characters (2048 ok, 2049 refused)", () => {
+    const base = "https://example.org/";
+    const at = base + "a".repeat(2048 - base.length);
+    expect(at).toHaveLength(2048);
+    expect(HttpUrl.safeParse(at).success).toBe(true);
+    expect(HttpUrl.safeParse(at + "a").success).toBe(false);
+    expect(HttpUrl.safeParse(base + "a".repeat(200_000)).success).toBe(false);
+  });
+
+  it("applies to both domain create and PATCH", () => {
+    const long = "https://example.org/" + "a".repeat(2100);
+    for (const v of [controls[0][1], controls[7][1], long]) {
+      expect(AddDomainInput.safeParse({ domain: "acme.com", rootRedirect: v }).success).toBe(false);
+      expect(AddDomainInput.safeParse({ domain: "acme.com", notFoundRedirect: v }).success).toBe(false);
+      expect(UpdateDomainInput.safeParse({ rootRedirect: v }).success).toBe(false);
+      expect(UpdateDomainInput.safeParse({ notFoundRedirect: v }).success).toBe(false);
+    }
+  });
+});
+
 describe("every contract field routes through HttpUrl", () => {
   const bad = "javascript:alert(1)";
   const metadata = "http://169.254.169.254/latest/meta-data/";
@@ -144,6 +191,19 @@ describe("every contract field routes through HttpUrl", () => {
     expect(AddDomainInput.safeParse({ domain: "acme.com", notFoundRedirect: metadata }).success).toBe(false);
     expect(AddDomainInput.safeParse({ domain: "acme.com", rootRedirect: good }).success).toBe(true);
     expect(AddDomainInput.safeParse({ domain: "acme.com", rootRedirect: null }).success).toBe(true);
+  });
+
+  it("UpdateDomainInput (#648) reuses the same guard and allows null to clear", () => {
+    expect(UpdateDomainInput.safeParse({ rootRedirect: bad }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ notFoundRedirect: metadata }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: "data:text/html,hi" }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: good }).success).toBe(true);
+    expect(UpdateDomainInput.safeParse({ notFoundRedirect: good }).success).toBe(true);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: null, notFoundRedirect: null }).success).toBe(true);
+    // Nothing to change, or something this route may not change.
+    expect(UpdateDomainInput.safeParse({}).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ domain: "acme.com" }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: null, isSystem: true }).success).toBe(false);
   });
 
   it("CreateWebhookInput.endpoint rejects dangerous URLs", () => {

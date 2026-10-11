@@ -1,4 +1,4 @@
-import { sql, type Database } from "@snapurl/database";
+import { DOMAIN_OP, sql, type Database } from "@snapurl/database";
 
 /* ============================================================
    Draining the projection outbox.
@@ -49,8 +49,23 @@ import { sql, type Database } from "@snapurl/database";
 
 /** One claimed outbox row, reduced to what a projection target acts on. */
 export interface ProjectionOp {
+  /** The link id — or, for operation DOMAIN_OP ('domain'), the DOMAIN id
+   *  (see domainProjectionOp in @snapurl/database). */
   linkId: string;
   operation: string;
+  /** Only on a domain op: the host, from the row's payload, so the meta item's
+   *  key can be built even when the domain row is already gone. */
+  host?: string;
+}
+
+/** Map one claimed outbox row to the op a target acts on. */
+export function toProjectionOp(row: { link_id: string; operation: string; payload?: unknown }): ProjectionOp {
+  const op: ProjectionOp = { linkId: row.link_id, operation: row.operation };
+  if (row.operation === DOMAIN_OP) {
+    const host = (row.payload as { host?: unknown } | null | undefined)?.host;
+    if (typeof host === "string") op.host = host;
+  }
+  return op;
 }
 
 /** The per-op outcome of a batched apply(): the batch method must report each
@@ -65,6 +80,9 @@ export interface ProjectionResult {
 export interface ProjectionTarget {
   upsert(linkId: string): Promise<void>;
   remove(linkId: string): Promise<void>;
+  /** A domain op (#711 review, Blocker-1): re-project or drop the domain's
+   *  meta item. Optional — NoProjection has nothing to project. */
+  projectDomain?(domainId: string, host: string | undefined): Promise<void>;
   /* Optional batch entry point. When a target implements it, drainOutbox hands
      it the whole claimed batch so the target can coalesce its writes (e.g. a
      DynamoDB projection batches into <=25-item BatchWrites — a 100-link import
@@ -111,8 +129,8 @@ export async function drainOutbox(
       limit ${batchSize}
       for update skip locked
     )
-    returning id, link_id, operation, attempts
-  `)) as unknown as Array<{ id: string; link_id: string; operation: string; attempts: number }>;
+    returning id, link_id, operation, payload, attempts
+  `)) as unknown as Array<{ id: string; link_id: string; operation: string; payload: unknown; attempts: number }>;
 
   let processed = 0;
   let failed = 0;
@@ -152,7 +170,7 @@ export async function drainOutbox(
        one poisonous row fails alone, exactly as the per-row path does. */
     let results: ProjectionResult[];
     try {
-      results = await target.apply(rows.map((r) => ({ linkId: r.link_id, operation: r.operation })));
+      results = await target.apply(rows.map(toProjectionOp));
     } catch (err) {
       /* apply() itself threw (not a per-op failure): fail every claimed row so
          the whole batch is retried on the next drain. */
@@ -170,8 +188,10 @@ export async function drainOutbox(
 
   for (const row of rows) {
     try {
-      if (row.operation === "delete") await target.remove(row.link_id);
-      else await target.upsert(row.link_id);
+      const op = toProjectionOp(row);
+      if (op.operation === DOMAIN_OP) await target.projectDomain?.(op.linkId, op.host);
+      else if (op.operation === "delete") await target.remove(op.linkId);
+      else await target.upsert(op.linkId);
       await markProcessed(row.id);
     } catch (err) {
       await markFailed(row.id, err);

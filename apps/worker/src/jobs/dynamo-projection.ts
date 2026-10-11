@@ -1,4 +1,6 @@
 import {
+  DOMAIN_OP,
+  domainMetaKey,
   domains,
   eq,
   linkCounters,
@@ -148,6 +150,10 @@ export class DynamoProjection implements ProjectionTarget {
     }
   }
 
+  async projectDomain(domainId: string, host: string | undefined): Promise<void> {
+    await this.flush(await this.buildDomainRequests(domainId, host));
+  }
+
   /* ---- batched path (drainOutbox hands the whole claimed batch here) ----
 
      Each op is resolved to its write requests INDEPENDENTLY and marked
@@ -197,7 +203,10 @@ export class DynamoProjection implements ProjectionTarget {
            path. Upserts take the same per-op read but there is no cheaper bulk
            form for them either (each reads a different link's full row set). */
         let requests: WriteRequest[];
-        if (op.operation === "delete") {
+        if (op.operation === DOMAIN_OP) {
+          // Domain meta only; nothing for the edge KVS (it holds links only).
+          requests = await this.buildDomainRequests(op.linkId, op.host);
+        } else if (op.operation === "delete") {
           requests = await this.buildDeleteRequests(op.linkId);
           if (this.kvs) {
             const targets = edgeTargetsOf(requests);
@@ -376,10 +385,43 @@ export class DynamoProjection implements ProjectionTarget {
     };
   }
 
+  /** A domain op (#711 review, Blocker-1): make the DOMAIN-META item equal to
+   *  the domain row, independent of whether the domain has any links.
+   *
+   *  - the row exists -> put the meta item built from it (a cleared redirect is
+   *    written as null, which the redirect reads as "not set");
+   *  - the row is gone (disconnected) -> delete the meta item, keyed by the host
+   *    the API stored in the op's payload, since the row can no longer say it.
+   *  Without a row AND without a host there is nothing addressable, and the op
+   *  is a no-op (marked processed) rather than retried forever. */
+  private async buildDomainRequests(domainId: string, host: string | undefined): Promise<WriteRequest[]> {
+    const [row] = await this.db
+      .select({
+        id: domains.id,
+        domain: domains.domain,
+        rootRedirect: domains.rootRedirect,
+        notFoundRedirect: domains.notFoundRedirect,
+      })
+      .from(domains)
+      .where(eq(domains.id, domainId))
+      .limit(1);
+    if (row) {
+      const item = toDomainItem(row.domain, {
+        id: row.id,
+        rootRedirect: row.rootRedirect,
+        notFoundRedirect: row.notFoundRedirect,
+      });
+      return [{ PutRequest: { Item: item } }];
+    }
+    if (host) return [{ DeleteRequest: { Key: domainMetaKey(host) } }];
+    return [];
+  }
+
   /** Query the GSI for the LINK item(s) with this link id and build deletes.
    *  Returns [] if nothing is projected (already gone) so the row is marked
    *  processed. The domain-meta item is intentionally left in place: it is
-   *  keyed by domain, shared by every link on it, and harmless when stale. */
+   *  keyed by domain, not by link, and the API enqueues a domain op alongside
+   *  every link delete, which keeps it equal to the domain row. */
   private async buildDeleteRequests(linkId: string): Promise<WriteRequest[]> {
     const result = await this.client.send(
       new QueryCommand({
