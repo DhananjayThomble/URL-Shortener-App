@@ -83,8 +83,28 @@ export type ConversionEvent = z.infer<typeof ConversionEvent>;
 export const CurrencyCode = z.string().length(3).describe("ISO 4217, e.g. INR");
 export type CurrencyCode = z.infer<typeof CurrencyCode>;
 
+/** G7 — conversions recorded in a currency other than the workspace's are not
+ *  summed into revenue and nothing is converted. This is the other half of that
+ *  rule: the report says how many were left out, so the exclusion is never
+ *  silent (#654). Same date window as `totals`. */
+export const ExcludedConversions = z.object({
+  /** All conversions in the window whose currency is not the workspace currency. */
+  count: z.number().int(),
+  /** One entry per excluded currency, largest count first, then by currency code. */
+  byCurrency: z.array(
+    z.object({
+      currency: CurrencyCode,
+      count: z.number().int(),
+      /** Sum of valueMinor in that currency, in its own minor units (4900 = 49.00). */
+      valueMinor: z.number().int(),
+    }),
+  ),
+});
+export type ExcludedConversions = z.infer<typeof ExcludedConversions>;
+
 export const ConversionsReport = z.object({
   currency: CurrencyCode.default("INR"),
+  excluded: ExcludedConversions.default({ count: 0, byCurrency: [] }),
   totals: z.object({
     clicks: z.number(),
     leads: z.number(),

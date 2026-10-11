@@ -44,6 +44,7 @@ export class ConversionsService {
 
     const totals = await this.totalsFor(workspaceId, start, undefined, currency);
     const previous = await this.totalsFor(workspaceId, previousStart, start, currency);
+    const excluded = await this.excludedFor(workspaceId, start, currency);
 
     const events = await this.readDb
       .select({
@@ -77,6 +78,7 @@ export class ConversionsService {
 
     return {
       currency,
+      excluded,
       totals,
       deltas: {
         clicks: percentChange(previous.clicks, totals.clicks),
@@ -188,6 +190,33 @@ export class ConversionsService {
     }
 
     return { id: row?.id ?? null, recorded: Boolean(row) };
+  }
+
+  /* G7's other half (#654). Revenue counts only the workspace currency; this
+     says what that rule left out, over the same window as `totals`, so the
+     exclusion is visible instead of a sale quietly vanishing. Nothing here
+     changes what revenue sums. */
+  private async excludedFor(workspaceId: string, start: Date, currency: string): Promise<ConversionsReport["excluded"]> {
+    // Replica-safe: helper for report(), pure aggregate read.
+    const rows = await this.readDb
+      .select({
+        currency: conversions.currency,
+        count: sql<number>`count(*)::int`,
+        valueMinor: sql<string>`coalesce(sum(${conversions.valueMinor}), 0)::text`,
+      })
+      .from(conversions)
+      .where(
+        and(
+          eq(conversions.workspaceId, workspaceId),
+          gte(conversions.occurredAt, start),
+          sql`${conversions.currency} <> ${currency}`,
+        ),
+      )
+      .groupBy(conversions.currency)
+      .orderBy(desc(sql`count(*)`), conversions.currency);
+
+    const byCurrency = rows.map((r) => ({ currency: r.currency, count: r.count, valueMinor: Number(r.valueMinor) }));
+    return { count: byCurrency.reduce((n, r) => n + r.count, 0), byCurrency };
   }
 
   private async totalsFor(workspaceId: string, start: Date, end: Date | undefined, currency: string) {
