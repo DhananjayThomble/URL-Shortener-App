@@ -7316,6 +7316,549 @@
           }
         }
       ]
+    },
+    {
+      "name": "Credential 401s are not 'session expired' (#646)",
+      "item": [
+        {
+          "name": "Register owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"cr_email\", \"newman-cr401-\" + Date.now().toString(36) + Math.random().toString(16).slice(2, 8) + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"cr_token\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman cred401\",\"email\":\"{{cr_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Current workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"cr_domain\", pm.response.json().defaultDomain);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create a password-protected link",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"cr_slug\", \"cr-\" + Date.now().toString(36) + Math.random().toString(16).slice(2, 6));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"password protected\", () => pm.expect(pm.response.json().passwordProtected).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/links",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"destination\":\"{{destDefault}}\",\"domain\":\"{{cr_domain}}\",\"slug\":\"{{cr_slug}}\",\"password\":\"{{linkPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Protected link: wrong password is 401 \"That password isn't right.\" (anonymous visitor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"message is exactly That password isn't right.\", () => pm.expect(b.message).to.eql(\"That password isn't right.\"));",
+                  "pm.test(\"not the generic guard text (client would show session expired)\", () => pm.expect([\"\", \"Unauthorized\", \"Sign in to continue.\"]).to.not.include(b.message));",
+                  "pm.test(\"never the session-expired text\", () => pm.expect(String(b.message)).to.not.match(/session has expired/i));",
+                  "pm.test(\"sent with no Authorization header (a visitor has no session)\", () => pm.expect(pm.request.headers.has(\"Authorization\")).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/public/links/{{cr_slug}}/unlock",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "links",
+                "{{cr_slug}}",
+                "unlock"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"password\":\"definitely-not-the-password\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Protected link: the right password unlocks (control)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"returns an unlock token\", () => pm.expect(pm.response.json().unlockToken).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/public/links/{{cr_slug}}/unlock",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "public",
+                "links",
+                "{{cr_slug}}",
+                "unlock"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"password\":\"{{linkPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2FA setup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"2xx\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"returns a secret\", () => pm.expect(b.secret).to.be.a(\"string\").and.not.empty);",
+                  "pm.collectionVariables.set(\"cr_totp_secret\", b.secret);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/2fa/setup",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "setup"
+              ]
+            }
+          }
+        },
+        {
+          "name": "2FA enable with a live code",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const secret = pm.collectionVariables.get(\"cr_totp_secret\");",
+                  "const A = \"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567\";",
+                  "let bits = \"\"; for (const ch of secret.replace(/=+$/, \"\").toUpperCase()) bits += A.indexOf(ch).toString(2).padStart(5, \"0\");",
+                  "let keyHex = \"\"; for (let i = 0; i + 8 <= bits.length; i += 8) keyHex += parseInt(bits.slice(i, i + 8), 2).toString(16).padStart(2, \"0\");",
+                  "const step = Math.floor(Date.now() / 1000 / 30);",
+                  "const msgHex = Math.floor(step / 4294967296).toString(16).padStart(8, \"0\") + (step >>> 0).toString(16).padStart(8, \"0\");",
+                  "const mac = CryptoJS.HmacSHA1(CryptoJS.enc.Hex.parse(msgHex), CryptoJS.enc.Hex.parse(keyHex)).toString(CryptoJS.enc.Hex);",
+                  "const off = parseInt(mac.slice(-1), 16);",
+                  "const bin = parseInt(mac.slice(off * 2, off * 2 + 8), 16) & 0x7fffffff;",
+                  "pm.collectionVariables.set(\"cr_totp_code\", String(bin % 1000000).padStart(6, \"0\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"2xx\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "pm.test(\"recovery codes issued\", () => pm.expect(pm.response.json().recoveryCodes).to.be.an(\"array\").that.is.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/2fa/enable",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "enable"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"code\":\"{{cr_totp_code}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2FA disable: wrong password is 401 \"That password isn't right.\" (signed in)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"message is exactly That password isn't right.\", () => pm.expect(b.message).to.eql(\"That password isn't right.\"));",
+                  "pm.test(\"not the generic guard text (client would show session expired)\", () => pm.expect([\"\", \"Unauthorized\", \"Sign in to continue.\"]).to.not.include(b.message));",
+                  "pm.test(\"never the session-expired text\", () => pm.expect(String(b.message)).to.not.match(/session has expired/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/2fa/disable",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "disable"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"password\":\"definitely-not-the-password\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2FA disable: an invalid or expired access token is 401 with the session-expired text (the client must NOT read this as a wrong password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"message is the guard's session text (token.service.ts verifyAccessToken)\", () => pm.expect(pm.response.json().message).to.eql(\"Your session has expired. Sign in again to continue.\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer not.a.valid.jwt"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/2fa/disable",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "disable"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sign in as the 2FA account: password step returns a TOTP challenge",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"is a totp challenge\", () => pm.expect(b.challenge).to.eql(\"totp\"));",
+                  "pm.collectionVariables.set(\"cr_challenge\", b.challengeToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/login",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{cr_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2FA sign-in: wrong code is 401 \"That code isn't right. Try the next one from your app.\"",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"message is exactly That code isn't right. Try the next one from your app.\", () => pm.expect(b.message).to.eql(\"That code isn't right. Try the next one from your app.\"));",
+                  "pm.test(\"not the generic guard text (client would show session expired)\", () => pm.expect([\"\", \"Unauthorized\", \"Sign in to continue.\"]).to.not.include(b.message));",
+                  "pm.test(\"never the session-expired text\", () => pm.expect(String(b.message)).to.not.match(/session has expired/i));",
+                  "pm.test(\"sent with no Authorization header (no session yet)\", () => pm.expect(pm.request.headers.has(\"Authorization\")).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/2fa/verify",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"challengeToken\":\"{{cr_challenge}}\",\"code\":\"000000\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [

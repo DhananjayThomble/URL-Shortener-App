@@ -139,6 +139,27 @@ export type TotpVerifyInput = z.infer<typeof TotpVerifyInput>;
 export const TotpDisableInput = z.object({ password: z.string().min(1) });
 export type TotpDisableInput = z.infer<typeof TotpDisableInput>;
 
+/* The two 401 messages POST /auth/2fa/disable sends when it rejects the CREDENTIAL
+   (AuthService.disableTotp). The route is authenticated, so any other 401 on it —
+   the guard's expired-token or missing-header text — is a session problem and
+   should be refreshed and retried. The client matches these POSITIVELY: if a new
+   credential message is added to disableTotp, add it here and to the list below
+   (#646). */
+export const TOTP_DISABLE_WRONG_PASSWORD_MESSAGE = "That password isn't right.";
+export const TOTP_DISABLE_NO_PASSWORD_MESSAGE =
+  "This account signs in with a provider and has no password, so two-factor authentication can't be turned off this way.";
+
+const TOTP_DISABLE_CREDENTIAL_MESSAGES: ReadonlySet<string> = new Set([
+  TOTP_DISABLE_WRONG_PASSWORD_MESSAGE,
+  TOTP_DISABLE_NO_PASSWORD_MESSAGE,
+]);
+
+/** True when a 401 message from POST /auth/2fa/disable is the server rejecting the
+ *  password (or the account having none), rather than an expired/missing session. */
+export function isTotpDisableCredentialRejection(message: string): boolean {
+  return TOTP_DISABLE_CREDENTIAL_MESSAGES.has(message.trim());
+}
+
 /**
  * Sign in with an ID token obtained from Google or Apple in the browser.
  *

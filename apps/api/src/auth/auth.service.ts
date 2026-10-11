@@ -33,6 +33,7 @@ import type {
   TotpSetup,
   UserWorkspace,
 } from "@snapurl/contract";
+import { TOTP_DISABLE_NO_PASSWORD_MESSAGE, TOTP_DISABLE_WRONG_PASSWORD_MESSAGE } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "./token.service.js";
@@ -409,12 +410,10 @@ export class AuthService {
        situation is safe here: the caller is already authenticated as this
        user, so there is nothing left to enumerate. */
     if (!user.passwordHash) {
-      throw new UnauthorizedException(
-        "This account signs in with a provider and has no password, so two-factor authentication can't be turned off this way.",
-      );
+      throw new UnauthorizedException(TOTP_DISABLE_NO_PASSWORD_MESSAGE);
     }
     if (!(await argon2.verify(user.passwordHash, password).catch(() => false))) {
-      throw new UnauthorizedException("That password isn't right.");
+      throw new UnauthorizedException(TOTP_DISABLE_WRONG_PASSWORD_MESSAGE);
     }
 
     await this.db.transaction(async (tx) => {
