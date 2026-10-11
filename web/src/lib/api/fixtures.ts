@@ -413,6 +413,7 @@ export const DOMAINS: Domain[] = [
     rootRedirect: "https://acme.com",
     notFoundRedirect: "https://acme.com/404",
     dns: null,
+    shared: true,
   },
   {
     id: "dom_go",
@@ -639,7 +640,7 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["GET", "POST"], pattern: /^\/conversions$/ },
   { methods: ["GET", "POST"], pattern: /^\/domains$/ },
   { methods: ["POST"], pattern: /^\/domains\/([^/]+)\/verify$/ },
-  { methods: ["DELETE"], pattern: /^\/domains\/([^/]+)$/ },
+  { methods: ["DELETE", "PATCH"], pattern: /^\/domains\/([^/]+)$/ },
   { methods: ["GET", "POST"], pattern: /^\/members$/ },
   { methods: ["PATCH", "DELETE"], pattern: /^\/members\/([^/]+)$/ },
   { methods: ["GET"], pattern: /^\/audit$/ },
@@ -1017,6 +1018,15 @@ export async function fixtureRequest<T>(
     domain.status = "live";
     domain.ssl = "active";
     domain.sslRenewsAt = daysAgo(-90);
+    data = domain;
+  } else if (m(/^\/domains\/([^/]+)$/) && method === "PATCH") {
+    const domain = domainStore.find((d) => d.id === m(/^\/domains\/([^/]+)$/)![1]);
+    if (!domain) throw new Error(`No fixture domain ${path}`);
+    // Mirrors the API: the shared domain's redirects belong to nobody (#648).
+    if (domain.shared) throw new Error("That's a shared SnapURL domain — its redirects can't be changed.");
+    const body = opts.body as { rootRedirect?: string | null; notFoundRedirect?: string | null };
+    if (body.rootRedirect !== undefined) domain.rootRedirect = body.rootRedirect;
+    if (body.notFoundRedirect !== undefined) domain.notFoundRedirect = body.notFoundRedirect;
     data = domain;
   } else if (m(/^\/domains\/([^/]+)$/) && method === "DELETE") {
     removeById(domainStore, m(/^\/domains\/([^/]+)$/)![1]);
