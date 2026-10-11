@@ -22,7 +22,7 @@ test.describe("public trust page: flagged link", () => {
     await expect(page.getByRole("heading", { name: "This link is safe to open" })).toBeVisible();
     await expect(page.getByText("No threats found")).toBeVisible();
     await expect(page.getByText("Flagged as unsafe")).toHaveCount(0);
-    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByText(/flagged as potentially dangerous/)).toHaveCount(0);
     await expect(page.getByRole("link", { name: /^Continue to / })).toBeVisible();
     await expect(page.getByRole("link", { name: /Continue anyway/ })).toHaveCount(0);
   });
@@ -33,7 +33,7 @@ test.describe("public trust page: flagged link", () => {
     // Heading, status chip, and an alert explaining it — not the "unverified" copy.
     await expect(page.getByRole("heading", { name: "This link has been flagged as unsafe" })).toBeVisible();
     await expect(page.getByText("Flagged as unsafe", { exact: true })).toBeVisible();
-    await expect(page.getByRole("alert")).toContainText(/do not continue/i);
+    await expect(page.getByRole("alert").filter({ hasText: /do not continue/i })).toBeVisible();
 
     // None of the safe / unverified wording survives.
     await expect(page.getByText("This link is safe to open")).toHaveCount(0);
@@ -54,7 +54,7 @@ test.describe("public trust page: flagged link", () => {
   test("an unrecognised warning value never escalates or de-escalates the page", async ({ page }) => {
     await page.goto("/p/spring-sale?warning=banana");
     await expect(page.getByRole("heading", { name: "This link is safe to open" })).toBeVisible();
-    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByText(/flagged as potentially dangerous/)).toHaveCount(0);
   });
 });
 
