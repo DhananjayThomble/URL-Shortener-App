@@ -132,10 +132,23 @@ test.describe("wrong credential is not 'session expired' (#646)", () => {
   test("turning 2FA off: an expired access token is still refreshed and retried (guard against over-matching)", async ({
     page,
   }) => {
+    /* KNOWN DEFECT IN PR #705 (see .qa-runs/646 report): client.ts treats a 401 on
+       /auth/2fa/disable as a wrong password unless its message is one of "", "Unauthorized",
+       "Sign in to continue.". But an expired access token reaches this route with
+       "Your session has expired. Sign in again to continue." (token.service.ts:64), which is
+       not in that list, so the client skips the refresh-and-retry that main performs and the
+       person is bounced to sign in again although their refresh token is valid. This test
+       asserts the correct behaviour, so it is expected to fail until client.ts is fixed;
+       Playwright then reports "expected to fail but passed" and this line must be removed. */
+    test.fail(true, "PR #705: expired access token on /auth/2fa/disable is not refreshed and retried");
+
     const api = await mockApi(page, {
       ...signedInHandlers,
-      // The auth guard's 401 for an expired access token — apps/api/src/auth/auth.guard.ts:100.
-      "POST /auth/2fa/disable": (_req, nth) => (nth === 1 ? nestError(401, "Sign in to continue.") : { status: 204 }),
+      // What the API really sends for an expired access token (the 15-minute JWT):
+      // apps/api/src/auth/token.service.ts:64 via AuthGuard.actorFromJwt. NOT the
+      // bare "Sign in to continue." (auth.guard.ts:100), which is only for a missing header.
+      "POST /auth/2fa/disable": (_req, nth) =>
+        nth === 1 ? nestError(401, "Your session has expired. Sign in again to continue.") : { status: 204 },
       "POST /auth/refresh": {
         status: 200,
         body: { accessToken: fakeAccessToken(MOCK_WORKSPACE.id), refreshToken: "mock.refresh.token.2" },

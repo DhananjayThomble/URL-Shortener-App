@@ -16,7 +16,7 @@ import { defineConfig, devices } from "@playwright/test";
    Same port, budgets and server shape as playwright.config.ts, so the two lanes
    must run one after the other (CI does). */
 
-const PORT = 3000;
+const PORT = Number(process.env.MOCKED_API_PORT ?? 3000);
 const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
