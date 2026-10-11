@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTotpDisableCredentialRejection } from "@snapurl/contract";
 
 /* ============================================================
    The only place this app talks to the network.
@@ -113,16 +114,16 @@ const ANONYMOUS_CREDENTIAL_PATH = /^\/(auth\/2fa\/verify|public\/links\/[^/]+\/u
 
 /* POST /auth/2fa/disable is the odd one out: it is authenticated AND checks a
    password, so a 401 can mean either "wrong password" or "your access token
-   expired". The API tells them apart only by message: the guard and a bare
-   UnauthorizedException send these generic strings, the password check sends a
-   specific one. Only a specific message counts as a credential rejection; the
-   generic ones keep the existing refresh-and-retry and session-expired text. */
+   expired". The API tells them apart only by message. Match the credential
+   rejection POSITIVELY against the messages AuthService.disableTotp sends
+   (shared via @snapurl/contract); every other 401 on this route — the guard's
+   "Your session has expired…", "Sign in to continue.", a bare "Unauthorized" —
+   is a session problem and keeps refresh-and-retry. */
 const CREDENTIAL_CHECK_WITH_SESSION = "/auth/2fa/disable";
-const GENERIC_401_MESSAGES = new Set(["", "Unauthorized", "Sign in to continue."]);
 
-function isCredentialRejection(path: string, message: string): boolean {
+export function isCredentialRejection(path: string, message: string): boolean {
   if (AUTH_CREDENTIAL_PATHS.has(path) || ANONYMOUS_CREDENTIAL_PATH.test(path)) return true;
-  return path === CREDENTIAL_CHECK_WITH_SESSION && !GENERIC_401_MESSAGES.has(message.trim());
+  return path === CREDENTIAL_CHECK_WITH_SESSION && isTotpDisableCredentialRejection(message);
 }
 
 function messageOf(detail: unknown, fallback: string): string {

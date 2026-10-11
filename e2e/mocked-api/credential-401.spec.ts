@@ -132,16 +132,12 @@ test.describe("wrong credential is not 'session expired' (#646)", () => {
   test("turning 2FA off: an expired access token is still refreshed and retried (guard against over-matching)", async ({
     page,
   }) => {
-    /* KNOWN DEFECT IN PR #705 (see .qa-runs/646 report): client.ts treats a 401 on
-       /auth/2fa/disable as a wrong password unless its message is one of "", "Unauthorized",
-       "Sign in to continue.". But an expired access token reaches this route with
-       "Your session has expired. Sign in again to continue." (token.service.ts:64), which is
-       not in that list, so the client skips the refresh-and-retry that main performs and the
-       person is bounced to sign in again although their refresh token is valid. This test
-       asserts the correct behaviour, so it is expected to fail until client.ts is fixed;
-       Playwright then reports "expected to fail but passed" and this line must be removed. */
-    test.fail(true, "PR #705: expired access token on /auth/2fa/disable is not refreshed and retried");
-
+    /* Regression guard for #646 / PR #705: client.ts used to treat any 401 on
+       /auth/2fa/disable whose message was not a generic one as a wrong password, so the
+       real expired-token text ("Your session has expired. Sign in again to continue.",
+       token.service.ts:64) skipped refresh-and-retry and bounced the person to sign in.
+       The credential rejection is now matched positively (isTotpDisableCredentialRejection
+       in @snapurl/contract), so this must refresh once and retry. */
     const api = await mockApi(page, {
       ...signedInHandlers,
       // What the API really sends for an expired access token (the 15-minute JWT):

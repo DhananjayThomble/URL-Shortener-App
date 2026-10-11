@@ -67,10 +67,15 @@ describe("toApiError — credential checks added for #646", () => {
     expect(e.message).toBe("That sign-in attempt timed out. Start again.");
   });
 
-  it("2FA disable: a specific message is kept; a generic one still means session expired", async () => {
+  it("2FA disable: a credential message is kept; every session 401 means session expired", async () => {
     expect((await err("/auth/2fa/disable", "That password isn't right.")).message).toBe("That password isn't right.");
+    const noPassword = "This account signs in with a provider and has no password, so two-factor authentication can't be turned off this way.";
+    expect((await err("/auth/2fa/disable", noPassword)).message).toBe(noPassword);
+    // The real expired-access-token text (token.service.ts) is NOT a credential rejection.
+    expect((await err("/auth/2fa/disable", SESSION_TEXT)).message).toBe(SESSION_TEXT);
     expect((await err("/auth/2fa/disable", "Unauthorized")).message).toBe(SESSION_TEXT);
     expect((await err("/auth/2fa/disable", "Sign in to continue.")).message).toBe(SESSION_TEXT);
+    expect((await err("/auth/2fa/disable", "Some other unknown 401 text")).message).toBe(SESSION_TEXT);
   });
 
   it("the unlock matcher is exact: another route under /public is still session text", async () => {
@@ -91,7 +96,20 @@ describe("request — no refresh-and-retry for a rejected credential (#646)", ()
     expect(window.localStorage.getItem(REFRESH)).toBe("refresh-1");
   });
 
-  it("2FA disable with an expired access token still refreshes and retries", async () => {
+  it("2FA disable with an expired access token (real API message) still refreshes and retries", async () => {
+    let disableCalls = 0;
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/auth/refresh")) return json(200, { accessToken: "n.e.w", refreshToken: "refresh-2" });
+      disableCalls += 1;
+      return disableCalls === 1 ? json(401, { message: SESSION_TEXT }) : new Response(null, { status: 204 });
+    });
+    const { request } = await import("./client");
+    await request("/auth/2fa/disable", z.undefined(), { method: "POST", body: { password: "right" } });
+    expect(calls(spy)).toEqual(["/auth/2fa/disable", "/auth/refresh", "/auth/2fa/disable"]);
+  });
+
+  it("2FA disable with a bare Unauthorized still refreshes and retries", async () => {
     let disableCalls = 0;
     const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
