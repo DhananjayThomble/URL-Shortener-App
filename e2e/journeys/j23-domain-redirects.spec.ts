@@ -17,12 +17,52 @@
  * staging stack + web on :3000.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, seedAccount } from "./helpers";
+
+const run = promisify(execFile);
+const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
+const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
 
 const host = `j23-${RUN_ID}.example.com`;
 const ROOT = `https://example.org/j23-root-${RUN_ID}`;
 const NOT_FOUND = `https://example.org/j23-not-found-${RUN_ID}`;
+/* The built-in short domain, from the stack's own configuration (DEFAULT_DOMAIN
+   is the redirect origin's host on the local stack), not from counting
+   `shared` rows: other suites can leave extra is_system rows behind. */
+const SHARED_HOST = process.env.QA_DEFAULT_DOMAIN ?? new URL(REDIRECT_URL).host;
+
+/** The newest /invite link mailed to `email` (MAIL_TRANSPORT=outbox in the API container). */
+async function inviteLink(email: string): Promise<string> {
+  const sanitized = email.replace(/[^a-z0-9]/gi, "_");
+  for (let i = 0; i < 40; i++) {
+    try {
+      const { stdout } = await run("docker", [
+        "exec", API_CONTAINER, "sh", "-c",
+        `ls /tmp/snapurl-outbox/ 2>/dev/null | grep -F -- '-${sanitized}.txt' | sort -t- -k1,1 -n -r`,
+      ]);
+      for (const name of stdout.split("\n").filter(Boolean)) {
+        const { stdout: body } = await run("docker", ["exec", API_CONTAINER, "cat", `/tmp/snapurl-outbox/${name}`]);
+        const m = body.match(/(https?:\/\/\S+\/invite\?token=[^\s&]+)/);
+        if (m) return m[1]!;
+      }
+    } catch {
+      /* not written yet */
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`no /invite mail for ${email}`);
+}
+
+async function apiJson(token: string, path: string, init: RequestInit = {}) {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) },
+  });
+  return { status: res.status, body: (await res.json().catch(() => null)) as any };
+}
 
 async function redirectFor(request: APIRequestContext, path: string, forHost: string) {
   const res = await request.get(`${REDIRECT_URL}${path}`, {
@@ -38,12 +78,14 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
   let context: BrowserContext;
   let page: Page;
   let token: string;
-  let sharedHost: string;
+  let ownerWorkspaceId: string;
+  const sharedHost = SHARED_HOST;
 
   test.beforeAll(async ({ browser }, testInfo) => {
     const email = makeEmail("j23");
     const session = await registerUser(email);
     token = session.accessToken;
+    ownerWorkspaceId = session.workspaceId;
 
     const add = await fetch(`${API_URL}/domains`, {
       method: "POST",
@@ -55,9 +97,7 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
     const list = (await (await fetch(`${API_URL}/domains`, {
       headers: { authorization: `Bearer ${token}` },
     })).json()) as Array<{ domain: string; shared?: boolean }>;
-    const shared = list.filter((d) => d.shared === true);
-    expect(shared, "exactly one shared domain").toHaveLength(1);
-    sharedHost = shared[0].domain;
+    expect(list.find((d) => d.domain === sharedHost), `DEFAULT_DOMAIN ${sharedHost} is listed`).toMatchObject({ shared: true });
 
     context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 1280, height: 800 } });
     page = await context.newPage();
@@ -143,5 +183,49 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
     expect(patched).toBe(false);
     await editor.getByRole("button", { name: "Cancel" }).click();
     await expect(editor).toHaveCount(0);
+  });
+
+  /* #711 review, Minor-5: the API refuses a redirect change below admin
+     (PATCH is @Roles("admin")), so the control must not be offered either.
+     Oracle: the role gate on PATCH /domains/:id, observed here as a 403. */
+  test("an editor in the workspace sees the domain but no Edit redirects control", async ({ browser }, testInfo) => {
+    const editorEmail = makeEmail("j23-editor");
+    const invitee = await registerUser(editorEmail);
+    // Fixture: accepting an invitation requires a verified email.
+    const { stdout } = await run("docker", [
+      "exec", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-At", "-c",
+      `update users set email_verified_at = now() where lower(email) = lower('${editorEmail.replace(/'/g, "''")}') returning id`,
+    ]);
+    expect(stdout.trim(), "invitee email verified").not.toBe("");
+
+    expect((await apiJson(token, "/members", { method: "POST", body: JSON.stringify({ email: editorEmail, role: "editor" }) })).status).toBe(201);
+    const inviteToken = new URL(await inviteLink(editorEmail)).searchParams.get("token")!;
+    expect((await apiJson(invitee.accessToken, "/auth/invite/accept", { method: "POST", body: JSON.stringify({ token: inviteToken }) })).status).toBe(200);
+
+    // Enter the owner's workspace the way the switcher does: a hinted refresh.
+    const refreshed = await fetch(`${API_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: invitee.refreshToken, workspaceId: ownerWorkspaceId }),
+    });
+    expect(refreshed.status).toBe(200);
+    const session = (await refreshed.json()) as { accessToken: string; refreshToken: string };
+    expect((await apiJson(session.accessToken, "/auth/me")).body.role).toBe("editor");
+    const domainsSeen = (await apiJson(session.accessToken, "/domains")).body as Array<{ id: string; domain: string }>;
+    const own = domainsSeen.find((d) => d.domain === host)!;
+    expect(own, "editor sees the workspace's custom domain").toBeTruthy();
+    expect((await apiJson(session.accessToken, `/domains/${own.id}`, { method: "PATCH", body: JSON.stringify({ rootRedirect: null }) })).status).toBe(403);
+
+    const ctx = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 1280, height: 800 } });
+    try {
+      const p = await ctx.newPage();
+      await seedAccount(p, { ...invitee, accessToken: session.accessToken, refreshToken: session.refreshToken });
+      await p.goto("/domains");
+      await expect(row(p, host)).toBeVisible({ timeout: 15_000 });
+      await expect(row(p, host)).toContainText(NOT_FOUND);
+      await expect(p.getByRole("button", { name: /Edit redirects/ })).toHaveCount(0);
+    } finally {
+      await ctx.close();
+    }
   });
 });

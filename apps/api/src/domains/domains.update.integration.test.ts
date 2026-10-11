@@ -2,7 +2,19 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Reflector } from "@nestjs/core";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { createDatabase, domains, eq, links, projectionOutbox, workspaces, type Database } from "@snapurl/database";
+import {
+  and,
+  auditLog,
+  createDatabase,
+  desc,
+  domains,
+  eq,
+  links,
+  projectionOutbox,
+  sql,
+  workspaces,
+  type Database,
+} from "@snapurl/database";
 import { UpdateDomainInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { REQUIRED_ROLES, REQUIRED_SCOPE, satisfiesRole, type RequestActor } from "../auth/auth.guard.js";
@@ -104,8 +116,16 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
     sharedDomainId = d4!.id;
   });
 
+  /** Outbox rows queued for a domain (a domain op carries the domain id in link_id). */
+  const outboxFor = (domainId: string) =>
+    db.select().from(projectionOutbox).where(eq(projectionOutbox.linkId, domainId)).orderBy(projectionOutbox.id);
+
   afterAll(async () => {
     await db.delete(projectionOutbox).where(eq(projectionOutbox.linkId, ownLinkId));
+    for (const id of [ownDomainId, ownDomainWithLinkId]) {
+      await db.delete(projectionOutbox).where(eq(projectionOutbox.linkId, id));
+    }
+    await db.execute(sql`delete from projection_outbox where payload->>'host' like ${`%-${stamp}.test`}`);
     await db.delete(links).where(eq(links.id, ownLinkId));
     await db.delete(domains).where(eq(domains.id, sharedDomainId));
     await db.delete(workspaces).where(eq(workspaces.id, own));
@@ -208,21 +228,115 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
     expect(satisfiesRole("owner", roles)).toBe(true);
   });
 
-  it("re-projects the domain for LINK_PROJECTION=dynamo: one outbox upsert for a link on it, plus a drain nudge", async () => {
-    const before = await db.select().from(projectionOutbox).where(eq(projectionOutbox.linkId, ownLinkId));
+  it("re-projects the domain for LINK_PROJECTION=dynamo: one domain-scoped outbox op, plus a drain nudge", async () => {
+    const before = await outboxFor(ownDomainWithLinkId);
     await controller.update(
       admin,
       ownDomainWithLinkId,
       pipe.transform({ notFoundRedirect: "https://example.org/missing" }),
     );
-    const after = await db.select().from(projectionOutbox).where(eq(projectionOutbox.linkId, ownLinkId));
+    const after = await outboxFor(ownDomainWithLinkId);
     expect(after.length - before.length).toBe(1);
-    expect(after.at(-1)!.operation).toBe("upsert");
+    expect(after.at(-1)!.operation).toBe("domain");
+    expect(after.at(-1)!.payload).toMatchObject({ domainId: ownDomainWithLinkId, host: `own-links-${stamp}.test` });
     expect(nudge).toHaveBeenCalledTimes(1);
   });
 
-  it("a domain with no links enqueues nothing and does not nudge", async () => {
+  /* #711 review, Blocker-1: the domain-meta item was only ever re-projected
+     piggy-backed on a link upsert, so a domain with NO links (a freshly
+     connected one, or one whose last link was deleted) never had a set /
+     change / clear reach the redirect service under LINK_PROJECTION=dynamo. */
+  it("a domain with no links still enqueues a domain-scoped projection op and nudges", async () => {
+    const before = await outboxFor(ownDomainId);
     await controller.update(admin, ownDomainId, pipe.transform({ rootRedirect: "https://example.org/r" }));
-    expect(nudge).not.toHaveBeenCalled();
+    const after = await outboxFor(ownDomainId);
+    expect(after.length - before.length).toBe(1);
+    expect(after.at(-1)!.operation).toBe("domain");
+    expect(after.at(-1)!.payload).toMatchObject({ domainId: ownDomainId, host: `own-${stamp}.test` });
+    expect(nudge).toHaveBeenCalledTimes(1);
+
+    // Clearing is enqueued the same way: a revocation must reach the edge too.
+    await controller.update(admin, ownDomainId, pipe.transform({ rootRedirect: null }));
+    expect((await outboxFor(ownDomainId)).length - after.length).toBe(1);
+  });
+
+  it("connecting a domain WITH redirects enqueues its domain op; disconnecting enqueues one to drop the meta item", async () => {
+    const host = `own-add-${stamp}.test`;
+    const dto = await service.add(own, { domain: host, rootRedirect: "https://example.org/at-create" });
+    const queued = await outboxFor(dto.id);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.operation).toBe("domain");
+    expect(queued[0]!.payload).toMatchObject({ domainId: dto.id, host });
+
+    await service.remove(own, dto.id);
+    const afterRemove = await outboxFor(dto.id);
+    expect(afterRemove).toHaveLength(2);
+    expect(afterRemove.at(-1)!.payload).toMatchObject({ domainId: dto.id, host });
+  });
+
+  /* #711 review, Minor-3: a redirect back to the domain being edited is a loop. */
+  it.each([
+    ["root to its own root", { rootRedirect: "https://LOOP-HOST/" }],
+    ["404 to its own missing slug", { notFoundRedirect: "https://loop-host/still-missing" }],
+    ["http variant", { rootRedirect: "http://loop-host/x" }],
+    ["trailing-dot host", { rootRedirect: "https://loop-host./" }],
+  ])("refuses a redirect loop: %s (400, nothing stored)", async (_label, raw) => {
+    const host = `own-${stamp}.test`;
+    const body = JSON.parse(JSON.stringify(raw).replaceAll("loop-host", host).replaceAll("LOOP-HOST", host.toUpperCase()));
+    const before = await read(ownDomainId);
+    await expect(controller.update(admin, ownDomainId, pipe.transform(body))).rejects.toBeInstanceOf(BadRequestException);
+    const row = await read(ownDomainId);
+    expect(row.rootRedirect).toBe(before.rootRedirect);
+    expect(row.notFoundRedirect).toBe(before.notFoundRedirect);
+  });
+
+  it("a redirect to a DIFFERENT subdomain of the same parent is not a loop", async () => {
+    const dto = await controller.update(
+      admin,
+      ownDomainId,
+      pipe.transform({ rootRedirect: `https://www.own-${stamp}.test/` }),
+    );
+    expect(dto.rootRedirect).toBe(`https://www.own-${stamp}.test/`);
+  });
+
+  it("refuses a self-loop at create time too", async () => {
+    const host = `own-loop-add-${stamp}.test`;
+    await expect(service.add(own, { domain: host, notFoundRedirect: `https://${host}/x` })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  /* #711 review, Minor-6: the audit entry must let a redirect change be
+     reconstructed, i.e. carry the old and new values of what changed. */
+  it("the domain.updated audit entry records before/after values of the changed fields only", async () => {
+    await controller.update(
+      admin,
+      ownDomainId,
+      pipe.transform({ rootRedirect: "https://example.org/audit-before", notFoundRedirect: "https://example.org/nf-keep" }),
+    );
+    await controller.update(admin, ownDomainId, pipe.transform({ rootRedirect: "https://example.org/audit-after" }));
+    const [entry] = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.targetId, ownDomainId), eq(auditLog.action, "domain.updated")))
+      .orderBy(desc(auditLog.id))
+      .limit(1);
+    expect(entry!.metadata).toMatchObject({
+      domain: `own-${stamp}.test`,
+      fields: ["rootRedirect"],
+      changes: { rootRedirect: { from: "https://example.org/audit-before", to: "https://example.org/audit-after" } },
+    });
+    expect((entry!.metadata as { changes: Record<string, unknown> }).changes).not.toHaveProperty("notFoundRedirect");
+
+    await controller.update(admin, ownDomainId, pipe.transform({ notFoundRedirect: null }));
+    const [cleared] = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.targetId, ownDomainId), eq(auditLog.action, "domain.updated")))
+      .orderBy(desc(auditLog.id))
+      .limit(1);
+    expect(cleared!.metadata).toMatchObject({
+      changes: { notFoundRedirect: { from: "https://example.org/nf-keep", to: null } },
+    });
   });
 });
