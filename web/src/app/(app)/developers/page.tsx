@@ -13,57 +13,9 @@ import {
 } from "@/lib/api/hooks";
 import { API_SCOPES, WEBHOOK_EVENTS } from "@snapurl/contract";
 import { API_URL } from "@/lib/api/client";
+import { snippets } from "@/lib/api-samples";
 
-const SNIPPETS = {
-  curl: `curl -X POST ${API_URL}/links \\
-  -H "Authorization: Bearer $SNAP_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "destination": "https://acme.com/spring",
-    "domain": "snap.to",
-    "slug": "spring-sale",
-    "tags": ["campaign/spring"],
-    "expiresAt": "2026-09-30T00:00:00Z",
-    "rules": [
-      { "when": {"country": "IN"},
-        "then": "https://acme.in/spring" }
-    ]
-  }'`,
-  ts: `import { SnapURL } from "@snapurl/sdk";
-
-const snap = new SnapURL({ key: process.env.SNAP_KEY });
-
-const link = await snap.links.create({
-  destination: "https://acme.com/spring",
-  domain: "snap.to",
-  slug: "spring-sale",
-  tags: ["campaign/spring"],
-  expiresAt: "2026-09-30T00:00:00Z",
-  rules: [
-    { when: { country: "IN" },
-      then: "https://acme.in/spring" },
-  ],
-});
-
-console.log(link.shortUrl);`,
-  python: `from snapurl import SnapURL
-
-snap = SnapURL(key=os.environ["SNAP_KEY"])
-
-link = snap.links.create(
-    destination="https://acme.com/spring",
-    domain="snap.to",
-    slug="spring-sale",
-    tags=["campaign/spring"],
-    expires_at="2026-09-30T00:00:00Z",
-    rules=[
-        {"when": {"country": "IN"},
-         "then": "https://acme.in/spring"},
-    ],
-)
-
-print(link.short_url)`,
-} as const;
+const SNIPPETS = snippets(API_URL);
 
 export default function DevelopersPage() {
   const { data: keys, isLoading } = useApiKeys();
