@@ -14,6 +14,8 @@
     "playwright.config.ts",
     "playwright.real.config.ts",
     "playwright.journeys.config.ts",
+    "playwright.mocked-api.config.ts",
+    "mocked-api/**/*.ts",
     "tests/**/*.ts",
     "support/**/*.ts",
     "journeys/**/*.ts",
