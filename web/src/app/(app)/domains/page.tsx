@@ -3,10 +3,10 @@
 import { useRef, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
-import { useAddDomain, useDeleteDomain, useDomains, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
+import { useAddDomain, useDeleteDomain, useDomains, useMe, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
 import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { formatDate, full } from "@/lib/utils";
-import { parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
+import { canEditDomainRedirects, parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
 
 /**
  * Edit a domain's root and 404 redirects (#648).
@@ -97,7 +97,9 @@ export default function DomainsPage() {
   const addDomain = useAddDomain();
   const verifyDomain = useVerifyDomain();
   const deleteDomain = useDeleteDomain();
-
+  const { data: me } = useMe();
+  // The API refuses a redirect change below admin; don't offer it (#711 review).
+  const canEditRedirects = canEditDomainRedirects(me?.role);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -107,7 +109,7 @@ export default function DomainsPage() {
 
   const domains = data ?? [];
   const pending = domains.find((d) => d.status === "verifying");
-  const editingDomain = domains.find((d) => d.id === editing && !d.shared);
+  const editingDomain = domains.find((d) => d.id === editing && !d.shared && canEditRedirects);
 
   function closeEditor() {
     const id = editing;
@@ -246,7 +248,7 @@ export default function DomainsPage() {
                       {d.notFoundRedirect ?? <span className="text-ink-3">— not set</span>}
                     </Td>
                     <Td className="text-right whitespace-nowrap">
-                      {!d.shared ? (
+                      {!d.shared && canEditRedirects ? (
                         <Button
                           size="sm"
                           variant="ghost"

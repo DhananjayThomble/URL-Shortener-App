@@ -1,4 +1,12 @@
-import { UpdateDomainInput } from "@snapurl/contract";
+import { UpdateDomainInput, type MemberRole } from "@snapurl/contract";
+
+/** Whether the caller's role may change a domain's redirects. Mirrors the
+ *  API gate on PATCH /domains/:id (@Roles("admin") = admin or owner); the API
+ *  stays authoritative, this only stops offering a control that would 403
+ *  (#711 review, Minor-5). Unknown role (still loading) = not offered. */
+export function canEditDomainRedirects(role: MemberRole | undefined): boolean {
+  return role === "owner" || role === "admin";
+}
 
 /* The /domains redirect editor's draft -> PATCH body step (#648).
 

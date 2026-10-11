@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRedirectDraft } from "./domain-redirects";
+import { canEditDomainRedirects, parseRedirectDraft } from "./domain-redirects";
 
 /* Oracle: packages/contract UpdateDomainInput (HttpUrl for both fields, null
    clears) — #648. */
@@ -38,4 +38,19 @@ describe("parseRedirectDraft", () => {
       expect(parseRedirectDraft(bad, "").ok).toBe(false);
     },
   );
+});
+
+/* Oracle: PATCH /domains/:id is @Roles("admin"), i.e. admin or owner (the
+   API's satisfiesRole), and the /team permission matrix ("Manage domains":
+   admin + owner). #711 review, Minor-5. */
+describe("canEditDomainRedirects", () => {
+  it.each([
+    ["owner", true],
+    ["admin", true],
+    ["editor", false],
+    ["viewer", false],
+    [undefined, false],
+  ] as const)("%s -> %s", (role, expected) => {
+    expect(canEditDomainRedirects(role)).toBe(expected);
+  });
 });

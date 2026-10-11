@@ -1,12 +1,38 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
-import { and, desc, domains, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
+import { and, domainProjectionOp, domains, eq, links, normaliseHost, projectionOutbox, sql, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain, UpdateDomainInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
+
+/**
+ * Refuse a root / 404 redirect that points back at the domain it is set on
+ * (#711 review, Minor-3). The redirect service would answer it with a 302 to
+ * itself and the browser would loop until its redirect cap. Compared on the
+ * hostname alone, case-insensitively and ignoring a trailing dot, so http vs
+ * https or a different path is still the same loop. Another subdomain of the
+ * same parent is a different host and is allowed.
+ */
+function assertNotSelfRedirect(domain: string, values: Array<string | null | undefined>): void {
+  const self = normaliseHost(domain).replace(/\.$/, "");
+  for (const value of values) {
+    if (!value) continue;
+    let host: string;
+    try {
+      host = new URL(value).hostname.toLowerCase().replace(/\.$/, "");
+    } catch {
+      continue; // the contract already refused anything unparseable
+    }
+    if (host === self) {
+      throw new BadRequestException(
+        `A redirect on ${domain} can't point back at ${domain} — visitors would loop. Use a different domain.`,
+      );
+    }
+  }
+}
 
 @Injectable()
 export class DomainsService {
@@ -55,21 +81,31 @@ export class DomainsService {
 
     // Same DNS-resolving SSRF step update() applies; see there.
     await assertNoSsrfDnsTarget([input.rootRedirect, input.notFoundRedirect]);
+    assertNotSelfRedirect(domain, [input.rootRedirect, input.notFoundRedirect]);
 
-    const [row] = await this.db
-      .insert(domains)
-      .values({
-        workspaceId,
-        domain,
-        status: "verifying",
-        ssl: "pending",
-        verificationToken: `snapurl-verify-${randomBytes(16).toString("hex")}`,
-        rootRedirect: input.rootRedirect ?? null,
-        notFoundRedirect: input.notFoundRedirect ?? null,
-      })
-      .returning();
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(domains)
+        .values({
+          workspaceId,
+          domain,
+          status: "verifying",
+          ssl: "pending",
+          verificationToken: `snapurl-verify-${randomBytes(16).toString("hex")}`,
+          rootRedirect: input.rootRedirect ?? null,
+          notFoundRedirect: input.notFoundRedirect ?? null,
+        })
+        .returning();
+      // A redirect set at connect time must reach the dynamo projection too
+      // (see update()); a domain without one has no meta item to write.
+      if (inserted!.rootRedirect || inserted!.notFoundRedirect) {
+        await tx.insert(projectionOutbox).values(domainProjectionOp(inserted!.id, inserted!.domain));
+      }
+      return inserted!;
+    });
+    if (row.rootRedirect || row.notFoundRedirect) this.projectionNudge.nudge();
 
-    return this.toDto(row!, 0);
+    return this.toDto(row, 0);
   }
 
   /**
@@ -165,6 +201,7 @@ export class DomainsService {
        so they get the same DNS-resolving half of the SSRF guard that
        LinksService applies after the contract's literal-host check. */
     await assertNoSsrfDnsTarget([input.rootRedirect, input.notFoundRedirect]);
+    assertNotSelfRedirect(row.domain, [input.rootRedirect, input.notFoundRedirect]);
 
     const patch: Partial<typeof domains.$inferInsert> = { updatedAt: new Date() };
     if (input.rootRedirect !== undefined) patch.rootRedirect = input.rootRedirect;
@@ -188,27 +225,25 @@ export class DomainsService {
          passes it straight through — so the new values apply on the very next
          request with nothing to invalidate.
 
-         LINK_PROJECTION=dynamo: the redirect reads a per-domain meta item that
-         the worker rewrites alongside every link upsert for that domain, and
-         nothing else rewrites it. Enqueue ONE link upsert on this domain through
-         the existing outbox (same transaction as the change, then the drain
-         nudge) so the meta item is re-projected from the row just written. A
-         domain with no links has no projected meta item and no link to carry
-         one; that pre-existing gap is documented in the PR. */
-      const [carrier] = await tx
-        .select({ id: links.id })
-        .from(links)
-        .where(eq(links.domainId, id))
-        .orderBy(desc(links.createdAt))
-        .limit(1);
-      if (carrier) {
-        await tx
-          .insert(projectionOutbox)
-          .values({ linkId: carrier.id, operation: "upsert", payload: { linkId: carrier.id, operation: "upsert" } });
-      }
-      return { row: u, enqueued: Boolean(carrier) };
+         LINK_PROJECTION=dynamo: the redirect reads a per-domain meta item. Enqueue
+         a DOMAIN op (same transaction as the change, then the drain nudge) and
+         the worker re-projects the meta item from this row. It is keyed on the
+         domain, not on a link, so it works for a domain with no links — the
+         case the earlier carrier-link approach missed, which also made a CLEAR
+         unrevocable at the edge (#711 review, Blocker-1). */
+      await tx.insert(projectionOutbox).values(domainProjectionOp(u.id, u.domain));
+      return u;
     });
-    if (updated.enqueued) this.projectionNudge.nudge();
+    this.projectionNudge.nudge();
+
+    /* Before/after values, not just field names, so a redirect change can be
+       reconstructed from the audit log alone (#711 review, Minor-6). Only
+       fields the request named appear, each as {from, to}. */
+    const changes: Record<string, { from: string | null; to: string | null }> = {};
+    if (input.rootRedirect !== undefined) changes.rootRedirect = { from: row.rootRedirect, to: updated.rootRedirect };
+    if (input.notFoundRedirect !== undefined) {
+      changes.notFoundRedirect = { from: row.notFoundRedirect, to: updated.notFoundRedirect };
+    }
 
     await recordActivity(this.db, this.logger, {
       workspaceId,
@@ -218,7 +253,8 @@ export class DomainsService {
       targetId: id,
       metadata: {
         domain: row.domain,
-        fields: Object.keys(patch).filter((k) => k !== "updatedAt"),
+        fields: Object.keys(changes),
+        changes,
       },
     });
 
@@ -226,7 +262,7 @@ export class DomainsService {
       .select({ n: sql<number>`count(*)::int` })
       .from(links)
       .where(and(eq(links.domainId, id), eq(links.workspaceId, workspaceId)));
-    return this.toDto(updated.row, count?.n ?? 0);
+    return this.toDto(updated, count?.n ?? 0);
   }
 
   async remove(workspaceId: string, id: string): Promise<void> {
@@ -253,11 +289,20 @@ export class DomainsService {
       );
     }
 
-    const result = await this.db
-      .delete(domains)
-      .where(and(eq(domains.id, id), eq(domains.workspaceId, workspaceId)))
-      .returning({ id: domains.id });
-    if (result.length === 0) throw new NotFoundException("That domain isn't connected to this workspace.");
+    const removed = await this.db.transaction(async (tx) => {
+      const result = await tx
+        .delete(domains)
+        .where(and(eq(domains.id, id), eq(domains.workspaceId, workspaceId)))
+        .returning({ id: domains.id, domain: domains.domain });
+      if (result.length === 0) throw new NotFoundException("That domain isn't connected to this workspace.");
+      /* Drop the dynamo DOMAIN-META item with the domain: left behind, the
+         redirect service would keep answering this host's root and missing
+         slugs with the old redirects after it was disconnected. The worker
+         sees the row gone and deletes the item by payload.host. */
+      await tx.insert(projectionOutbox).values(domainProjectionOp(result[0]!.id, result[0]!.domain));
+      return result[0]!;
+    });
+    if (removed) this.projectionNudge.nudge();
   }
 
   private toDto(row: typeof domains.$inferSelect, linkCount: number): Domain {
