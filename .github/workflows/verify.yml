@@ -850,12 +850,21 @@ jobs:
       - name: Run E2E
         run: pnpm --filter snapurl-e2e test:e2e
 
+      # Behaviour that lives in the real API client (web/src/lib/api/client.ts) is
+      # invisible in fixtures mode, which answers every call in-process. This lane
+      # builds the app with fixtures OFF and answers /api/v1 in the browser (#646).
+      # No API or database; it reuses port 3000 after the step above has released it.
+      - name: Run E2E (real API client, mocked responses)
+        run: pnpm --filter snapurl-e2e test:e2e:mocked-api
+
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report
-          path: e2e/playwright-report/
+          path: |
+            e2e/playwright-report/
+            e2e/playwright-report-mocked-api/
           retention-days: 7
           if-no-files-found: ignore
 
