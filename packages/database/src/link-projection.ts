@@ -45,6 +45,49 @@ import type { RoutingRule } from "@snapurl/contract";
 /** Fixed sort key for the per-domain meta item (root / not-found redirect). */
 export const DOMAIN_META_SK = "d#meta";
 
+/* ============================================================
+   The domain-scoped outbox op (#648, #711 review Blocker-1).
+
+   The DOMAIN-META item used to be (re)written only alongside a LINK
+   upsert on that domain. A domain with no links — a freshly connected
+   one, or one whose last link was deleted — therefore never had a
+   root / 404 redirect set, changed or CLEARED reach the redirect
+   service under LINK_PROJECTION=dynamo, while the API reported
+   success. So the API now enqueues an op about the DOMAIN itself
+   whenever its redirects, or its existence, change.
+
+   Encoding, chosen to need no migration: projection_outbox.link_id
+   is a plain NOT NULL uuid with no foreign key, so a domain op stores
+   the DOMAIN id there with operation = DOMAIN_OP. uuidv7 ids are
+   globally unique, so it can never be mistaken for a link id. The
+   payload carries the host as well, because a domain op for a domain
+   that has since been deleted must still be able to build the meta
+   item's key (exactly the delete-key gap links have, see below).
+
+   Applied by the worker: the domain row exists -> put the meta item
+   from it; it is gone -> delete the meta item for payload.host.
+   ============================================================ */
+
+/** projection_outbox.operation for a domain-scoped op. */
+export const DOMAIN_OP = "domain";
+
+/** The payload stored on a domain op's outbox row. */
+export interface DomainOpPayload {
+  domainId: string;
+  host: string;
+  operation: typeof DOMAIN_OP;
+}
+
+/** The projection_outbox insert values for a domain op. One definition, so
+ *  the API's writer and the worker's reader cannot disagree on the shape. */
+export function domainProjectionOp(
+  domainId: string,
+  host: string,
+): { linkId: string; operation: typeof DOMAIN_OP; payload: DomainOpPayload } {
+  const payload: DomainOpPayload = { domainId, host: normaliseHost(host), operation: DOMAIN_OP };
+  return { linkId: domainId, operation: DOMAIN_OP, payload };
+}
+
 /** The attribute the delete GSI is keyed on. Present on every LINK item. */
 export const LINK_ID_ATTR = "linkId";
 

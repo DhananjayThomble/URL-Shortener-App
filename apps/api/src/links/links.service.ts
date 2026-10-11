@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { and, asc, clickDaily, desc, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
+import { and, asc, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
 import { CreateLinkInput as CreateLinkInputSchema } from "@snapurl/contract";
 import type {
   BulkCreateLinksInput,
@@ -821,7 +821,7 @@ export class LinksService {
     // cache-bust key mean anything afterwards — once the row is gone there is
     // nothing left to join against for the domain string.
     const [row] = await this.db
-      .select({ id: links.id, slug: links.slug, domain: domains.domain })
+      .select({ id: links.id, slug: links.slug, domain: domains.domain, domainId: domains.id })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
       .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
@@ -844,6 +844,11 @@ export class LinksService {
       `);
       await this.enqueueProjection(tx, id, "delete");
       await tx.delete(links).where(eq(links.id, id));
+      /* Refresh the domain's dynamo meta item from its row as the link leaves
+         (#711 review, Blocker-1). It used to be written only alongside link
+         upserts, so a domain's LAST link was the only thing keeping it current;
+         a domain op keeps it equal to the row with or without links. */
+      await tx.insert(projectionOutbox).values(domainProjectionOp(row.domainId, row.domain));
     });
 
     // #470: bust the redirect's hot-cache entry for exactly this (host, slug)

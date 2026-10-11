@@ -3178,6 +3178,131 @@
           }
         },
         {
+          "name": "Owner connects a custom domain (for the #648 role check)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"inv_owner_domain_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"domain\":\"inv648-{{invRun}}.example.com\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer cannot PATCH a domain's redirects (role enforced, #648)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_joined_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{inv_owner_domain_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{inv_owner_domain_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"https://example.org/viewer-attempt\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer's PATCH changed nothing (owner reads it back)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().find((x) => x.id === pm.collectionVariables.get(\"inv_owner_domain_id\"));",
+                  "pm.test(\"rootRedirect still null\", () => pm.expect(d.rootRedirect).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            }
+          }
+        },
+        {
           "name": "Viewer can read the workspace's members",
           "event": [
             {
@@ -5811,6 +5936,1381 @@
                 "public",
                 "forms",
                 "{{fm_slug}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Domain redirects (#648)",
+      "item": [
+        {
+          "name": "Register owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const s = Date.now().toString(36) + Math.random().toString(16).slice(2, 8);",
+                  "pm.collectionVariables.set(\"dr_email\", \"newman-dr-\" + s + \"@example.com\");",
+                  "pm.collectionVariables.set(\"dr_email2\", \"newman-dr2-\" + s + \"@example.com\");",
+                  "pm.collectionVariables.set(\"dr_host\", \"dr648-\" + s + \".example.com\");",
+                  "pm.collectionVariables.set(\"dr_host2\", \"dr648-other-\" + s + \".example.com\");",
+                  "pm.collectionVariables.set(\"dr_root\", \"https://example.org/dr648-root-\" + s);",
+                  "pm.collectionVariables.set(\"dr_root2\", \"https://example.org/dr648-root-changed-\" + s);",
+                  "pm.collectionVariables.set(\"dr_nf\", \"https://example.org/dr648-not-found-\" + s);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"dr_token\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman domains\",\"email\":\"{{dr_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register outsider (other workspace)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"dr_token2\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman domains outsider\",\"email\":\"{{dr_email2}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List: exactly one shared domain, flagged shared=true",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const shared = pm.response.json().filter((d) => d.shared === true);",
+                  "pm.test(\"one shared domain\", () => pm.expect(shared.length).to.eql(1));",
+                  "pm.collectionVariables.set(\"dr_shared_id\", shared[0].id);",
+                  "pm.collectionVariables.set(\"dr_shared_host\", shared[0].domain);",
+                  "pm.collectionVariables.set(\"dr_shared_root_before\", String(shared[0].rootRedirect));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Owner adds a custom domain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"not shared, nothing set\", () => { pm.expect(b.shared).to.eql(false); pm.expect(b.rootRedirect).to.eql(null); pm.expect(b.notFoundRedirect).to.eql(null); });",
+                  "pm.collectionVariables.set(\"dr_id\", b.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"domain\":\"{{dr_host}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Outsider adds its own custom domain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"dr_other_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"domain\":\"{{dr_host2}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect before PATCH: root is 404 (nothing set)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404 Nothing here\", () => { pm.response.to.have.status(404); pm.expect(pm.response.headers.get(\"Location\")).to.eql(undefined); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH sets both redirects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"both stored\", () => { pm.expect(b.rootRedirect).to.eql(pm.collectionVariables.get(\"dr_root\")); pm.expect(b.notFoundRedirect).to.eql(pm.collectionVariables.get(\"dr_nf\")); pm.expect(b.shared).to.eql(false); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"{{dr_root}}\",\"notFoundRedirect\":\"{{dr_nf}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /domains reflects the PATCH",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().find((x) => x.id === pm.collectionVariables.get(\"dr_id\"));",
+                  "pm.test(\"persisted\", () => { pm.expect(d.rootRedirect).to.eql(pm.collectionVariables.get(\"dr_root\")); pm.expect(d.notFoundRedirect).to.eql(pm.collectionVariables.get(\"dr_nf\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Redirect: root follows the new rootRedirect immediately (no settle wait, no restart)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"302 to rootRedirect\", () => { pm.response.to.have.status(302); pm.expect(pm.response.headers.get(\"Location\")).to.eql(pm.collectionVariables.get(\"dr_root\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Redirect: a missing slug follows notFoundRedirect",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"302 to notFoundRedirect\", () => { pm.response.to.have.status(302); pm.expect(pm.response.headers.get(\"Location\")).to.eql(pm.collectionVariables.get(\"dr_nf\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/dr648-no-such-slug",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                "dr648-no-such-slug"
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH changes only rootRedirect",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"root changed, 404 kept\", () => { pm.expect(b.rootRedirect).to.eql(pm.collectionVariables.get(\"dr_root2\")); pm.expect(b.notFoundRedirect).to.eql(pm.collectionVariables.get(\"dr_nf\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"{{dr_root2}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect: root follows the CHANGED value immediately",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"302 to new root\", () => { pm.response.to.have.status(302); pm.expect(pm.response.headers.get(\"Location\")).to.eql(pm.collectionVariables.get(\"dr_root2\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH rootRedirect null clears it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"root cleared, 404 kept\", () => { pm.expect(b.rootRedirect).to.eql(null); pm.expect(b.notFoundRedirect).to.eql(pm.collectionVariables.get(\"dr_nf\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":null}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Redirect: cleared root is a 404 again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404\", () => { pm.response.to.have.status(404); pm.expect(pm.response.headers.get(\"Location\")).to.eql(undefined); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "PATCH rejects javascript: (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"javascript:alert(1)\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects data: (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"notFoundRedirect\":\"data:text/html;base64,PHNjcmlwdD4=\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects metadata address (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"http://169.254.169.254/latest/meta-data/\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects localhost (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"notFoundRedirect\":\"http://localhost:3001/\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects relative path (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"/elsewhere\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects empty body (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH rejects unknown key isSystem (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":null,\"isSystem\":false}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Rejected PATCHes changed nothing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().find((x) => x.id === pm.collectionVariables.get(\"dr_id\"));",
+                  "pm.test(\"unchanged\", () => { pm.expect(d.rootRedirect).to.eql(null); pm.expect(d.notFoundRedirect).to.eql(pm.collectionVariables.get(\"dr_nf\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH on the SHARED domain is refused (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"explains it is shared\", () => pm.expect(JSON.stringify(pm.response.json())).to.match(/shared/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_shared_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_shared_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"https://example.org/dr648-hijack\",\"notFoundRedirect\":\"https://example.org/dr648-hijack-404\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shared domain still has its original redirects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().find((x) => x.shared === true);",
+                  "pm.test(\"unchanged for another workspace\", () => pm.expect(String(d.rootRedirect)).to.eql(pm.collectionVariables.get(\"dr_shared_root_before\")));",
+                  "pm.test(\"not hijacked\", () => { pm.expect(String(d.rootRedirect)).to.not.include(\"dr648-hijack\"); pm.expect(String(d.notFoundRedirect)).to.not.include(\"dr648-hijack\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Redirect: shared domain root is not redirected to the hijack URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"no hijack Location\", () => pm.expect(String(pm.response.headers.get(\"Location\"))).to.not.include(\"dr648-hijack\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_shared_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Redirect: shared domain missing slug is not redirected to the hijack URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"no hijack Location\", () => pm.expect(String(pm.response.headers.get(\"Location\"))).to.not.include(\"dr648-hijack\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-Host",
+                "value": "{{dr_shared_host}}"
+              }
+            ],
+            "url": {
+              "raw": "{{redirectUrl}}/dr648-no-such-slug",
+              "host": [
+                "{{redirectUrl}}"
+              ],
+              "path": [
+                "dr648-no-such-slug"
+              ]
+            }
+          },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Outsider cannot PATCH the owner's domain (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"https://example.org/dr648-cross-tenant\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Owner cannot PATCH the outsider's domain (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_other_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_other_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":\"https://example.org/dr648-cross-tenant\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cross-tenant attempts changed nothing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().find((x) => x.id === pm.collectionVariables.get(\"dr_other_id\"));",
+                  "pm.test(\"outsider domain untouched\", () => pm.expect(d.rootRedirect).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains"
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH without a token is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":null}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH an unknown domain id is 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/00000000-0000-7000-8000-000000000000",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "00000000-0000-7000-8000-000000000000"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"rootRedirect\":null}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cleanup: owner disconnects the domain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cleanup: outsider disconnects its domain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{dr_token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/domains/{{dr_other_id}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "domains",
+                "{{dr_other_id}}"
               ]
             }
           }

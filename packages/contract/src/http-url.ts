@@ -121,9 +121,26 @@ export const isDeniedHost = (host: string): boolean => {
  * body, for the two fields a click can reach: `destination` and
  * `social.image`. It reuses `isDeniedIpv4`/`isDeniedIpv6` below, exported for
  * that reason.
+ *
+ * Two string-level rules on top of the parse (#711 review, Minor-2):
+ *   - no C0 control character (U+0000–U+001F) and no DEL (U+007F). WHATWG
+ *     `URL` silently strips tab/CR/LF while parsing, so the parse succeeds,
+ *     but the ORIGINAL string is what gets stored and later emitted as a
+ *     Location header — where Node refuses it and the redirect 500s. A real
+ *     URL carries these percent-encoded (`%0A`), which stays allowed.
+ *   - at most {@link HTTP_URL_MAX_LENGTH} characters: the de-facto ceiling
+ *     browsers, CDNs and load balancers agree on for a URL, and far below the
+ *     header limits a longer Location header trips.
  */
+export const HTTP_URL_MAX_LENGTH = 2048;
+
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
 export const HttpUrl = z
   .url({ protocol: /^https?$/, error: "Enter an absolute http(s) URL" })
+  .max(HTTP_URL_MAX_LENGTH, { error: `Keep it under ${HTTP_URL_MAX_LENGTH} characters` })
+  .refine((value) => !CONTROL_CHARS.test(value), { error: "That URL contains a control character" })
   .refine(
     (value) => {
       let host: string;
