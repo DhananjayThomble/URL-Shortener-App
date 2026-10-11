@@ -8,7 +8,9 @@ import { formatDate } from "@/lib/utils";
 
 /* Operator-side abuse-report queue — #291 (FEAT-003). Lists reports filed
    against this workspace's links and lets an editor move them through their
-   status or flag the underlying link (which blocks the redirect server-side). */
+   status or flag the underlying link (visitors then see the trust page's
+   "Flagged as unsafe" warning before they can continue -- the redirect is not
+   blocked). */
 
 const TONE: Record<AbuseReportStatus, "good" | "warn" | "default" | "bad"> = {
   open: "warn",
@@ -35,7 +37,7 @@ export default function ReportsPage() {
     <>
       <PageHead
         title="Abuse reports"
-        sub="Reports filed against links in this workspace. Flagging a link blocks its redirect immediately."
+        sub="Reports filed against links in this workspace. Flagging a link puts a warning page in front of its redirect; visitors can still choose to continue."
       />
 
       {reports.isLoading ? (

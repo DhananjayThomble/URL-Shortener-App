@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button, Chip, ErrorState, Field, Input, Skeleton } from "@/components/ui";
 import { useLinkPreview, useReportLink, useUnlockLink } from "@/lib/api/hooks";
+import { trustState } from "@/lib/trust-state";
 import { formatDate, relativeDate } from "@/lib/utils";
 
 /** shortUrl is "domain/slug" with no scheme; localhost is the dev redirect. */
@@ -22,8 +23,12 @@ export default function LinkPreviewPage() {
      ?unlock=1 and waits for the visitor to come back with ?k=<token>. The
      page ignored the parameter entirely, so those links were unreachable:
      the redirect sent people to a page that offered no way to continue. */
-  const unlockRequested = useSearchParams().get("unlock") === "1";
+  const searchParams = useSearchParams();
+  const unlockRequested = searchParams.get("unlock") === "1";
   const { data, isLoading, isError, error, refetch } = useLinkPreview(slug);
+  /* A flagged link redirects here with ?warning=unsafe. The preview's own
+     status is the source of truth; the param only escalates it (#647). */
+  const trust = trustState(data?.safeBrowsing ?? "pending", searchParams.get("warning"));
   const unlock = useUnlockLink(slug);
   const report = useReportLink(slug);
 
@@ -89,15 +94,16 @@ export default function LinkPreviewPage() {
           <>
             <div className="p-6 border-b border-line text-center">
               <div
-                className={`w-[46px] h-[46px] rounded-[13px] grid place-items-center text-[21px] mx-auto mb-3.5 ${
-                  data.safeBrowsing === "clean" ? "bg-wash-good text-good" : "bg-wash-warn text-amber"
-                }`}
+                className={`w-[46px] h-[46px] rounded-[13px] grid place-items-center text-[21px] mx-auto mb-3.5 ${trust.iconClass}`}
               >
-                🛡
+                {trust.icon}
               </div>
-              <h2 className="text-[19px] font-bold">
-                {data.safeBrowsing === "clean" ? "This link is safe to open" : "We couldn't fully verify this link"}
-              </h2>
+              <h2 className="text-[19px] font-bold">{trust.heading}</h2>
+              {trust.notice ? (
+                <p role="alert" className="mt-2 text-[13px] leading-[1.6] text-bad">
+                  {trust.notice}
+                </p>
+              ) : null}
             </div>
 
             <div className="px-6 py-[18px] bg-surface-2 border-b border-line">
@@ -119,8 +125,8 @@ export default function LinkPreviewPage() {
                   ],
                   [
                     "Safety scan",
-                    <Chip key="sb" tone={data.safeBrowsing === "clean" ? "good" : "warn"} dot>
-                      {data.safeBrowsing === "clean" ? "No threats found" : "Unverified"}
+                    <Chip key="sb" tone={trust.chipTone} dot>
+                      {trust.chipLabel}
                     </Chip>,
                   ],
                   [
@@ -175,9 +181,13 @@ export default function LinkPreviewPage() {
               <a
                 href={data.destination}
                 rel="noopener noreferrer nofollow"
-                className="px-[13px] py-[11px] rounded-[var(--radius-sm)] bg-accent text-accent-ink font-semibold text-[13px] text-center"
+                className={`px-[13px] py-[11px] rounded-[var(--radius-sm)] font-semibold text-[13px] text-center ${
+                  trust.kind === "flagged"
+                    ? "bg-surface border border-line-2 text-ink-2 hover:bg-surface-3"
+                    : "bg-accent text-accent-ink"
+                }`}
               >
-                Continue to{" "}
+                {trust.continueLabel}{" "}
                 {(() => {
                   try {
                     return new URL(data.destination).hostname;
