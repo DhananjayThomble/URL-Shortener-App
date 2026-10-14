@@ -39,4 +39,12 @@ describe("developers page create-link sample", () => {
   it("interpolates the API url into the cURL snippet", () => {
     expect(s.curl).toContain("https://api.example.test/api/v1/links");
   });
+
+  /* Issue #656: the only sample we actually back is cURL. There are no typed
+     SDKs to import, so the ts/python snippets (and their '@snapurl/sdk' /
+     'from "snapurl"' imports) must be gone. */
+  it("only ships the cURL snippet (no unbacked SDK samples)", () => {
+    expect(Object.keys(s)).toEqual(["curl"]);
+    expect(JSON.stringify(s)).not.toMatch(/@snapurl\/sdk|from "snapurl"|SnapURL/);
+  });
 });

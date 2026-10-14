@@ -12,7 +12,7 @@ const COLUMNS: { heading: string; links: { label: string; href: string; external
   },
   {
     heading: "Developers",
-    links: [{ label: "API & SDKs", href: "/for-developers" }],
+    links: [{ label: "API & webhooks", href: "/for-developers" }],
   },
   {
     heading: "Self-host",

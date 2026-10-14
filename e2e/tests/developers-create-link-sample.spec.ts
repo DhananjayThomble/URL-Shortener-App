@@ -57,18 +57,39 @@ test.describe("developers: create-a-link sample", () => {
     expect(body.rules[0].id.length).toBeGreaterThan(0);
   });
 
-  test("every language tab shows the rule id and the placeholder domain, with no stale expiry", async ({ page }) => {
+  test("the cURL tab shows the rule id and the placeholder domain, with no stale expiry", async ({ page }) => {
     await page.goto("/developers");
-    for (const [tab, lang] of [
-      ["cURL", "curl"],
-      ["TS", "ts"],
-      ["Python", "python"],
-    ] as const) {
-      const text = await sampleFor(page, tab, lang);
-      expect(text, `${tab} sample rule id`).toContain("rule_in");
-      expect(text, `${tab} sample domain`).toContain("<your-domain>");
-      expect(text, `${tab} sample stale domain`).not.toContain("snap.to");
-      expect(text, `${tab} sample stale expiry`).not.toMatch(/2026-09-30|expires_?[aA]t/);
-    }
+    const text = await sampleFor(page, "cURL", "curl");
+    expect(text, "cURL sample rule id").toContain("rule_in");
+    expect(text, "cURL sample domain").toContain("<your-domain>");
+    expect(text, "cURL sample stale domain").not.toContain("snap.to");
+    expect(text, "cURL sample stale expiry").not.toMatch(/2026-09-30|expires_?[aA]t/);
+  });
+
+  /* Issue #656: cURL is the only sample we back. There are no typed SDKs, CLI
+     or MCP server, so the TS/Python tabs must be gone and the page must not
+     claim an MCP server or SDKs. */
+  test("there are no TS/Python tabs and no SDK/MCP claims on /developers", async ({ page }) => {
+    await page.goto("/developers");
+    await expect(page.getByRole("button", { name: "cURL", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "TS", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Python", exact: true })).toHaveCount(0);
+
+    const body = (await page.locator("body").textContent()) ?? "";
+    expect(body).not.toContain("MCP");
+    expect(body).not.toContain("SDKs");
+  });
+
+  /* Issue #656: the marketing landing page must not claim typed SDKs, a CLI,
+     an MCP server, or PDF/EPS QR export — none exist. QR is SVG + PNG only. */
+  test("the marketing landing page makes no unbacked product claims", async ({ page }) => {
+    await page.goto("/");
+    const body = (await page.locator("body").textContent()) ?? "";
+    expect(body).not.toContain("typed SDKs");
+    expect(body).not.toContain("CLI");
+    expect(body).not.toContain("MCP server");
+    expect(body).not.toContain("PDF");
+    expect(body).not.toContain("EPS");
+    expect(body).toContain("SVG and PNG");
   });
 });
