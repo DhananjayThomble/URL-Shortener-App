@@ -155,7 +155,7 @@ export class MembersService {
     await this.db
       .update(memberships)
       .set({ inviteTokenHash: createHash("sha256").update(token).digest("hex"), invitedAt })
-      .where(eq(memberships.id, membershipId));
+      .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)));
 
     await this.mail.sendInvite({ to: target.email, token, invitedBy: actorLabel });
     await this.writeAudit(workspaceId, null, actorLabel, "member.invite_resent", "membership", membershipId, {
