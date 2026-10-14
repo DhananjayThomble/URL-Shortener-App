@@ -11,9 +11,10 @@ import { seedSession } from "../support/session";
 
    This spec drives the fix TDD-style: with touch emulation (isMobile+hasTouch)
    at the two verified viewports (Pixel 7 412x839 and 393x852) it asserts the
-   Copy and Duplicate buttons have non-zero EFFECTIVE computed opacity and are
-   clickable. A desktop regression guard then confirms the actions remain
-   hover-only (opacity 0 at rest) on hover-capable devices.
+   Copy, Duplicate and Archive buttons have non-zero EFFECTIVE computed opacity
+   and are clickable (Copy and Duplicate; Archive need not be clicked). A
+   desktop regression guard then confirms the actions remain hover-only
+   (opacity 0 at rest) on hover-capable devices.
 
    NOTE: Playwright's toBeVisible() does NOT treat opacity:0 as hidden, so we
    read the effective opacity from getComputedStyle (walking the element and its
@@ -40,6 +41,7 @@ function rowActions(page: import("@playwright/test").Page) {
   return {
     copy: page.getByRole("button", { name: /^Copy short link / }).first(),
     duplicate: page.getByRole("button", { name: /^Duplicate link / }).first(),
+    archive: page.getByRole("button", { name: /^(Archive|Unarchive) link / }).first(),
   };
 }
 
@@ -56,7 +58,7 @@ for (const viewport of [
   test.describe(`touch devices (${viewport.width}x${viewport.height}) reveal the row actions`, () => {
     test.use({ viewport, isMobile: true, hasTouch: true });
 
-    test("Copy and Duplicate are visible, non-zero opacity, and clickable", async ({ page, context }) => {
+    test("Copy, Duplicate, and Archive are visible, non-zero opacity, and clickable", async ({ page, context }) => {
       // onCopy writes to navigator.clipboard; grant the permission so the click
       // can round-trip to the "✓ copied" state. (Clipboard behavior itself is
       // out of scope — issue #641 — this only exercises that the button is
@@ -69,13 +71,15 @@ for (const viewport of [
       const canHover = await page.evaluate(() => window.matchMedia("(hover: hover)").matches);
       expect(canHover, "touch emulation reports no hover capability").toBe(false);
 
-      const { copy, duplicate } = rowActions(page);
+      const { copy, duplicate, archive } = rowActions(page);
 
       await expect(copy).toBeVisible();
       await expect(duplicate).toBeVisible();
+      await expect(archive).toBeVisible();
 
       expect(await effectiveOpacity(copy), "Copy short link effective opacity").toBeGreaterThan(0);
       expect(await effectiveOpacity(duplicate), "Duplicate link effective opacity").toBeGreaterThan(0);
+      expect(await effectiveOpacity(archive), "Archive link effective opacity").toBeGreaterThan(0);
 
       // Clickable: Copy toggles to its copied state; Duplicate is enabled.
       await expect(duplicate).toBeEnabled();
@@ -88,22 +92,27 @@ for (const viewport of [
 test.describe("hover-capable devices keep the row actions hover-only (regression guard)", () => {
   // Default project is Desktop Chrome (no isMobile/hasTouch) — a pointer device
   // that CAN hover. The fix must not make the actions always-visible here.
-  test("Copy and Duplicate are present but at opacity 0 until hover", async ({ page }) => {
+  test("Copy, Duplicate, and Archive are present but at opacity 0 until hover", async ({ page }) => {
     await gotoLinks(page);
 
     const canHover = await page.evaluate(() => window.matchMedia("(hover: hover)").matches);
     expect(canHover, "desktop reports hover capability").toBe(true);
 
-    const { copy, duplicate } = rowActions(page);
+    const { copy, duplicate, archive } = rowActions(page);
 
     // Present in the DOM (attached) but hidden by opacity 0 at rest.
     await expect(copy).toBeAttached();
     await expect(duplicate).toBeAttached();
+    await expect(archive).toBeAttached();
 
     expect(await copy.evaluate((el) => getComputedStyle(el).opacity), "Copy opacity at rest").toBe("0");
     expect(
       await duplicate.evaluate((el) => getComputedStyle(el).opacity),
       "Duplicate opacity at rest",
+    ).toBe("0");
+    expect(
+      await archive.evaluate((el) => getComputedStyle(el).opacity),
+      "Archive opacity at rest",
     ).toBe("0");
   });
 });
