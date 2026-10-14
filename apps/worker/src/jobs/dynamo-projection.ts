@@ -316,6 +316,7 @@ export class DynamoProjection implements ProjectionTarget {
           link: links,
           domain: domains.domain,
           domainId: domains.id,
+          status: domains.status,
           rootRedirect: domains.rootRedirect,
           notFoundRedirect: domains.notFoundRedirect,
           clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
@@ -333,6 +334,16 @@ export class DynamoProjection implements ProjectionTarget {
     ]);
 
     if (!row) return { requests: [] };
+
+    /* #713 item 2 (sibling of #712): a non-live domain has not proven ownership,
+       so its links must NOT be resolvable at the edge. #712 gated the Postgres
+       resolver's queries on `status = 'live'`; the DynamoDB projection carries
+       no status (the DynamoLinkResolver just serves the pre-written item), so
+       the same gate lives here at WRITE time. A verifying domain gains neither a
+       LINK item nor a domain-meta item (and no edge/KVS entry). The op still
+       resolves to an empty request set so the outbox marks it processed rather
+       than retrying forever, exactly how the resolver returns null for it. */
+    if (row.status !== "live") return { requests: [] };
 
     const projectedLink: ProjectedLink = {
       id: row.link.id,
@@ -399,6 +410,7 @@ export class DynamoProjection implements ProjectionTarget {
       .select({
         id: domains.id,
         domain: domains.domain,
+        status: domains.status,
         rootRedirect: domains.rootRedirect,
         notFoundRedirect: domains.notFoundRedirect,
       })
@@ -406,6 +418,15 @@ export class DynamoProjection implements ProjectionTarget {
       .where(eq(domains.id, domainId))
       .limit(1);
     if (row) {
+      /* #713 item 2 (sibling of #712): only a `live` domain's meta item may be
+         served at the edge. If the domain exists but is no longer live (status
+         regression / still verifying), REMOVE the meta item so its root/404
+         redirects stop resolving, mirroring #712's read-time `status = 'live'`
+         gate, applied here at projection-write time. A live domain keeps the
+         put; a gone domain keeps the delete-by-host below. */
+      if (row.status !== "live") {
+        return [{ DeleteRequest: { Key: domainMetaKey(row.domain) } }];
+      }
       const item = toDomainItem(row.domain, {
         id: row.id,
         rootRedirect: row.rootRedirect,
