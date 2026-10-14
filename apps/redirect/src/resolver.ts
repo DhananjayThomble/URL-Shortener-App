@@ -102,6 +102,11 @@ export class PostgresLinkResolver implements LinkResolver {
           and(
             sql`lower(${domains.domain}) = ${normalisedHost}`,
             sql`lower(${links.slug}) = ${normalisedSlug}`,
+            /* #712 self-host hardening: only serve verified (live) domains.
+               A custom domain stays 'verifying' until its TXT record proves
+               ownership, so resolving one before that would let anyone point a
+               hostname at this redirect and have it serve their links. */
+            sql`${domains.status} = 'live'`,
           ),
         )
         .limit(1),
@@ -114,6 +119,8 @@ export class PostgresLinkResolver implements LinkResolver {
           and(
             sql`lower(${domains.domain}) = ${normalisedHost}`,
             sql`lower(${links.slug}) = ${normalisedSlug}`,
+            /* #712: match the link lookup above; rules only for live domains. */
+            sql`${domains.status} = 'live'`,
           ),
         )
         .orderBy(routingRules.position),
@@ -157,7 +164,9 @@ export class PostgresLinkResolver implements LinkResolver {
     const [row] = await this.db
       .select({ id: domains.id, rootRedirect: domains.rootRedirect, notFoundRedirect: domains.notFoundRedirect })
       .from(domains)
-      .where(sql`lower(${domains.domain}) = ${normaliseHost(host)}`)
+      /* #712: a non-live domain must not surface its root/404 redirects either,
+         so gate resolveDomain on status = 'live' exactly like resolve(). */
+      .where(and(sql`lower(${domains.domain}) = ${normaliseHost(host)}`, sql`${domains.status} = 'live'`))
       .limit(1);
     return row ?? null;
   }
