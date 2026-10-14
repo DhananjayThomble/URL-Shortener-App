@@ -142,3 +142,36 @@ describe("DynamoLinkResolver.resolveDomain", () => {
     expect(await resolver.resolveDomain("snap.to")).toBeNull();
   });
 });
+
+describe("DynamoLinkResolver carries no status gate (#713 item 2)", () => {
+  /* The projection item has NO status field, so the DynamoLinkResolver serves
+     back exactly whatever was written, with no live/verifying check (that is
+     what the two null-on-absent specs above already prove: the only way an item
+     is NOT served is if it was never written). This is precisely WHY the #713
+     item-2 gate lives at projection-WRITE time in the worker (buildUpsertRequests
+     / buildDomainRequests gate on domains.status='live'), mirroring #712's
+     read-time gate on the Postgres resolver. If a verifying domain's item ever
+     reached the table, the edge WOULD serve it, so the only durable gate is to
+     never write it. These assertions pin that read-side behaviour so a future
+     change cannot quietly move the gate to the (status-less) read path. */
+  it("serves a link item verbatim regardless of the originating domain's status", async () => {
+    const { resolver } = makeResolver({
+      GetCommand: () => ({ Item: toLinkItem(storedLink, "verifying-domain.example", "foo") }),
+    });
+    // The resolver cannot know the domain was verifying; it just returns the
+    // stored item. Hence the write-time gate.
+    expect(await resolver.resolve("verifying-domain.example", "foo")).toEqual(storedLink);
+  });
+
+  it("serves a domain-meta item verbatim regardless of the domain's status", async () => {
+    const domain: ProjectedDomain = {
+      id: "55555555-5555-5555-5555-555555555555",
+      rootRedirect: "https://example.com/root",
+      notFoundRedirect: null,
+    };
+    const { resolver } = makeResolver({
+      GetCommand: () => ({ Item: toDomainItem("verifying-domain.example", domain) }),
+    });
+    expect(await resolver.resolveDomain("verifying-domain.example")).toEqual(domain);
+  });
+});

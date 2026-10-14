@@ -109,7 +109,13 @@ describeLive("DynamoProjection domain-meta (dynamodb-local + Postgres)", () => {
     projection = new DynamoProjection(db, doc, table);
 
     await db.insert(workspaces).values({ id: workspaceId, name: "it", slug: `it-dm-${stamp}` });
-    const [b] = await db.insert(domains).values({ workspaceId, domain: hostB }).returning({ id: domains.id });
+    // status 'live' so these meta-projection assertions exercise the live path;
+    // #713 item 2 gates NON-live domains to a meta DELETE, covered by a
+    // dedicated case below and by the mock-based unit specs.
+    const [b] = await db
+      .insert(domains)
+      .values({ workspaceId, domain: hostB, status: "live" })
+      .returning({ id: domains.id });
     domainB = b!.id;
     const [c] = await db
       .insert(domains)
@@ -188,6 +194,46 @@ describeLive("DynamoProjection domain-meta (dynamodb-local + Postgres)", () => {
     expect(await meta(hostC)).toMatchObject({ rootRedirect: `https://example.org/c-root-${stamp}` });
     await db.delete(links).where(eq(links.id, linkId));
     await applyOk([{ linkId, operation: "delete" }]);
+  });
+
+  it("#713 item 2: a non-live (verifying) domain's meta item is deleted, link upsert projects nothing", async () => {
+    /* Mirror of #712's read-time `status = 'live'` gate, applied at
+       projection-write time (the DynamoLinkResolver carries no status). A
+       domain that is live, then regresses to verifying, must have its meta item
+       REMOVED and its link items must stop being (re)projected. */
+    const hostV = `it-verifying-${stamp}.test`;
+    const [v] = await db
+      .insert(domains)
+      .values({ workspaceId, domain: hostV, status: "live", rootRedirect: `https://example.org/v-root-${stamp}` })
+      .returning({ id: domains.id });
+    const domainV = v!.id;
+    const linkV = randomUUID();
+    await db.insert(links).values({
+      id: linkV,
+      workspaceId,
+      domainId: domainV,
+      slug: `v-${stamp}`,
+      destination: "https://example.org/v",
+    });
+
+    // While live: the domain op projects the meta item and the link upserts.
+    await applyOk([domainOp(domainV, hostV), { linkId: linkV, operation: "upsert" }]);
+    expect(await meta(hostV)).toMatchObject({ rootRedirect: `https://example.org/v-root-${stamp}` });
+    expect((await doc.send(new GetCommand({ TableName: table, Key: linkKey(hostV, `v-${stamp}`) }))).Item).toBeDefined();
+
+    // Status regresses to verifying.
+    await db.update(domains).set({ status: "verifying" }).where(eq(domains.id, domainV));
+
+    // A re-projected domain op now DELETEs the stale meta item.
+    await applyOk([domainOp(domainV, hostV)]);
+    expect(await meta(hostV)).toBeUndefined();
+
+    // A re-projected link upsert writes NOTHING (no new LINK item for a
+    // non-live domain) and is still marked processed.
+    await applyOk([{ linkId: linkV, operation: "upsert" }]);
+
+    await db.delete(links).where(eq(links.id, linkV));
+    await db.delete(domains).where(eq(domains.id, domainV));
   });
 
   it("a disconnected domain's meta item is deleted", async () => {

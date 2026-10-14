@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import type { Database } from "@snapurl/database";
+import { DOMAIN_OP, type Database } from "@snapurl/database";
 import { DynamoProjection } from "./dynamo-projection.js";
 import type { KvsWriter } from "./kvs-projection.js";
 
@@ -42,9 +42,22 @@ function linkRow(overrides: Partial<any> = {}) {
     },
     domain: "snap.to",
     domainId: "dom-1",
+    status: "live",
     rootRedirect: null,
     notFoundRedirect: null,
     clicks: 7,
+  };
+}
+
+/** A domain row as buildDomainRequests reads it (status gates the meta item). */
+function domainRow(overrides: Partial<any> = {}) {
+  return {
+    id: "dom-1",
+    domain: "snap.to",
+    status: "live",
+    rootRedirect: null,
+    notFoundRedirect: null,
+    ...overrides,
   };
 }
 
@@ -592,5 +605,160 @@ describe("DynamoProjection edge fast path (#289) — optional KvsWriter", () => 
     // writer. The assertion here is that the calls above all succeed without a
     // KvsWriter present (a KVS call would have thrown on undefined).
     expect(batches.length).toBeGreaterThan(0);
+  });
+});
+
+describe("DynamoProjection gates the projection on domain.status='live' (#713 item 2)", () => {
+  /* #712 gated the Postgres resolver's three queries on `status = 'live'` so a
+     verifying (unproven-ownership) domain's links and root/404 redirects never
+     resolve from Postgres. The DynamoDB/projection path carries NO status (the
+     DynamoLinkResolver just reads the pre-written item), so the SAME gate has
+     to live where the projection is WRITTEN: a non-live domain must never GAIN
+     projected LINK/meta items, and a domain that drops out of live must have
+     its meta item REMOVED so a status regression does not leave stale served
+     items at the edge. These specs are the authoritative RED/GREEN evidence. */
+
+  function makeDomainDb(rows: any[]): Database {
+    const select = () => {
+      const builder: any = {
+        from: () => builder,
+        innerJoin: () => builder,
+        leftJoin: () => builder,
+        where: () => builder,
+        limit: () => Promise.resolve(rows),
+        orderBy: () => Promise.resolve(rows),
+      };
+      return builder;
+    };
+    return { select } as unknown as Database;
+  }
+
+  it("upsert writes NO LINK item and NO domain-meta item when the domain is 'verifying'", async () => {
+    const batches: any[] = [];
+    const { client, send } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const projection = new DynamoProjection(
+      makeDb([linkRow({})], []),
+      client,
+      TABLE,
+    );
+    // Override just the row's domain status to a non-live value.
+    const verifyingDb = makeDb([{ ...linkRow(), status: "verifying" }], []);
+    const gated = new DynamoProjection(verifyingDb, client, TABLE);
+
+    await gated.upsert("link-1");
+
+    // A verifying domain must not gain ANY projected item: no BatchWrite at all
+    // for an empty request set, mirroring how PostgresLinkResolver returns null.
+    expect(batches).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+    void projection;
+  });
+
+  it("apply marks a verifying-domain upsert processed (ok) but writes nothing", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const verifyingDb = makeDb([{ ...linkRow(), status: "verifying" }], []);
+    const projection = new DynamoProjection(verifyingDb, client, TABLE);
+
+    const results = await projection.apply([{ linkId: "link-1", operation: "upsert" }]);
+
+    // The op is a success (processed, not retried forever) but no item is sent.
+    expect(results).toHaveLength(1);
+    expect(results[0]!.ok).toBe(true);
+    expect(batches).toHaveLength(0);
+  });
+
+  it("domain op DELETEs the domain-meta item when the domain is 'verifying'", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const verifyingDomainDb = makeDomainDb([domainRow({ status: "verifying" })]);
+    const projection = new DynamoProjection(verifyingDomainDb, client, TABLE);
+
+    await projection.projectDomain("dom-1", "snap.to");
+
+    expect(batches).toHaveLength(1);
+    const requests = batches[0].RequestItems[TABLE];
+    // A domain that dropped out of live has its meta item REMOVED, not put.
+    expect(requests).toHaveLength(1);
+    expect(requests[0].DeleteRequest.Key).toEqual({ PK: "d#snap.to", SK: "d#meta" });
+    expect(requests[0].PutRequest).toBeUndefined();
+  });
+
+  it("positive control: a 'live' domain still produces the LINK put + domain-meta put", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE);
+
+    await projection.upsert("link-1");
+
+    expect(batches).toHaveLength(1);
+    const requests = batches[0].RequestItems[TABLE];
+    expect(requests).toHaveLength(2);
+    const link = requests.find((r: any) => r.PutRequest.Item.SK.startsWith("s#")).PutRequest.Item;
+    const meta = requests.find((r: any) => r.PutRequest.Item.SK === "d#meta").PutRequest.Item;
+    expect(link.PK).toBe("d#snap.to");
+    expect(meta.PK).toBe("d#snap.to");
+  });
+
+  it("positive control: a 'live' domain op still PUTs the domain-meta item", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const liveDomainDb = makeDomainDb([domainRow({ status: "live" })]);
+    const projection = new DynamoProjection(liveDomainDb, client, TABLE);
+
+    await projection.projectDomain("dom-1", "snap.to");
+
+    expect(batches).toHaveLength(1);
+    const requests = batches[0].RequestItems[TABLE];
+    expect(requests).toHaveLength(1);
+    expect(requests[0].PutRequest.Item.SK).toBe("d#meta");
+    expect(requests[0].PutRequest.Item.PK).toBe("d#snap.to");
+  });
+
+  // A domain op is the DOMAIN_OP operation on the batched path too.
+  it("apply() routes a DOMAIN_OP for a verifying domain to a meta DELETE", async () => {
+    const batches: any[] = [];
+    const { client } = makeClient({
+      BatchWriteCommand: (input) => {
+        batches.push(input);
+        return {};
+      },
+    });
+    const verifyingDomainDb = makeDomainDb([domainRow({ status: "verifying" })]);
+    const projection = new DynamoProjection(verifyingDomainDb, client, TABLE);
+
+    const results = await projection.apply([
+      { linkId: "dom-1", operation: DOMAIN_OP, host: "snap.to" },
+    ]);
+
+    expect(results[0]!.ok).toBe(true);
+    const requests = batches[0].RequestItems[TABLE];
+    expect(requests).toHaveLength(1);
+    expect(requests[0].DeleteRequest.Key).toEqual({ PK: "d#snap.to", SK: "d#meta" });
   });
 });
