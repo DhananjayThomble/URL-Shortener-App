@@ -492,6 +492,7 @@ export const BIO_PAGES: BioPage[] = [
 
 export const CONVERSIONS: ConversionsReport = {
   currency: "INR",
+  excluded: { count: 0, byCurrency: [] },
   totals: { clicks: 412908, leads: 28104, signups: 12440, paid: 1882, revenue: 3140000 },
   deltas: { clicks: 22.6, leads: 14.2, signups: -2.4, paid: 8.1, revenue: 11.9 },
   events: [

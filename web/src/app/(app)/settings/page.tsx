@@ -5,8 +5,9 @@ import { useEffect, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { ACCENTS, useAppearance, type Mode } from "@/components/theme/theme-provider";
 import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
-import { useUpdateWorkspace, useWorkspace } from "@/lib/api/hooks";
+import { useUpdateWorkspace, useMe, useWorkspace } from "@/lib/api/hooks";
 import { importHref } from "@/lib/import";
+import { canChangeWorkspaceCurrency, currencyOptions } from "@/lib/money";
 import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn, compact } from "@/lib/utils";
 import { TwoFactorCard } from "./two-factor-card";
@@ -19,7 +20,7 @@ const retentionValue = (years: number) => (years >= FOREVER_YEARS ? "forever" : 
 
 type Draft = Pick<
   Workspace,
-  "name" | "slug" | "defaultDomain" | "defaultRedirect" | "retentionYears" | "cookielessAnalytics" | "scanOnCreate" | "publicPreviews"
+  "name" | "slug" | "defaultDomain" | "defaultRedirect" | "retentionYears" | "cookielessAnalytics" | "scanOnCreate" | "publicPreviews" | "currency"
 >;
 
 const draftOf = (ws: Workspace): Draft => ({
@@ -31,11 +32,15 @@ const draftOf = (ws: Workspace): Draft => ({
   cookielessAnalytics: ws.cookielessAnalytics,
   scanOnCreate: ws.scanOnCreate,
   publicPreviews: ws.publicPreviews,
+  currency: ws.currency.toUpperCase(),
 });
 
 export default function SettingsPage() {
   const router = useRouter();
   const { data: ws, isLoading } = useWorkspace();
+  const { data: me } = useMe();
+  // PATCH /workspaces/current is admin-or-owner; don't offer a control that would 403.
+  const canChangeCurrency = canChangeWorkspaceCurrency(me?.role);
   const appearance = useAppearance();
   const save = useUpdateWorkspace();
 
@@ -58,6 +63,9 @@ export default function SettingsPage() {
   };
 
   const dirty = Boolean(ws && draft && JSON.stringify(draft) !== JSON.stringify(draftOf(ws)));
+  // A failed save is reported under the control the person changed, so a refused
+  // currency change is not shown under the redirect type.
+  const currencyChanged = Boolean(ws && draft && draft.currency !== ws.currency.toUpperCase());
 
   async function submit() {
     if (!draft) return;
@@ -105,7 +113,7 @@ export default function SettingsPage() {
                   <Field
                     label="Default redirect type"
                     help="Applies to new links. Any link can override it."
-                    error={problem ?? undefined}
+                    error={problem && !currencyChanged ? problem : undefined}
                     controlId="settings-default-redirect-type"
                   >
                     <Segmented<RedirectType>
@@ -120,6 +128,32 @@ export default function SettingsPage() {
                         { value: "307", label: "307" },
                       ]}
                     />
+                  </Field>
+                  <Field
+                    label="Workspace currency"
+                    error={problem && currencyChanged ? problem : undefined}
+                    help={
+                      canChangeCurrency
+                        ? "Revenue on Conversions is reported in this currency. Conversions recorded in another currency are listed as not counted — nothing is converted."
+                        : "Only owners and admins can change the workspace currency."
+                    }
+                  >
+                    <select
+                      className={cn(
+                        "w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[13px] text-ink",
+                        "focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash",
+                        "disabled:opacity-60 disabled:cursor-not-allowed",
+                      )}
+                      value={draft.currency}
+                      disabled={!canChangeCurrency}
+                      onChange={(e) => set("currency", e.target.value)}
+                    >
+                      {currencyOptions(draft.currency).map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                   <div className="flex items-center gap-2">
                     <Button variant="primary" onClick={submit} disabled={!dirty || save.isPending}>

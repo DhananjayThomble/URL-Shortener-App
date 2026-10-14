@@ -4,9 +4,11 @@ import { PageHead } from "@/components/app-shell";
 import { Funnel, Sparkline } from "@/components/charts";
 import { Card, CardBody, CardHeader, Chip, ErrorState, Segmented, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
 import { useConversions } from "@/lib/api/hooks";
-import type { AnalyticsRange } from "@snapurl/contract";
+import type { AnalyticsRange, ConversionsReport } from "@snapurl/contract";
+import Link from "next/link";
 import { useState } from "react";
-import { formatDelta, full, inr, NO_VALUE, ratioPct } from "@/lib/utils";
+import { excludedLine, excludedNotice, formatMoney } from "@/lib/money";
+import { formatDelta, full, NO_VALUE, ratioPct } from "@/lib/utils";
 
 /** A tile's delta line: the period change, plus the rate against clicks when there is one. */
 function tileDelta(delta: number | null, rate?: string) {
@@ -18,6 +20,30 @@ function tileDelta(delta: number | null, rate?: string) {
 /** Share of clicks as a number, or null (rendered as a dash) when there were no clicks. */
 function shareOf(n: number, clicks: number): number | null {
   return clicks > 0 ? (n / clicks) * 100 : null;
+}
+
+/* G7 counts revenue only in the workspace currency and converts nothing; this is
+   the other half of that rule (#654): say what was left out. Renders nothing at
+   all when nothing was. */
+function ExcludedNotice({ excluded, currency }: { excluded: ConversionsReport["excluded"]; currency: string }) {
+  const text = excludedNotice(excluded);
+  if (!text) return null;
+  return (
+    <div role="note" className="mb-4 px-[14px] py-[11px] rounded-[var(--radius-sm)] border border-line-2 bg-surface-2 text-[13px] text-ink-2">
+      <p className="m-0 text-ink font-medium">{text}</p>
+      <ul className="m-0 mt-[6px] pl-0 list-none flex flex-col gap-[2px] text-[12px] font-mono text-ink-3">
+        {excluded.byCurrency.map((c) => (
+          <li key={c.currency}>{excludedLine(c)}</li>
+        ))}
+      </ul>
+      <p className="m-0 mt-[6px] text-[12px]">
+        Revenue is reported in {currency} and nothing is converted.{" "}
+        <Link href="/settings" className="text-accent underline underline-offset-2">
+          Change workspace currency
+        </Link>
+      </p>
+    </div>
+  );
 }
 
 export default function ConversionsPage() {
@@ -55,12 +81,14 @@ export default function ConversionsPage() {
         <Skeleton className="h-[400px]" />
       ) : (
         <>
+          <ExcludedNotice excluded={data.excluded} currency={data.currency} />
+
           <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
             <Tile label="Clicks" value={full(data.totals.clicks)} {...tileDelta(data.deltas.clicks)} />
             <Tile label="Leads" value={full(data.totals.leads)} {...tileDelta(data.deltas.leads, ratioPct(data.totals.leads, data.totals.clicks))} />
             <Tile label="Signups" value={full(data.totals.signups)} {...tileDelta(data.deltas.signups, ratioPct(data.totals.signups, data.totals.clicks))} />
             <Tile label="Paid" value={full(data.totals.paid)} {...tileDelta(data.deltas.paid, ratioPct(data.totals.paid, data.totals.clicks, 2))} />
-            <Tile label="Revenue" value={inr(data.totals.revenue)} {...tileDelta(data.deltas.revenue)}>
+            <Tile label="Revenue" value={formatMoney(data.totals.revenue, data.currency)} {...tileDelta(data.deltas.revenue)}>
               <Sparkline values={data.revenueSeries} width={160} height={26} />
             </Tile>
           </div>
@@ -120,8 +148,8 @@ export default function ConversionsPage() {
                       <Td className="tnum">{full(r.clicks)}</Td>
                       <Td className="tnum">{full(r.signups)}</Td>
                       <Td className="tnum">{r.cvr}%</Td>
-                      <Td className="tnum text-ink font-medium">{inr(r.revenue)}</Td>
-                      <Td className="tnum">{r.clicks > 0 ? `₹${Math.round(r.revenue / r.clicks)}` : NO_VALUE}</Td>
+                      <Td className="tnum text-ink font-medium">{formatMoney(r.revenue, data.currency)}</Td>
+                      <Td className="tnum">{r.clicks > 0 ? formatMoney(Math.round(r.revenue / r.clicks), data.currency) : NO_VALUE}</Td>
                     </tr>
                   ))}
                 </tbody>

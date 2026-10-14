@@ -7859,6 +7859,1335 @@
           }
         }
       ]
+    },
+    {
+      "name": "Conversions: excluded currencies + workspace currency (#654)",
+      "item": [
+        {
+          "name": "Register owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const s = Date.now().toString(36) + Math.random().toString(16).slice(2, 8);",
+                  "pm.collectionVariables.set(\"cc_owner_email\", \"newman-cc-owner-\" + s + \"@example.com\");",
+                  "pm.collectionVariables.set(\"cc_invitee_email\", \"newman-cc-viewer-\" + s + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "pm.collectionVariables.set(\"cc_owner_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"cc_owner_wid\", claims(b.accessToken).wid);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman currency owner\",\"email\":\"{{cc_owner_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register the future viewer (own workspace for now)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set(\"cc_invitee_token\", b.accessToken);",
+                  "pm.collectionVariables.set(\"cc_invitee_refresh\", b.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman currency viewer\",\"email\":\"{{cc_invitee_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Workspace starts in INR (the default)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"INR\", () => pm.expect(pm.response.json().currency).to.eql(\"INR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Owner creates an API key (conversions:write + analytics:read)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"cc_key\", pm.response.json().key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/api-keys",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "api-keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"newman-cc\",\"scopes\":[\"conversions:write\",\"analytics:read\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Record a 100.00 INR sale (workspace currency)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"recorded\", () => pm.expect(pm.response.json().recorded).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\":\"sale\",\"name\":\"cc-inr\",\"valueMinor\":10000,\"externalId\":\"cc-inr-{{cc_owner_wid}}\",\"currency\":\"INR\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Record a 49.00 USD sale (accepted, as before)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"recorded\", () => pm.expect(pm.response.json().recorded).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\":\"sale\",\"name\":\"cc-usd-1\",\"valueMinor\":4900,\"externalId\":\"cc-usd-1-{{cc_owner_wid}}\",\"currency\":\"USD\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Record a 10.00 USD sale, currency sent in lower case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"recorded\", () => pm.expect(pm.response.json().recorded).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\":\"sale\",\"name\":\"cc-usd-2\",\"valueMinor\":1000,\"externalId\":\"cc-usd-2-{{cc_owner_wid}}\",\"currency\":\"usd\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Record a 25.00 EUR sale",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"recorded\", () => pm.expect(pm.response.json().recorded).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"kind\":\"sale\",\"name\":\"cc-eur\",\"valueMinor\":2500,\"externalId\":\"cc-eur-{{cc_owner_wid}}\",\"currency\":\"EUR\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Report: revenue counts INR only (G7 unchanged), excluded names the rest",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"workspace currency INR\", () => pm.expect(b.currency).to.eql(\"INR\"));",
+                  "pm.test(\"revenue sums only INR\", () => pm.expect(b.totals.revenue).to.eql(100));",
+                  "pm.test(\"all four sales are still counted as paid\", () => pm.expect(b.totals.paid).to.eql(4));",
+                  "pm.test(\"excluded.count is 3\", () => pm.expect(b.excluded.count).to.eql(3));",
+                  "pm.test(\"excluded.byCurrency is USD x2 then EUR x1, with the minor-unit value\", () => pm.expect(b.excluded.byCurrency).to.eql([{ currency: \"USD\", count: 2, valueMinor: 5900 }, { currency: \"EUR\", count: 1, valueMinor: 2500 }]));",
+                  "pm.test(\"the series sums to the same revenue\", () => pm.expect(b.revenueSeries.reduce((a, x) => a + x, 0)).to.eql(100));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions?range=30d",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30d"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Report honours the range: 24h sees the same excluded rows",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"3 excluded in 24h\", () => pm.expect(pm.response.json().excluded.count).to.eql(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions?range=24h",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "24h"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "An API key (analytics:read) gets the same excluded object",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"excluded.count 3\", () => pm.expect(pm.response.json().excluded.count).to.eql(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Another workspace sees none of it (tenant isolation)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"nothing excluded\", () => pm.expect(b.excluded).to.eql({ count: 0, byCurrency: [] }));",
+                  "pm.test(\"no revenue\", () => pm.expect(b.totals.revenue).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Owner invites the viewer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"pending viewer\", () => { const b = pm.response.json(); pm.expect(b.status).to.eql(\"invited\"); pm.expect(b.role).to.eql(\"viewer\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{cc_invitee_email}}\",\"role\":\"viewer\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Mail sink: invitation token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"cc_invite_token\", pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{cc_invitee_email}}&kind=invite",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{cc_invitee_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "invite"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mail sink: verification token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"cc_verify_token\", pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{cc_invitee_email}}&kind=verify",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{cc_invitee_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "verify"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Viewer verifies their email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/email/verify",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "email",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{cc_verify_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer accepts the invitation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"viewer role\", () => pm.expect(pm.response.json().user.role).to.eql(\"viewer\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_invitee_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{cc_invite_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer enters the owner's workspace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const claims = (t) => { let p = t.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\"); while (p.length % 4) p += \"=\"; return JSON.parse(require(\"atob\")(p)); };",
+                  "const b = pm.response.json();",
+                  "pm.test(\"bound to the owner workspace as viewer\", () => { const c = claims(b.accessToken); pm.expect(c.wid).to.eql(pm.collectionVariables.get(\"cc_owner_wid\")); pm.expect(c.role).to.eql(\"viewer\"); });",
+                  "pm.collectionVariables.set(\"cc_viewer_token\", b.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/refresh",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refreshToken\":\"{{cc_invitee_refresh}}\",\"workspaceId\":\"{{cc_owner_wid}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Viewer can read the report, excluded included",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"excluded.count 3\", () => pm.expect(pm.response.json().excluded.count).to.eql(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_viewer_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Viewer cannot change the workspace currency (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_viewer_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"USD\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "An API key cannot change the workspace currency (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"USD\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Without a token: 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"USD\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The refused changes did not change anything",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"still INR\", () => pm.expect(pm.response.json().currency).to.eql(\"INR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invalid currency codes are 400 (too short)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"US\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Owner changes the workspace currency to USD",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"USD\", () => pm.expect(pm.response.json().currency).to.eql(\"USD\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"USD\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Report now counts USD and excludes INR + EUR",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"currency USD\", () => pm.expect(b.currency).to.eql(\"USD\"));",
+                  "pm.test(\"revenue is the two USD sales\", () => pm.expect(b.totals.revenue).to.eql(59));",
+                  "pm.test(\"excluded is INR x1 and EUR x1 (count desc, then code)\", () => { pm.expect(b.excluded.count).to.eql(2); pm.expect(b.excluded.byCurrency).to.eql([{ currency: \"EUR\", count: 1, valueMinor: 2500 }, { currency: \"INR\", count: 1, valueMinor: 10000 }]); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions?range=30d",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30d"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Currency sent in lower case is stored upper case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"EUR\", () => pm.expect(pm.response.json().currency).to.eql(\"EUR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"eur\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Report in EUR: revenue 25, USD x2 + INR x1 excluded",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"EUR report\", () => { pm.expect(b.currency).to.eql(\"EUR\"); pm.expect(b.totals.revenue).to.eql(25); });",
+                  "pm.test(\"excluded\", () => { pm.expect(b.excluded.count).to.eql(3); pm.expect(b.excluded.byCurrency).to.eql([{ currency: \"USD\", count: 2, valueMinor: 5900 }, { currency: \"INR\", count: 1, valueMinor: 10000 }]); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Owner sets the currency back to INR",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/workspaces/current",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "workspaces",
+                "current"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\":\"INR\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Back in INR the report is as it was",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"INR, revenue 100, excluded 3\", () => { pm.expect(b.currency).to.eql(\"INR\"); pm.expect(b.totals.revenue).to.eql(100); pm.expect(b.excluded.count).to.eql(3); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{cc_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/conversions",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "conversions"
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
