@@ -89,7 +89,7 @@ export default function DevelopersPage() {
     <>
       <PageHead
         title="Developers"
-        sub="Scoped API keys, real-time webhooks, and an MCP server so agents can create links directly."
+        sub="Scoped API keys and real-time webhooks."
         actions={
           <>
             {/* The API reference the API itself serves (Swagger UI generated from
@@ -366,11 +366,7 @@ export default function DevelopersPage() {
               <Tabs
                 value={lang}
                 onChange={setLang}
-                options={[
-                  { value: "curl", label: "cURL" },
-                  { value: "ts", label: "TS" },
-                  { value: "python", label: "Python" },
-                ]}
+                options={[{ value: "curl", label: "cURL" }]}
               />
             }
           />
@@ -382,11 +378,6 @@ export default function DevelopersPage() {
           >
             {SNIPPETS[lang]}
           </pre>
-          <div className="p-4 border-t border-line flex gap-[18px] text-[11.5px] text-ink-3 flex-wrap">
-            <span>
-              SDKs <b className="text-ink-2">TS · Python · Go</b>
-            </span>
-          </div>
         </Card>
       </div>
     </>

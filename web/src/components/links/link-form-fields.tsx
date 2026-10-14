@@ -412,7 +412,7 @@ export function LinkFormFields({
                 keeps working.
               </p>
               <Button type="button" className="justify-center">
-                SVG · PNG · PDF
+                SVG · PNG
               </Button>
             </div>
           </div>
