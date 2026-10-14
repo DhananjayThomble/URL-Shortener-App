@@ -131,6 +131,14 @@ export const isDeniedHost = (host: string): boolean => {
  *   - at most {@link HTTP_URL_MAX_LENGTH} characters: the de-facto ceiling
  *     browsers, CDNs and load balancers agree on for a URL, and far below the
  *     header limits a longer Location header trips.
+ *
+ * One more authority-level rule (#712 item 2):
+ *   - no embedded credentials. A URL whose authority carries a username or
+ *     password (`user@host`, `user:pass@host`) is a classic phishing disguise
+ *     — the visible host reads as legitimate while the real target is whatever
+ *     follows the `@` — so it is refused. The check keys off the PARSED
+ *     authority (`new URL(value).username`/`.password`), so an `@` that appears
+ *     only in the path or query is left alone.
  */
 export const HTTP_URL_MAX_LENGTH = 2048;
 
@@ -141,6 +149,18 @@ export const HttpUrl = z
   .url({ protocol: /^https?$/, error: "Enter an absolute http(s) URL" })
   .max(HTTP_URL_MAX_LENGTH, { error: `Keep it under ${HTTP_URL_MAX_LENGTH} characters` })
   .refine((value) => !CONTROL_CHARS.test(value), { error: "That URL contains a control character" })
+  .refine(
+    (value) => {
+      let url: URL;
+      try {
+        url = new URL(value);
+      } catch {
+        return false;
+      }
+      return url.username === "" && url.password === "";
+    },
+    { error: "A URL can't include a username or password" },
+  )
   .refine(
     (value) => {
       let host: string;
