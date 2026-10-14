@@ -3995,6 +3995,441 @@
           }
         },
         {
+          "name": "#700 — register the resend invitee (verified account that will join)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get(\"invRun\")) pm.collectionVariables.set(\"invRun\", Date.now().toString(36) + Math.random().toString(16).slice(2, 8));",
+                  "pm.collectionVariables.set(\"inv_resend_email\", \"newman-inv-resend-\" + pm.collectionVariables.get(\"invRun\") + \"@example.com\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"registered\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"inv_resend_token\", pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/register",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Newman resend invitee\",\"email\":\"{{inv_resend_email}}\",\"password\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "#700 — mail sink: read the resend invitee's verification token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"verification mail was written\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"inv_resend_verify_token\", pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{inv_resend_email}}&kind=verify",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{inv_resend_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "verify"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "#700 — resend invitee verifies their email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/email/verify",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "email",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_resend_verify_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "#700 — owner invites the resend invitee (editor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"invited row carries its membership id\", () => pm.expect(pm.response.json().id).to.be.a(\"string\").and.not.empty);",
+                  "pm.collectionVariables.set(\"inv_resend_mid\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{inv_resend_email}}\",\"role\":\"editor\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "#700 — mail sink: read the resend invitee's first invitation token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"inv_resend_first_token\", pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{inv_resend_email}}&kind=invite",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{inv_resend_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "invite"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "#700 — fixture: backdate the resend invitation by 8 days (expire it)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"one row backdated\", () => { pm.response.to.have.status(200); pm.expect(pm.response.json().updated).to.eql(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/backdate-invite?email={{inv_resend_email}}&days=8",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "backdate-invite"
+              ],
+              "query": [
+                {
+                  "key": "email",
+                  "value": "{{inv_resend_email}}"
+                },
+                {
+                  "key": "days",
+                  "value": "8"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "#700 — accepting the expired resend invitation is invite_expired (the dead-end)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 410\", () => pm.response.to.have.status(410));",
+                  "pm.test(\"code invite_expired\", () => pm.expect(pm.response.json().code).to.eql(\"invite_expired\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_resend_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_resend_first_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "#700 — owner resends the expired invitation (admin-only route)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"2xx\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "pm.test(\"returns the invited member, still pending\", () => { const b = pm.response.json(); pm.expect(b.id).to.eql(pm.collectionVariables.get(\"inv_resend_mid\")); pm.expect(b.status).to.eql(\"invited\"); pm.expect(b.email).to.eql(pm.collectionVariables.get(\"inv_resend_email\")); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_owner_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/members/{{inv_resend_mid}}/resend",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "members",
+                "{{inv_resend_mid}}",
+                "resend"
+              ]
+            }
+          }
+        },
+        {
+          "name": "#700 — mail sink: read the freshly resent invitation token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const fresh = pm.response.json().token;",
+                  "pm.test(\"a token came back\", () => pm.expect(fresh).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"the resent token is not the expired one\", () => pm.expect(fresh).to.not.eql(pm.collectionVariables.get(\"inv_resend_first_token\")));",
+                  "pm.collectionVariables.set(\"inv_resend_fresh_token\", fresh);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mailSinkUrl}}/token?to={{inv_resend_email}}&kind=invite",
+              "host": [
+                "{{mailSinkUrl}}"
+              ],
+              "path": [
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{inv_resend_email}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "invite"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "#700 — invitee accepts the resent invitation: the expired dead-end is resolved",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"joined the owner's workspace\", () => pm.expect(b.workspaceId).to.eql(pm.collectionVariables.get(\"inv_owner_wid\")));",
+                  "pm.test(\"with the invited role\", () => pm.expect(b.user.role).to.eql(\"editor\"));",
+                  "pm.test(\"no invite error code\", () => pm.expect(b.code).to.be.undefined);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inv_resend_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/auth/invite/accept",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "auth",
+                "invite",
+                "accept"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"token\":\"{{inv_resend_fresh_token}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "Owner creates an API key (links:write)",
           "event": [
             {

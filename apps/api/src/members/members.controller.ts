@@ -30,6 +30,14 @@ export class MembersController {
     await this.members.changeRole(actor.workspaceId, id, input.role, actor.label, actor.role);
   }
 
+  /* #700 — resend a pending/expired invitation. Same @Roles("admin") gate as
+     invite/changeRole/remove: deciding who may rejoin the team is an admin act. */
+  @Post("members/:id/resend")
+  @Roles("admin")
+  resend(@Actor() actor: RequestActor, @Param("id") id: string) {
+    return this.members.resend(actor.workspaceId, id, actor.label);
+  }
+
   @Delete("members/:id")
   @Roles("admin")
   @HttpCode(204)

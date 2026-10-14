@@ -20,6 +20,7 @@
    ============================================================ */
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -28,6 +29,27 @@ const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
 const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
 const PATHS = { invite: "/invite?token=", verify: "/verify-email?token=", reset: "/reset-password?token=" };
 const EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/;
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/* The sink binds 127.0.0.1 only, but a hostile page can still reach it via
+   DNS-rebinding: it resolves its own name to 127.0.0.1 and the browser sends
+   that name in the Host header. Pin the request to a loopback Host so only
+   genuinely local callers (newman, curl) get past this gate. Exported so the
+   @snapurl/api vitest lane can unit-test the allow/deny decision. */
+export function isLoopbackHost(hostHeader) {
+  if (typeof hostHeader !== "string" || hostHeader === "") return false;
+  // Strip the optional :port. [::1]:3099 → ::1, 127.0.0.1:3099 → 127.0.0.1.
+  let host = hostHeader.trim();
+  if (host.startsWith("[")) {
+    const close = host.indexOf("]");
+    if (close === -1) return false;
+    host = host.slice(1, close);
+  } else {
+    const colon = host.indexOf(":");
+    if (colon !== -1) host = host.slice(0, colon);
+  }
+  return LOOPBACK_HOSTS.has(host.toLowerCase());
+}
 
 async function latestToken(to, kind) {
   const sanitized = to.replace(/[^a-z0-9]/gi, "_");
@@ -69,12 +91,15 @@ async function backdateInvite(email, days) {
   return { code, updated };
 }
 
-createServer(async (req, res) => {
+async function handle(req, res) {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   const send = (status, body) => {
     res.writeHead(status, { "content-type": "application/json" });
     res.end(JSON.stringify(body));
   };
+  // DNS-rebinding defence: refuse any request not addressed to a loopback host
+  // before touching the outbox or the database.
+  if (!isLoopbackHost(req.headers.host)) return send(403, { error: "forbidden host" });
   try {
     if (req.method === "GET" && url.pathname === "/health") return send(200, { ok: true });
     if (req.method === "GET" && url.pathname === "/token") {
@@ -95,4 +120,11 @@ createServer(async (req, res) => {
   } catch (err) {
     send(500, { error: String(err) });
   }
-}).listen(PORT, "127.0.0.1", () => console.log(`mail-sink listening on http://127.0.0.1:${PORT}`));
+}
+
+// Only bind a port when run directly (qa/postman/run.sh runs this file as the
+// entrypoint). Importing the module — e.g. from the @snapurl/api unit test that
+// exercises isLoopbackHost — must have no listening side effect.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  createServer(handle).listen(PORT, "127.0.0.1", () => console.log(`mail-sink listening on http://127.0.0.1:${PORT}`));
+}

@@ -18,6 +18,6 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 
-npx -y newman@6 run "$here/snapurl.postman_collection.json" \
+npx -y newman@6.2.1 run "$here/snapurl.postman_collection.json" \
   -e "$here/local.postman_environment.json" \
   --env-var "mailSinkUrl=http://127.0.0.1:$port" "$@"

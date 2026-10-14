@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ConflictException, ForbiddenException, GoneException, HttpException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, GoneException, HttpException, NotFoundException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { and, auditLog, createDatabase, eq, inArray, memberships, sql, users, workspaces, type Database } from "@snapurl/database";
 import { AuthService, INVITE_TTL_MS } from "./auth.service.js";
@@ -284,5 +284,56 @@ describeDb("AuthService.acceptInvite (#668)", () => {
     const hinted = await auth.refresh(invitee.refreshToken, undefined, ownerWid);
     expect(claims(hinted.accessToken).wid).toBe(invitee.wid);
     expect((await auth.listWorkspaces(invitee.user.id, invitee.wid)).map((w) => w.id)).toEqual([invitee.wid]);
+  });
+
+  /* #700 — resend turns a lapsed invitation back into a usable one. Without a
+     resend route an invite that aged past INVITE_TTL_MS was a dead end: the old
+     token stays expired forever and there was no way to mint a new one. This
+     drives the whole flow against real Postgres: invite -> backdate past the
+     TTL (the old token is now invite_expired) -> admin resends -> the OLD token
+     is still refused but the NEW token accepts, proving the dead end is gone. */
+  it("resend revives an expired invitation: the old token stays expired, the new token accepts", async () => {
+    const invitee = await newUser("resend");
+    const oldToken = await invite(invitee.email, "editor");
+
+    // Age the invitation past the 7-day TTL.
+    await db
+      .update(memberships)
+      .set({ invitedAt: new Date(Date.now() - INVITE_TTL_MS - 60_000) })
+      .where(eq(memberships.id, (await row(invitee.email)).id));
+    await expectRefusal(auth.acceptInvite(invitee.user.id, oldToken), GoneException, "invite_expired");
+
+    // The admin resends: a new token is minted and invitedAt is refreshed.
+    const resent = await members.resend(ownerWid, (await row(invitee.email)).id, "owner@example.com");
+    expect(resent).toMatchObject({ email: invitee.email, status: "invited", role: "editor" });
+    const newToken = mail.invites.at(-1)!.token;
+    expect(newToken).not.toBe(oldToken);
+
+    // The old token is dead; the new one works.
+    await expectRefusal(auth.acceptInvite(invitee.user.id, oldToken), NotFoundException, "invite_invalid");
+    const accepted = await auth.acceptInvite(invitee.user.id, newToken);
+    expect(accepted).toMatchObject({ workspaceId: ownerWid });
+    expect((await row(invitee.email)).status).toBe("active");
+
+    // The resend is audited.
+    const audit = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.workspaceId, ownerWid), eq(auditLog.action, "member.invite_resent")));
+    expect(audit.some((a) => a.targetId === (resent as { id: string }).id)).toBe(true);
+  });
+
+  it("resend refuses an active member and an unknown membership", async () => {
+    const invitee = await newUser("resend-guard");
+    const token = await invite(invitee.email, "viewer");
+    await auth.acceptInvite(invitee.user.id, token);
+    // Already active: nothing to resend.
+    await expect(members.resend(ownerWid, (await row(invitee.email)).id, "owner@example.com")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    // Unknown membership id.
+    await expect(members.resend(ownerWid, "00000000-0000-0000-0000-000000000000", "owner@example.com")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
