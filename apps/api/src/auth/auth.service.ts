@@ -633,7 +633,7 @@ export class AuthService {
       throw inviteError(
         GoneException,
         "invite_expired",
-        "This invitation has expired. Ask the person who invited you to send a new one.",
+        "This invitation has expired. Ask the person who invited you to resend it.",
       );
     }
 

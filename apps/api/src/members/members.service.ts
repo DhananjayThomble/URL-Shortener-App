@@ -34,24 +34,35 @@ export class MembersService {
       .where(eq(memberships.workspaceId, workspaceId))
       .orderBy(memberships.createdAt);
 
-    return rows.map(({ membership, user, linkCount }) => ({
-      id: membership.id,
-      // An invited member has no user row yet, so the email is all we can show.
-      name: user?.name ?? membership.email,
-      email: membership.email,
-      role: membership.role as Member["role"],
-      status: membership.status as Member["status"],
-      links: linkCount,
-      /* #699 — last seen in THIS workspace (GET /auth/me stamps the workspace
-         the session is in), not the account-wide users.last_active_at, which
-         would reveal activity in the person's other workspaces. */
-      lastActive: membership.status === "active" ? (membership.lastActiveAt?.toISOString() ?? null) : null,
-      invitedAt: membership.status === "invited" ? (membership.invitedAt?.toISOString() ?? null) : null,
-      /* G6 — this column is why the whole TOTP module exists. It was rendered
-         by the team page with nothing behind it. */
-      twoFactor: Boolean(user?.totpEnabledAt),
-      initials: initialsOf(user?.name ?? membership.email),
-    }));
+    return rows.map(({ membership, user, linkCount }) => {
+      /* #700 — a pending ('invited') membership must expose ONLY the invited
+         email + invite metadata (role, status, invitedAt). The LEFT JOIN above
+         resolves a users row whenever the invited address already has an
+         account, but before the person accepts, their name, 2FA status,
+         per-workspace link count and last-active time are not the workspace's
+         to see. The join stays (invite() needs it to pre-attach userId) but its
+         user-derived fields are suppressed until the row is active. */
+      const active = membership.status === "active";
+      return {
+        id: membership.id,
+        // An invited member has no joinable identity yet, so the email is all we show.
+        name: active ? (user?.name ?? membership.email) : membership.email,
+        email: membership.email,
+        role: membership.role as Member["role"],
+        status: membership.status as Member["status"],
+        links: active ? linkCount : 0,
+        /* #699 — last seen in THIS workspace (GET /auth/me stamps the workspace
+           the session is in), not the account-wide users.last_active_at, which
+           would reveal activity in the person's other workspaces. */
+        lastActive: active ? (membership.lastActiveAt?.toISOString() ?? null) : null,
+        invitedAt: membership.status === "invited" ? (membership.invitedAt?.toISOString() ?? null) : null,
+        /* G6 — this column is why the whole TOTP module exists. It was rendered
+           by the team page with nothing behind it. Only ever true for an active
+           member: a pending invite reveals nothing about the account behind it. */
+        twoFactor: active ? Boolean(user?.totpEnabledAt) : false,
+        initials: initialsOf(active ? (user?.name ?? membership.email) : membership.email),
+      };
+    });
   }
 
   /* invite/changeRole/remove/writeAudit all stay on the primary (this.db):
@@ -115,6 +126,53 @@ export class MembersService {
       invitedAt: row!.invitedAt?.toISOString() ?? null,
       twoFactor: false,
       initials: initialsOf(email),
+    };
+  }
+
+  /* #700 — resend a pending invitation. The 409 branch of invite() tells an
+     admin to "Resend the invitation instead." but there was no route behind
+     that advice: an invite that lapsed past the 7-day TTL became a dead end for
+     both sides. resend() regenerates the token (so a lapsed invite is valid
+     again) and refreshes invitedAt (which resets the TTL, since acceptInvite
+     measures expiry from invitedAt), persists the new hash, re-sends the mail
+     and audits it. Like the other mutators it reads-then-writes on this.db so
+     the guard read and the write share the primary handle. */
+  async resend(workspaceId: string, membershipId: string, actorLabel: string): Promise<Member> {
+    const [target] = await this.db
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)))
+      .limit(1);
+    if (!target) throw new NotFoundException("That invitation doesn't exist.");
+    if (target.status !== "invited") {
+      throw new BadRequestException(`${target.email} is already on this team.`);
+    }
+
+    // Only the hash is stored, exactly as in invite(): a leaked database cannot
+    // be used to accept an invitation.
+    const token = randomBytes(32).toString("base64url");
+    const invitedAt = new Date();
+    await this.db
+      .update(memberships)
+      .set({ inviteTokenHash: createHash("sha256").update(token).digest("hex"), invitedAt })
+      .where(eq(memberships.id, membershipId));
+
+    await this.mail.sendInvite({ to: target.email, token, invitedBy: actorLabel });
+    await this.writeAudit(workspaceId, null, actorLabel, "member.invite_resent", "membership", membershipId, {
+      email: target.email,
+    });
+
+    return {
+      id: target.id,
+      name: target.email,
+      email: target.email,
+      role: target.role as Member["role"],
+      status: "invited",
+      links: 0,
+      lastActive: null,
+      invitedAt: invitedAt.toISOString(),
+      twoFactor: false,
+      initials: initialsOf(target.email),
     };
   }
 
@@ -234,6 +292,8 @@ function describe(action: string, metadata: Record<string, unknown> | null): str
   switch (action) {
     case "member.invited":
       return `Invited ${email ?? "a teammate"}`;
+    case "member.invite_resent":
+      return `Resent the invitation to ${email ?? "a teammate"}`;
     case "member.joined":
       return `${email ?? "A teammate"} joined as ${metadata?.role ?? "a member"}`;
     case "member.removed":
