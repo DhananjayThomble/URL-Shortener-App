@@ -129,6 +129,36 @@ describe("HttpUrl — control characters and length", () => {
   });
 });
 
+/* Issue #712 item 2: a URL that embeds credentials in its authority
+   (`user@host` / `user:pass@host`) must be refused. Those forms are a classic
+   phishing disguise — the visible host looks legitimate while the real target
+   is whatever follows the `@` — and the leaked credentials would otherwise be
+   stored and later emitted as a Location header. An `@` that appears only in
+   the path or query is harmless and must still pass. */
+describe("HttpUrl — embedded credentials", () => {
+  it.each([
+    ["username only", "http://user@example.com/x"],
+    ["username and password", "https://user:pass@example.com/x"],
+    ["password only", "https://:pass@example.com/x"],
+    ["credentials and denied host", "http://user@169.254.169.254/x"],
+  ])("rejects %s: %s", (_label, url) => {
+    expect(HttpUrl.safeParse(url).success).toBe(false);
+  });
+
+  it("still accepts an '@' that appears only in the path or query", () => {
+    expect(HttpUrl.safeParse("https://example.com/u@h").success).toBe(true);
+    expect(HttpUrl.safeParse("https://example.com/?e=a@b.com").success).toBe(true);
+  });
+
+  it("propagates to domain create, domain update and link create", () => {
+    const creds = "https://user:pass@evil.com/";
+    expect(AddDomainInput.safeParse({ domain: "acme.com", rootRedirect: creds }).success).toBe(false);
+    expect(AddDomainInput.safeParse({ domain: "acme.com", notFoundRedirect: creds }).success).toBe(false);
+    expect(UpdateDomainInput.safeParse({ rootRedirect: creds }).success).toBe(false);
+    expect(CreateLinkInput.safeParse({ destination: creds, domain: "d" }).success).toBe(false);
+  });
+});
+
 describe("every contract field routes through HttpUrl", () => {
   const bad = "javascript:alert(1)";
   const metadata = "http://169.254.169.254/latest/meta-data/";

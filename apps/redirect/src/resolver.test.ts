@@ -45,6 +45,7 @@ describeDb("PostgresLinkResolver.resolve", () => {
   let resolver: PostgresLinkResolver;
   let workspaceId: string;
   let host: string;
+  let nonLiveHost: string;
 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
@@ -53,6 +54,7 @@ describeDb("PostgresLinkResolver.resolve", () => {
 
     const stamp = Date.now();
     host = `resolver-${stamp}.test`;
+    nonLiveHost = `resolver-notlive-${stamp}.test`;
 
     const [ws] = await db
       .insert(workspaces)
@@ -60,9 +62,14 @@ describeDb("PostgresLinkResolver.resolve", () => {
       .returning({ id: workspaces.id });
     workspaceId = ws!.id;
 
+    /* #712: a live domain is the only kind the redirect may serve, so the
+       positive fixtures must be inserted with status:'live' now that the
+       resolver filters on it. Without this they would default to 'verifying'
+       and the resolve/resolveDomain assertions below would start returning
+       null. */
     const [dom] = await db
       .insert(domains)
-      .values({ workspaceId, domain: host })
+      .values({ workspaceId, domain: host, status: "live" })
       .returning({ id: domains.id });
 
     /* A link with two routing rules, inserted position 1 before position 0 so
@@ -81,6 +88,24 @@ describeDb("PostgresLinkResolver.resolve", () => {
     await db
       .insert(links)
       .values({ workspaceId, domainId: dom!.id, slug: "plain", destination: "https://example.com/plain" });
+
+    /* #712 fixture: a domain still in verification. It owns a link and carries
+       a root/404 redirect, yet the redirect service must refuse to serve any of
+       it until the domain is verified (status flips to 'live'). status is set
+       explicitly for clarity even though 'verifying' is the column default. */
+    const [notLive] = await db
+      .insert(domains)
+      .values({
+        workspaceId,
+        domain: nonLiveHost,
+        status: "verifying",
+        rootRedirect: "https://example.com/root",
+        notFoundRedirect: "https://example.com/404",
+      })
+      .returning({ id: domains.id });
+    await db
+      .insert(links)
+      .values({ workspaceId, domainId: notLive!.id, slug: "pending", destination: "https://example.com/pending" });
   });
 
   afterAll(async () => {
@@ -118,5 +143,30 @@ describeDb("PostgresLinkResolver.resolve", () => {
 
     expect(resolved).not.toBeNull();
     expect(resolved!.rules).toEqual([]);
+  });
+
+  /* #712: the positive path above proves a live domain resolves its link and,
+     via resolveDomain below, its redirects — the two assertions that pin
+     status:'live' is served. */
+  it("resolveDomain returns the redirects of a live domain", async () => {
+    const resolved = await resolver.resolveDomain(host);
+
+    expect(resolved).not.toBeNull();
+    expect(resolved!.id).toBeTruthy();
+  });
+
+  /* #712 regression guard: a non-live (verifying) domain must not be served.
+     Before the status='live' filter these would both return the pending link /
+     the domain's redirects — this is the RED assertion the fix turns GREEN. */
+  it("does not resolve a link on a non-live (verifying) domain", async () => {
+    const resolved = await resolver.resolve(nonLiveHost, "pending");
+
+    expect(resolved).toBeNull();
+  });
+
+  it("resolveDomain returns null for a non-live (verifying) domain", async () => {
+    const resolved = await resolver.resolveDomain(nonLiveHost);
+
+    expect(resolved).toBeNull();
   });
 });
