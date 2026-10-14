@@ -243,3 +243,18 @@ h4 {
     min-width: 44px;
   }
 }
+
+/* ------------------------------------------------------------------
+   Hover-less reveal (#659). The per-row link actions (Copy, Duplicate,
+   Archive) are revealed on desktop with `opacity-0 group-hover:opacity-100`.
+   Touch devices cannot hover (matchMedia('(hover: hover)') is false), so the
+   group-hover reveal never fires and the actions stay at opacity 0 — unusable.
+   This utility forces them visible on hover-less devices only; hover-capable
+   (pointer) devices keep the hover-reveal untouched. focus-visible:opacity-100
+   still covers keyboard users on every device.
+   ------------------------------------------------------------------ */
+@utility row-action {
+  @media (hover: none) {
+    opacity: 1;
+  }
+}

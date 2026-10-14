@@ -72,7 +72,7 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
             <button
               onClick={onCopy}
               aria-label={`Copy short link ${link.domain}/${link.slug}`}
-              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
+              className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
             >
               {copied ? "✓ copied" : "⧉ copy"}
             </button>
@@ -83,7 +83,7 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
               disabled={cloneLink.isPending}
               aria-label={`Duplicate link ${link.domain}/${link.slug}`}
               title="Create a copy of this link with a new back-half"
-              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
+              className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
             >
               {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
             </button>
@@ -92,7 +92,7 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
               disabled={updateLink.isPending}
               aria-label={archived ? `Unarchive link ${link.domain}/${link.slug}` : `Archive link ${link.domain}/${link.slug}`}
               title={archived ? "Move this link back to your active lists" : "Archive this link — it keeps working, just moves out of your active lists"}
-              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
+              className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
             >
               {updateLink.isPending ? "…" : archived ? "⤴ unarchive" : "⤵ archive"}
             </button>
