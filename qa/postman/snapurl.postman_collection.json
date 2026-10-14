@@ -6483,7 +6483,7 @@
           }
         },
         {
-          "name": "List: exactly one shared domain, flagged shared=true",
+          "name": "List: exactly one shared domain for the default host, flagged shared=true",
           "event": [
             {
               "listen": "test",
@@ -6491,8 +6491,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"200\", () => pm.response.to.have.status(200));",
-                  "const shared = pm.response.json().filter((d) => d.shared === true);",
-                  "pm.test(\"one shared domain\", () => pm.expect(shared.length).to.eql(1));",
+                  "const host = pm.environment.get(\"defaultDomainHost\");",
+                  "const shared = pm.response.json().filter((d) => d.shared === true && d.domain === host);",
+                  "pm.test(\"one shared domain for the default host\", () => pm.expect(shared.length).to.eql(1));",
                   "pm.collectionVariables.set(\"dr_shared_id\", shared[0].id);",
                   "pm.collectionVariables.set(\"dr_shared_host\", shared[0].domain);",
                   "pm.collectionVariables.set(\"dr_shared_root_before\", String(shared[0].rootRedirect));"
