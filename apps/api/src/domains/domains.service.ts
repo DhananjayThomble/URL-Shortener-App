@@ -34,6 +34,38 @@ function assertNotSelfRedirect(domain: string, values: Array<string | null | und
   }
 }
 
+/**
+ * Normalise a root / 404 redirect to a header-safe href before it is stored
+ * (#713 item 1).
+ *
+ * A redirect URL whose characters go beyond Latin-1 — an IDN host like
+ * `例え.テスト`, or a CJK / emoji path or query — SAVES fine but then 500s the
+ * visitor: the redirect service emits the stored string verbatim as a
+ * `Location` header and Node's HTTP layer refuses non-Latin-1 header bytes.
+ *
+ * Links never hit this because the redirect serves a link destination through
+ * packages/domain `buildDestination`, which runs `new URL(dest).toString()` and
+ * emits the normalised (host punycoded to `xn--`, path/query percent-encoded)
+ * href. Domains stored the raw string, so the asymmetry was the bug. Normalise
+ * here, at the one write path, and the stored value — which is also what the
+ * Postgres `resolveDomain()` Location header and the DynamoDB projected meta
+ * item are built from — is a valid header value by construction.
+ *
+ * `null`/`undefined` passes straight through (an absent or cleared redirect).
+ * The contract's `HttpUrl` has already proven a present value parses as http(s),
+ * so `new URL` cannot throw for an accepted input; the try/catch is a defensive
+ * backstop that returns the original rather than turning a stored value into a
+ * 500 in the unlikely event it ever did.
+ */
+function normaliseRedirect(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  try {
+    return new URL(value).href;
+  } catch {
+    return value;
+  }
+}
+
 @Injectable()
 export class DomainsService {
   constructor(
@@ -92,8 +124,9 @@ export class DomainsService {
           status: "verifying",
           ssl: "pending",
           verificationToken: `snapurl-verify-${randomBytes(16).toString("hex")}`,
-          rootRedirect: input.rootRedirect ?? null,
-          notFoundRedirect: input.notFoundRedirect ?? null,
+          // Store the header-safe href, not the raw string (#713 item 1).
+          rootRedirect: normaliseRedirect(input.rootRedirect),
+          notFoundRedirect: normaliseRedirect(input.notFoundRedirect),
         })
         .returning();
       // A redirect set at connect time must reach the dynamo projection too
@@ -203,9 +236,11 @@ export class DomainsService {
     await assertNoSsrfDnsTarget([input.rootRedirect, input.notFoundRedirect]);
     assertNotSelfRedirect(row.domain, [input.rootRedirect, input.notFoundRedirect]);
 
+    // Store the header-safe href, not the raw string (#713 item 1); an omitted
+    // field stays omitted, and null still clears.
     const patch: Partial<typeof domains.$inferInsert> = { updatedAt: new Date() };
-    if (input.rootRedirect !== undefined) patch.rootRedirect = input.rootRedirect;
-    if (input.notFoundRedirect !== undefined) patch.notFoundRedirect = input.notFoundRedirect;
+    if (input.rootRedirect !== undefined) patch.rootRedirect = normaliseRedirect(input.rootRedirect);
+    if (input.notFoundRedirect !== undefined) patch.notFoundRedirect = normaliseRedirect(input.notFoundRedirect);
 
     const updated = await this.db.transaction(async (tx) => {
       /* The ownership predicate is repeated on the write itself (and the shared
