@@ -6,7 +6,7 @@ import { Sparkline } from "@/components/charts";
 import { Chip } from "@/components/ui";
 import { useCloneLink, useUpdateLink } from "@/lib/api/hooks";
 import type { Link, LinkStatus } from "@/lib/api/types";
-import { cn, compact, copy, faviconFor, formatDate, relativeDate } from "@/lib/utils";
+import { cn, compact, copy, faviconFor, formatDate, relativeDate, shortUrlHref } from "@/lib/utils";
 
 const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; label: (l: Link) => string }> = {
   active: { tone: "good", label: () => "Active" },
@@ -25,11 +25,10 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
   const cloneLink = useCloneLink();
   const updateLink = useUpdateLink();
   const status = STATUS[link.status];
-  const url = `${link.domain}/${link.slug}`;
   const archived = link.status === "archived";
 
   async function onCopy() {
-    const ok = await copy(`https://${url}`);
+    const ok = await copy(shortUrlHref(link.domain, link.slug));
     setCopied(ok);
     setTimeout(() => setCopied(false), 1600);
   }

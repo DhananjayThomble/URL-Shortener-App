@@ -8,7 +8,7 @@ import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, T
 import { EditLinkDrawer } from "@/components/links/edit-link-drawer";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
-import { copy, formatDate, formatDelta, full, NO_VALUE, pct } from "@/lib/utils";
+import { copy, formatDate, formatDelta, full, NO_VALUE, pct, shortUrlHref } from "@/lib/utils";
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
   "24h": "prev 24h",
@@ -66,7 +66,7 @@ export default function LinkDetailPage() {
   /* The link's public short URL, the same https://<domain>/<slug> the QR studio
      encodes. */
   async function copyShortUrl() {
-    if (await copy(`https://${l.domain}/${l.slug}`)) {
+    if (await copy(shortUrlHref(l.domain, l.slug))) {
       setProblem(null);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);

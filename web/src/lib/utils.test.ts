@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { compact, inr, pct, shortUrl, faviconFor, relativeDate, formatDate, timeAgo } from "./utils";
+import { compact, inr, pct, shortUrl, shortUrlHref, faviconFor, relativeDate, formatDate, timeAgo } from "./utils";
 
 /* First tests for web/ (issue #351). These are the pure formatting helpers the
    dashboard renders numbers, money and links with — worth pinning because a
@@ -39,6 +39,18 @@ describe("pct", () => {
 describe("shortUrl", () => {
   it("joins domain and slug with a slash", () => {
     expect(shortUrl("localhost:3002", "spring-sale")).toBe("localhost:3002/spring-sale");
+  });
+});
+
+describe("shortUrlHref", () => {
+  it("uses the passed protocol for non-local domains", () => {
+    expect(shortUrlHref("snap.to", "spring-sale", "http:")).toBe("http://snap.to/spring-sale");
+  });
+  it("falls back to http for localhost when no protocol is passed", () => {
+    expect(shortUrlHref("localhost:3002", "spring-sale", "")).toBe("http://localhost:3002/spring-sale");
+  });
+  it("falls back to https for non-local domains when no protocol is passed", () => {
+    expect(shortUrlHref("snap.to", "spring-sale", "")).toBe("https://snap.to/spring-sale");
   });
 });
 

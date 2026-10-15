@@ -6,7 +6,7 @@ import { Button, Toggle } from "@/components/ui";
 import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
 import { useUpdateLink } from "@/lib/api/hooks";
 import { UpdateLinkInput, type CreateLinkFormValues, type Link } from "@/lib/api/types";
-import { cn } from "@/lib/utils";
+import { cn, shortUrlHref } from "@/lib/utils";
 
 type TabId = LinkFormTabId;
 
@@ -219,7 +219,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               control={control}
               watch={watch}
               formState={formState}
-              qrValue={`https://${link.domain}/${link.slug}`}
+              qrValue={shortUrlHref(link.domain, link.slug)}
               passwordPlaceholder={link.passwordProtected ? "Type a new password to replace the current one" : "Leave blank for no password"}
               passwordSlot={
                 link.passwordProtected ? (

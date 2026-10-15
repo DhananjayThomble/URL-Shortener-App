@@ -112,6 +112,22 @@ export function shortUrl(domain: string, slug: string) {
   return `${domain}/${slug}`;
 }
 
+/**
+ * Full short-link URL, using the browser's current protocol when available.
+ * Falls back to http for localhost/127.0.0.1 domains, otherwise https.
+ */
+export function shortUrlHref(domain: string, slug: string, protocol = typeof window !== "undefined" ? window.location.protocol : "") {
+  const bare = shortUrl(domain, slug);
+  if (/^https?:\/\//i.test(bare)) return bare;
+  const scheme =
+    protocol === "http:" || protocol === "https:"
+      ? protocol.slice(0, -1)
+      : /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(domain)
+        ? "http"
+        : "https";
+  return `${scheme}://${bare}`;
+}
+
 /** Clipboard is unavailable on http:// origins and in some webviews. */
 export async function copy(text: string): Promise<boolean> {
   try {

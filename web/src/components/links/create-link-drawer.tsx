@@ -9,7 +9,7 @@ import { tabsWithErrors } from "@/components/links/link-form-values";
 import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
-import { cn } from "@/lib/utils";
+import { cn, shortUrlHref } from "@/lib/utils";
 
 type TabId = LinkFormTabId;
 
@@ -314,7 +314,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
               control={control}
               watch={watch}
               formState={formState}
-              qrValue={`https://${domain}/${slug || "your-slug"}`}
+              qrValue={shortUrlHref(domain, slug || "your-slug")}
               showBackHalf={
                 <Field
                   label="Short link"
