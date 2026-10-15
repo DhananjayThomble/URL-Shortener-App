@@ -59,6 +59,7 @@ export default function ConversionsPage() {
           <>
             <Segmented<AnalyticsRange>
               aria-label="Conversions date range"
+              className="w-full sm:w-auto"
               value={range}
               onChange={setRange}
               options={[

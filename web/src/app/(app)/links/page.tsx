@@ -171,7 +171,7 @@ export default function LinksPage() {
           ))}
         </div>
 
-        <span className="w-px h-[22px] bg-line" />
+        <span className="hidden sm:block w-px h-[22px] bg-line" />
 
         <Input
           value={search}
@@ -218,7 +218,7 @@ export default function LinksPage() {
           </Button>
         ) : null}
 
-        <div className="ml-auto">
+        <div className="sm:ml-auto">
           <Tabs
             value={view}
             onChange={setView}
