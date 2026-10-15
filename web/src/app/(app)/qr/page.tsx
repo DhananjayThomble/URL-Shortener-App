@@ -6,7 +6,7 @@ import { PageHead } from "@/components/app-shell";
 import { QrPreview } from "@/components/qr/qr-preview";
 import { Button, Card, CardBody, CardHeader, Field, Segmented, Skeleton, Toggle } from "@/components/ui";
 import { useLinks } from "@/lib/api/hooks";
-import { cn } from "@/lib/utils";
+import { cn, shortUrlHref } from "@/lib/utils";
 
 const FOREGROUNDS = ["#0C1219", "#1F5FD4", "#0B6E80", "#5B4BC4"];
 
@@ -20,7 +20,7 @@ export default function QrStudioPage() {
   const [busy, setBusy] = useState(false);
 
   const link = links[selected];
-  const value = link ? `https://${link.domain}/${link.slug}` : "";
+  const value = link ? shortUrlHref(link.domain, link.slug) : "";
 
   const filename = useMemo(() => (link ? `${link.domain}-${link.slug}` : "snapurl"), [link]);
 
