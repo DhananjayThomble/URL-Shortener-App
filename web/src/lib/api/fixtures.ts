@@ -657,6 +657,9 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["PATCH"], pattern: /^\/reports\/([^/]+)$/ },
   { methods: ["GET"], pattern: /^\/reports$/ },
   { methods: ["GET", "POST"], pattern: /^\/public\/forms\/([^/]+)$/ },
+  { methods: ["GET"], pattern: /^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)$/ },
+  { methods: ["POST"], pattern: /^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)\/view$/ },
+  { methods: ["POST"], pattern: /^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)\/blocks\/([^/]+)\/click$/ },
   { methods: ["GET"], pattern: /^\/public\/bio-pages\/([^/]+)$/ },
   { methods: ["POST"], pattern: /^\/public\/bio-pages\/([^/]+)\/view$/ },
   { methods: ["POST"], pattern: /^\/public\/bio-pages\/([^/]+)\/blocks\/([^/]+)\/click$/ },
@@ -1155,7 +1158,35 @@ export async function fixtureRequest<T>(
     removeById(bioStore, m(/^\/bio-pages\/([^/]+)$/)![1]);
     data = undefined;
   } else if (m(/^\/bio-pages$/)) data = bioStore;
-  /* ---- public bio page (#457) ---- */
+  /* ---- public bio page, per-domain (#650) ---- */
+  else if (m(/^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)\/view$/) && method === "POST") {
+    const [, domain, slug] = m(/^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)\/view$/)!;
+    const page = bioStore.find((b) => b.domain === decodeURIComponent(domain) && b.slug === slug && b.status === "live");
+    if (!page) throw new Error(`No fixture bio page ${path}`);
+    page.views += 1;
+    data = undefined;
+  } else if (m(/^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)\/blocks\/([^/]+)\/click$/) && method === "POST") {
+    const [, domain, slug, blockId] = m(/^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)\/blocks\/([^/]+)\/click$/)!;
+    const page = bioStore.find((b) => b.domain === decodeURIComponent(domain) && b.slug === slug && b.status === "live");
+    if (!page?.blocks.some((b) => b.id === blockId)) throw new Error(`No fixture bio block ${path}`);
+    data = undefined;
+  } else if (m(/^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)$/)) {
+    const [, domain, slug] = m(/^\/public\/bio-pages\/by-domain\/([^/]+)\/([^/]+)$/)!;
+    const page = bioStore.find((b) => b.domain === decodeURIComponent(domain) && b.slug === slug && b.status === "live");
+    if (!page) throw new Error(`No fixture bio page ${path}`);
+    data = {
+      slug: page.slug,
+      profile: { name: page.profile.name, bio: page.profile.bio, initials: page.profile.initials },
+      blocks: page.blocks.map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        title: b.title,
+        subtitle: b.subtitle ?? null,
+        href: b.href ?? null,
+      })),
+    };
+  }
+  /* ---- public bio page (#457), slug alias ---- */
   else if (m(/^\/public\/bio-pages\/([^/]+)\/view$/) && method === "POST") {
     const slug = m(/^\/public\/bio-pages\/([^/]+)\/view$/)![1];
     const page = bioStore.find((b) => b.slug === slug && b.status === "live");

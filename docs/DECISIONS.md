@@ -1259,6 +1259,76 @@ found (#706), so the class cannot grow while those are worked off.
 
 ---
 
+### Per-domain bio pages via a managed link, not a redirect-service renderer (#650)
+
+**The bug.** A bio page is unique per `(domain, slug)` — `bio_pages_domain_slug_key` enforces that —
+but every public route resolved it by **slug alone** (`BioPagesService.livePage(slug)`, ordered by
+`created_at`, `limit 1`). So two workspaces publishing `/<something>` on two different domains
+collided: a visitor to either `<domain-a>/<something>` or `<domain-b>/<something>` got whichever page
+was created first. The address bar said one thing; the page said another.
+
+**Decision — option (b): each published page owns a managed link.** When a bio page is published
+(`status: 'live'`), the publish transaction also creates (or repoints) a row in `links` at the
+page's `(domain, slug)` whose `destination` is the web app's `/b/<domain>/<slug>`, tagged with a new
+`links.managed_bio_page_id` column (FK to `bio_pages`, `ON DELETE CASCADE`). A visitor hitting the
+short URL gets **one 302** from the redirect service to the web host, which renders the page by
+`(domain, slug)`.
+
+**Why not move bio rendering into the redirect service.** The redirect service is a stateless,
+Postgres-optional, edge-cacheable resolver whose only job is "given `(host, slug)`, where do I send
+you." Teaching it to render a bio page — fetch the profile, the blocks, their click counters, and
+return HTML — would hand it a second, heavier data model, a templating concern, and a reason to hold
+a database connection on the AWS profile where the whole point is that it does not. A managed link
+keeps the redirect service, the Dynamo projection, the short-lived cache and the CloudFront
+`KeyValueStore` edge path **byte-for-byte unchanged**: a managed link is just a link.
+
+**What this buys, for free, from the existing unique index.** Because the managed link is a real row
+in `links`, `links_domain_slug_key` refuses a collision in **both directions**: publishing a page
+onto a slug a user link already holds throws a unique violation (surfaced as a `409 — slug already
+in use on this domain`), and creating a user link on a slug a bio page holds throws exactly the same
+way in `LinksService`. One index is the single arbiter of "who owns this back-half," rather than two
+features inventing their own overlapping checks.
+
+**Managed links are infrastructure, not user links.** `LinksService.list`, the single-link `GET`,
+the CSV export, and the delete/update-by-id paths all filter `managed_bio_page_id IS NULL`, so a
+managed link never shows in the links table, is never editable or deletable from the links UI, and
+is reached only through the bio editor. There is **no link quota** in this codebase today, so there
+is nothing to exempt a managed link from; if a quota is ever added, the same `IS NULL` filter is
+where it must not count.
+
+**Unpublish and delete go through the existing invalidation, not a new one.** Setting a page back to
+draft deletes its managed link inside the same transaction; deleting the page cascades the link away
+via the FK. Both then call the **existing** `LinkCacheBustService.bust(host, slug)` and the existing
+projection-outbox + nudge, after commit — the exact path `LinksService.remove` uses (#470). No new
+invalidation mechanism was introduced.
+
+**The address bar ends on the web host.** The 302 means a visitor who typed `custom.example.com/me`
+lands on `app.snapurl.dev/b/custom.example.com/me`. That is the accepted cost of option (b): one
+extra hop and a web-host address bar.
+
+**Backward compatibility.** The per-domain web route is `/b/<domain>/<slug>` and the API route is
+`/public/bio-pages/by-domain/<domain>/<slug>`. The old bare `/b/<slug>` (and
+`/public/bio-pages/<slug>`) are kept as an alias for URLs already shared before this change. The
+alias resolves **only on a system (shared/default) domain** — a bare slug can be ambiguous across
+domains, and rather than guess, the alias answers for the shared domain every workspace publishes on
+(where the old slug-only URLs were minted). A slug that exists only on a custom domain **404s on the
+alias** and must be reached per-domain. (The alternative — "pick deterministically across all
+domains" — was rejected: it would silently serve one workspace's page at another workspace's
+address, which is the very ambiguity this issue exists to end.)
+
+**Backfill.** Migration `0019` adds the column, index and FK; a one-off
+(`pnpm --filter @snapurl/database backfill-bio-links`) creates the managed link for every
+already-published page. It is non-destructive: a page whose `(domain, slug)` is already occupied by
+another link is **left on the alias** and reported, never overwritten.
+
+**Revisit if** the custom-domain address bar must be preserved — i.e. a visitor to
+`custom.example.com/me` must *stay* on `custom.example.com`. That cannot be done with a 302 to the
+web host; it would require the redirect service (or an edge function) to proxy or render the bio
+page itself, which is the architecture this decision deliberately declined. If that requirement
+arrives, it is a new epic, not a tweak to this one.
+
+---
+
 ## Part 5 — Open questions for you
 
 1. **Is the v1 Mongo database still live?** Decides whether the import script matters (G9).
