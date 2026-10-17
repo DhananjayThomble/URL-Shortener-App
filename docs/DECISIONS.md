@@ -1463,8 +1463,54 @@ straight from CI. The overall Lighthouse performance score is deliberately **not
 a noisy composite (shown above only as context; perf 95–98 confirms the prod bundle is healthy,
 versus the dev-mode 38–41 these numbers replace).
 
-**Not covered here.** Authenticated `(app)` routes need a login script to measure and are
-tracked as a separate follow-up (see the issue referencing #475).
+### Authenticated `(app)` routes — fixtures lane (#737)
+
+The marketing lane above cannot reach the dashboard routes under `src/app/(app)`: `AppLayout`
+calls `GET /auth/me` and redirects to `/login` unless a session resolves, so an unauthenticated
+Lighthouse pass only ever measures the login page.
+
+**Decision:** measure the `(app)` routes by building the web app in **fixtures mode**
+(`NEXT_PUBLIC_USE_FIXTURES=true`) rather than standing up the NestJS API + Postgres and a
+puppeteer login. In fixtures mode `web/src/lib/api/client.ts` routes every request to
+`web/src/lib/api/fixtures.ts`, which answers `/auth/me` with a fixture user (no token required)
+and serves fixture links/analytics/bio data — so the full authenticated shell renders with no API
+and no login step.
+
+**What the numbers mean.** They reflect the production bundle rendering **fixture data**, not
+production data volumes. That is the right trade for a bundle/paint baseline: Lighthouse here
+measures script bytes, LCP and TBT of the shipped prod bundle, which do not depend on how many
+real rows the API would return. It is **not** a load/throughput measurement.
+
+**The build.** `web/next.config.ts` deliberately refuses a production build with fixtures on
+(it is the "serving invented data as real" failure the guard exists to prevent), so this lane
+sets `SNAPURL_ALLOW_UNCONFIGURED_BUILD=true` — the config's named escape hatch for a build that is
+*measured, never served*. The guard also runs on `next start`, so the flag is set for both the
+build and the serve. It remains a genuine `next build`: minified, code-split, production React.
+
+**How.** A second job, `lighthouse-app`, in the same standalone `.github/workflows/lighthouse.yml`.
+It mirrors the marketing job (prod build → `next start` → map `snapurl.test` to loopback → run
+`@lhci/cli@0.15.1`, `numberOfRuns: 3`, `--no-sandbox`) but uses a **separate config**,
+`web/lighthouserc.app.json`, with its own `outputDir` (`.lighthouseci-app`) and its own artifact
+(`lighthouse-report-app`), so the marketing config and reports are untouched. It carries the **same
+advisory contract**: `continue-on-error: true`, warn-level assertions only, and **absent from the
+`ci-gate` job's `needs:`** — it can never block or redden the required `CI gate`.
+
+**Routes measured.** `/links`, `/analytics`, `/bio` — the three heaviest `(app)` bundles
+(First Load JS 341 / 336 / 232 kB respectively), so the baseline tracks the worst case.
+
+**Budgets** (`web/lighthouserc.app.json`, all **warn-level**, median across 3 runs). Set
+generously as placeholders on first author (LCP 4,000 ms, TBT 600 ms, script 400,000 B) because
+these client-rendered dashboards are heavier than the static marketing pages; **recalibrated from
+real CI medians in a follow-up commit** once the first run's `Summarize medians` output is read
+from the job log.
+
+**Measured baseline (3-run median per route, ubuntu, prod `next build` + `next start`, fixtures):**
+
+| Route | LCP (ms) | TBT (ms) | Script bytes | Perf score |
+| --- | --- | --- | --- | --- |
+| `/links` | _pending first CI run_ | | | |
+| `/analytics` | _pending first CI run_ | | | |
+| `/bio` | _pending first CI run_ | | | |
 
 ---
 
