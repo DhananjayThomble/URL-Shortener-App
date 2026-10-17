@@ -110,7 +110,7 @@ describeLive("DynamoProjection domain-meta (dynamodb-local + Postgres)", () => {
 
     await db.insert(workspaces).values({ id: workspaceId, name: "it", slug: `it-dm-${stamp}` });
     // status 'live' so these meta-projection assertions exercise the live path;
-    // #713 item 2 gates NON-live domains to a meta DELETE, covered by a
+    // #713 item 2 gates NON-live domains to a NEUTRALISED meta item, covered by a
     // dedicated case below and by the mock-based unit specs.
     const [b] = await db
       .insert(domains)
@@ -224,9 +224,14 @@ describeLive("DynamoProjection domain-meta (dynamodb-local + Postgres)", () => {
     // Status regresses to verifying.
     await db.update(domains).set({ status: "verifying" }).where(eq(domains.id, domainV));
 
-    // A re-projected domain op now DELETEs the stale meta item.
+    // A re-projected domain op now NEUTRALISES the stale meta item: nothing is
+    // served for it (a null redirect reads exactly like no item). It is kept,
+    // carrying the row's id + version, so a stalled put of the earlier live
+    // state cannot land over it (#713 item 4).
     await applyOk([domainOp(domainV, hostV)]);
-    expect(await meta(hostV)).toBeUndefined();
+    const neutralised = await meta(hostV);
+    expect(neutralised?.rootRedirect ?? null).toBeNull();
+    expect(neutralised?.notFoundRedirect ?? null).toBeNull();
 
     // A re-projected link upsert writes NOTHING (no new LINK item for a
     // non-live domain) and is still marked processed.
@@ -236,12 +241,14 @@ describeLive("DynamoProjection domain-meta (dynamodb-local + Postgres)", () => {
     await db.delete(domains).where(eq(domains.id, domainV));
   });
 
-  it("a disconnected domain's meta item is deleted", async () => {
+  it("a disconnected domain's meta item is tombstoned: its redirects are no longer served", async () => {
     await db.update(domains).set({ rootRedirect: `https://example.org/b-again-${stamp}` }).where(eq(domains.id, domainB));
     await applyOk([domainOp(domainB, hostB)]);
     expect(await meta(hostB)).toBeDefined();
     await db.delete(domains).where(eq(domains.id, domainB));
     await applyOk([domainOp(domainB, hostB)]);
-    expect(await meta(hostB)).toBeUndefined();
+    // #713 item 4: a tombstone (redirects null, deleted) rather than a delete, so
+    // a stalled put for this domain id cannot resurrect them.
+    expect(await meta(hostB)).toMatchObject({ id: domainB, rootRedirect: null, notFoundRedirect: null, deleted: true });
   });
 });

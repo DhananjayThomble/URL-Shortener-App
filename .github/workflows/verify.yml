@@ -582,7 +582,7 @@ jobs:
       # dynamodb-local; the test creates and drops its own table. It is skipped
       # in `verify` (no AWS_ENDPOINT_URL_DYNAMODB there), so this is where it runs.
       - name: Domain-meta projection (dynamodb-local integration test)
-        run: pnpm --filter @snapurl/worker exec vitest run src/jobs/dynamo-projection.domain.integration.test.ts
+        run: pnpm --filter @snapurl/worker exec vitest run src/jobs/dynamo-projection.domain.integration.test.ts src/jobs/dynamo-projection.domain-race.integration.test.ts
 
       - name: Smoke — redirect path (resolving from DynamoDB)
         run: bash scripts/smoke-redirect.sh

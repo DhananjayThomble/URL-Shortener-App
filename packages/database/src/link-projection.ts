@@ -160,13 +160,25 @@ export interface LinkItem {
   utm: ProjectedLink["utm"];
 }
 
-/** The stored form of a DOMAIN-META item. */
+/** The stored form of a DOMAIN-META item.
+ *
+ *  `version` and `deleted` exist for the writer's ordering guard (#713 item 4)
+ *  and are ignored by the reader (fromDomainItem drops them):
+ *  - `version`: the domain row's updated_at (ISO) the item was built from, so a
+ *    stale write of an OLDER state of the same domain cannot land over a newer.
+ *  - `deleted`: a tombstone. When a domain is disconnected its meta item is
+ *    neutralised (both redirects null — read exactly like "no item") and marked
+ *    deleted rather than removed, so a stalled write for that domain id cannot
+ *    resurrect its redirects afterwards. A re-added host is a NEW domain row
+ *    with a newer (uuidv7) id, which overwrites the tombstone. */
 export interface DomainItem {
   PK: string;
   SK: string;
   id: string;
   rootRedirect: string | null;
   notFoundRedirect: string | null;
+  version?: string;
+  deleted?: true;
 }
 
 /** Strips nothing but case/whitespace: the SAME normalisation the Postgres
@@ -451,15 +463,24 @@ export function kvsValue(link: ProjectedLink): string {
   return JSON.stringify(value);
 }
 
-/** ProjectedDomain -> stored DomainItem. */
-export function toDomainItem(host: string, domain: ProjectedDomain): DomainItem {
-  return {
+/** ProjectedDomain -> stored DomainItem. `meta` carries the writer-only
+ *  ordering attributes (see DomainItem); they are omitted when not given, so
+ *  the item never holds an `undefined` attribute. */
+export function toDomainItem(
+  host: string,
+  domain: ProjectedDomain,
+  meta: { version?: string; deleted?: true } = {},
+): DomainItem {
+  const item: DomainItem = {
     PK: domainPk(host),
     SK: DOMAIN_META_SK,
     id: domain.id,
     rootRedirect: domain.rootRedirect,
     notFoundRedirect: domain.notFoundRedirect,
   };
+  if (meta.version !== undefined) item.version = meta.version;
+  if (meta.deleted) item.deleted = true;
+  return item;
 }
 
 /** Stored DomainItem -> ProjectedDomain. */

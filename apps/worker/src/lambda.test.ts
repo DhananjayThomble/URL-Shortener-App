@@ -39,6 +39,14 @@ vi.mock("./jobs/rollup.js", () => ({
   backfillClickPartitions: (...args: unknown[]) => backfillClickPartitions(...args),
 }));
 
+/* The #713 item 5 one-off: the routine is exercised for real against Postgres +
+   dynamodb-local in dynamo-projection.domain-race.integration.test.ts; here only
+   the dispatch wiring is asserted. */
+const backfillDomainMeta = vi.fn(async () => 0);
+vi.mock("./jobs/outbox.js", () => ({
+  backfillDomainMeta: (...args: unknown[]) => backfillDomainMeta(...args),
+}));
+
 // Imported after the mocks so the handler closes over them.
 const { handler } = await import("./lambda.js");
 
@@ -168,6 +176,19 @@ describe("worker task dispatch", () => {
     expect(result).toEqual({ task: "maintenance", maintenance: { ok: true } });
     // A task branch that returns before backfill must not touch the routine.
     expect(backfillClickPartitions).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the backfill-domain-meta task: enqueue, then drain (#713 item 5)", async () => {
+    backfillDomainMeta.mockReset();
+    backfillDomainMeta.mockResolvedValue(3 as never);
+    runProjection.mockResolvedValue({ processed: 3, failed: 0 } as never);
+    const result = await handler({ task: "backfill-domain-meta" });
+    expect(backfillDomainMeta).toHaveBeenCalledWith(fakeDb);
+    expect(runProjection).toHaveBeenCalledWith(fakeDb);
+    expect(backfillDomainMeta.mock.invocationCallOrder[0]!).toBeLessThan(runProjection.mock.invocationCallOrder[0]!);
+    expect(result).toEqual({ task: "backfill-domain-meta", enqueued: 3, outbox: { processed: 3, failed: 0 } });
+    expect(backfillClickPartitions).not.toHaveBeenCalled();
+    expect(runFrequent).not.toHaveBeenCalled();
   });
 
   it("dispatches the projection task to runProjection only, not runFrequent (#394)", async () => {

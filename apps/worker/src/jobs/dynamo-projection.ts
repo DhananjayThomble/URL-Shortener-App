@@ -20,6 +20,7 @@ import {
 import type { RoutingRule } from "@snapurl/contract";
 import {
   BatchWriteCommand,
+  PutCommand,
   QueryCommand,
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
@@ -51,6 +52,30 @@ import type { KvsWriter } from "./kvs-projection.js";
    projection table therefore has a GSI on the top-level `linkId`
    attribute (LINK_ID_GSI); remove(linkId) queries it and deletes
    the matching LINK item(s) by their real PK/SK.
+
+   DOMAIN-META ordering (#713 item 4): the meta item is keyed by
+   HOST, but a host can change owner — domain A on host H is
+   disconnected and H is re-added as domain B. Two workers can
+   drain at once and a crashed worker's claimed rows come back
+   after the lease, so a meta write RESOLVED from an old state of
+   Postgres (A still live, or an older version of B) can reach
+   DynamoDB after a newer one and overwrite it — or a reclaimed
+   delete for A can wipe B's redirects. BatchWriteItem cannot carry
+   a condition, so meta writes leave the batch and go out as single
+   conditional PutItems that only land if they are not older than
+   what is stored:
+     - ordered first by domain id: ids are uuidv7 (time-ordered, the
+       `domains.id` default), so a re-added host's row always sorts
+       after the deleted one's and an old-id write is a no-op;
+     - then, for the same id, a tombstone beats a live item (a
+       deleted domain stays deleted) and otherwise by `version` (the
+       row's updated_at), so an older edit cannot overwrite a newer.
+   A disconnected domain is TOMBSTONED (redirects null, deleted:
+   true) rather than removed, so a stalled put cannot recreate it;
+   the redirect reads a null redirect exactly like a missing item.
+   A write that loses the condition is superseded, not failed: the
+   row is marked processed. LINK items are untouched by this and
+   still batch.
    ============================================================ */
 
 /** DynamoDB caps a BatchWriteItem at 25 requests. */
@@ -59,18 +84,67 @@ const BATCH_LIMIT = 25;
 /** Bounded retries for UnprocessedItems returned by BatchWriteItem. */
 const MAX_BATCH_ATTEMPTS = 5;
 
-/** A single put or delete request destined for a BatchWriteCommand. */
+/** A single put or delete request destined for a BatchWriteCommand. LINK items
+ *  only — DOMAIN-META writes are conditional and go out as their own PutItem
+ *  (see writeMeta). */
 type WriteRequest =
-  | { PutRequest: { Item: LinkItem | DomainItem } }
+  | { PutRequest: { Item: LinkItem } }
   | { DeleteRequest: { Key: { PK: string; SK: string } } };
 
-/** What an upsert resolves to: the DynamoDB write requests plus, for the #289
- *  edge fast path, the ProjectedLink and its (host, slug) so the KVS writer can
- *  PutKey/DeleteKey it. `edge` is undefined when the link no longer exists (the
+/** What an upsert resolves to: the DynamoDB write requests, the domain-meta
+ *  item to write conditionally, plus, for the #289 edge fast path, the
+ *  ProjectedLink and its (host, slug) so the KVS writer can PutKey/DeleteKey
+ *  it. `edge` and `meta` are undefined when the link no longer exists (the
  *  requests are then empty too). */
 interface UpsertResolution {
   requests: WriteRequest[];
+  meta?: DomainItem;
   edge?: { link: ProjectedLink; host: string; slug: string };
+}
+
+/** The meta item's ordering version: the domain row's updated_at as ISO. ISO
+ *  strings of one fixed format compare lexically in time order, which is how
+ *  DynamoDB compares them in a ConditionExpression. */
+function versionOf(updatedAt: Date | string | null | undefined): string {
+  if (updatedAt === null || updatedAt === undefined) return new Date(0).toISOString();
+  return (updatedAt instanceof Date ? updatedAt : new Date(updatedAt)).toISOString();
+}
+
+/** Whether meta item `a` supersedes `b` (same key) — the in-process twin of
+ *  metaCondition, used to keep the newest when one batch carries several
+ *  writes for one domain-meta key. */
+function supersedes(a: DomainItem, b: DomainItem): boolean {
+  if (a.id !== b.id) return a.id > b.id;
+  if (Boolean(a.deleted) !== Boolean(b.deleted)) return Boolean(a.deleted);
+  return (a.version ?? "") >= (b.version ?? "");
+}
+
+/** The ConditionExpression that makes a meta write land only if it is not
+ *  older than the stored item (see the ordering note at the top). */
+function metaCondition(item: DomainItem): {
+  ConditionExpression: string;
+  ExpressionAttributeNames: Record<string, string>;
+  ExpressionAttributeValues: Record<string, unknown>;
+} {
+  if (item.deleted) {
+    // A tombstone for domain id X replaces anything owned by X or an older id.
+    return {
+      ConditionExpression: "attribute_not_exists(#id) OR #id <= :id",
+      ExpressionAttributeNames: { "#id": "id" },
+      ExpressionAttributeValues: { ":id": item.id },
+    };
+  }
+  return {
+    ConditionExpression:
+      "attribute_not_exists(#id) OR #id < :id OR " +
+      "(#id = :id AND attribute_not_exists(#deleted) AND (attribute_not_exists(#version) OR #version <= :version))",
+    ExpressionAttributeNames: { "#id": "id", "#deleted": "deleted", "#version": "version" },
+    ExpressionAttributeValues: { ":id": item.id, ":version": item.version ?? versionOf(null) },
+  };
+}
+
+function isConditionalCheckFailed(err: unknown): boolean {
+  return (err as { name?: unknown } | null)?.name === "ConditionalCheckFailedException";
 }
 
 /** Recover (host, slug) from a LINK item's DynamoDB key. The projection stores
@@ -135,6 +209,7 @@ export class DynamoProjection implements ProjectionTarget {
     // DynamoDB first: the authoritative projection must never be lost to a
     // KVS-only failure.
     await this.flush(resolved.requests);
+    if (resolved.meta) await this.writeMeta(resolved.meta);
     if (this.kvs && resolved.edge) {
       await this.kvs.putIfEligible(resolved.edge.link, resolved.edge.host, resolved.edge.slug);
     }
@@ -151,7 +226,8 @@ export class DynamoProjection implements ProjectionTarget {
   }
 
   async projectDomain(domainId: string, host: string | undefined): Promise<void> {
-    await this.flush(await this.buildDomainRequests(domainId, host));
+    const meta = await this.buildDomainMeta(domainId, host);
+    if (meta) await this.writeMeta(meta);
   }
 
   /* ---- batched path (drainOutbox hands the whole claimed batch here) ----
@@ -182,6 +258,23 @@ export class DynamoProjection implements ProjectionTarget {
        contributed that key. */
     const byKey = new Map<string, { request: WriteRequest; owners: Set<number> }>();
 
+    /* The DOMAIN-META writes, one per meta key, keeping the NEWEST (see
+       supersedes) and the union of every op that contributed one. They are
+       written conditionally after the LINK batches (#713 item 4). Collapsing
+       them here is also what keeps a batch of N upserts on one domain to ONE
+       meta write. */
+    const metaByKey = new Map<string, { item: DomainItem; owners: Set<number> }>();
+    const addMeta = (item: DomainItem, index: number) => {
+      const key = `${item.PK}\u0000${item.SK}`;
+      const existing = metaByKey.get(key);
+      if (!existing) {
+        metaByKey.set(key, { item, owners: new Set([index]) });
+        return;
+      }
+      if (supersedes(item, existing.item)) existing.item = item;
+      existing.owners.add(index);
+    };
+
     /* Per-op KVS work, keyed by result index, applied ONLY after the op's
        DynamoDB requests have flushed successfully (DynamoDB first: a KVS-only
        failure must never lose the authoritative projection). undefined for any
@@ -203,9 +296,11 @@ export class DynamoProjection implements ProjectionTarget {
            path. Upserts take the same per-op read but there is no cheaper bulk
            form for them either (each reads a different link's full row set). */
         let requests: WriteRequest[];
+        let meta: DomainItem | null | undefined;
         if (op.operation === DOMAIN_OP) {
           // Domain meta only; nothing for the edge KVS (it holds links only).
-          requests = await this.buildDomainRequests(op.linkId, op.host);
+          requests = [];
+          meta = await this.buildDomainMeta(op.linkId, op.host);
         } else if (op.operation === "delete") {
           requests = await this.buildDeleteRequests(op.linkId);
           if (this.kvs) {
@@ -218,6 +313,7 @@ export class DynamoProjection implements ProjectionTarget {
         } else {
           const resolved = await this.buildUpsertRequests(op.linkId);
           requests = resolved.requests;
+          meta = resolved.meta;
           if (this.kvs && resolved.edge) {
             const kvs = this.kvs;
             const { link, host, slug } = resolved.edge;
@@ -225,6 +321,7 @@ export class DynamoProjection implements ProjectionTarget {
           }
         }
         results.push({ linkId: op.linkId, ok: true });
+        if (meta) addMeta(meta, index);
         for (const request of requests) {
           const key = requestKey(request);
           const existing = byKey.get(key);
@@ -279,6 +376,23 @@ export class DynamoProjection implements ProjectionTarget {
       }
     }
 
+    /* The conditional DOMAIN-META writes (#713 item 4), one PutItem per key. A
+       write that fails (other than losing the condition, which writeMeta treats
+       as superseded) fails every op that contributed to that key. */
+    for (const { item, owners: metaOwners } of metaByKey.values()) {
+      try {
+        await this.writeMeta(item);
+      } catch (err) {
+        this.log?.error(
+          { err: serialiseError(err), table: this.table, domainId: item.id },
+          "projection domain-meta write failed",
+        );
+        for (const index of metaOwners) {
+          results[index] = { linkId: results[index]!.linkId, ok: false, error: err };
+        }
+      }
+    }
+
     /* #289 edge fast path: drive the KVS writer per-op, but ONLY for ops whose
        DynamoDB write has already succeeded (DynamoDB first — a KVS-only failure
        must never lose the authoritative projection). A KVS write failure marks
@@ -319,6 +433,7 @@ export class DynamoProjection implements ProjectionTarget {
           status: domains.status,
           rootRedirect: domains.rootRedirect,
           notFoundRedirect: domains.notFoundRedirect,
+          domainUpdatedAt: domains.updatedAt,
           clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
         })
         .from(links)
@@ -385,27 +500,38 @@ export class DynamoProjection implements ProjectionTarget {
     };
 
     const linkItem = toLinkItem(projectedLink, row.domain, row.link.slug);
-    const domainItem = toDomainItem(row.domain, projectedDomain);
+    const domainItem = toDomainItem(row.domain, projectedDomain, { version: versionOf(row.domainUpdatedAt) });
 
     /* The domain-meta item is (re)written alongside every link upsert for that
        domain — the simplest way to keep resolveDomain() current without a
-       separate outbox stream, and cheap (one extra put per upsert). */
+       separate outbox stream, and cheap (one extra put per upsert). It is a
+       CONDITIONAL write (writeMeta), because the row it was built from may be
+       stale by the time it lands (#713 item 4). */
     return {
-      requests: [{ PutRequest: { Item: linkItem } }, { PutRequest: { Item: domainItem } }],
+      requests: [{ PutRequest: { Item: linkItem } }],
+      meta: domainItem,
       edge: { link: projectedLink, host: row.domain, slug: row.link.slug },
     };
   }
 
   /** A domain op (#711 review, Blocker-1): make the DOMAIN-META item equal to
-   *  the domain row, independent of whether the domain has any links.
+   *  the domain row, independent of whether the domain has any links. Returns
+   *  the item to write conditionally (writeMeta), or null for nothing to do.
    *
-   *  - the row exists -> put the meta item built from it (a cleared redirect is
-   *    written as null, which the redirect reads as "not set");
-   *  - the row is gone (disconnected) -> delete the meta item, keyed by the host
-   *    the API stored in the op's payload, since the row can no longer say it.
+   *  - the row exists and is live -> the meta item built from it (a cleared
+   *    redirect is written as null, which the redirect reads as "not set");
+   *  - the row exists but is not live (#713 item 2) -> the same item with both
+   *    redirects null, so nothing is served for it. It is NEUTRALISED rather
+   *    than removed so it still carries the row's id and version: an older
+   *    stalled put for the live state cannot land over it (#713 item 4);
+   *  - the row is gone (disconnected) -> a TOMBSTONE for this domain id, keyed
+   *    by the host the API stored in the op's payload, since the row can no
+   *    longer say it. Conditional on the stored item not belonging to a NEWER
+   *    domain: a reclaimed delete for an old domain must not wipe the redirects
+   *    of the domain that re-added the host (#713 item 4).
    *  Without a row AND without a host there is nothing addressable, and the op
    *  is a no-op (marked processed) rather than retried forever. */
-  private async buildDomainRequests(domainId: string, host: string | undefined): Promise<WriteRequest[]> {
+  private async buildDomainMeta(domainId: string, host: string | undefined): Promise<DomainItem | null> {
     const [row] = await this.db
       .select({
         id: domains.id,
@@ -413,29 +539,40 @@ export class DynamoProjection implements ProjectionTarget {
         status: domains.status,
         rootRedirect: domains.rootRedirect,
         notFoundRedirect: domains.notFoundRedirect,
+        updatedAt: domains.updatedAt,
       })
       .from(domains)
       .where(eq(domains.id, domainId))
       .limit(1);
     if (row) {
-      /* #713 item 2 (sibling of #712): only a `live` domain's meta item may be
-         served at the edge. If the domain exists but is no longer live (status
-         regression / still verifying), REMOVE the meta item so its root/404
-         redirects stop resolving, mirroring #712's read-time `status = 'live'`
-         gate, applied here at projection-write time. A live domain keeps the
-         put; a gone domain keeps the delete-by-host below. */
-      if (row.status !== "live") {
-        return [{ DeleteRequest: { Key: domainMetaKey(row.domain) } }];
-      }
-      const item = toDomainItem(row.domain, {
-        id: row.id,
-        rootRedirect: row.rootRedirect,
-        notFoundRedirect: row.notFoundRedirect,
-      });
-      return [{ PutRequest: { Item: item } }];
+      const live = row.status === "live";
+      return toDomainItem(
+        row.domain,
+        {
+          id: row.id,
+          rootRedirect: live ? row.rootRedirect : null,
+          notFoundRedirect: live ? row.notFoundRedirect : null,
+        },
+        { version: versionOf(row.updatedAt) },
+      );
     }
-    if (host) return [{ DeleteRequest: { Key: domainMetaKey(host) } }];
-    return [];
+    if (host) {
+      return toDomainItem(host, { id: domainId, rootRedirect: null, notFoundRedirect: null }, { deleted: true });
+    }
+    return null;
+  }
+
+  /** Write one DOMAIN-META item only if it is not older than the stored one
+   *  (metaCondition; ordering rules at the top of this file). Losing the
+   *  condition means a newer state is already projected — the op is
+   *  superseded, which is success, not a failure to retry. */
+  private async writeMeta(item: DomainItem): Promise<void> {
+    try {
+      await this.client.send(new PutCommand({ TableName: this.table, Item: item, ...metaCondition(item) }));
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) return;
+      throw err;
+    }
   }
 
   /** Query the GSI for the LINK item(s) with this link id and build deletes.
