@@ -181,11 +181,27 @@ export class DomainsService {
        process — ACM issues it, CloudFront has to accept it as an alternate
        domain name, and that takes minutes. The UI shows the two states side by
        side precisely because they diverge. The worker moves ssl to "active". */
-    const [updated] = await this.db
-      .update(domains)
-      .set({ status: "live", verifiedAt: new Date(), updatedAt: new Date() })
-      .where(eq(domains.id, id))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      const [u] = await tx
+        .update(domains)
+        .set({ status: "live", verifiedAt: new Date(), updatedAt: new Date() })
+        .where(eq(domains.id, id))
+        .returning();
+
+      /* #729 item 4: becoming live IS a projectable change. Under
+         LINK_PROJECTION=dynamo the redirect reads a per-domain meta item, and
+         the #719 live-gate means a NON-live domain never gets one written — so
+         a domain verified here, with redirects set but no links, would serve
+         nothing at the edge until some later link upsert happened to touch it
+         (the #713-item-5 backfill is a one-off remedy, not a fix). Enqueue a
+         DOMAIN op in the SAME transaction as the status change — exactly how
+         update()/add()/remove() do — so the drain re-projects the now-live meta
+         item from this row. Keyed on the domain, so it works with zero links.
+         Harmless under LINK_PROJECTION=none (NoProjection marks it processed). */
+      await tx.insert(projectionOutbox).values(domainProjectionOp(u!.id, u!.domain));
+      return u!;
+    });
+    this.projectionNudge.nudge();
 
     await recordActivity(this.db, this.logger, {
       workspaceId,
@@ -197,7 +213,7 @@ export class DomainsService {
       metadata: { domain: row.domain },
     });
 
-    return this.toDto(updated!, 0);
+    return this.toDto(updated, 0);
   }
 
   /**
@@ -240,9 +256,25 @@ export class DomainsService {
 
     // Store the header-safe href, not the raw string (#713 item 1); an omitted
     // field stays omitted, and null still clears.
-    const patch: Partial<typeof domains.$inferInsert> = { updatedAt: new Date() };
+    const patch: Partial<typeof domains.$inferInsert> = {};
     if (input.rootRedirect !== undefined) patch.rootRedirect = normaliseRedirect(input.rootRedirect);
     if (input.notFoundRedirect !== undefined) patch.notFoundRedirect = normaliseRedirect(input.notFoundRedirect);
+
+    /* The meta version is updated_at (#713 item 4 / #729 item 1). Derive it in
+       SQL under the row lock the UPDATE takes, NOT as `new Date()` here before
+       the transaction: with two concurrent edits to the same domain, the write
+       that COMMITS LAST could otherwise carry the EARLIER wall-clock timestamp,
+       so the projection's version guard would treat the last-committed content
+       as "superseded" and the two stores stay divergent forever.
+
+       `greatest(clock_timestamp(), updated_at + interval '1 millisecond')`
+       evaluates while the row is locked, so it is serialised with commit order:
+       clock_timestamp() is the real time at evaluation (unlike now()/
+       transaction_timestamp(), which is frozen at BEGIN and would tie two
+       overlapping transactions), and the greatest() floor guarantees it is
+       strictly greater than the stored value even if the clock has not advanced
+       a full millisecond — so the version is monotonic non-decreasing per row. */
+    const updatedAtSql = sql`greatest(clock_timestamp(), ${domains.updatedAt} + interval '1 millisecond')`;
 
     const updated = await this.db.transaction(async (tx) => {
       /* The ownership predicate is repeated on the write itself (and the shared
@@ -250,7 +282,7 @@ export class DomainsService {
          between a tenant and the shared row. */
       const [u] = await tx
         .update(domains)
-        .set(patch)
+        .set({ ...patch, updatedAt: updatedAtSql })
         .where(and(eq(domains.id, id), eq(domains.workspaceId, workspaceId), eq(domains.isSystem, false)))
         .returning();
       if (!u) throw new NotFoundException("That domain isn't connected to this workspace.");
