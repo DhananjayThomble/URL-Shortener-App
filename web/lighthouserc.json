@@ -1,0 +1,37 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://snapurl.test:3000/",
+        "http://snapurl.test:3000/pricing",
+        "http://snapurl.test:3000/product",
+        "http://snapurl.test:3000/for-developers",
+        "http://snapurl.test:3000/self-host"
+      ],
+      "numberOfRuns": 3,
+      "settings": {
+        "chromeFlags": "--no-sandbox"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "largest-contentful-paint": [
+          "warn",
+          { "maxNumericValue": 2500, "aggregationMethod": "median" }
+        ],
+        "total-blocking-time": [
+          "warn",
+          { "maxNumericValue": 300, "aggregationMethod": "median" }
+        ],
+        "resource-summary:script:size": [
+          "warn",
+          { "maxNumericValue": 143360, "aggregationMethod": "median" }
+        ]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci"
+    }
+  }
+}
