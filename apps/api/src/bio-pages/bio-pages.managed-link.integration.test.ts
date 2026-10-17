@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import {
   and,
   bioPages,
+  clickDaily,
   createDatabase,
   domains,
   eq,
@@ -11,10 +12,12 @@ import {
   isUniqueViolation,
   links,
   projectionOutbox,
+  sql,
   workspaces,
   type Database,
 } from "@snapurl/database";
 import { UpsertBioPageInput } from "@snapurl/contract";
+import { PostgresAnalyticsReader } from "../analytics/analytics.reader.js";
 import { makeBioService, type BioServiceHarness } from "./bio-pages.test-harness.js";
 
 /* ============================================================
@@ -338,5 +341,43 @@ describeDb("BioPagesService managed link (#650)", () => {
     await expect(
       harness.service.upsert(workspaceId, input({ id: draft.id, domain: verifyingDomain, slug, status: "live" })),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("a managed link is excluded from top-links analytics and the domain link count (#734 finding 6)", async () => {
+    const slug = `analytics-${stamp}`;
+    const userSlug = `user-analytics-${stamp}`;
+    const page = await harness.service.upsert(workspaceId, input({ domain: customDomain, slug, status: "live" }));
+    const [managed] = await db.select().from(links).where(eq(links.managedBioPageId, page.id));
+    const [userLink] = await db
+      .insert(links)
+      .values({ workspaceId, domainId: customDomainId, slug: userSlug, destination: "https://example.com/u" })
+      .returning();
+
+    // Give both links clicks in the rollup.
+    const today = new Date().toISOString().slice(0, 10);
+    await db.insert(clickDaily).values([
+      { linkId: managed!.id, workspaceId, day: today, clicks: 999 },
+      { linkId: userLink!.id, workspaceId, day: today, clicks: 5 },
+    ]);
+
+    // topLinks must not surface the managed link despite its higher click count.
+    const reader = new PostgresAnalyticsReader(db);
+    const top = await reader.topLinks(workspaceId, new Date(Date.now() - 86_400_000));
+    expect(top.some((r) => r.label === slug)).toBe(false);
+    expect(top.some((r) => r.label === userSlug)).toBe(true);
+
+    // The domain link-count predicate (what DomainsService applies) excludes it.
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(links)
+      .where(and(eq(links.workspaceId, workspaceId), eq(links.domainId, customDomainId), isNull(links.managedBioPageId)));
+    const countAll = (
+      await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(links)
+        .where(and(eq(links.workspaceId, workspaceId), eq(links.domainId, customDomainId)))
+    )[0]!.n;
+    // The managed link is in the raw count but not in the filtered one.
+    expect(countAll).toBeGreaterThan(n!);
   });
 });

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
-import { and, domainProjectionOp, domains, eq, links, normaliseHost, projectionOutbox, sql, type Database } from "@snapurl/database";
+import { and, domainProjectionOp, domains, eq, isNull, links, normaliseHost, projectionOutbox, sql, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain, UpdateDomainInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
@@ -89,7 +89,9 @@ export class DomainsService {
     const counts = await this.db
       .select({ domainId: links.domainId, n: sql<number>`count(*)::int` })
       .from(links)
-      .where(eq(links.workspaceId, workspaceId))
+      // #650: managed bio links are infrastructure, not user links — do not
+      // count them in a domain's link total (they are hidden from the list).
+      .where(and(eq(links.workspaceId, workspaceId), isNull(links.managedBioPageId)))
       .groupBy(links.domainId);
 
     // Scoped to the caller: on a shared system domain, other workspaces'
