@@ -119,6 +119,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lighthouse-report
+          # lhci writes to a dot-prefixed dir; upload-artifact excludes hidden
+          # files by default, so opt them in or the report is dropped silently.
+          include-hidden-files: true
           path: |
             .lighthouseci/
           if-no-files-found: warn

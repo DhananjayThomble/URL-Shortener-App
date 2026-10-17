@@ -1367,21 +1367,31 @@ whitespace-splitting of Chrome's `--host-resolver-rules`, which corrupts the
 `MAP *.snapurl.test 127.0.0.1` rule), runs `@lhci/cli@0.15.1` with `numberOfRuns: 3`
 (median) and `--no-sandbox`, and uploads the report as an artifact.
 
-**Budgets** (`web/lighthouserc.json`, all **warn-level**, median across 3 runs):
+**Budgets** (`web/lighthouserc.json`, all **warn-level**, median across 3 runs on ubuntu-24.04) —
+**recalibrated from the first two CI runs:**
 
 | Metric | Budget | Basis |
 | --- | --- | --- |
-| `resource-summary:script:size` | 295,000 B (≈288 kB) | **Recalibrated from the first CI run's medians.** This audit measures the *total transferred bytes of all script resources* a route loads — larger than Next's "First Load JS" parse figure (114–118 kB). Measured medians: `/` 205,796 B · `/pricing` 253,871 B · `/product` 212,024 B · `/for-developers` 212,024 B · `/self-host` 253,879 B. Budget set at the largest route (253,879 B) + ~15 % headroom. |
-| `largest-contentful-paint` | 2,500 ms | Provisional (the "good" Core Web Vitals threshold). The first CI run did not breach it (no warning fired); the `Summarize medians` step now prints the exact per-route medians each run, from which this can be tightened. |
-| `total-blocking-time` | 300 ms | Provisional (the "good" threshold). Same: not breached on the first run; recalibrate from the printed medians. |
+| `resource-summary:script:size` | 295,000 B (≈288 kB) | This audit measures the *total transferred bytes of all script resources* a route loads — larger than Next's "First Load JS" parse figure (114–118 kB). Budget = largest measured route (253,879 B) + ~15 % headroom. |
+| `largest-contentful-paint` | 2,800 ms | Measured medians 2,254–2,277 ms (all five routes). Budget set just above the observed max with headroom. The Core Web Vitals "good" line is 2,500 ms; these routes sit just under it. |
+| `total-blocking-time` | 250 ms | Measured medians 101–123 ms. Comfortable headroom under both the observed max and the 300 ms "good" line. |
 
-**First measured medians (script transfer bytes), 3-run median on ubuntu-24.04:**
-`/` 205,796 B · `/pricing` 253,871 B · `/product` 212,024 B · `/for-developers` 212,024 B · `/self-host` 253,879 B.
+**Measured baseline (3-run median per route, ubuntu-24.04, prod `next build` + `next start`):**
+
+| Route | LCP (ms) | TBT (ms) | Script bytes | Perf score |
+| --- | --- | --- | --- | --- |
+| `/` | 2,264 | 111 | 205,796 | 97 |
+| `/pricing` | 2,265 | 110 | 253,871 | 97 |
+| `/product` | 2,254 | 101 | 212,024 | 98 |
+| `/for-developers` | 2,277 | 123 | 212,024 | 96 |
+| `/self-host` | 2,265 | 110 | 253,879 | 95 |
 
 The script-byte budget is the deterministic gate-worthy signal. LCP and TBT are environment-sensitive
-and remain provisional; the `Summarize medians` workflow step prints LCP/TBT/script-bytes/perf per
-route into the job log every run, so future tightening reads straight from CI. The overall
-Lighthouse performance score is deliberately **not** asserted — it is a noisy composite.
+but now anchored to real CI medians. The `Summarize medians` workflow step prints
+LCP/TBT/script-bytes/perf per route into the job log every run, so future tightening reads
+straight from CI. The overall Lighthouse performance score is deliberately **not** asserted — it is
+a noisy composite (shown above only as context; perf 95–98 confirms the prod bundle is healthy,
+versus the dev-mode 38–41 these numbers replace).
 
 **Not covered here.** Authenticated `(app)` routes need a login script to measure and are
 tracked as a separate follow-up (see the issue referencing #475).

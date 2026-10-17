@@ -17,11 +17,11 @@
       "assertions": {
         "largest-contentful-paint": [
           "warn",
-          { "maxNumericValue": 2500, "aggregationMethod": "median" }
+          { "maxNumericValue": 2800, "aggregationMethod": "median" }
         ],
         "total-blocking-time": [
           "warn",
-          { "maxNumericValue": 300, "aggregationMethod": "median" }
+          { "maxNumericValue": 250, "aggregationMethod": "median" }
         ],
         "resource-summary:script:size": [
           "warn",
