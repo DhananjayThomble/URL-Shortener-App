@@ -6,6 +6,7 @@ import {
   domains,
   eq,
   projectionOutbox,
+  sql,
   workspaces,
   type Database,
 } from "@snapurl/database";
@@ -197,5 +198,101 @@ describeDb("DomainsService version-under-lock + verify() enqueue (#729 items 1, 
     expect((await read(id)).status).toBe("verifying");
     expect((await outboxFor(id)).length).toBe(before.length);
     expect(nudge).not.toHaveBeenCalled();
+  });
+
+  it("BLOCKER regression: an update() then verify() on one domain strictly advances updated_at even with the app clock FROZEN", async () => {
+    /* The review BLOCKER: verify() stamped `new Date()`, so a verify() racing
+       an update() on the same row could carry an EARLIER instant yet commit
+       last — the worker then projects that row while the conditional meta write
+       is swallowed as superseded, leaving DynamoDB stale. Both paths must now
+       derive updated_at in SQL under the row lock (shared nextVersionSql). With
+       the app clock frozen, update() and verify() share no advancing Date, so
+       the SQL +1ms floor is the ONLY thing that can keep updated_at strictly
+       increasing across the two calls — which is exactly what the fix adds.
+       RED on the pre-fix verify() (new Date() == frozen, so verify ties or
+       regresses update's version). */
+    const token = `snapurl-verify-seq-${stamp}`;
+    const [d] = await db
+      .insert(domains)
+      .values({
+        workspaceId,
+        domain: `vseq-${stamp}.test`,
+        status: "verifying",
+        verificationToken: token,
+        rootRedirect: "https://example.org/root",
+      })
+      .returning({ id: domains.id });
+    const id = d!.id;
+
+    resolveTxtMock.mockReset();
+    resolveTxtMock.mockResolvedValue([[token]]);
+
+    const frozen = new Date("2026-04-04T04:04:04.000Z").getTime();
+    const RealDate = Date;
+    const dateSpy = vi.spyOn(globalThis, "Date").mockImplementation(((...args: unknown[]) =>
+      args.length ? new (RealDate as any)(...args) : new (RealDate as any)(frozen)) as never);
+    (globalThis.Date as any).now = () => frozen;
+
+    try {
+      // A verifying-domain update() stamps the first version under the row lock.
+      await service.update(workspaceId, id, { rootRedirect: "https://example.org/pre" }, admin);
+      const afterUpdate = (await read(id)).updatedAt.getTime();
+
+      // verify() flips to live; its updated_at must be STRICTLY greater than the
+      // update()'s, despite both seeing the same frozen `new Date()`.
+      await service.verify(workspaceId, id, admin);
+      const afterVerify = (await read(id)).updatedAt.getTime();
+
+      expect(afterVerify).toBeGreaterThan(afterUpdate);
+    } finally {
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("SHOULD-FIX regression: repeated verify() on a live domain produces exactly ONE outbox op, one nudge, no second activity", async () => {
+    /* verify() used to redo DNS, rewrite the timestamp, enqueue another outbox
+       row, nudge and record a second activity event every time it was called on
+       an already-live domain. It must now be idempotent: the first call does the
+       work, every subsequent call is a no-op returning the unchanged domain.
+       RED on the pre-fix verify() (each call enqueued another op + nudge). */
+    const token = `snapurl-verify-idem-${stamp}`;
+    const [d] = await db
+      .insert(domains)
+      .values({
+        workspaceId,
+        domain: `videm-${stamp}.test`,
+        status: "verifying",
+        verificationToken: token,
+        rootRedirect: "https://example.org/root",
+      })
+      .returning({ id: domains.id });
+    const id = d!.id;
+
+    resolveTxtMock.mockReset();
+    resolveTxtMock.mockResolvedValue([[token]]);
+    nudge.mockReset();
+
+    const before = await outboxFor(id);
+    // Three verify() calls; only the first transitions the domain.
+    const first = await service.verify(workspaceId, id, admin);
+    const second = await service.verify(workspaceId, id, admin);
+    const third = await service.verify(workspaceId, id, admin);
+
+    expect(first.status).toBe("live");
+    expect(second.status).toBe("live");
+    expect(third.status).toBe("live");
+
+    // Exactly one DOMAIN op was enqueued across all three calls.
+    const after = await outboxFor(id);
+    expect(after.length - before.length).toBe(1);
+    expect(after.at(-1)!.operation).toBe(DOMAIN_OP);
+    // Only the first call nudged the drain; the no-op calls did nothing.
+    expect(nudge).toHaveBeenCalledTimes(1);
+    // Only the first call wrote a domain.verified activity entry.
+    const [{ n }] = (await db.execute(sql`
+      select count(*)::int as n from audit_log
+      where target_id = ${id}::uuid and action = 'domain.verified'
+    `)) as unknown as [{ n: number }];
+    expect(n).toBe(1);
   });
 });

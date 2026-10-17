@@ -66,6 +66,32 @@ function normaliseRedirect(value: string | null | undefined): string | null {
   }
 }
 
+/**
+ * The domain-meta version (updated_at), derived in SQL under the row lock the
+ * UPDATE takes — NOT a `new Date()` captured in app code before the
+ * transaction (#729 items 1 & the review BLOCKER).
+ *
+ * Every mutation that the DynamoDB projection re-reads (update(), verify())
+ * must stamp updated_at this way so the stored version is serialised with
+ * COMMIT order, not with the order the callers happened to call `new Date()`.
+ * Two transactions touching the same row — e.g. an update() and a concurrent
+ * verify() — serialise on the row lock; whichever commits LAST evaluates this
+ * expression LAST and therefore wins the version comparison. With `new Date()`
+ * the loser could stamp an earlier instant yet commit last, and the worker
+ * would project that row while the conditional meta write was swallowed as
+ * "superseded" — leaving DynamoDB permanently stale.
+ *
+ * `greatest(clock_timestamp(), updated_at + interval '1 millisecond')`:
+ * clock_timestamp() is the real time at evaluation (unlike now()/
+ * transaction_timestamp(), frozen at BEGIN, which would TIE two overlapping
+ * transactions), and the greatest() floor makes it strictly greater than the
+ * stored value even inside one clock tick — so the version is strictly
+ * increasing per row regardless of clock resolution.
+ */
+function nextVersionSql() {
+  return sql`greatest(clock_timestamp(), ${domains.updatedAt} + interval '1 millisecond')`;
+}
+
 @Injectable()
 export class DomainsService {
   constructor(
@@ -157,6 +183,19 @@ export class DomainsService {
       .where(and(eq(domains.id, id), eq(domains.workspaceId, workspaceId)))
       .limit(1);
     if (!row) throw new NotFoundException("That domain isn't connected to this workspace.");
+
+    /* Idempotent for an already-live domain (review SHOULD-FIX). verify() used
+       to only check a token EXISTS, then redo DNS, rewrite updated_at, enqueue
+       another outbox op, nudge and record a second activity event every time it
+       was called on a domain that was already verified. A re-verify of a live
+       domain is a no-op: return the current DTO with NO side effects (no DNS, no
+       write, no outbox row, no nudge, no activity). The verifying-only predicate
+       on the UPDATE below is the second half of this guard — it makes the write
+       itself idempotent even under a concurrent first verify. */
+    if (row.status === "live") {
+      return this.toDto(row, 0);
+    }
+
     if (!row.verificationToken) throw new BadRequestException("This domain has no pending verification.");
 
     let records: string[][] = [];
@@ -181,12 +220,22 @@ export class DomainsService {
        process — ACM issues it, CloudFront has to accept it as an alternate
        domain name, and that takes minutes. The UI shows the two states side by
        side precisely because they diverge. The worker moves ssl to "active". */
-    const updated = await this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
+      /* The `status = 'verifying'` predicate makes the transition idempotent: a
+         concurrent verify() that already flipped the row to live updates zero
+         rows here, so this one enqueues nothing and nudges nothing — exactly
+         like the already-live short-circuit above, but race-safe. updated_at is
+         derived under THIS row lock (nextVersionSql), NOT `new Date()` captured
+         before the lock — otherwise a verify() racing an update() on the same
+         row could compute an earlier instant yet commit last, and the worker
+         would project that row while the conditional meta write was swallowed
+         as superseded (review BLOCKER). */
       const [u] = await tx
         .update(domains)
-        .set({ status: "live", verifiedAt: new Date(), updatedAt: new Date() })
-        .where(eq(domains.id, id))
+        .set({ status: "live", verifiedAt: new Date(), updatedAt: nextVersionSql() })
+        .where(and(eq(domains.id, id), eq(domains.status, "verifying")))
         .returning();
+      if (!u) return null; // a concurrent verify() won the transition; nothing to do.
 
       /* #729 item 4: becoming live IS a projectable change. Under
          LINK_PROJECTION=dynamo the redirect reads a per-domain meta item, and
@@ -198,9 +247,18 @@ export class DomainsService {
          update()/add()/remove() do — so the drain re-projects the now-live meta
          item from this row. Keyed on the domain, so it works with zero links.
          Harmless under LINK_PROJECTION=none (NoProjection marks it processed). */
-      await tx.insert(projectionOutbox).values(domainProjectionOp(u!.id, u!.domain));
-      return u!;
+      await tx.insert(projectionOutbox).values(domainProjectionOp(u.id, u.domain));
+      return u;
     });
+
+    /* A concurrent verify() flipped the row first: re-read and return it
+       unchanged, with none of the side effects below (the winning call did
+       them). */
+    if (!result) {
+      const [current] = await this.db.select().from(domains).where(eq(domains.id, id)).limit(1);
+      return this.toDto(current!, 0);
+    }
+
     this.projectionNudge.nudge();
 
     await recordActivity(this.db, this.logger, {
@@ -213,7 +271,7 @@ export class DomainsService {
       metadata: { domain: row.domain },
     });
 
-    return this.toDto(updated, 0);
+    return this.toDto(result, 0);
   }
 
   /**
@@ -260,21 +318,9 @@ export class DomainsService {
     if (input.rootRedirect !== undefined) patch.rootRedirect = normaliseRedirect(input.rootRedirect);
     if (input.notFoundRedirect !== undefined) patch.notFoundRedirect = normaliseRedirect(input.notFoundRedirect);
 
-    /* The meta version is updated_at (#713 item 4 / #729 item 1). Derive it in
-       SQL under the row lock the UPDATE takes, NOT as `new Date()` here before
-       the transaction: with two concurrent edits to the same domain, the write
-       that COMMITS LAST could otherwise carry the EARLIER wall-clock timestamp,
-       so the projection's version guard would treat the last-committed content
-       as "superseded" and the two stores stay divergent forever.
-
-       `greatest(clock_timestamp(), updated_at + interval '1 millisecond')`
-       evaluates while the row is locked, so it is serialised with commit order:
-       clock_timestamp() is the real time at evaluation (unlike now()/
-       transaction_timestamp(), which is frozen at BEGIN and would tie two
-       overlapping transactions), and the greatest() floor guarantees it is
-       strictly greater than the stored value even if the clock has not advanced
-       a full millisecond — so the version is monotonic non-decreasing per row. */
-    const updatedAtSql = sql`greatest(clock_timestamp(), ${domains.updatedAt} + interval '1 millisecond')`;
+    // The meta version is updated_at, derived in SQL under the row lock the
+    // UPDATE takes (shared with verify() — see nextVersionSql).
+    const updatedAtSql = nextVersionSql();
 
     const updated = await this.db.transaction(async (tx) => {
       /* The ownership predicate is repeated on the write itself (and the shared
