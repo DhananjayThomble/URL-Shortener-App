@@ -53,6 +53,16 @@ export function isPlausibleHttpUrl(raw: string): boolean {
 }
 
 /**
+ * A bare host the visitor pasted ("acme.com/sale") gets an explicit https://
+ * so the drawer is prefilled with a value CreateLinkInput accepts, instead of
+ * landing the visitor on a validation error after sign-up. A value that
+ * already carries a scheme is returned unchanged.
+ */
+export function withHttpsScheme(url: string): string {
+  return /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`;
+}
+
+/**
  * Where the Shorten button should send the visitor.
  *
  * Signed in  → straight to the drawer: `/links?new=<encoded url>`.
@@ -66,7 +76,7 @@ export function isPlausibleHttpUrl(raw: string): boolean {
  * only; it does not reimplement next handling.
  */
 export function heroShortenTarget(rawUrl: string, isSignedIn: boolean): string {
-  const url = rawUrl.trim();
+  const url = withHttpsScheme(rawUrl.trim());
   const drawerPath = `/links?${NEW_LINK_QUERY_PARAM}=${encodeURIComponent(url)}`;
   if (isSignedIn) return drawerPath;
   return `/register?next=${encodeURIComponent(drawerPath)}`;

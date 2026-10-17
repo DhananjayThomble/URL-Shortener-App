@@ -26,7 +26,7 @@ export function MarketingShortenForm() {
     e.preventDefault();
     const raw = inputRef.current?.value ?? "";
     if (!isPlausibleHttpUrl(raw)) {
-      setError("Enter a web address starting with http:// or https://");
+      setError("Enter a web address, like https://example.com/page");
       inputRef.current?.focus();
       return;
     }
@@ -44,7 +44,7 @@ export function MarketingShortenForm() {
           ref={inputRef}
           type="url"
           name="url"
-          defaultValue="https://acme.com/collections/spring-2026?utm_source=instagram"
+          placeholder="https://acme.com/collections/spring-2026?utm_source=instagram"
           spellCheck={false}
           onInput={() => error && setError(null)}
           aria-label="URL to shorten"

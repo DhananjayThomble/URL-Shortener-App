@@ -72,4 +72,13 @@ describe("heroShortenTarget (#660 — carry the pasted URL through to the drawer
       `/links?${NEW_LINK_QUERY_PARAM}=${encodeURIComponent("https://acme.com")}`,
     );
   });
+
+  it("adds https:// to a bare host so the drawer is prefilled with a valid destination", () => {
+    expect(heroShortenTarget("acme.com/sale", true)).toBe(
+      `/links?${NEW_LINK_QUERY_PARAM}=${encodeURIComponent("https://acme.com/sale")}`,
+    );
+    expect(heroShortenTarget("http://acme.com", true)).toBe(
+      `/links?${NEW_LINK_QUERY_PARAM}=${encodeURIComponent("http://acme.com")}`,
+    );
+  });
 });
