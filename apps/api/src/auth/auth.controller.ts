@@ -24,7 +24,16 @@ import { Actor, Public, type RequestActor } from "./auth.guard.js";
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  /* 5/min per client IP, matching login. #658: register answers a duplicate
+     email with a friendly 409 (deliberate — see the enumeration ADR in
+     docs/DECISIONS.md), which makes the route a sign-up enumeration oracle.
+     The accepted mitigation is this throttle: a human signing up fat-fingers
+     the form a handful of times, an enumeration script needs thousands of
+     calls a minute, so 5/min is generous for the former and useless for the
+     latter. Keyed on the trustworthy IP (ProxyAwareThrottlerGuard) so a
+     rotating X-Forwarded-For cannot reset it. */
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post("register")
   register(@Body(zodBody(RegisterInput)) input: RegisterInput, @Req() req: FastifyRequest) {
     return this.auth.register(input, req.headers["user-agent"]);
