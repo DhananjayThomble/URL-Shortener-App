@@ -3,6 +3,7 @@ import { ConflictException } from "@nestjs/common";
 import { bioBlocks, bioPages, createDatabase, domains, eq, workspaces, type Database } from "@snapurl/database";
 import { UpsertBioPageInput } from "@snapurl/contract";
 import { BioPagesService } from "./bio-pages.service.js";
+import { makeBioService } from "./bio-pages.test-harness.js";
 
 /* ============================================================
    Bio page addresses on a SHARED (system) domain belong to whichever
@@ -45,7 +46,7 @@ describeDb("BioPagesService upsert on a shared domain is scoped to the caller's 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new BioPagesService(db);
+    service = makeBioService(db).service;
 
     const [a] = await db.insert(workspaces).values({ name: "bio owner", slug: `bio-owner-${stamp}` }).returning({ id: workspaces.id });
     const [b] = await db.insert(workspaces).values({ name: "bio other", slug: `bio-other-${stamp}` }).returning({ id: workspaces.id });

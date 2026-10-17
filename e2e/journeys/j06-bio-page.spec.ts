@@ -18,6 +18,7 @@ import {
   registerUser,
   seedAccount,
   API_URL,
+  REDIRECT_URL,
   RUN_ID,
 } from "./helpers";
 
@@ -78,6 +79,7 @@ test.describe("Journey 6 — Bio page", () => {
     type ApiBioPage = {
       id: string;
       slug: string;
+      domain: string;
       status: string;
       views: number;
       blocks: Array<{ id: string; title: string; href?: string | null; metric?: string | null }>;
@@ -116,6 +118,45 @@ test.describe("Journey 6 — Bio page", () => {
     const anonPage = await anon.newPage();
     await anonPage.goto(`/b/${slug}`, { waitUntil: "networkidle", timeout: 15_000 });
     await expect(anonPage.getByText("J6 Journey Bio")).toBeVisible({ timeout: 10_000 });
+
+    /* ---- 9c. #650: the per-domain route and the managed link ---- */
+    // The page's domain is the workspace default (the shared system domain), so
+    // the slug alias above resolves. The NEW per-domain route must render the
+    // same page, and the published page must now own a managed link at
+    // <domain>/<slug> that 302s to /b/<domain>/<slug>.
+    const domain = bioPage!.domain;
+
+    // The per-domain public API serves the same page.
+    const perDomainRes = await fetch(`${API_URL}/public/bio-pages/by-domain/${encodeURIComponent(domain)}/${slug}`);
+    expect(perDomainRes.ok, "GET /public/bio-pages/by-domain/:domain/:slug serves the page").toBe(true);
+    expect(((await perDomainRes.json()) as { profile: { name: string } }).profile.name).toBe("J6 Journey Bio");
+
+    // The managed link is NOT in the user's links list (read-only infrastructure).
+    const linksRes = await fetch(`${API_URL}/links?limit=200`, {
+      headers: { authorization: `Bearer ${session.accessToken}` },
+    });
+    const linksBody = (await linksRes.json()) as { items: Array<{ slug: string; destination: string }> };
+    expect(
+      linksBody.items.some((l) => l.slug === slug),
+      "the managed bio link must not appear in the links list",
+    ).toBe(false);
+
+    // The per-domain web route renders for a signed-out visitor too.
+    const perDomainPage = await anon.newPage();
+    await perDomainPage.goto(`/b/${encodeURIComponent(domain)}/${slug}`, { waitUntil: "networkidle", timeout: 15_000 });
+    await expect(perDomainPage.getByText("J6 Journey Bio")).toBeVisible({ timeout: 10_000 });
+    await perDomainPage.close();
+
+    /* ---- 9d. #734 finding 10: a missing page is a real HTTP 404, not a soft
+       200 shell. The route is a server component that probes existence against
+       the API and calls notFound() for a miss. ---- */
+    const missingResp = await anonPage.goto(`/b/no-such-page-${RUN_ID}`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    expect(missingResp?.status(), "a missing bio page returns HTTP 404").toBe(404);
+
+    // The managed link 302s from the short URL to the per-domain web page.
+    const hop = await fetch(`${REDIRECT_URL}/${slug}`, { redirect: "manual", headers: { "user-agent": "Mozilla/5.0 (j6-bio)" } });
+    expect([301, 302, 307, 308]).toContain(hop.status);
+    expect(hop.headers.get("location"), "short URL 302s to the per-domain bio page").toContain(`/b/${encodeURIComponent(domain)}/${slug}`);
 
     // The block is a real link to its destination. Clicking it is counted
     // (keepalive POST) before the browser leaves; stub the destination so the

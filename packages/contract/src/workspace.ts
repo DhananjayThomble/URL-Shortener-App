@@ -245,6 +245,12 @@ export const PublicBioPage = z.object({
 export type PublicBioPage = z.infer<typeof PublicBioPage>;
 
 export const UpsertBioPageInput = z.object({
+  /* #650 — the page being saved, when it already exists. The editor sends it
+     back so a save that CHANGES the (domain, slug) updates and MOVES that page
+     rather than creating a second one at the new address. Omitted when creating
+     a page; then the (domain, slug) is the new page's address. A save with an
+     id is always scoped to the caller's workspace server-side. */
+  id: z.string().uuid().optional(),
   domain: z.string(),
   slug: z.string().regex(/^[a-zA-Z0-9._-]+$/),
   status: z.enum(["live", "draft"]).default("draft"),

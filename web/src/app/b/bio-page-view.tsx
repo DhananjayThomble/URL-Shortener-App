@@ -1,37 +1,52 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
 import { Card, CardBody, Skeleton } from "@/components/ui";
-import { recordBioClick, recordBioView, usePublicBioPage } from "@/lib/api/hooks";
+import type { PublicBioPage } from "@snapurl/contract";
+import type { UseQueryResult } from "@tanstack/react-query";
 
 const BLOCK_ICON: Record<string, string> = { embed: "▶", email: "✉", social: "◈" };
 
-/* The shareable end of a bio page.
+/* The shareable end of a bio page (#650).
 
-   Served by the web app at /b/<slug> rather than on a short domain, the same
-   way /f/<slug> serves a form: the redirect service owns the short-domain slug
-   namespace, and a bio page competing for it would race a link for the same
-   back-half.
+   Rendered by two routes: /b/<domain>/<slug> (the per-domain route the managed
+   link 302s to) and /b/<slug> (the backward-compatible alias for already-shared
+   URLs). Both pass the same `page` query and a `recordView`/`recordClick` pair;
+   this component is the view they share so the markup never drifts between them.
 
    No auth, and no cookies — the same promise the redirect path and the public
    form page make. A visitor sees the profile and the blocks; the workspace's
    view and click analytics never reach here. */
 
-export default function PublicBioPage() {
-  const { slug } = useParams<{ slug: string }>();
-  const page = usePublicBioPage(slug);
-
+export function BioPageView({
+  page,
+  viewKey,
+  recordView,
+  recordClick,
+}: {
+  page: UseQueryResult<PublicBioPage>;
+  /** The address identity this view belongs to — "<domain>/<slug>" for the
+   *  per-domain route, "<slug>" for the alias. Keying the once-only guard on
+   *  this (not the resolved slug alone) makes navigating between two pages that
+   *  share a slug on different domains count a view for each (#734 finding 9). */
+  viewKey: string;
+  recordView: () => void;
+  recordClick: (blockId: string) => void;
+}) {
   /* One view per page load — not per refetch, and not twice under React's
      dev-mode double effect. Only once the page actually resolved, so a 404
      counts nothing. */
   const counted = useRef<string | null>(null);
-  const loadedSlug = page.data?.slug;
+  const resolved = Boolean(page.data);
   useEffect(() => {
-    if (!loadedSlug || counted.current === loadedSlug) return;
-    counted.current = loadedSlug;
-    void recordBioView(slug);
-  }, [loadedSlug, slug]);
+    if (!resolved || counted.current === viewKey) return;
+    counted.current = viewKey;
+    recordView();
+    // recordView is a stable closure for a given address; keying the guard on
+    // (domain, slug) is what prevents a double count while still re-counting a
+    // genuine navigation to a different address that happens to share a slug.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, viewKey]);
 
   if (page.isLoading) {
     return (
@@ -85,7 +100,7 @@ export default function PublicBioPage() {
                     key={block.id ?? i}
                     href={block.href}
                     rel="noopener"
-                    onClick={() => void recordBioClick(slug, block.id)}
+                    onClick={() => recordClick(block.id)}
                     className="w-full px-4 py-3 rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[14px] font-medium text-ink hover:border-accent hover:bg-surface transition-colors no-underline"
                   >
                     {BLOCK_ICON[block.kind] ? <span aria-hidden="true">{BLOCK_ICON[block.kind]} </span> : null}

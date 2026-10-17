@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bioBlocks, bioPages, createDatabase, domains, eq, workspaces, type Database } from "@snapurl/database";
 import { BioPage } from "@snapurl/contract";
 import { BioPagesService } from "./bio-pages.service.js";
+import { makeBioService } from "./bio-pages.test-harness.js";
 
 /* ============================================================
    BioPagesService.list, against a real Postgres (issue #486).
@@ -39,7 +40,7 @@ describeDb("BioPagesService.list", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new BioPagesService(db);
+    service = makeBioService(db).service;
 
     const [ws] = await db
       .insert(workspaces)

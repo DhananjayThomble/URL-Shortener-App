@@ -54,6 +54,13 @@ export class LinksService {
   async list(workspaceId: string, query: ListLinksQuery) {
     const filters = [eq(links.workspaceId, workspaceId)];
 
+    /* #650 — managed links (the ones a published bio page owns at its
+       <domain>/<slug>) are not user-created and must never appear in the links
+       table, the CSV export, or the single-link GET. They are read-only
+       infrastructure the bio editor manages, not links a user can edit or
+       delete from here. */
+    filters.push(isNull(links.managedBioPageId));
+
     /* "expiring" and "expired" are derived, not stored — deriveStatus computes
        them from expires_at and the click count, so they can never go stale.
        That means the filter has to be expressed in SQL rather than compared
@@ -193,7 +200,7 @@ export class LinksService {
       .innerJoin(domains, eq(links.domainId, domains.id))
       .leftJoin(users, eq(links.createdBy, users.id))
       .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
-      .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
+      .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId), isNull(links.managedBioPageId)))
       .limit(1);
 
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
@@ -824,7 +831,7 @@ export class LinksService {
       .select({ id: links.id, slug: links.slug, domain: domains.domain, domainId: domains.id })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
-      .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId)))
+      .where(and(eq(links.id, id), eq(links.workspaceId, workspaceId), isNull(links.managedBioPageId)))
       .limit(1);
     if (!row) throw new NotFoundException("That link doesn't exist, or isn't in this workspace.");
 
