@@ -129,7 +129,7 @@ jobs:
 
       - name: Install kiro-cli
         run: |
-          curl -fsSL https://cli.kiro.dev/install | bash
+          bash scripts/install-kiro-cli.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run agent session

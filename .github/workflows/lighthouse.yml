@@ -125,3 +125,105 @@ jobs:
           path: |
             .lighthouseci/
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Authenticated (app) routes (#737).
+  #
+  # The dashboard routes under src/app/(app) are gated by the AppLayout, which
+  # calls GET /auth/me and redirects to /login unless a session resolves. Rather
+  # than stand up the NestJS API + Postgres just to log in, this job builds the
+  # web app in FIXTURES mode (NEXT_PUBLIC_USE_FIXTURES=true): client.ts then
+  # routes every request to src/lib/api/fixtures.ts, which answers /auth/me with
+  # a fixture user and serves fixture links/analytics/bio data — so the full
+  # shell renders with no API and no login. The numbers below therefore reflect
+  # the prod bundle rendering FIXTURE data, not production data volumes; that is
+  # fine for a bundle/paint baseline (what Lighthouse measures here) and is
+  # documented in docs/DECISIONS.md Part 4c.
+  #
+  # next.config.ts refuses a production build with fixtures on, so this build
+  # sets SNAPURL_ALLOW_UNCONFIGURED_BUILD=true — the named escape hatch for a
+  # build that is measured, never served. It is still a real `next build`
+  # (minified, split, prod React), which is the whole point.
+  #
+  # Same advisory contract as the marketing job: continue-on-error, warn-only
+  # assertions, and NOT in the CI gate's needs.
+  lighthouse-app:
+    name: Lighthouse CI (app routes, fixtures)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build:packages
+
+      # Fixtures mode: no API is contacted, so NEXT_PUBLIC_API_URL is irrelevant
+      # to rendering. SNAPURL_ALLOW_UNCONFIGURED_BUILD=true lets the prod build
+      # complete with fixtures on (next.config.ts otherwise refuses it).
+      - name: Build the production web bundle (fixtures)
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_USE_FIXTURES: "true"
+          SNAPURL_ALLOW_UNCONFIGURED_BUILD: "true"
+        run: pnpm --filter snapurl-web build
+
+      - name: Point the .test hosts at loopback
+        run: echo "127.0.0.1 snapurl.test" | sudo tee -a /etc/hosts
+
+      # next.config.ts re-runs its guard on `next start`, so the fixtures escape
+      # hatch has to be set here too, or the server refuses to boot.
+      - name: Start the production server (fixtures)
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_USE_FIXTURES: "true"
+          SNAPURL_ALLOW_UNCONFIGURED_BUILD: "true"
+        run: |
+          nohup pnpm --filter snapurl-web start > "${RUNNER_TEMP}/next-start-app.log" 2>&1 &
+          echo "started next start (pid $!)"
+
+      - name: Wait for the server to answer
+        run: |
+          for i in $(seq 1 30); do
+            code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://snapurl.test:3000/links || true)"
+            echo "attempt ${i}: ${code}"
+            if [ "${code}" = "200" ]; then exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          cat "${RUNNER_TEMP}/next-start-app.log" || true
+          exit 1
+
+      # Separate config (web/lighthouserc.app.json) with its own outputDir
+      # (./.lighthouseci-app), so the marketing baseline config and reports are
+      # untouched.
+      - name: Run Lighthouse CI (app routes)
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=web/lighthouserc.app.json
+
+      - name: Summarize medians
+        if: ${{ !cancelled() }}
+        run: node web/scripts/lhci-summary.mjs .lighthouseci-app
+
+      - name: Upload Lighthouse report (app routes)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lighthouse-report-app
+          include-hidden-files: true
+          path: |
+            .lighthouseci-app/
+          if-no-files-found: warn
