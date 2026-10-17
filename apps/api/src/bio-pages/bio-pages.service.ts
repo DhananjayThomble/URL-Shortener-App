@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, bioBlocks, bioPages, domains, eq, inArray, sql, type Database } from "@snapurl/database";
 import type { BioPage, PublicBioPage, UpsertBioPageInput } from "@snapurl/contract";
 import { isSlugAvailableShape } from "@snapurl/domain";
@@ -75,10 +75,18 @@ export class BioPagesService {
 
     const pageId = await this.db.transaction(async (tx) => {
       const [existing] = await tx
-        .select({ id: bioPages.id })
+        .select({ id: bioPages.id, workspaceId: bioPages.workspaceId })
         .from(bioPages)
         .where(and(eq(bioPages.domainId, domain.id), sql`lower(${bioPages.slug}) = ${input.slug.toLowerCase()}`))
         .limit(1);
+
+      /* A system domain is shared by every workspace, so the page at this
+         address may belong to someone else. Only the caller's OWN page may be
+         updated here; anyone else's is a taken address, and nothing about it
+         may change. */
+      if (existing && existing.workspaceId !== workspaceId) {
+        throw new ConflictException(`${input.domain}/${input.slug} is already taken.`);
+      }
 
       let id: string;
       if (existing) {
