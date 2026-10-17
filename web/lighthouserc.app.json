@@ -1,0 +1,35 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://snapurl.test:3000/links",
+        "http://snapurl.test:3000/analytics",
+        "http://snapurl.test:3000/bio"
+      ],
+      "numberOfRuns": 3,
+      "settings": {
+        "chromeFlags": "--no-sandbox"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "largest-contentful-paint": [
+          "warn",
+          { "maxNumericValue": 4000, "aggregationMethod": "median" }
+        ],
+        "total-blocking-time": [
+          "warn",
+          { "maxNumericValue": 600, "aggregationMethod": "median" }
+        ],
+        "resource-summary:script:size": [
+          "warn",
+          { "maxNumericValue": 400000, "aggregationMethod": "median" }
+        ]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci-app"
+    }
+  }
+}
