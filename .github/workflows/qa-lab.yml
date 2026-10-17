@@ -102,8 +102,10 @@ jobs:
       # `chrome` is the branded browser the Playwright MCP server drives; it
       # installs system-wide, so it is not covered by the cache above.
       - name: Install browsers
+        env:
+          CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
         run: |
-          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+          if [ "${CACHE_HIT}" = "true" ]; then
             pnpm --filter snapurl-e2e exec playwright install-deps chromium firefox webkit
           else
             pnpm --filter snapurl-e2e exec playwright install --with-deps chromium firefox webkit
