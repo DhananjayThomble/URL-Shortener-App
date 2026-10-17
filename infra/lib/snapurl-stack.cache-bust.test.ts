@@ -211,4 +211,70 @@ describe("SnapUrlStack — API/redirect CacheStore pairing for immediate cache i
       }
     }
   });
+
+  /* #620: the worker also busts the hot-link cache, after a delete/flag op's
+     DynamoDB + edge-KVS writes land, to evict a stale entry the API's pre-drain
+     bust could not. For that bust to reach the redirect it must hit the SAME
+     cache table (CACHE_DRIVER=dynamodb + CACHE_DYNAMO_TABLE) and have write
+     access to it — the identical wiring apiFn needs, verified the same way.
+     Without this, DynamoProjection's cache param is never constructed (main.ts
+     cacheBuster() returns undefined) and the post-drain window stays open. */
+  it("gives WorkerFn the same CACHE_DRIVER=dynamodb + CACHE_DYNAMO_TABLE env, pointing at the one cache table", () => {
+    const cacheTables = template.findResources("AWS::DynamoDB::Table", {
+      Properties: { KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }] },
+    });
+    const cacheTableLogicalIds = Object.keys(cacheTables);
+    expect(cacheTableLogicalIds).toHaveLength(1);
+
+    const workerFnEntry = Object.entries(template.findResources("AWS::Lambda::Function")).find(([id]) =>
+      id.startsWith("WorkerFn"),
+    );
+    expect(workerFnEntry, "WorkerFn not found in the synthesized template").toBeDefined();
+
+    const workerEnv = workerFnEntry![1].Properties.Environment.Variables;
+    expect(workerEnv.CACHE_DRIVER, "WorkerFn.CACHE_DRIVER").toBe("dynamodb");
+    expect(workerEnv.CACHE_DYNAMO_TABLE).toEqual({ Ref: cacheTableLogicalIds[0] });
+  });
+
+  it("grants WorkerFn write (DeleteItem), but not read, on the cache table", () => {
+    const policies = template.findResources("AWS::IAM::Policy");
+    const cacheTables = template.findResources("AWS::DynamoDB::Table", {
+      Properties: { KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }] },
+    });
+    const cacheTableLogicalId = Object.keys(cacheTables)[0]!;
+
+    const workerFnEntry = Object.entries(template.findResources("AWS::Lambda::Function")).find(([id]) =>
+      id.startsWith("WorkerFn"),
+    )!;
+    const workerRoleLogicalId = workerFnEntry[1].Properties.Role["Fn::GetAtt"][0];
+
+    // Flatten the actions of every statement on WorkerFn's OWN role that
+    // references the cache table (scoped to its role for the same reason the
+    // ApiFn assertions are — an unscoped check is satisfied by redirectFn's
+    // pre-existing grantReadWriteData regardless of whether WorkerFn got its
+    // own grant).
+    const workerCacheActions: string[][] = [];
+    for (const [, policy] of Object.entries(policies)) {
+      const onWorkerRole = (policy.Properties.Roles ?? []).some(
+        (r: unknown) =>
+          typeof r === "object" && r !== null && "Ref" in r && (r as { Ref: string }).Ref === workerRoleLogicalId,
+      );
+      if (!onWorkerRole) continue;
+      const statements = Array.isArray(policy.Properties.PolicyDocument.Statement)
+        ? policy.Properties.PolicyDocument.Statement
+        : [policy.Properties.PolicyDocument.Statement];
+      for (const statement of statements) {
+        if (!JSON.stringify(statement).includes(cacheTableLogicalId)) continue;
+        workerCacheActions.push(Array.isArray(statement.Action) ? statement.Action : [statement.Action]);
+      }
+    }
+
+    const flat = workerCacheActions.flat();
+    // The write half bust() needs.
+    expect(flat).toContain("dynamodb:DeleteItem");
+    // Least-privilege: the worker reads nothing from the cache table.
+    for (const readAction of ["dynamodb:GetItem", "dynamodb:Scan", "dynamodb:Query", "dynamodb:BatchGetItem"]) {
+      expect(flat, `WorkerFn cache-table actions: ${JSON.stringify(workerCacheActions)}`).not.toContain(readAction);
+    }
+  });
 });
