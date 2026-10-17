@@ -92,7 +92,6 @@ function fromPage(page: BioPage): Draft {
    so whatever is sent here IS the page afterwards. */
 function toInput(page: BioPage, draft: Draft, status: BioPage["status"]): UpsertBioPageInput {
   return {
-    id: page.id,
     domain: page.domain,
     slug: page.slug,
     status,
