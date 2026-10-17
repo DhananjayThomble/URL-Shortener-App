@@ -14,6 +14,7 @@ import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyval
    fast path never fills, silently, with redirects still served by the Lambda. */
 import "@aws-sdk/signature-v4a";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
+import { DynamoDbCacheStore, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { NoProjection, backfillDomainMeta, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
@@ -135,6 +136,37 @@ function kvsEndpoint(): string | undefined {
   );
 }
 
+/* #620: the hot-link cache buster handed to the DynamoProjection so the worker
+   evicts a link's redirect-cache entry AFTER both the DynamoDB and edge-KVS
+   writes for a delete/flag op have landed — closing the window where a request
+   between the API's pre-drain bust and this drain re-caches the stale entry for
+   up to LINK_CACHE_TTL_SECONDS (see DynamoProjection's cache param).
+
+   OPT-IN and built directly (not via createCacheStore, which is async): only
+   when CACHE_DRIVER=dynamodb + CACHE_DYNAMO_TABLE are set — the exact pairing
+   the CDK stack wires on the worker — do we construct a DynamoDbCacheStore over
+   the SAME table the redirect reads and the API busts. When either env is unset
+   the buster is undefined and the projection makes ZERO cache calls, so every
+   non-AWS profile (and any worker without the shared cache configured) is
+   unchanged. The region/endpoint-override pattern matches the DynamoDB
+   projection and KVS clients so CI can point it at dynamodb-local; the
+   marshaller strips undefined for symmetry with those clients, though a bust is
+   a bare DeleteItem on a key and never marshals an item. */
+let cacheBusterStore: CacheStore | undefined;
+function cacheBuster(): CacheStore | undefined {
+  if ((process.env.CACHE_DRIVER ?? "memory") !== "dynamodb") return undefined;
+  const cacheTable = process.env.CACHE_DYNAMO_TABLE;
+  if (!cacheTable) return undefined;
+  cacheBusterStore ??= new DynamoDbCacheStore(
+    DynamoDBDocumentClient.from(
+      new DynamoDBClient({ region: process.env.AWS_REGION, endpoint: dynamoEndpoint() }),
+      { marshallOptions: { removeUndefinedValues: true } },
+    ),
+    cacheTable,
+  );
+  return cacheBusterStore;
+}
+
 function projectionFor(database: Database): ProjectionTarget {
   if (!projectionTarget) {
     if (LINK_PROJECTION === "dynamo") {
@@ -185,7 +217,7 @@ function projectionFor(database: Database): ProjectionTarget {
          .last_error and counts the failure, so before this the real cause never
          reached a log line — a projection that wrote nothing looked silent even
          at LOG_LEVEL=debug. */
-      projectionTarget = new DynamoProjection(database, client, table, log, kvsWriter);
+      projectionTarget = new DynamoProjection(database, client, table, log, kvsWriter, cacheBuster());
     } else {
       projectionTarget = new NoProjection();
     }
