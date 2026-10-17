@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DOMAIN_OP, type Database } from "@snapurl/database";
+import { linkCacheKey } from "@snapurl/cache";
 import { DynamoProjection } from "./dynamo-projection.js";
 import type { KvsWriter } from "./kvs-projection.js";
 
@@ -897,5 +898,180 @@ describe("DynamoProjection orders DOMAIN-META writes (#713 item 4)", () => {
     expect(puts).toHaveLength(1);
     expect(puts[0].Item).toMatchObject({ id: "dom-2", rootRedirect: "https://example.com/new" });
     expect(puts[0].Item.deleted).toBeUndefined();
+  });
+});
+
+describe("DynamoProjection post-drain cache bust (#620) — optional LinkCacheBuster", () => {
+  /* The worker busts the hot redirect-cache entry for a delete/flag op AFTER
+     both its DynamoDB write and its edge-KVS write have succeeded, closing the
+     window where a request arriving between the API's pre-drain bust and this
+     drain re-caches the stale projection for up to LINK_CACHE_TTL_SECONDS. The
+     bust uses the shared linkCacheKey(host, slug) — the exact key the redirect
+     reads and the API busts. Proven RED first: before this change the
+     constructor had NO cache parameter, so a buster could not be injected and
+     cache.del was NEVER called; these specs assert it IS called, and only in
+     the right order, which the pre-change code cannot satisfy. */
+
+  /** A spy cache buster recording every del, structurally a LinkCacheBuster
+   *  (and a CacheStore's del). */
+  function spyCache() {
+    const del = vi.fn(async () => {});
+    return { del, cache: { del } as unknown as { del: (k: string) => Promise<void> } };
+  }
+
+  function spyWriter() {
+    const putIfEligible = vi.fn(async () => {});
+    const deleteKey = vi.fn(async () => {});
+    return {
+      putIfEligible,
+      deleteKey,
+      writer: { putIfEligible, deleteKey } as unknown as KvsWriter,
+    };
+  }
+
+  it("upsert (flag) busts linkCacheKey(host, slug) AFTER the DynamoDB and KVS writes", async () => {
+    const order: string[] = [];
+    const { client, puts } = makeClient({
+      BatchWriteCommand: () => {
+        order.push("dynamo");
+        return {};
+      },
+    });
+    // Record meta-put ordering too (PutCommand default handler pushes to puts).
+    const kvs = spyWriter();
+    kvs.putIfEligible.mockImplementation(async () => {
+      order.push("kvs");
+    });
+    const cache = spyCache();
+    cache.del.mockImplementation(async () => {
+      order.push("cache");
+    });
+    const projection = new DynamoProjection(
+      makeDb([linkRow()], []),
+      client,
+      TABLE,
+      undefined,
+      kvs.writer,
+      cache.cache,
+    );
+
+    await projection.upsert("link-1");
+
+    expect(puts).toHaveLength(1); // meta still written
+    expect(cache.del).toHaveBeenCalledTimes(1);
+    expect(cache.del).toHaveBeenCalledWith(linkCacheKey("snap.to", "one"));
+    // DynamoDB first, then KVS, then the cache bust — never before both writes.
+    expect(order.indexOf("cache")).toBeGreaterThan(order.indexOf("dynamo"));
+    expect(order.indexOf("cache")).toBeGreaterThan(order.indexOf("kvs"));
+  });
+
+  it("remove (delete) busts linkCacheKey(host, slug) AFTER the DynamoDB and KVS writes", async () => {
+    const order: string[] = [];
+    const { client } = makeClient({
+      QueryCommand: () => ({ Items: [{ PK: "d#snap.to", SK: "s#one", linkId: "link-1" }] }),
+      BatchWriteCommand: () => {
+        order.push("dynamo");
+        return {};
+      },
+    });
+    const kvs = spyWriter();
+    kvs.deleteKey.mockImplementation(async () => {
+      order.push("kvs");
+    });
+    const cache = spyCache();
+    cache.del.mockImplementation(async () => {
+      order.push("cache");
+    });
+    const projection = new DynamoProjection(makeDb([], []), client, TABLE, undefined, kvs.writer, cache.cache);
+
+    await projection.remove("link-1");
+
+    expect(cache.del).toHaveBeenCalledTimes(1);
+    expect(cache.del).toHaveBeenCalledWith(linkCacheKey("snap.to", "one"));
+    expect(order.indexOf("cache")).toBeGreaterThan(order.indexOf("dynamo"));
+    expect(order.indexOf("cache")).toBeGreaterThan(order.indexOf("kvs"));
+  });
+
+  it("busts the cache WITHOUT a KvsWriter (shared cache but no edge fast path)", async () => {
+    const { client } = makeClient({
+      QueryCommand: () => ({ Items: [{ PK: "d#snap.to", SK: "s#one", linkId: "link-1" }] }),
+      BatchWriteCommand: () => ({}),
+    });
+    const cache = spyCache();
+    // No KvsWriter (5th arg undefined); cache buster is the 6th arg.
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE, undefined, undefined, cache.cache);
+
+    await projection.upsert("link-1");
+    await projection.remove("link-1");
+
+    expect(cache.del).toHaveBeenCalledTimes(2);
+    expect(cache.del).toHaveBeenNthCalledWith(1, linkCacheKey("snap.to", "one"));
+    expect(cache.del).toHaveBeenNthCalledWith(2, linkCacheKey("snap.to", "one"));
+  });
+
+  it("does NOT bust when the DynamoDB write fails (op retried)", async () => {
+    const { client } = makeClient({
+      // A delete whose GSI query throws fails BEFORE any write — the op errors.
+      QueryCommand: () => {
+        throw new Error("query boom");
+      },
+    });
+    const kvs = spyWriter();
+    const cache = spyCache();
+    const projection = new DynamoProjection(makeDb([], []), client, TABLE, undefined, kvs.writer, cache.cache);
+
+    const results = await projection.apply([{ linkId: "link-1", operation: "delete" }]);
+
+    expect(results[0]!.ok).toBe(false);
+    expect(kvs.deleteKey).not.toHaveBeenCalled();
+    expect(cache.del).not.toHaveBeenCalled();
+  });
+
+  it("does NOT bust when the KVS write fails (op retried)", async () => {
+    const { client } = makeClient({
+      BatchWriteCommand: () => ({}),
+    });
+    const kvs = spyWriter();
+    kvs.putIfEligible.mockRejectedValueOnce(new Error("kvs boom"));
+    const cache = spyCache();
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE, undefined, kvs.writer, cache.cache);
+
+    const results = await projection.apply([{ linkId: "link-1", operation: "upsert" }]);
+
+    // DynamoDB was written, but the KVS write failed — so the op is retried and
+    // the cache was NOT busted (busting a key the projection has not yet made
+    // current would be pointless, and the retry re-does both writes + the bust).
+    expect(results[0]!.ok).toBe(false);
+    expect(cache.del).not.toHaveBeenCalled();
+  });
+
+  it("a cache-bust failure fails only that op so the outbox retries it", async () => {
+    const { client } = makeClient({
+      BatchWriteCommand: () => ({}),
+    });
+    const cache = spyCache();
+    cache.del.mockRejectedValueOnce(new Error("cache boom"));
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE, undefined, undefined, cache.cache);
+
+    const results = await projection.apply([{ linkId: "link-1", operation: "upsert" }]);
+
+    expect(results[0]!.ok).toBe(false);
+    expect(String((results[0] as any).error)).toContain("cache boom");
+  });
+
+  it("makes ZERO cache calls when no buster is injected (byte-for-byte unchanged)", async () => {
+    const { client } = makeClient({
+      QueryCommand: () => ({ Items: [{ PK: "d#snap.to", SK: "s#one", linkId: "link-1" }] }),
+      BatchWriteCommand: () => ({}),
+    });
+    // No 6th constructor arg — cache buster is undefined; a cache call would
+    // throw on undefined, so the calls succeeding IS the proof.
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE);
+
+    const upserted = await projection.apply([{ linkId: "link-1", operation: "upsert" }]);
+    await projection.upsert("link-1");
+    await projection.remove("link-1");
+
+    expect(upserted[0]!.ok).toBe(true);
   });
 });

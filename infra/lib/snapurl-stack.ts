@@ -1248,6 +1248,20 @@ export class SnapUrlStack extends Stack {
            On workerFn ONLY — the redirect never writes the KVS; the CloudFront
            Function reads it via its association above. */
         LINK_PROJECTION_KVS_ARN: linkKvs.keyValueStoreArn,
+        /* #620: back the worker's CacheStore with DynamoDB — the SAME cache
+           table the redirect reads and apiFn busts — so the projection's
+           post-drain cache bust (DynamoProjection's #620 cache param) evicts a
+           link's redirect-cache entry AFTER both the DynamoDB and edge-KVS
+           writes for a delete/flag op have landed. Without this the API's
+           pre-drain bust can be re-populated with stale data for up to
+           LINK_CACHE_TTL_SECONDS by a request that arrives before this drain;
+           busting the same key here, after the projection is current, closes
+           that window. Mirrors redirectFn's CACHE_DRIVER=dynamodb pairing (set
+           on workerFn only, not commonEnv — the api keeps its own grant via
+           grantWriteData, and the single-node/k8s profiles never see it). The
+           table is single-key on `pk`, matching DynamoDbCacheStore. */
+        CACHE_DRIVER: "dynamodb",
+        CACHE_DYNAMO_TABLE: cacheTable.tableName,
       },
       ...vpcSettings,
     });
@@ -1256,6 +1270,16 @@ export class SnapUrlStack extends Stack {
        and queries the linkId GSI to find what to delete — readWriteData covers
        the table and its indexes. */
     linkProjectionTable.grantReadWriteData(workerFn);
+
+    /* #620: the worker busts the hot-link cache entry after a delete/flag op's
+       DynamoDB + edge-KVS writes land, to evict a stale entry the API's
+       pre-drain bust could not (a request between that bust and this drain
+       re-caches the stale projection). bust() only ever calls
+       CacheStore.del(), so this is write-only — grantWriteData, NOT
+       grantReadWriteData — exactly like apiFn's grant for the same reason. The
+       worker reads nothing from this table (its rate-limit counters and salt
+       cache live elsewhere), so no read action is granted. */
+    cacheTable.grantWriteData(workerFn);
 
     /* #289 edge fast path: the worker's KvsWriter maintains the RedirectLinkKvs
        store on the same outbox drain that writes the DynamoDB projection —

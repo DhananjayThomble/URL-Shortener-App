@@ -1214,18 +1214,42 @@ not a read action on that table — a wiring regression like this one fails in
 seconds, with no Docker/dynamodb-local required, rather than only surfacing
 on a real-stack CI run.
 
-**Correction: on the projected AWS profile this is bounded staleness, not
-immediate (#620).** Sharing the `CacheStore` lets the API's bust reach the
-redirect, but the redirect's cache sits in front of the DynamoDB projection,
-which only the worker's outbox drain updates. The bust lands *before* that
-drain, so until it runs a cache miss re-reads the stale projection, and a
-request arriving in between re-caches the stale entry for up to
-`LINK_CACHE_TTL_SECONDS`. `dynamo-smoke` showed exactly this: `DELETE` 204, no
-bust error, and the very next redirect still 302. The guarantee there is
-therefore drain lag plus at most one TTL. `scripts/smoke-redirect.sh` waits
-for the projection to drain before its delete/flag assertions on projected
-backends only; the Postgres-direct profiles keep the strict "very next
-redirect" assertion. Options for closing the gap are in #620.
+**Correction: on the projected AWS profile this WAS bounded staleness, now
+closed by a post-drain worker bust (#620).** Sharing the `CacheStore` lets the
+API's bust reach the redirect, but the redirect's cache sits in front of the
+DynamoDB projection, which only the worker's outbox drain updates. The API's
+bust lands *before* that drain, so a request arriving between the bust and the
+drain re-read the stale projection and re-cached it for up to
+`LINK_CACHE_TTL_SECONDS` — `dynamo-smoke` showed exactly this: `DELETE` 204, no
+bust error, and the very next redirect still 302.
+
+The fix (option 2; option 1 — conditional/versioned projection writes — was
+rejected): the projection worker busts the SAME `linkCacheKey(host, slug)`
+AGAIN, from inside the drain, but only AFTER both the DynamoDB write and the
+edge-KVS write for that delete/flag op have succeeded — so the bust can never
+run ahead of the projection it makes visible. By then the projection is
+current, so the entry the bust evicts cannot be re-populated stale. The worker
+derives `(host, slug)` without a new column: a delete recovers them from the
+`linkId`-GSI hit (`PK`/`SK` strip to host/slug, the same values
+`edgeTargetsOf` already uses for the KVS delete), and a flag is an `upsert`
+whose resolution already carries the projected link's host/slug. The bust reuses
+the shared `linkCacheKey` helper, never a second copy. CDK wires
+`CACHE_DRIVER=dynamodb` + `CACHE_DYNAMO_TABLE` and `cacheTable.grantWriteData`
+on `workerFn` (write-only — the bust is a bare `del`); the cache-bust CDK test
+now pins the worker's env + grant alongside the API's. If the bust (or either
+write) fails, the outbox row is retried and the bust re-runs — the DynamoDB
+write and KVS put are idempotent — so the invalidation is guaranteed, not
+best-effort, up to the outbox's `MAX_ATTEMPTS`.
+
+**Resulting guarantee (projected AWS profile):** after a delete or flag, the
+cache is current within the drain latency. With the #394 projection nudge that
+is **~1s typical**; if the nudge is lost the entry still clears on the next
+1-minute scheduled drain, so **60s worst case**. There is **no post-drain cache
+window**: once the drain has run, no request can re-cache the stale entry,
+because the bust fires after the projection is updated. `scripts/smoke-redirect.sh`
+waits for the projection to drain before its delete/flag assertions on projected
+backends; the Postgres-direct profiles keep the strict "very next redirect"
+assertion (their bust is synchronous with the write and needs no drain).
 
 **Revisit if** a future profile adds a THIRD process that needs to read or
 bust this cache (e.g. a second redirect-like service) — it needs the same

@@ -17,6 +17,7 @@
     "@aws-sdk/client-dynamodb": "^3.1121.0",
     "@aws-sdk/lib-dynamodb": "^3.1121.0",
     "@aws-sdk/signature-v4a": "^3.1111.0",
+    "@snapurl/cache": "workspace:*",
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",

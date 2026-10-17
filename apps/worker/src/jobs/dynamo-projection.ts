@@ -18,6 +18,7 @@ import {
   type ProjectedLink,
 } from "@snapurl/database";
 import type { RoutingRule } from "@snapurl/contract";
+import { linkCacheKey, type CacheStore } from "@snapurl/cache";
 import {
   BatchWriteCommand,
   PutCommand,
@@ -173,6 +174,15 @@ export interface ProjectionLogger {
   error(obj: Record<string, unknown>, msg: string): void;
 }
 
+/** The subset of CacheStore the projection needs to invalidate a link's hot
+ *  redirect-cache entry (#620). Narrowed to `del` on purpose: the worker only
+ *  ever busts a key, never reads or writes a value, so this seam cannot be used
+ *  to do anything else, and the per-op unit tests can supply a one-method fake.
+ *  A full CacheStore satisfies it structurally. */
+export interface LinkCacheBuster {
+  del(key: string): Promise<void>;
+}
+
 /** The DynamoDB Key that identifies an item, used to deduplicate coalesced
  *  write requests: two PutRequests (or a Put and a Delete) with the same
  *  {PK, SK} in one BatchWriteCommand make DynamoDB reject the WHOLE request
@@ -200,7 +210,33 @@ export class DynamoProjection implements ProjectionTarget {
      *  so a KVS-only failure never loses the authoritative DynamoDB projection;
      *  a KVS failure then fails the outbox row so the next drain retries it. */
     private readonly kvs?: KvsWriter,
+    /** Optional hot-link cache buster (#620). Present ONLY on the AWS profile
+     *  when CACHE_DRIVER=dynamodb (+ CACHE_DYNAMO_TABLE) is wired on the worker;
+     *  undefined everywhere else, so NoProjection and any worker without the
+     *  shared cache configured make ZERO cache calls and behave exactly as
+     *  before.
+     *
+     *  Why the worker busts at all, when the API already busts synchronously on
+     *  delete/flag: the API's bust lands BEFORE this drain, so until the drain
+     *  updates the DynamoDB projection a cache miss re-reads the stale projected
+     *  copy and a request arriving in that window re-caches it for up to
+     *  LINK_CACHE_TTL_SECONDS. Busting the SAME key again here — AFTER both the
+     *  DynamoDB write and the edge-KVS write for the op have succeeded — evicts
+     *  that re-cached stale entry, so there is no post-drain cache window. The
+     *  key is computed with the shared linkCacheKey helper (the exact key the
+     *  redirect reads and the API busts), never duplicated. */
+    private readonly cache?: LinkCacheBuster,
   ) {}
+
+  /** Bust the hot redirect-cache entry for exactly (host, slug), using the one
+   *  shared linkCacheKey format (#620). No-op when no cache buster is
+   *  configured. Called ONLY after the op's DynamoDB write (and its edge-KVS
+   *  write, if any) have succeeded — so a bust can never run ahead of the
+   *  projection it is meant to make visible. */
+  private async bustCache(host: string, slug: string): Promise<void> {
+    if (!this.cache) return;
+    await this.cache.del(linkCacheKey(host, slug));
+  }
 
   /* ---- per-row fallback (used when drainOutbox does not batch) ---- */
 
@@ -210,18 +246,23 @@ export class DynamoProjection implements ProjectionTarget {
     // KVS-only failure.
     await this.flush(resolved.requests);
     if (resolved.meta) await this.writeMeta(resolved.meta);
-    if (this.kvs && resolved.edge) {
-      await this.kvs.putIfEligible(resolved.edge.link, resolved.edge.host, resolved.edge.slug);
+    if (resolved.edge) {
+      if (this.kvs) {
+        await this.kvs.putIfEligible(resolved.edge.link, resolved.edge.host, resolved.edge.slug);
+      }
+      // #620: evict the hot-cache entry only after BOTH writes above have
+      // succeeded (a throw before here skips the bust and the outbox retries).
+      await this.bustCache(resolved.edge.host, resolved.edge.slug);
     }
   }
 
   async remove(linkId: string): Promise<void> {
     const requests = await this.buildDeleteRequests(linkId);
     await this.flush(requests);
-    if (this.kvs) {
-      for (const { host, slug } of edgeTargetsOf(requests)) {
-        await this.kvs.deleteKey(host, slug);
-      }
+    for (const { host, slug } of edgeTargetsOf(requests)) {
+      if (this.kvs) await this.kvs.deleteKey(host, slug);
+      // #620: evict the hot-cache entry only after BOTH writes above succeeded.
+      await this.bustCache(host, slug);
     }
   }
 
@@ -275,10 +316,14 @@ export class DynamoProjection implements ProjectionTarget {
       existing.owners.add(index);
     };
 
-    /* Per-op KVS work, keyed by result index, applied ONLY after the op's
-       DynamoDB requests have flushed successfully (DynamoDB first: a KVS-only
-       failure must never lose the authoritative projection). undefined for any
-       op when no KvsWriter is configured, so the non-KVS path is unchanged. */
+    /* Per-op POST-DYNAMODB work, keyed by result index, applied ONLY after the
+       op's DynamoDB requests have flushed successfully (DynamoDB first: a
+       KVS-only or cache-only failure must never lose the authoritative
+       projection). Each closure does the op's edge-KVS write (if a KvsWriter is
+       configured) and THEN the op's #620 cache bust (if a cache buster is
+       configured) — both keyed on the SAME (host, slug). An op gets a closure
+       when EITHER is configured; undefined for every op when neither is, so the
+       non-KVS, non-cache path is byte-for-byte unchanged. */
     const edgeByIndex = new Map<number, () => Promise<void>>();
 
     for (const op of ops) {
@@ -303,21 +348,29 @@ export class DynamoProjection implements ProjectionTarget {
           meta = await this.buildDomainMeta(op.linkId, op.host);
         } else if (op.operation === "delete") {
           requests = await this.buildDeleteRequests(op.linkId);
-          if (this.kvs) {
+          if (this.kvs || this.cache) {
             const targets = edgeTargetsOf(requests);
             const kvs = this.kvs;
             edgeByIndex.set(index, async () => {
-              for (const { host, slug } of targets) await kvs.deleteKey(host, slug);
+              for (const { host, slug } of targets) {
+                if (kvs) await kvs.deleteKey(host, slug);
+                // #620: bust only after the KVS delete (if any) succeeded.
+                await this.bustCache(host, slug);
+              }
             });
           }
         } else {
           const resolved = await this.buildUpsertRequests(op.linkId);
           requests = resolved.requests;
           meta = resolved.meta;
-          if (this.kvs && resolved.edge) {
+          if ((this.kvs || this.cache) && resolved.edge) {
             const kvs = this.kvs;
             const { link, host, slug } = resolved.edge;
-            edgeByIndex.set(index, () => kvs.putIfEligible(link, host, slug));
+            edgeByIndex.set(index, async () => {
+              if (kvs) await kvs.putIfEligible(link, host, slug);
+              // #620: bust only after the KVS put (if any) succeeded.
+              await this.bustCache(host, slug);
+            });
           }
         }
         results.push({ linkId: op.linkId, ok: true });
@@ -393,22 +446,28 @@ export class DynamoProjection implements ProjectionTarget {
       }
     }
 
-    /* #289 edge fast path: drive the KVS writer per-op, but ONLY for ops whose
-       DynamoDB write has already succeeded (DynamoDB first — a KVS-only failure
-       must never lose the authoritative projection). A KVS write failure marks
-       that row failed so the outbox retries it on the next drain, exactly as a
-       DynamoDB failure would; it does not touch any other row. No-op when no
-       KvsWriter is configured (edgeByIndex is empty), so the non-KVS path is
+    /* #289 edge fast path + #620 cache bust: run each op's post-DynamoDB work
+       per-op, but ONLY for ops whose DynamoDB write has already succeeded
+       (DynamoDB first — a KVS-only or cache-only failure must never lose the
+       authoritative projection). The closure does the op's KVS write (if a
+       writer is configured) and then its cache bust (if a buster is), both on
+       the same (host, slug); the bust therefore runs ONLY after both the
+       DynamoDB write and the KVS write for that op have succeeded (#620). A
+       failure anywhere in the closure marks that row failed so the outbox
+       retries the whole op on the next drain — the DynamoDB write and KVS put
+       are idempotent and the bust re-runs — exactly as a DynamoDB failure
+       would; it does not touch any other row. No-op when neither a KvsWriter
+       nor a cache buster is configured (edgeByIndex is empty), so that path is
        byte-for-byte unchanged. */
     for (const [index, run] of edgeByIndex) {
       const result = results[index]!;
-      if (!result.ok) continue; // DynamoDB write for this op failed; skip KVS.
+      if (!result.ok) continue; // DynamoDB write for this op failed; skip edge + bust.
       try {
         await run();
       } catch (err) {
         this.log?.error(
           { err: serialiseError(err), linkId: result.linkId },
-          "projection KVS write failed",
+          "projection edge/cache write failed",
         );
         results[index] = { linkId: result.linkId, ok: false, error: err };
       }
