@@ -1371,12 +1371,16 @@ whitespace-splitting of Chrome's `--host-resolver-rules`, which corrupts the
 
 | Metric | Budget | Basis |
 | --- | --- | --- |
-| `resource-summary:script:size` | 143,360 B (140 kB) | `next build` First Load JS was 114 kB (`/`) and 118 kB (others), uncompressed parse size; budget set with ~15 % headroom over the largest route. Gzipped transfer bytes (what this audit measures) are smaller, so this is a safe upper bound. |
-| `largest-contentful-paint` | 2,500 ms | Provisional (the "good" Core Web Vitals threshold). **To be recalibrated** from the first CI medians. |
-| `total-blocking-time` | 300 ms | Provisional (the "good" threshold). **To be recalibrated** from the first CI medians. |
+| `resource-summary:script:size` | 295,000 B (≈288 kB) | **Recalibrated from the first CI run's medians.** This audit measures the *total transferred bytes of all script resources* a route loads — larger than Next's "First Load JS" parse figure (114–118 kB). Measured medians: `/` 205,796 B · `/pricing` 253,871 B · `/product` 212,024 B · `/for-developers` 212,024 B · `/self-host` 253,879 B. Budget set at the largest route (253,879 B) + ~15 % headroom. |
+| `largest-contentful-paint` | 2,500 ms | Provisional (the "good" Core Web Vitals threshold). The first CI run did not breach it (no warning fired); the `Summarize medians` step now prints the exact per-route medians each run, from which this can be tightened. |
+| `total-blocking-time` | 300 ms | Provisional (the "good" threshold). Same: not breached on the first run; recalibrate from the printed medians. |
+
+**First measured medians (script transfer bytes), 3-run median on ubuntu-24.04:**
+`/` 205,796 B · `/pricing` 253,871 B · `/product` 212,024 B · `/for-developers` 212,024 B · `/self-host` 253,879 B.
 
 The script-byte budget is the deterministic gate-worthy signal. LCP and TBT are environment-sensitive
-and start provisional; the first real CI run's medians replace these placeholders. The overall
+and remain provisional; the `Summarize medians` workflow step prints LCP/TBT/script-bytes/perf per
+route into the job log every run, so future tightening reads straight from CI. The overall
 Lighthouse performance score is deliberately **not** asserted — it is a noisy composite.
 
 **Not covered here.** Authenticated `(app)` routes need a login script to measure and are

@@ -25,7 +25,7 @@
         ],
         "resource-summary:script:size": [
           "warn",
-          { "maxNumericValue": 143360, "aggregationMethod": "median" }
+          { "maxNumericValue": 295000, "aggregationMethod": "median" }
         ]
       }
     },

@@ -101,9 +101,18 @@ jobs:
 
       # Pinned exact version. lhci drives the runner's pre-installed Chrome with
       # --no-sandbox (ubuntu-latest restricts unprivileged user namespaces, so
-      # Chrome's sandbox cannot start otherwise).
+      # Chrome's sandbox cannot start otherwise). The config's upload.outputDir
+      # is "./.lighthouseci", resolved against the CWD (the repo root), so the
+      # reports land in ./.lighthouseci regardless of the --config path.
       - name: Run Lighthouse CI
         run: npx --yes @lhci/cli@0.15.1 autorun --config=web/lighthouserc.json
+
+      # Print the per-route medians (LCP, TBT, script transfer bytes, perf
+      # score) into the job log so the baseline is readable without downloading
+      # the artifact. Reads the representative-run JSON reports lhci wrote.
+      - name: Summarize medians
+        if: ${{ !cancelled() }}
+        run: node web/scripts/lhci-summary.mjs .lighthouseci
 
       - name: Upload Lighthouse report
         if: ${{ !cancelled() }}
@@ -111,5 +120,5 @@ jobs:
         with:
           name: lighthouse-report
           path: |
-            web/.lighthouseci/
+            .lighthouseci/
           if-no-files-found: warn
