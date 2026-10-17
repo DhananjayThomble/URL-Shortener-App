@@ -1281,6 +1281,59 @@ on any `<Button>`/`<button>` with no `onClick`, `href`, `type="submit"` or forwa
 three named files must be clean; every other screen is held to a ratchet of the seven that were
 found (#706), so the class cannot grow while those are worked off.
 
+### Registration's duplicate-email 409 is kept; a per-IP throttle is the mitigation (#658)
+
+**Decision.** `POST /auth/register` keeps answering a duplicate email with a friendly
+`409 Conflict` ("an account with this email already exists"), rather than returning the
+same opaque response for new and existing addresses. The account-existence signal is
+therefore acknowledged as a deliberate, accepted leak — **not** closed by making the
+response uniform. The mitigation is a per-IP rate limit on the route:
+`@Throttle({ default: { limit: 5, ttl: 60_000 } })`, the same 5/min decorator the login,
+password-reset, email-resend and 2fa/verify routes already carry, keyed on the
+trustworthy client IP by `ProxyAwareThrottlerGuard` so a rotating `X-Forwarded-For`
+cannot reset it.
+
+**Why the 409 cannot honestly be hidden here.** The usual anti-enumeration move — return
+an identical response whether or not the email exists, and send a "confirm your address"
+mail either way — depends on registration *not* logging you in. This one does the
+opposite: a successful register issues a session immediately (instant onboarding, no
+email round-trip), and the whole account flow is built on that. The `#668` invite
+`?next=` flow and the `#660` carry-through both assume register returns a usable session
+synchronously. So the two outcomes — "new account, here is your session" and "that email
+is taken" — are *structurally* different responses; a brand-new signup is logged in on
+the spot and a duplicate cannot be, and no amount of response-shaping disguises that an
+existing account produces no session. Faking uniformity would mean giving up
+instant-onboarding, which is a product decision the issue explicitly declined. Given the
+signal is unavoidable while register issues a session immediately, the honest posture is
+to keep the *useful* 409 (a real person mistyping their signup is told plainly to log in
+instead) and raise the cost of using it as a bulk oracle.
+
+**Why a throttle is a real mitigation and not theatre.** Enumeration is only valuable at
+scale — the attacker wants to test thousands of candidate addresses. A human signing up
+hits the form a handful of times; a dictionary sweep needs hundreds or thousands of calls
+a minute from an IP. 5/min per client IP is generous for the former and useless for the
+latter, and because the key is the rightmost-trustworthy `X-Forwarded-For` entry (not the
+client-typed leftmost one, see the `ProxyAwareThrottlerGuard` / `#279` reasoning), an
+attacker cannot buy back budget by rotating a header. It does not make the 409 secret; it
+makes harvesting the whole address space through it impractical.
+
+**What it was chosen over.** (a) *Uniform response + deferred session* — rejected: it
+trades away instant onboarding, the exact property `#668`/`#660` are built on, to hide a
+signal the throttle already defangs. (b) *A generic "check your email" 202 that is a lie
+when the account is new* — rejected on the same honest-UI rule as the billing and
+dead-control decisions above: a response that does not match what happened is worse than
+one that does. (c) *No mitigation, treat the leak as acceptable as-is* — rejected because
+an unthrottled register route is a free bulk oracle, and the login route next to it was
+already throttled for the identical reason, so leaving register open was an inconsistency,
+not a considered trade.
+
+**Revisit if** register stops issuing a session immediately — e.g. a future move to
+mandatory email verification *before* first sign-in. At that point the two outcomes stop
+being structurally distinguishable, the uniform-response + always-send-mail design
+becomes available, and hiding the 409 (rather than only throttling it) becomes the better
+posture. The throttle should stay regardless; it is cheap and correct independent of this
+trade.
+
 ---
 
 ## Part 5 — Open questions for you
