@@ -1498,19 +1498,26 @@ advisory contract**: `continue-on-error: true`, warn-level assertions only, and 
 **Routes measured.** `/links`, `/analytics`, `/bio` — the three heaviest `(app)` bundles
 (First Load JS 341 / 336 / 232 kB respectively), so the baseline tracks the worst case.
 
-**Budgets** (`web/lighthouserc.app.json`, all **warn-level**, median across 3 runs). Set
-generously as placeholders on first author (LCP 4,000 ms, TBT 600 ms, script 400,000 B) because
-these client-rendered dashboards are heavier than the static marketing pages; **recalibrated from
-real CI medians in a follow-up commit** once the first run's `Summarize medians` output is read
-from the job log.
+**Budgets** (`web/lighthouserc.app.json`, all **warn-level**, median across 3 runs). First
+authored as generous placeholders, then **recalibrated from the first CI run's real medians**
+(PR #741): LCP `4,800 ms`, TBT `600 ms`, script `450,000 B` — each set with ~15 % headroom above
+the observed worst route. These sit above the Core Web Vitals "good" lines on purpose: a
+client-rendered dashboard booting the shell, hydrating React Query and fetching its data is
+legitimately heavier than a static marketing page, and the lane is a drift tripwire, not a target.
+The `Summarize medians` step prints LCP/TBT/script-bytes/perf per route into the job log every run,
+so future tightening reads straight from CI.
 
 **Measured baseline (3-run median per route, ubuntu, prod `next build` + `next start`, fixtures):**
 
 | Route | LCP (ms) | TBT (ms) | Script bytes | Perf score |
 | --- | --- | --- | --- | --- |
-| `/links` | _pending first CI run_ | | | |
-| `/analytics` | _pending first CI run_ | | | |
-| `/bio` | _pending first CI run_ | | | |
+| `/links` | 4,184 | 289 | 394,477 | 80 |
+| `/analytics` | 3,584 | 465 | 389,078 | 78 |
+| `/bio` | 3,008 | 204 | 284,217 | 72 |
+
+The perf scores (72–80) are shown as context, not asserted — lower than the marketing pages'
+95–98 because these routes ship more interactive JavaScript, which is expected. The script-byte
+budget is the deterministic drift signal; LCP/TBT are anchored to real CI medians.
 
 ---
 
