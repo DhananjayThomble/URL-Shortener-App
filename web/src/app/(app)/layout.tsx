@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Sidebar, Topbar } from "@/components/app-shell";
 import { CreateLinkDrawer } from "@/components/links/create-link-drawer";
+import { NEW_LINK_QUERY_PARAM } from "@/lib/hero-shorten";
 import { useBioPages, useDomains, useLinks, useMe, useMembers, useWorkspaceChangeGuard } from "@/lib/api/hooks";
 
 /**
@@ -47,10 +48,24 @@ function Booting() {
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
   const [creating, setCreating] = useState(false);
+  // #660 — the destination to seed the create drawer with when it is opened
+  // from the marketing hero's `/links?new=<url>` deep link. Cleared whenever
+  // the drawer closes so a later manual "New link" opens blank.
+  const [createDestination, setCreateDestination] = useState<string | undefined>(undefined);
   const { data: links } = useLinks();
   const { data: bio } = useBioPages();
   const { data: domains } = useDomains();
   const { data: members } = useMembers();
+
+  const openCreate = useCallback(() => {
+    setCreateDestination(undefined);
+    setCreating(true);
+  }, []);
+
+  const openCreateWith = useCallback((destination: string) => {
+    setCreateDestination(destination);
+    setCreating(true);
+  }, []);
 
   const counts = {
     links: links?.total,
@@ -61,12 +76,43 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar onCreate={() => setCreating(true)} counts={counts} />
+      <Suspense fallback={null}>
+        <NewLinkDeepLink onOpen={openCreateWith} />
+      </Suspense>
+      <Sidebar onCreate={openCreate} counts={counts} />
       <div className="flex-1 min-w-0 flex flex-col">
-        <Topbar counts={counts} onCreate={() => setCreating(true)} />
+        <Topbar counts={counts} onCreate={openCreate} />
         <main className="flex-1 px-[14px] sm:px-[22px] pt-[26px] pb-[60px]">{children}</main>
       </div>
-      <CreateLinkDrawer open={creating} onClose={() => setCreating(false)} />
+      <CreateLinkDrawer
+        open={creating}
+        initialDestination={createDestination}
+        onClose={() => {
+          setCreating(false);
+          setCreateDestination(undefined);
+        }}
+      />
     </div>
   );
+}
+
+/**
+ * Opens the create-link drawer prefilled with `?new=<url>` when a visitor
+ * arrives from the marketing hero's Shorten box (#660), then drops the param
+ * with router.replace so a refresh does not reopen the drawer. Only fires on
+ * /links — the param is meaningless elsewhere, and the drawer is a /links
+ * surface. Renders nothing; isolated so useSearchParams gets its own Suspense
+ * boundary (mirrors ImportDeepLink on the links page).
+ */
+function NewLinkDeepLink({ onOpen }: { onOpen: (destination: string) => void }) {
+  const params = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const requested = params.get(NEW_LINK_QUERY_PARAM);
+  useEffect(() => {
+    if (requested === null || pathname !== "/links") return;
+    onOpen(requested);
+    router.replace("/links");
+  }, [requested, pathname, onOpen, router]);
+  return null;
 }
