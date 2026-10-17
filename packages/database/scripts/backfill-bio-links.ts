@@ -20,7 +20,8 @@ import { bioManagedDestination } from "@snapurl/domain";
 
    Run:  WEB_ORIGIN=https://app.example.com DATABASE_URL=… \
          pnpm --filter @snapurl/database backfill-bio-links
-   WEB_ORIGIN defaults to the API's own default (http://localhost:3000). */
+   WEB_ORIGIN is REQUIRED and must be an absolute http(s) URL — the same origin
+   the API uses. The script refuses to run otherwise (no localhost default). */
 
 interface LivePage {
   id: string;
@@ -32,7 +33,16 @@ interface LivePage {
 
 async function main() {
   const url = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
-  const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+  const webOrigin = process.env.WEB_ORIGIN;
+  // #650 — fail fast rather than minting managed-link destinations against a
+  // localhost default that would be wrong in every real environment. The value
+  // must be the SAME absolute http(s) origin the API's WEB_ORIGIN carries.
+  if (!webOrigin || !/^https?:\/\/[^\s/]+/i.test(webOrigin)) {
+    console.error(
+      "backfill-bio-links: WEB_ORIGIN must be set to an absolute http(s) URL (e.g. https://app.example.com) — the same origin the API uses. Refusing to run with a guessed default.",
+    );
+    process.exit(2);
+  }
   const sql = postgres(url, { max: 1 });
 
   let created = 0;

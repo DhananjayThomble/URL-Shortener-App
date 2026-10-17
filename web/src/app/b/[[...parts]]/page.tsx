@@ -1,61 +1,52 @@
-"use client";
-
-import { useParams } from "next/navigation";
 import { notFound } from "next/navigation";
-import {
-  recordBioClick,
-  recordBioClickByDomain,
-  recordBioView,
-  recordBioViewByDomain,
-  usePublicBioPage,
-  usePublicBioPageByDomain,
-} from "@/lib/api/hooks";
-import { BioPageView } from "../bio-page-view";
+import { BioPageClient } from "./bio-page-client";
 
 /* The public bio page (#650). One optional catch-all route serves both shapes,
    because Next.js forbids two sibling dynamic segments with different names at
    the same path position (`/b/[slug]` and `/b/[domain]/[slug]` collide):
 
-     /b/<domain>/<slug>  — the per-domain route the managed link 302s to. This
-                           is what makes two workspaces' pages at the same
-                           back-half on different domains distinct.
-     /b/<slug>           — the backward-compatible alias for URLs shared before
-                           this change. Resolves on the shared/system domain
-                           only (see docs/DECISIONS.md). */
+     /b/<domain>/<slug>  — the per-domain route the managed link 302s to.
+     /b/<slug>           — the backward-compatible alias (system domain only).
 
-function PerDomain({ domain, slug }: { domain: string; slug: string }) {
-  const page = usePublicBioPageByDomain(domain, slug);
-  return (
-    <BioPageView
-      page={page}
-      recordView={() => void recordBioViewByDomain(domain, slug)}
-      recordClick={(blockId) => void recordBioClickByDomain(domain, slug, blockId)}
-    />
-  );
-}
+   SERVER component so a MISSING page is a REAL HTTP 404 (#734 finding 10), not
+   a soft 200 shell. Against the real API it probes existence server-side and
+   calls notFound() on a 404. In fixtures mode (dev/CI — the fake backend is
+   browser-only, there is no server to fetch) it skips the probe and lets the
+   client view resolve; the fixtures/mocked-api E2E lanes drive the browser. */
 
-function BySlug({ slug }: { slug: string }) {
-  const page = usePublicBioPage(slug);
-  return (
-    <BioPageView
-      page={page}
-      recordView={() => void recordBioView(slug)}
-      recordClick={(blockId) => void recordBioClick(slug, blockId)}
-    />
-  );
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
+const USE_FIXTURES = process.env.NEXT_PUBLIC_USE_FIXTURES === "true";
 
-export default function PublicBioPage() {
-  const { parts } = useParams<{ parts?: string[] }>();
-  const segments = parts ?? [];
+// Per request: the probe must reflect a page published/deleted since build, so
+// the route is never prerendered or cached into a stale 200/404.
+export const dynamic = "force-dynamic";
 
+function publicPath(segments: string[]): string | null {
   if (segments.length === 2) {
-    const [domain, slug] = segments;
-    return <PerDomain domain={domain!} slug={slug!} />;
+    return `/public/bio-pages/by-domain/${encodeURIComponent(segments[0]!)}/${encodeURIComponent(segments[1]!)}`;
   }
   if (segments.length === 1) {
-    return <BySlug slug={segments[0]!} />;
+    return `/public/bio-pages/${encodeURIComponent(segments[0]!)}`;
   }
-  // /b with no slug, or a deeper path, is not an address.
-  notFound();
+  return null;
+}
+
+export default async function PublicBioPage({ params }: { params: Promise<{ parts?: string[] }> }) {
+  const { parts } = await params;
+  const segments = parts ?? [];
+
+  const path = publicPath(segments);
+  if (!path) notFound(); // /b with no slug, or a deeper path, is not an address.
+
+  if (!USE_FIXTURES) {
+    try {
+      const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
+      if (res.status === 404) notFound();
+    } catch {
+      // A network error reaching the API is not "this page does not exist" —
+      // let the client render and surface it.
+    }
+  }
+
+  return <BioPageClient segments={segments} />;
 }

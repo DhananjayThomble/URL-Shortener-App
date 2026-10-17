@@ -147,6 +147,12 @@ test.describe("Journey 6 — Bio page", () => {
     await expect(perDomainPage.getByText("J6 Journey Bio")).toBeVisible({ timeout: 10_000 });
     await perDomainPage.close();
 
+    /* ---- 9d. #734 finding 10: a missing page is a real HTTP 404, not a soft
+       200 shell. The route is a server component that probes existence against
+       the API and calls notFound() for a miss. ---- */
+    const missingResp = await anonPage.goto(`/b/no-such-page-${RUN_ID}`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    expect(missingResp?.status(), "a missing bio page returns HTTP 404").toBe(404);
+
     // The managed link 302s from the short URL to the per-domain web page.
     const hop = await fetch(`${REDIRECT_URL}/${slug}`, { redirect: "manual", headers: { "user-agent": "Mozilla/5.0 (j6-bio)" } });
     expect([301, 302, 307, 308]).toContain(hop.status);

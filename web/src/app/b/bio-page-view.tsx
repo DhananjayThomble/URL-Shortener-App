@@ -20,10 +20,16 @@ const BLOCK_ICON: Record<string, string> = { embed: "▶", email: "✉", social:
 
 export function BioPageView({
   page,
+  viewKey,
   recordView,
   recordClick,
 }: {
   page: UseQueryResult<PublicBioPage>;
+  /** The address identity this view belongs to — "<domain>/<slug>" for the
+   *  per-domain route, "<slug>" for the alias. Keying the once-only guard on
+   *  this (not the resolved slug alone) makes navigating between two pages that
+   *  share a slug on different domains count a view for each (#734 finding 9). */
+  viewKey: string;
   recordView: () => void;
   recordClick: (blockId: string) => void;
 }) {
@@ -31,15 +37,16 @@ export function BioPageView({
      dev-mode double effect. Only once the page actually resolved, so a 404
      counts nothing. */
   const counted = useRef<string | null>(null);
-  const loadedSlug = page.data?.slug;
+  const resolved = Boolean(page.data);
   useEffect(() => {
-    if (!loadedSlug || counted.current === loadedSlug) return;
-    counted.current = loadedSlug;
+    if (!resolved || counted.current === viewKey) return;
+    counted.current = viewKey;
     recordView();
     // recordView is a stable closure for a given address; keying the guard on
-    // the resolved slug is what prevents a double count.
+    // (domain, slug) is what prevents a double count while still re-counting a
+    // genuine navigation to a different address that happens to share a slug.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedSlug]);
+  }, [resolved, viewKey]);
 
   if (page.isLoading) {
     return (
