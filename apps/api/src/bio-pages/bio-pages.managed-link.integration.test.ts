@@ -33,7 +33,9 @@ import { makeBioService, type BioServiceHarness } from "./bio-pages.test-harness
    3. A managed link does not appear in LinksService.list.
    4. Unpublishing (status -> draft) removes the managed link and busts its
       cache entry.
-   5. Deleting the page cascades the managed link away and busts its cache.
+   5. Deleting the page removes the managed link (via the service, which
+      enqueues the projection delete + cache bust); a RAW page delete is
+      refused by the NO ACTION FK.
    6. The slug alias resolves on a SYSTEM domain only; a custom-domain-only
       slug 404s on the alias and must be reached per-domain.
 
@@ -170,7 +172,7 @@ describeDb("BioPagesService managed link (#650)", () => {
     expect(harness.busted.some((b) => b.host === customDomain && b.slug === slug)).toBe(true);
   });
 
-  it("deleting a published page cascades the managed link away and busts its cache", async () => {
+  it("deleting a published page removes the managed link (outbox delete + bust)", async () => {
     const slug = `del-${stamp}`;
     const page = await harness.service.upsert(workspaceId, input({ domain: customDomain, slug, status: "live" }));
     const [link] = await db.select().from(links).where(eq(links.managedBioPageId, page.id));
@@ -182,6 +184,35 @@ describeDb("BioPagesService managed link (#650)", () => {
     expect(await db.select().from(links).where(eq(links.id, link!.id))).toHaveLength(0);
     expect(await db.select().from(bioPages).where(eq(bioPages.id, page.id))).toHaveLength(0);
     expect(harness.busted.some((b) => b.host === customDomain && b.slug === slug)).toBe(true);
+    // The projection worker is told to drop the old Dynamo/KVS key.
+    expect(
+      (await db.select().from(projectionOutbox).where(eq(projectionOutbox.linkId, link!.id))).some(
+        (o) => o.operation === "delete",
+      ),
+    ).toBe(true);
+  });
+
+  it("a raw bio_pages delete is REFUSED while the managed link exists (NO ACTION, not CASCADE)", async () => {
+    const slug = `noaction-${stamp}`;
+    const page = await harness.service.upsert(workspaceId, input({ domain: customDomain, slug, status: "live" }));
+    const [link] = await db.select().from(links).where(eq(links.managedBioPageId, page.id));
+    expect(link).toBeTruthy();
+
+    // A delete that bypasses BioPagesService.remove (so no outbox/bust) must be
+    // refused by the FK rather than silently dropping a projected link.
+    let caught: unknown;
+    try {
+      await db.delete(bioPages).where(eq(bioPages.id, page.id));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught, "raw page delete must be refused by the FK").toBeDefined();
+    // The page and its managed link are both still there.
+    expect(await db.select().from(bioPages).where(eq(bioPages.id, page.id))).toHaveLength(1);
+    expect(await db.select().from(links).where(eq(links.id, link!.id))).toHaveLength(1);
+
+    // Cleanup through the proper path.
+    await harness.service.remove(workspaceId, page.id);
   });
 
   it("the slug alias resolves on a system domain but 404s a custom-domain-only slug", async () => {

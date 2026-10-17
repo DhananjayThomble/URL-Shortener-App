@@ -71,10 +71,13 @@ export const links = pgTable(
        not one a user created. A published bio page owns the link at its
        (domain, slug) so the `links_domain_slug_key` unique index refuses a
        collision between a bio page and a user link in both directions. The
-       bio page's row id is stored here; the FK (ON DELETE CASCADE) is declared
-       in migration 0019 rather than with drizzle's `.references()` because
-       bio_pages lives in developers.ts, which already imports this file —
-       adding links -> bio_pages here would make the import cycle. Null is the
+       bio page's row id is stored here; the FK (ON DELETE NO ACTION) is
+       declared in migration 0019 rather than with drizzle's `.references()`
+       because bio_pages lives in developers.ts, which already imports this
+       file — adding links -> bio_pages here would make the import cycle.
+       NO ACTION (not CASCADE) forces page deletion through
+       BioPagesService.remove, the only path that enqueues the projection
+       DELETE and busts the cache before the link row goes. Null is the
        overwhelming majority: every ordinary user link. A managed link is
        hidden from the links list, is read-only in the UI, and is never counted
        as a user-created link. */

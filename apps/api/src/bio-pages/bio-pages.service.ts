@@ -425,12 +425,13 @@ export class BioPagesService {
 
   async remove(workspaceId: string, id: string): Promise<void> {
     /* Read the managed link's (domain, slug) BEFORE the delete so the
-       cache-bust key still means something afterwards — the CASCADE removes
-       the link, so there is nothing left to join against once the page is
-       gone. The managed link's own delete goes through the FK cascade, and we
-       enqueue its projection delete + bust its cache here so the redirect's
-       hot path and the Dynamo projection both drop it — the same invalidation
-       the user-link delete path uses (#650 item 2), not a new one. */
+       cache-bust key still means something afterwards — once the rows are gone
+       there is nothing left to join against for the domain string. We delete
+       the managed link EXPLICITLY (the FK is ON DELETE NO ACTION, not CASCADE,
+       so a raw page delete would be refused while the link exists — that is
+       the point: deletion must come through here) and enqueue its projection
+       delete + bust its cache, the same invalidation the user-link delete path
+       uses (#650 item 2), not a new one. */
     const row = await this.db
       .select({ linkId: links.id, slug: links.slug, domain: domains.domain })
       .from(bioPages)
@@ -442,9 +443,12 @@ export class BioPagesService {
     const managed = row[0]!;
 
     await this.db.transaction(async (tx) => {
-      if (managed.linkId) await this.enqueueManagedProjection(tx, managed.linkId, "delete");
-      // The managed link row is removed by ON DELETE CASCADE on
-      // managed_bio_page_id when the bio page goes.
+      if (managed.linkId) {
+        await this.enqueueManagedProjection(tx, managed.linkId, "delete");
+        // Remove the managed link FIRST — the NO ACTION FK refuses the page
+        // delete while this row still references it.
+        await tx.delete(links).where(eq(links.id, managed.linkId));
+      }
       await tx.delete(bioPages).where(and(eq(bioPages.id, id), eq(bioPages.workspaceId, workspaceId)));
     });
 
