@@ -31,13 +31,24 @@ interface LivePage {
   domain: string;
 }
 
+/** A parseable absolute http(s) URL with a host and nothing stray around it. */
+function isAbsoluteHttpUrl(value: string | undefined): value is string {
+  if (!value || value.trim() !== value) return false;
+  try {
+    const u = new URL(value);
+    return (u.protocol === "http:" || u.protocol === "https:") && Boolean(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const url = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
   const webOrigin = process.env.WEB_ORIGIN;
   // #650 — fail fast rather than minting managed-link destinations against a
   // localhost default that would be wrong in every real environment. The value
   // must be the SAME absolute http(s) origin the API's WEB_ORIGIN carries.
-  if (!webOrigin || !/^https?:\/\/[^\s/]+/i.test(webOrigin)) {
+  if (!isAbsoluteHttpUrl(webOrigin)) {
     console.error(
       "backfill-bio-links: WEB_ORIGIN must be set to an absolute http(s) URL (e.g. https://app.example.com) — the same origin the API uses. Refusing to run with a guessed default.",
     );

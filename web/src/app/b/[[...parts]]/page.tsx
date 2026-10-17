@@ -39,13 +39,18 @@ export default async function PublicBioPage({ params }: { params: Promise<{ part
   if (!path) notFound(); // /b with no slug, or a deeper path, is not an address.
 
   if (!USE_FIXTURES) {
+    /* notFound() works by throwing a Next.js sentinel, so it must run OUTSIDE
+       the try — inside it the catch would swallow the sentinel and render a
+       soft 200. Only the fetch itself is guarded. */
+    let status: number | null = null;
     try {
       const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
-      if (res.status === 404) notFound();
+      status = res.status;
     } catch {
       // A network error reaching the API is not "this page does not exist" —
       // let the client render and surface it.
     }
+    if (status === 404) notFound();
   }
 
   return <BioPageClient segments={segments} />;

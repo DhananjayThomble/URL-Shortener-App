@@ -298,7 +298,8 @@ export class DomainsService {
     const [count] = await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(links)
-      .where(and(eq(links.domainId, id), eq(links.workspaceId, workspaceId)));
+      // #650: same predicate as list() — managed bio links are not user links.
+      .where(and(eq(links.domainId, id), eq(links.workspaceId, workspaceId), isNull(links.managedBioPageId)));
     return this.toDto(updated, count?.n ?? 0);
   }
 
