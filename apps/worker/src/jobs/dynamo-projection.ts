@@ -172,6 +172,11 @@ function edgeTargetsOf(requests: WriteRequest[]): Array<{ host: string; slug: st
  *  this; it is optional so the per-row unit tests can omit it. */
 export interface ProjectionLogger {
   error(obj: Record<string, unknown>, msg: string): void;
+  /** Optional info-level sink (a pino logger has it). Used to surface a
+   *  swallowed ConditionalCheckFailedException — a meta write that lost the
+   *  ordering guard (#729 item 3) — which is otherwise invisible. Optional so
+   *  the per-op unit tests can supply an error-only fake. */
+  info?(obj: Record<string, unknown>, msg: string): void;
 }
 
 /** The subset of CacheStore the projection needs to invalidate a link's hot
@@ -627,9 +632,43 @@ export class DynamoProjection implements ProjectionTarget {
    *  superseded, which is success, not a failure to retry. */
   private async writeMeta(item: DomainItem): Promise<void> {
     try {
-      await this.client.send(new PutCommand({ TableName: this.table, Item: item, ...metaCondition(item) }));
+      await this.client.send(
+        new PutCommand({
+          TableName: this.table,
+          Item: item,
+          ...metaCondition(item),
+          /* #729 item 3: on a lost condition DynamoDB returns the STORED item in
+             the error, so the swallowed-but-logged line below can report what
+             actually won. Costs nothing on the success path. */
+          ReturnValuesOnConditionCheckFailure: "ALL_OLD",
+        }),
+      );
     } catch (err) {
-      if (isConditionalCheckFailed(err)) return;
+      if (isConditionalCheckFailed(err)) {
+        /* The write lost the ordering guard: a newer state (by id, tombstone,
+           then version) is already projected, so this older write is correctly
+           SUPERSEDED — success, not a failure to retry. But swallowing it
+           silently makes a genuine permanent divergence (a #729-item-1 stale
+           version, or a clock jump sorting a re-added id below the old one)
+           invisible. Log it at info with the domain id and stored-vs-incoming
+           version so the loser is traceable. The stored item is in the error's
+           `Item` (ReturnValuesOnConditionCheckFailure above); it is absent for
+           the id/tombstone branch of the condition, logged as undefined. */
+        const stored = (err as { Item?: Record<string, unknown> }).Item;
+        this.log?.info?.(
+          {
+            domainId: item.id,
+            host: item.PK,
+            incomingVersion: item.version,
+            storedId: stored?.id,
+            storedVersion: stored?.version,
+            storedDeleted: stored?.deleted,
+            incomingDeleted: item.deleted,
+          },
+          "projection domain-meta write superseded (condition failed)",
+        );
+        return;
+      }
       throw err;
     }
   }

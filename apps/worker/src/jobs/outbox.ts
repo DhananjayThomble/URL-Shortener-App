@@ -279,6 +279,14 @@ export async function sweepExpired(db: Database): Promise<number> {
  * the same item. Safe under LINK_PROJECTION=none too: NoProjection marks the
  * rows processed with no side effects.
  *
+ * #729 item 2: "already has an unprocessed op" means a LIVE one — `attempts <
+ * MAX_ATTEMPTS`. A row that already hit MAX_ATTEMPTS is dead-lettered and will
+ * NEVER be retried by the drain (its claim query filters on the same bound), so
+ * treating it as "pending" would permanently skip exactly the domains whose
+ * projection is broken and most need the backfill. Enqueuing a fresh op for
+ * such a domain is correct: it is a new row at attempts 0 that the drain WILL
+ * process, and the stale dead-lettered row is pruned once nothing references it.
+ *
  * Invoke once, after deploying: `{ "task": "backfill-domain-meta" }` on the
  * worker Lambda (or `--backfill-domain-meta` on the long-running worker).
  *
@@ -302,6 +310,7 @@ export async function backfillDomainMeta(db: Database): Promise<number> {
         and not exists (
           select 1 from projection_outbox o
           where o.link_id = d.id and o.processed_at is null
+            and o.attempts < ${MAX_ATTEMPTS}
         )
     ), queued as (
       insert into projection_outbox (link_id, operation, payload)
