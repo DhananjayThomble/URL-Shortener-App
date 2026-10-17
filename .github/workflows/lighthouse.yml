@@ -1,0 +1,127 @@
+# Lighthouse CI baseline for the static marketing routes (#475).
+#
+# This workflow is DELIBERATELY separate from verify.yml and is NOT listed in
+# the `ci-gate` job's `needs:`. The `CI gate` required status check therefore
+# never waits on it and never fails because of it — this lane is advisory only.
+# The whole job is `continue-on-error: true`, so even a Lighthouse assertion
+# failure (every assertion is warn-level anyway) reports neutral, not red.
+#
+# Why it exists: the only trustworthy Lighthouse numbers come from a PRODUCTION
+# `next build` + `next start`. Earlier scores were taken against `next dev`,
+# whose un-minified, un-split, HMR-instrumented bundles make LCP/TBT/perf
+# meaningless (see docs/DECISIONS.md). This measures the real prod bundle on the
+# clean ubuntu runner and uploads the report as an artifact for inspection and
+# for recalibrating the budgets in web/lighthouserc.json from real CI medians.
+name: Lighthouse
+
+on:
+  pull_request:
+    paths:
+      - "web/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lighthouse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lighthouse:
+    name: Lighthouse CI (marketing routes)
+    runs-on: ubuntu-latest
+    # Advisory lane: never let a Lighthouse result turn this check red, and keep
+    # it out of the CI gate entirely (it is not in ci-gate's needs).
+    continue-on-error: true
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # web depends on the workspace packages (@snapurl/contract, @snapurl/domain);
+      # they must be built before `next build` can compile the app.
+      - name: Build packages
+        run: pnpm build:packages
+
+      # The marketing routes measured here (/, /pricing, /product,
+      # /for-developers, /self-host) are statically prerendered and make no API
+      # call to render, so no API server is needed. NEXT_PUBLIC_API_URL still has
+      # to be a NON-localhost URL or web/next.config.ts refuses the prod build;
+      # the reserved .test TLD below is never resolved by anything on this route
+      # set. We do NOT set SNAPURL_ALLOW_UNCONFIGURED_BUILD — this is a genuine
+      # production build, exactly what we want to measure.
+      - name: Build the production web bundle
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_API_URL: http://api.snapurl.test:3001/api/v1
+        run: pnpm --filter snapurl-web build
+
+      # Map the .test hosts to loopback via /etc/hosts rather than Chrome's
+      # --host-resolver-rules: lhci splits chromeFlags on whitespace, which
+      # corrupts the "MAP *.snapurl.test 127.0.0.1" rule (it contains a space).
+      # GitHub-hosted runners allow sudo, so an /etc/hosts entry is the robust
+      # fix. snapurl.test -> the next-start server; api.snapurl.test is listed
+      # for completeness even though these static routes never call it.
+      - name: Point the .test hosts at loopback
+        run: echo "127.0.0.1 snapurl.test api.snapurl.test" | sudo tee -a /etc/hosts
+
+      - name: Start the production server
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_API_URL: http://api.snapurl.test:3001/api/v1
+        run: |
+          nohup pnpm --filter snapurl-web start > "${RUNNER_TEMP}/next-start.log" 2>&1 &
+          echo "started next start (pid $!)"
+
+      - name: Wait for the server to answer
+        run: |
+          for i in $(seq 1 30); do
+            code="$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://snapurl.test:3000/ || true)"
+            echo "attempt ${i}: ${code}"
+            if [ "${code}" = "200" ]; then exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          cat "${RUNNER_TEMP}/next-start.log" || true
+          exit 1
+
+      # Pinned exact version. lhci drives the runner's pre-installed Chrome with
+      # --no-sandbox (ubuntu-latest restricts unprivileged user namespaces, so
+      # Chrome's sandbox cannot start otherwise). The config's upload.outputDir
+      # is "./.lighthouseci", resolved against the CWD (the repo root), so the
+      # reports land in ./.lighthouseci regardless of the --config path.
+      - name: Run Lighthouse CI
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=web/lighthouserc.json
+
+      # Print the per-route medians (LCP, TBT, script transfer bytes, perf
+      # score) into the job log so the baseline is readable without downloading
+      # the artifact. Reads the representative-run JSON reports lhci wrote.
+      - name: Summarize medians
+        if: ${{ !cancelled() }}
+        run: node web/scripts/lhci-summary.mjs .lighthouseci
+
+      - name: Upload Lighthouse report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lighthouse-report
+          # lhci writes to a dot-prefixed dir; upload-artifact excludes hidden
+          # files by default, so opt them in or the report is dropped silently.
+          include-hidden-files: true
+          path: |
+            .lighthouseci/
+          if-no-files-found: warn
