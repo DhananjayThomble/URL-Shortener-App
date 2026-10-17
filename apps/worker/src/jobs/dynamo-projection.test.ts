@@ -1075,3 +1075,121 @@ describe("DynamoProjection post-drain cache bust (#620) — optional LinkCacheBu
     expect(upserted[0]!.ok).toBe(true);
   });
 });
+
+describe("DynamoProjection logs a swallowed ConditionalCheckFailedException (#729 item 3)", () => {
+  /* A meta write that loses the ordering guard is correctly SWALLOWED as
+     success (superseded, not retried) — but swallowing it SILENTLY makes a
+     genuine permanent divergence (a #729-item-1 stale version, or a clock jump
+     sorting a re-added id below the old one) invisible. So writeMeta now logs
+     the lost condition at INFO with the domain id and stored-vs-incoming
+     version. Proven RED first: before this change writeMeta's catch returned
+     immediately with no log call AND sent the PutCommand WITHOUT
+     ReturnValuesOnConditionCheckFailure, so neither the info() call nor the
+     stored-item fields these specs assert existed. */
+
+  function emptyDb(): Database {
+    const builder: any = {
+      from: () => builder,
+      where: () => builder,
+      limit: () => Promise.resolve([]),
+    };
+    return { select: () => builder } as unknown as Database;
+  }
+
+  /** A logger spy with both error and info sinks (a pino logger has both). */
+  function spyLogger() {
+    const error = vi.fn();
+    const info = vi.fn();
+    return { error, info, log: { error, info } };
+  }
+
+  /** A client whose PutCommand rejects with a ConditionalCheckFailedException
+   *  carrying the STORED item in `Item` — exactly what DynamoDB returns when
+   *  ReturnValuesOnConditionCheckFailure=ALL_OLD is set and the condition
+   *  fails. */
+  function conditionFailingClient(storedItem: Record<string, unknown>) {
+    const sends: any[] = [];
+    const send = vi.fn(async (command: unknown) => {
+      sends.push((command as { input: any }).input);
+      throw Object.assign(new Error("The conditional request failed"), {
+        name: "ConditionalCheckFailedException",
+        Item: storedItem,
+      });
+    });
+    return { sends, client: { send } as unknown as DynamoDBDocumentClient };
+  }
+
+  it("logs the lost condition at info with domain id + stored vs incoming version, and still succeeds", async () => {
+    const logger = spyLogger();
+    // The stored (winning) meta item: a NEWER version of the same domain.
+    const { sends, client } = conditionFailingClient({
+      PK: "d#snap.to",
+      SK: "d#meta",
+      id: "dom-1",
+      version: "2026-05-05T00:00:00.000Z",
+    });
+    const projection = new DynamoProjection(emptyDb(), client, TABLE, logger.log);
+
+    /* A live domain op whose write LOSES to the stored newer item. The op is a
+       success (superseded) — projectDomain resolves — but it must now have
+       logged the loser. */
+    const liveDb = {
+      select: () => {
+        const builder: any = {
+          from: () => builder,
+          where: () => builder,
+          limit: () =>
+            Promise.resolve([
+              {
+                id: "dom-1",
+                domain: "snap.to",
+                status: "live",
+                rootRedirect: "https://example.com/old",
+                notFoundRedirect: null,
+                updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+              },
+            ]),
+        };
+        return builder;
+      },
+    } as unknown as Database;
+    const liveProjection = new DynamoProjection(liveDb, client, TABLE, logger.log);
+
+    await expect(liveProjection.projectDomain("dom-1", "snap.to")).resolves.toBeUndefined();
+
+    // The PutCommand asked DynamoDB to return the stored item on failure.
+    expect(sends.at(-1).ReturnValuesOnConditionCheckFailure).toBe("ALL_OLD");
+    // Exactly one info line, carrying the domain id and both versions.
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    const [obj, msg] = logger.info.mock.calls[0] as [Record<string, unknown>, string];
+    expect(msg).toContain("superseded");
+    expect(obj.domainId).toBe("dom-1");
+    expect(obj.incomingVersion).toBe("2026-01-01T00:00:00.000Z");
+    expect(obj.storedVersion).toBe("2026-05-05T00:00:00.000Z");
+    // No error-level noise for a (correct) supersede.
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("does not log when the write SUCCEEDS (no condition failure)", async () => {
+    const logger = spyLogger();
+    const { puts, client } = makeClient({});
+    const projection = new DynamoProjection(emptyDb(), client, TABLE, logger.log);
+
+    // A gone domain -> tombstone put; the default PutCommand handler succeeds.
+    await projection.projectDomain("dom-gone", "snap.to");
+
+    expect(puts).toHaveLength(1);
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("still works with an error-only logger (no info sink)", async () => {
+    // ProjectionLogger.info is optional; a logger without it must not throw.
+    const error = vi.fn();
+    const { client } = conditionFailingClient({ id: "dom-9", version: "2030-01-01T00:00:00.000Z" });
+    const projection = new DynamoProjection(emptyDb(), client, TABLE, { error });
+
+    await expect(projection.projectDomain("dom-old", "snap.to")).resolves.toBeUndefined();
+    expect(error).not.toHaveBeenCalled();
+  });
+});
