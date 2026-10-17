@@ -14,6 +14,7 @@ export const qk = {
   formResponses: (id: string) => ["form", id, "responses"] as const,
   publicForm: (slug: string) => ["public-form", slug] as const,
   publicBioPage: (slug: string) => ["public-bio-page", slug] as const,
+  publicBioPageByDomain: (domain: string, slug: string) => ["public-bio-page", domain, slug] as const,
   analytics: (range: string, linkId?: string) => ["analytics", range, linkId ?? "workspace"] as const,
   domains: ["domains"] as const,
   members: ["members"] as const,

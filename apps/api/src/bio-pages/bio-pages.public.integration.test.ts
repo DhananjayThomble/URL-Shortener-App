@@ -4,6 +4,7 @@ import { NotFoundException } from "@nestjs/common";
 import { bioBlocks, bioPages, createDatabase, domains, eq, workspaces, type Database } from "@snapurl/database";
 import { PublicBioPage } from "@snapurl/contract";
 import { BioPagesService } from "./bio-pages.service.js";
+import { makeBioService } from "./bio-pages.test-harness.js";
 
 /* ============================================================
    PublicController#bioPage -> BioPagesService.publicPage, against a real
@@ -38,11 +39,12 @@ describeDb("BioPagesService.publicPage", () => {
   const stamp = Date.now();
   const liveSlug = `live-${stamp}`;
   const draftSlug = `draft-${stamp}`;
+  const domainName = `bio-${stamp}.example.com`;
 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new BioPagesService(db);
+    service = makeBioService(db).service;
 
     const [ws] = await db
       .insert(workspaces)
@@ -58,7 +60,7 @@ describeDb("BioPagesService.publicPage", () => {
 
     const [domain] = await db
       .insert(domains)
-      .values({ workspaceId, domain: `bio-${stamp}.example.com`, status: "live", ssl: "active" })
+      .values({ workspaceId, domain: domainName, status: "live", ssl: "active" })
       .returning({ id: domains.id });
     const domainId = domain!.id;
 
@@ -99,7 +101,7 @@ describeDb("BioPagesService.publicPage", () => {
   });
 
   it("returns a published page's profile and blocks by slug for an anonymous visitor", async () => {
-    const page = await service.publicPage(liveSlug);
+    const page = await service.publicPage(domainName, liveSlug);
 
     // Contract is the oracle: the response must satisfy PublicBioPage exactly.
     expect(() => PublicBioPage.parse(page)).not.toThrow();
@@ -117,7 +119,7 @@ describeDb("BioPagesService.publicPage", () => {
   });
 
   it("never leaks workspace analytics through the public shape", async () => {
-    const page = await service.publicPage(liveSlug);
+    const page = await service.publicPage(domainName, liveSlug);
     const asRecord = page as unknown as Record<string, unknown>;
 
     // views / clickThrough / internal id are workspace business, not a
@@ -134,10 +136,10 @@ describeDb("BioPagesService.publicPage", () => {
   });
 
   it("404s a draft page rather than revealing that the slug exists", async () => {
-    await expect(service.publicPage(draftSlug)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.publicPage(domainName, draftSlug)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("404s a slug that does not exist at all", async () => {
-    await expect(service.publicPage(`missing-${randomUUID()}`)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.publicPage(domainName, `missing-${randomUUID()}`)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
