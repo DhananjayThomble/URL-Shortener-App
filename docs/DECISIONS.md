@@ -1336,6 +1336,68 @@ trade.
 
 ---
 
+## Part 4c — Lighthouse performance baseline (#475)
+
+**Decision:** measure web performance from a **production** `next build` + `next start`,
+on the clean GitHub ubuntu runner, via a dedicated advisory Lighthouse CI workflow —
+never from `next dev`.
+
+**Why dev-mode numbers were invalid.** Every Lighthouse score taken before #475 was
+collected against `next dev`. The dev server serves un-minified, un-code-split JavaScript,
+runs React in development mode, and injects Hot Module Replacement and the error overlay.
+That inflates bundle size several-fold and adds main-thread work that does not exist in
+production, so dev-mode LCP (observed 15–19 s) and performance score (38–41) describe the
+dev toolchain, not the shipped site. They are not a baseline; they are noise. Only a
+`next build` artifact served by `next start` is representative of what a visitor loads.
+
+**What is measured.** The five **statically prerendered** marketing routes only:
+`/`, `/pricing`, `/product`, `/for-developers`, `/self-host`. These render with no API
+call, so no API server has to run during the Lighthouse pass — the bundle is self-contained.
+`NEXT_PUBLIC_API_URL` is still set to a non-localhost value (`http://api.snapurl.test:3001/api/v1`,
+reserved `.test` TLD) purely to satisfy `web/next.config.ts`, which refuses a production
+build with an unset or localhost API URL; nothing on these routes ever resolves it.
+
+**How.** `.github/workflows/lighthouse.yml` is a standalone workflow, triggered on
+`pull_request` for `web/**` changes and on `workflow_dispatch`. It is **not** part of
+`verify.yml` and is **absent from the `ci-gate` job's `needs:`**, and the job is
+`continue-on-error: true` with warn-level assertions, so it can never block or redden the
+required `CI gate`. It builds the prod bundle, serves it with `next start`, maps the `.test`
+hosts to loopback through `/etc/hosts` (runners permit `sudo`; this avoids lhci's
+whitespace-splitting of Chrome's `--host-resolver-rules`, which corrupts the
+`MAP *.snapurl.test 127.0.0.1` rule), runs `@lhci/cli@0.15.1` with `numberOfRuns: 3`
+(median) and `--no-sandbox`, and uploads the report as an artifact.
+
+**Budgets** (`web/lighthouserc.json`, all **warn-level**, median across 3 runs on ubuntu-24.04) —
+**recalibrated from the first two CI runs:**
+
+| Metric | Budget | Basis |
+| --- | --- | --- |
+| `resource-summary:script:size` | 295,000 B (≈288 kB) | This audit measures the *total transferred bytes of all script resources* a route loads — larger than Next's "First Load JS" parse figure (114–118 kB). Budget = largest measured route (253,879 B) + ~15 % headroom. |
+| `largest-contentful-paint` | 2,800 ms | Measured medians 2,254–2,277 ms (all five routes). Budget set just above the observed max with headroom. The Core Web Vitals "good" line is 2,500 ms; these routes sit just under it. |
+| `total-blocking-time` | 250 ms | Measured medians 101–123 ms. Comfortable headroom under both the observed max and the 300 ms "good" line. |
+
+**Measured baseline (3-run median per route, ubuntu-24.04, prod `next build` + `next start`):**
+
+| Route | LCP (ms) | TBT (ms) | Script bytes | Perf score |
+| --- | --- | --- | --- | --- |
+| `/` | 2,264 | 111 | 205,796 | 97 |
+| `/pricing` | 2,265 | 110 | 253,871 | 97 |
+| `/product` | 2,254 | 101 | 212,024 | 98 |
+| `/for-developers` | 2,277 | 123 | 212,024 | 96 |
+| `/self-host` | 2,265 | 110 | 253,879 | 95 |
+
+The script-byte budget is the deterministic gate-worthy signal. LCP and TBT are environment-sensitive
+but now anchored to real CI medians. The `Summarize medians` workflow step prints
+LCP/TBT/script-bytes/perf per route into the job log every run, so future tightening reads
+straight from CI. The overall Lighthouse performance score is deliberately **not** asserted — it is
+a noisy composite (shown above only as context; perf 95–98 confirms the prod bundle is healthy,
+versus the dev-mode 38–41 these numbers replace).
+
+**Not covered here.** Authenticated `(app)` routes need a login script to measure and are
+tracked as a separate follow-up (see the issue referencing #475).
+
+---
+
 ## Part 5 — Open questions for you
 
 1. **Is the v1 Mongo database still live?** Decides whether the import script matters (G9).
