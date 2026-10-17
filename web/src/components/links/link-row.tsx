@@ -68,33 +68,40 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
               <span className="text-ink-3 font-normal">{link.domain}/</span>
               <span className="text-accent">{link.slug}</span>
             </NextLink>
-            <button
-              onClick={onCopy}
-              aria-label={`Copy short link ${link.domain}/${link.slug}`}
-              className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
-            >
-              {copied ? "✓ copied" : "⧉ copy"}
-            </button>
-            {/* No slug is sent, so the server generates one — a duplicate that
-                reused the back-half would collide with the link it came from. */}
-            <button
-              onClick={() => cloneLink.mutate({ id: link.id })}
-              disabled={cloneLink.isPending}
-              aria-label={`Duplicate link ${link.domain}/${link.slug}`}
-              title="Create a copy of this link with a new back-half"
-              className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
-            >
-              {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
-            </button>
-            <button
-              onClick={toggleArchived}
-              disabled={updateLink.isPending}
-              aria-label={archived ? `Unarchive link ${link.domain}/${link.slug}` : `Archive link ${link.domain}/${link.slug}`}
-              title={archived ? "Move this link back to your active lists" : "Archive this link — it keeps working, just moves out of your active lists"}
-              className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
-            >
-              {updateLink.isPending ? "…" : archived ? "⤴ unarchive" : "⤵ archive"}
-            </button>
+            {/* On a phone the three always-on touch actions wrap together as a
+                compact group onto their own line under the slug (basis-full)
+                instead of crowding the slug + status chip. On md+ the group
+                collapses back to inline (md:basis-auto, md:contents) so the
+                buttons flow between the slug and chip exactly as before. */}
+            <div className="flex items-center gap-2 flex-wrap basis-full order-last md:basis-auto md:order-none md:contents">
+              <button
+                onClick={onCopy}
+                aria-label={`Copy short link ${link.domain}/${link.slug}`}
+                className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
+              >
+                {copied ? "✓ copied" : "⧉ copy"}
+              </button>
+              {/* No slug is sent, so the server generates one — a duplicate that
+                  reused the back-half would collide with the link it came from. */}
+              <button
+                onClick={() => cloneLink.mutate({ id: link.id })}
+                disabled={cloneLink.isPending}
+                aria-label={`Duplicate link ${link.domain}/${link.slug}`}
+                title="Create a copy of this link with a new back-half"
+                className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
+              >
+                {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
+              </button>
+              <button
+                onClick={toggleArchived}
+                disabled={updateLink.isPending}
+                aria-label={archived ? `Unarchive link ${link.domain}/${link.slug}` : `Archive link ${link.domain}/${link.slug}`}
+                title={archived ? "Move this link back to your active lists" : "Archive this link — it keeps working, just moves out of your active lists"}
+                className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
+              >
+                {updateLink.isPending ? "…" : archived ? "⤴ unarchive" : "⤵ archive"}
+              </button>
+            </div>
             <Chip tone={status.tone} dot>
               {status.label(link)}
             </Chip>

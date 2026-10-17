@@ -25,6 +25,7 @@ export default function AnalyticsPage() {
                 were unreachable even though the API serves all five. */}
             <Segmented<AnalyticsRange>
               aria-label="Analytics date range"
+              className="w-full sm:w-auto"
               value={range}
               onChange={setRange}
               options={[

@@ -673,7 +673,11 @@ export function PageHead({
         <h1 className="text-[24px] font-bold">{title}</h1>
         {sub ? <div className="text-[13.5px] text-ink-3 mt-[3px]">{sub}</div> : null}
       </div>
-      {actions ? <div className="ml-auto flex gap-2 flex-wrap">{actions}</div> : null}
+      {actions ? (
+        <div className="w-full sm:w-auto sm:ml-auto flex gap-2 flex-wrap justify-start sm:justify-end">
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }
