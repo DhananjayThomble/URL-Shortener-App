@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
+import { MarketingShortenForm } from "@/components/marketing/shorten-form";
 
 const FEATURES = [
   { icon: "◈", title: "Your domain, your links", body: "Bring any domain, get automatic SSL, and set root and 404 redirects. As many as you want — domains aren't metered." },
@@ -32,29 +33,24 @@ export default function LandingPage() {
             interstitial ads. No scan caps. Clicks are counted, never capped.
           </p>
 
-          <div className="max-w-[640px] mx-auto mt-[34px] bg-surface border border-line-2 rounded-[14px] p-[9px] flex flex-col sm:flex-row gap-[9px] shadow-[var(--shadow-2)] text-left">
-            <input
-              defaultValue="https://acme.com/collections/spring-2026?utm_source=instagram"
-              spellCheck={false}
-              className="flex-1 bg-transparent border-none px-[11px] py-[9px] text-[14.5px] text-ink focus:outline-none min-w-0"
-              aria-label="URL to shorten"
-            />
-            <Link
-              href="/register"
-              className="px-[18px] py-[9px] rounded-[var(--radius-sm)] bg-accent text-accent-ink font-semibold text-[13px] text-center whitespace-nowrap"
-            >
-              Shorten
-            </Link>
-          </div>
+          <MarketingShortenForm />
 
           <div className="max-w-[640px] mx-auto mt-[11px] flex items-center gap-3 px-[15px] py-[13px] bg-surface border border-good rounded-[11px] shadow-[var(--shadow-1)] text-left">
             <span className="w-6 h-6 rounded-full bg-wash-good text-good grid place-items-center text-[12px] shrink-0">
               ✓
             </span>
             <div className="flex-1 min-w-0">
-              <div className="font-mono text-[15px] font-semibold">
-                <span className="text-ink-3">snap.to/</span>
-                <span className="text-accent">spring-sale</span>
+              <div className="flex items-center gap-2">
+                <div className="font-mono text-[15px] font-semibold">
+                  <span className="text-ink-3">snap.to/</span>
+                  <span className="text-accent">spring-sale</span>
+                </div>
+                {/* #660 — a static mock, not a link the visitor just made. Label
+                    it so the real result (reached via the Shorten form) can't be
+                    confused with this illustration. */}
+                <span className="px-[7px] py-[1px] rounded-full bg-surface-3 text-ink-3 text-[10.5px] font-semibold uppercase tracking-wide">
+                  Example
+                </span>
               </div>
               <div className="text-[11.5px] text-ink-3 mt-[2px]">
                 no cookies set

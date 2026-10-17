@@ -130,10 +130,18 @@ export class BioPagesService {
         id = byId.id;
       } else {
         const [existing] = await tx
-          .select({ id: bioPages.id })
+          .select({ id: bioPages.id, workspaceId: bioPages.workspaceId })
           .from(bioPages)
           .where(and(eq(bioPages.domainId, domain.id), sql`lower(${bioPages.slug}) = ${input.slug.toLowerCase()}`))
           .limit(1);
+
+        /* #735 — a system domain is shared by every workspace, so the page at
+           this address may belong to someone else. Only the caller's OWN page
+           may be updated here; anyone else's is a taken address, and nothing
+           about it may change. */
+        if (existing && existing.workspaceId !== workspaceId) {
+          throw new ConflictException(`${input.domain}/${input.slug} is already taken.`);
+        }
 
         if (existing) {
           await tx

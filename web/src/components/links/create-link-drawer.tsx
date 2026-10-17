@@ -13,7 +13,35 @@ import { cn, shortUrlHref } from "@/lib/utils";
 
 type TabId = LinkFormTabId;
 
-export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+/* The drawer's blank starting point. Hoisted so the reset-on-open effect can
+   rebuild it when seeding a destination from the #660 hero deep link, instead
+   of handing react-hook-form a partial object that would blank every other
+   field. `domain` is intentionally "" here and filled from the workspace's own
+   domains by the effect below. */
+const BLANK_LINK_FORM: CreateLinkFormValues = {
+  destination: "",
+  domain: "",
+  slug: "",
+  tags: [],
+  redirectType: "302",
+  rules: [],
+  forwardQuery: true,
+  deepLink: false,
+  hideReferrer: false,
+  publicPreview: true,
+};
+
+export function CreateLinkDrawer({
+  open,
+  onClose,
+  initialDestination,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** #660 — prefill the Destination field when the drawer is opened from the
+   *  marketing hero's `/links?new=<url>` deep link. */
+  initialDestination?: string;
+}) {
   const [tab, setTab] = useState<TabId>("dest");
   const { data: domains } = useDomains();
   const { data: workspace, isPending: workspacePending } = useWorkspace();
@@ -40,22 +68,7 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
     // blankOptionalUrlsToUndefined's docblock) is treated as "not set"
     // before CreateLinkInput, unmodified, validates the rest.
     resolver: (values, context, options) => zodResolver(CreateLinkInput)(blankOptionalUrlsToUndefined(values), context, options),
-    defaultValues: {
-      destination: "",
-      // Left blank here and filled from the workspace's own domains once they
-      // load (see the effect below). Hardcoding a production domain like
-      // "snap.to" made the first create in any other workspace fail with
-      // "snap.to isn't a domain you can use" until the user changed it.
-      domain: "",
-      slug: "",
-      tags: [],
-      redirectType: "302",
-      rules: [],
-      forwardQuery: true,
-      deepLink: false,
-      hideReferrer: false,
-      publicPreview: true,
-    },
+    defaultValues: BLANK_LINK_FORM,
   });
 
   const { register, handleSubmit, control, watch, reset, setValue, getValues, formState } = form;
@@ -148,13 +161,17 @@ export function CreateLinkDrawer({ open, onClose }: { open: boolean; onClose: ()
   // holding the abandoned attempt (typed values, errors, a stale server
   // error) until the next open; clearing at close means nothing from one
   // attempt can leak into the next, whichever way the drawer was dismissed.
+  //
+  // #660 — when opened from the hero deep link, seed the Destination field with
+  // the URL the visitor pasted on the landing page. Everything else resets to
+  // its blank default; the back-half domain is still chosen by the effect below.
   useEffect(() => {
-    reset();
+    reset({ ...BLANK_LINK_FORM, ...(initialDestination ? { destination: initialDestination } : {}) });
     setTab("dest");
     create.reset();
     // `create` is a stable mutation object; re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, reset]);
+  }, [open, reset, initialDestination]);
 
   // Default the back-half domain once the workspace's domains load, unless the
   // user has already picked one: the workspace's defaultDomain if it is live,
