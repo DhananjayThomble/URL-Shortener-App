@@ -46,6 +46,7 @@ function linkRow(overrides: Partial<any> = {}) {
     rootRedirect: null,
     notFoundRedirect: null,
     clicks: 7,
+    domainUpdatedAt: new Date("2026-01-02T03:04:05.000Z"),
   };
 }
 
@@ -57,6 +58,7 @@ function domainRow(overrides: Partial<any> = {}) {
     status: "live",
     rootRedirect: null,
     notFoundRedirect: null,
+    updatedAt: new Date("2026-01-02T03:04:05.000Z"),
     ...overrides,
   };
 }
@@ -83,19 +85,30 @@ function makeDb(linkRows: any[], rulesRows: any[]): Database {
 }
 
 function makeClient(handlers: Record<string, (input: any) => unknown>) {
+  /* DOMAIN-META writes are single conditional PutItems (#713 item 4), not part
+     of a BatchWrite. Unless a test supplies its own PutCommand handler, they
+     succeed and are recorded here. */
+  const puts: any[] = [];
   const send = vi.fn(async (command: unknown) => {
     const name = commandName(command);
-    const handler = handlers[name];
+    const handler =
+      handlers[name] ??
+      (name === "PutCommand"
+        ? (input: any) => {
+            puts.push(input);
+            return {};
+          }
+        : undefined);
     if (!handler) throw new Error(`unexpected command ${name}`);
     return handler((command as { input: any }).input);
   });
-  return { send, client: { send } as unknown as DynamoDBDocumentClient };
+  return { send, puts, client: { send } as unknown as DynamoDBDocumentClient };
 }
 
 describe("DynamoProjection.upsert", () => {
-  it("reads the link and BatchWrites the LINK item + domain-meta item", async () => {
+  it("reads the link, BatchWrites the LINK item and conditionally Puts the domain-meta item", async () => {
     const batches: any[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batches.push(input);
         return {};
@@ -107,16 +120,20 @@ describe("DynamoProjection.upsert", () => {
 
     expect(batches).toHaveLength(1);
     const requests = batches[0].RequestItems[TABLE];
-    // One LINK put + one domain-meta put.
-    expect(requests).toHaveLength(2);
-    const link = requests.find((r: any) => r.PutRequest.Item.SK.startsWith("s#")).PutRequest.Item;
-    const meta = requests.find((r: any) => r.PutRequest.Item.SK === "d#meta").PutRequest.Item;
+    // The LINK put is batched; the domain-meta put is a conditional PutItem.
+    expect(requests).toHaveLength(1);
+    const link = requests[0].PutRequest.Item;
     expect(link.PK).toBe("d#snap.to");
     expect(link.SK).toBe("s#one");
     expect(link.linkId).toBe("link-1");
     expect(link.clicks).toBe(7);
+    expect(puts).toHaveLength(1);
+    const meta = puts[0].Item;
     expect(meta.PK).toBe("d#snap.to");
+    expect(meta.SK).toBe("d#meta");
     expect(meta.id).toBe("dom-1");
+    expect(meta.version).toBe("2026-01-02T03:04:05.000Z");
+    expect(puts[0].ConditionExpression).toContain("#id < :id");
   });
 });
 
@@ -159,7 +176,7 @@ describe("DynamoProjection.remove", () => {
 describe("DynamoProjection.apply (batching)", () => {
   it("splits >25 upserts into multiple BatchWriteCommands of <=25", async () => {
     const batchSizes: number[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batchSizes.push(input.RequestItems[TABLE].length);
         return {};
@@ -167,12 +184,13 @@ describe("DynamoProjection.apply (batching)", () => {
     });
     /* 30 DISTINCT links on ONE domain. Each contributes a distinct LINK put;
        all 30 share the domain's single meta item, which apply() deduplicates to
-       ONE meta put. So 30 upserts -> 31 write requests (30 links + 1 shared
-       meta) -> ceil(31/25) = 2 batches, proving both the O(N/25) batching AND
-       that the shared meta is written once (before dedup this was 60 requests
-       carrying 30 IDENTICAL meta keys, which DynamoDB rejects wholesale — the
-       #288 failure). Each op resolves to a distinct link row (distinct slug) so
-       the fake mirrors reality rather than returning one identical row. */
+       ONE (conditional, unbatched — #713 item 4) meta put. So 30 upserts -> 30
+       batched LINK puts -> ceil(30/25) = 2 batches + 1 meta PutItem, proving
+       both the O(N/25) batching AND that the shared meta is written once
+       (before dedup this was 60 requests carrying 30 IDENTICAL meta keys, which
+       DynamoDB rejects wholesale — the #288 failure). Each op resolves to a
+       distinct link row (distinct slug) so the fake mirrors reality rather than
+       returning one identical row. */
     const N = 30;
     let call = 0;
     const distinctDb = {
@@ -200,8 +218,9 @@ describe("DynamoProjection.apply (batching)", () => {
     expect(results.every((r) => r.ok)).toBe(true);
     expect(batchSizes.length).toBe(2);
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(25);
-    // N distinct LINK puts + 1 deduplicated shared meta put.
-    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(N + 1);
+    // N distinct LINK puts batched + 1 deduplicated shared meta PutItem.
+    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(N);
+    expect(puts).toHaveLength(1);
   });
 
   it("retries UnprocessedItems then succeeds", async () => {
@@ -370,7 +389,7 @@ describe("DynamoProjection.apply deduplicates the shared domain-meta item", () =
 
   it("writes the shared domain-meta item ONCE for many links on one domain, with no duplicate keys", async () => {
     const sentBatches: any[][] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         sentBatches.push(input.RequestItems[TABLE]);
         return {};
@@ -399,9 +418,11 @@ describe("DynamoProjection.apply deduplicates the shared domain-meta item", () =
       expect(new Set(keys).size).toBe(keys.length);
     }
 
-    // The domain-meta item is written exactly once, not once per link.
-    const metaPuts = allRequests.filter((r: any) => r.PutRequest?.Item.SK === "d#meta");
-    expect(metaPuts).toHaveLength(1);
+    // The domain-meta item is written exactly once, not once per link — and
+    // outside the batches, as a conditional PutItem (#713 item 4).
+    expect(allRequests.filter((r: any) => r.PutRequest?.Item.SK === "d#meta")).toHaveLength(0);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item.SK).toBe("d#meta");
 
     // All N LINK items are present, each with a non-empty linkId / PK / SK.
     const linkPuts = allRequests.filter((r: any) => r.PutRequest?.Item.SK.startsWith("s#"));
@@ -481,7 +502,7 @@ describe("DynamoProjection edge fast path (#289) — optional KvsWriter", () => 
 
   it("upsert writes DynamoDB AND drives putIfEligible with the link + host + slug", async () => {
     const batches: any[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batches.push(input);
         return {};
@@ -492,9 +513,10 @@ describe("DynamoProjection edge fast path (#289) — optional KvsWriter", () => 
 
     await projection.upsert("link-1");
 
-    // DynamoDB still written.
+    // DynamoDB still written: the LINK batch + the conditional meta put.
     expect(batches).toHaveLength(1);
-    expect(batches[0].RequestItems[TABLE]).toHaveLength(2);
+    expect(batches[0].RequestItems[TABLE]).toHaveLength(1);
+    expect(puts).toHaveLength(1);
     // KVS driven with the projected link and the row's (domain, slug).
     expect(kvs.putIfEligible).toHaveBeenCalledTimes(1);
     const [link, host, slug] = kvs.putIfEligible.mock.calls[0] as any[];
@@ -614,9 +636,10 @@ describe("DynamoProjection gates the projection on domain.status='live' (#713 it
      resolve from Postgres. The DynamoDB/projection path carries NO status (the
      DynamoLinkResolver just reads the pre-written item), so the SAME gate has
      to live where the projection is WRITTEN: a non-live domain must never GAIN
-     projected LINK/meta items, and a domain that drops out of live must have
-     its meta item REMOVED so a status regression does not leave stale served
-     items at the edge. These specs are the authoritative RED/GREEN evidence. */
+     projected LINK items or served redirects, and a domain that drops out of
+     live must have its meta item NEUTRALISED (redirects null) so a status
+     regression does not leave stale served redirects at the edge. These specs
+     are the authoritative RED/GREEN evidence. */
 
   function makeDomainDb(rows: any[]): Database {
     const select = () => {
@@ -678,30 +701,40 @@ describe("DynamoProjection gates the projection on domain.status='live' (#713 it
     expect(batches).toHaveLength(0);
   });
 
-  it("domain op DELETEs the domain-meta item when the domain is 'verifying'", async () => {
+  it("domain op NEUTRALISES the domain-meta item when the domain is 'verifying'", async () => {
     const batches: any[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batches.push(input);
         return {};
       },
     });
-    const verifyingDomainDb = makeDomainDb([domainRow({ status: "verifying" })]);
+    const verifyingDomainDb = makeDomainDb([
+      domainRow({ status: "verifying", rootRedirect: "https://example.com/r", notFoundRedirect: "https://example.com/n" }),
+    ]);
     const projection = new DynamoProjection(verifyingDomainDb, client, TABLE);
 
     await projection.projectDomain("dom-1", "snap.to");
 
-    expect(batches).toHaveLength(1);
-    const requests = batches[0].RequestItems[TABLE];
-    // A domain that dropped out of live has its meta item REMOVED, not put.
-    expect(requests).toHaveLength(1);
-    expect(requests[0].DeleteRequest.Key).toEqual({ PK: "d#snap.to", SK: "d#meta" });
-    expect(requests[0].PutRequest).toBeUndefined();
+    // A domain that dropped out of live serves NOTHING: its meta item carries
+    // null redirects (read exactly like no item), but keeps its id + version so
+    // a stalled put of the earlier live state cannot land over it (#713 item 4).
+    expect(batches).toHaveLength(0);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item).toMatchObject({
+      PK: "d#snap.to",
+      SK: "d#meta",
+      id: "dom-1",
+      rootRedirect: null,
+      notFoundRedirect: null,
+      version: "2026-01-02T03:04:05.000Z",
+    });
+    expect(puts[0].Item.deleted).toBeUndefined();
   });
 
   it("positive control: a 'live' domain still produces the LINK put + domain-meta put", async () => {
     const batches: any[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batches.push(input);
         return {};
@@ -713,43 +746,44 @@ describe("DynamoProjection gates the projection on domain.status='live' (#713 it
 
     expect(batches).toHaveLength(1);
     const requests = batches[0].RequestItems[TABLE];
-    expect(requests).toHaveLength(2);
-    const link = requests.find((r: any) => r.PutRequest.Item.SK.startsWith("s#")).PutRequest.Item;
-    const meta = requests.find((r: any) => r.PutRequest.Item.SK === "d#meta").PutRequest.Item;
-    expect(link.PK).toBe("d#snap.to");
-    expect(meta.PK).toBe("d#snap.to");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].PutRequest.Item.SK.startsWith("s#")).toBe(true);
+    expect(requests[0].PutRequest.Item.PK).toBe("d#snap.to");
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item.SK).toBe("d#meta");
+    expect(puts[0].Item.PK).toBe("d#snap.to");
   });
 
   it("positive control: a 'live' domain op still PUTs the domain-meta item", async () => {
     const batches: any[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batches.push(input);
         return {};
       },
     });
-    const liveDomainDb = makeDomainDb([domainRow({ status: "live" })]);
+    const liveDomainDb = makeDomainDb([domainRow({ status: "live", rootRedirect: "https://example.com/r" })]);
     const projection = new DynamoProjection(liveDomainDb, client, TABLE);
 
     await projection.projectDomain("dom-1", "snap.to");
 
-    expect(batches).toHaveLength(1);
-    const requests = batches[0].RequestItems[TABLE];
-    expect(requests).toHaveLength(1);
-    expect(requests[0].PutRequest.Item.SK).toBe("d#meta");
-    expect(requests[0].PutRequest.Item.PK).toBe("d#snap.to");
+    expect(batches).toHaveLength(0);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item.SK).toBe("d#meta");
+    expect(puts[0].Item.PK).toBe("d#snap.to");
+    expect(puts[0].Item.rootRedirect).toBe("https://example.com/r");
   });
 
   // A domain op is the DOMAIN_OP operation on the batched path too.
-  it("apply() routes a DOMAIN_OP for a verifying domain to a meta DELETE", async () => {
+  it("apply() routes a DOMAIN_OP for a verifying domain to a neutralised meta put", async () => {
     const batches: any[] = [];
-    const { client } = makeClient({
+    const { client, puts } = makeClient({
       BatchWriteCommand: (input) => {
         batches.push(input);
         return {};
       },
     });
-    const verifyingDomainDb = makeDomainDb([domainRow({ status: "verifying" })]);
+    const verifyingDomainDb = makeDomainDb([domainRow({ status: "verifying", rootRedirect: "https://example.com/r" })]);
     const projection = new DynamoProjection(verifyingDomainDb, client, TABLE);
 
     const results = await projection.apply([
@@ -757,8 +791,111 @@ describe("DynamoProjection gates the projection on domain.status='live' (#713 it
     ]);
 
     expect(results[0]!.ok).toBe(true);
-    const requests = batches[0].RequestItems[TABLE];
-    expect(requests).toHaveLength(1);
-    expect(requests[0].DeleteRequest.Key).toEqual({ PK: "d#snap.to", SK: "d#meta" });
+    expect(batches).toHaveLength(0);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item).toMatchObject({ PK: "d#snap.to", SK: "d#meta", rootRedirect: null, notFoundRedirect: null });
+  });
+});
+
+describe("DynamoProjection orders DOMAIN-META writes (#713 item 4)", () => {
+  /* The meta item is keyed by HOST, and a host can change owner (domain A
+     deleted, host re-added as domain B). Every meta write is therefore a
+     conditional PutItem that only lands if it is not older than the stored
+     item: by domain id (uuidv7, time-ordered), then tombstone-beats-live, then
+     version (updated_at). The real-DynamoDB behaviour is pinned in
+     dynamo-projection.domain-race.integration.test.ts; these specs pin the
+     request shapes and the superseded-is-success contract. */
+
+  function emptyDb(): Database {
+    const builder: any = {
+      from: () => builder,
+      where: () => builder,
+      limit: () => Promise.resolve([]),
+    };
+    return { select: () => builder } as unknown as Database;
+  }
+
+  it("a gone domain is TOMBSTONED, conditional on the stored item not belonging to a newer domain", async () => {
+    const { client, puts } = makeClient({});
+    const projection = new DynamoProjection(emptyDb(), client, TABLE);
+
+    await projection.projectDomain("dom-old", "Snap.To");
+
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item).toEqual({
+      PK: "d#snap.to",
+      SK: "d#meta",
+      id: "dom-old",
+      rootRedirect: null,
+      notFoundRedirect: null,
+      deleted: true,
+    });
+    expect(puts[0].ConditionExpression).toBe("attribute_not_exists(#id) OR #id <= :id");
+    expect(puts[0].ExpressionAttributeValues).toEqual({ ":id": "dom-old" });
+  });
+
+  it("a live put is conditional on id, tombstone and version", async () => {
+    const { client, puts } = makeClient({ BatchWriteCommand: () => ({}) });
+    const projection = new DynamoProjection(makeDb([linkRow()], []), client, TABLE);
+
+    await projection.upsert("link-1");
+
+    expect(puts[0].ConditionExpression).toBe(
+      "attribute_not_exists(#id) OR #id < :id OR " +
+        "(#id = :id AND attribute_not_exists(#deleted) AND (attribute_not_exists(#version) OR #version <= :version))",
+    );
+    expect(puts[0].ExpressionAttributeValues).toEqual({ ":id": "dom-1", ":version": "2026-01-02T03:04:05.000Z" });
+  });
+
+  it("a write that loses the condition is SUPERSEDED (ok), not failed", async () => {
+    const { client } = makeClient({
+      PutCommand: () => {
+        throw Object.assign(new Error("The conditional request failed"), { name: "ConditionalCheckFailedException" });
+      },
+    });
+    const projection = new DynamoProjection(emptyDb(), client, TABLE);
+
+    await expect(projection.projectDomain("dom-old", "snap.to")).resolves.toBeUndefined();
+    const results = await projection.apply([{ linkId: "dom-old", operation: DOMAIN_OP, host: "snap.to" }]);
+    expect(results).toEqual([{ linkId: "dom-old", ok: true }]);
+  });
+
+  it("any OTHER meta write error fails the op so the outbox retries it", async () => {
+    const { client } = makeClient({
+      PutCommand: () => {
+        throw Object.assign(new Error("slow down"), { name: "ProvisionedThroughputExceededException" });
+      },
+    });
+    const projection = new DynamoProjection(emptyDb(), client, TABLE);
+
+    const results = await projection.apply([{ linkId: "dom-old", operation: DOMAIN_OP, host: "snap.to" }]);
+    expect(results[0]!.ok).toBe(false);
+    expect(String((results[0] as any).error)).toContain("slow down");
+  });
+
+  it("one batch carrying several writes for one host keeps the NEWEST and fails/succeeds all owners together", async () => {
+    // A tombstone for the old id and a live put for the newer id in one batch.
+    let call = 0;
+    const db = {
+      select: () => {
+        const which = call++;
+        // 1st select: domain op for the OLD id -> row gone. 2nd: the NEW id -> live row.
+        const rows = which === 0 ? [] : [domainRow({ id: "dom-2", rootRedirect: "https://example.com/new" })];
+        const builder: any = { from: () => builder, where: () => builder, limit: () => Promise.resolve(rows) };
+        return builder;
+      },
+    } as unknown as Database;
+    const { client, puts } = makeClient({});
+    const projection = new DynamoProjection(db, client, TABLE);
+
+    const results = await projection.apply([
+      { linkId: "dom-1", operation: DOMAIN_OP, host: "snap.to" },
+      { linkId: "dom-2", operation: DOMAIN_OP, host: "snap.to" },
+    ]);
+
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].Item).toMatchObject({ id: "dom-2", rootRedirect: "https://example.com/new" });
+    expect(puts[0].Item.deleted).toBeUndefined();
   });
 });

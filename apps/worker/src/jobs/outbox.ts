@@ -256,3 +256,61 @@ export async function sweepExpired(db: Database): Promise<number> {
   `)) as unknown as [{ n: number }];
   return result[0]?.n ?? 0;
 }
+
+/**
+ * One-off backfill of DOMAIN-META items (#713 item 5).
+ *
+ * Under LINK_PROJECTION=dynamo a domain's meta item used to be written only as
+ * a side effect of a LINK upsert, so a live domain whose root / 404 redirect
+ * was set before domain ops existed (#711) — and which has no links, or whose
+ * domain op an older worker silently dropped (see below) — has no meta item
+ * at all, and the redirect service serves 404 for its root and missing slugs
+ * while the dashboard shows the redirects as set.
+ *
+ * This enqueues one domain op (the exact shape the API enqueues, via
+ * domainProjectionOp's payload) for every LIVE domain with a redirect set. The
+ * drain then projects each from its row. Only `status = 'live'` domains are
+ * enqueued — the #719 live-gate means a non-live domain's meta never serves
+ * anything, so there is nothing to backfill for one.
+ *
+ * Idempotent, modelled on sweepExpired: a domain that already has an
+ * unprocessed op is skipped, so re-running it (or running it while a drain is
+ * in flight) never piles up duplicates, and applying a domain op twice writes
+ * the same item. Safe under LINK_PROJECTION=none too: NoProjection marks the
+ * rows processed with no side effects.
+ *
+ * Invoke once, after deploying: `{ "task": "backfill-domain-meta" }` on the
+ * worker Lambda (or `--backfill-domain-meta` on the long-running worker).
+ *
+ * DEPLOY ORDER — WORKER FIRST. A worker older than #711 does not know the
+ * 'domain' operation: its per-row path treats the op as a link upsert of the
+ * domain id, finds no such link and marks the row PROCESSED — the op is
+ * dropped, not retried. So the worker must be running this version (domain-op
+ * aware, with the #713 conditional meta writes) before the API that enqueues
+ * domain ops, and before this backfill is invoked; otherwise the backfill's
+ * ops (and any redirect edit made during the rollout) can be consumed by an
+ * old instance and silently lost. If that happens, deploying the worker and
+ * re-running this backfill repairs it.
+ */
+export async function backfillDomainMeta(db: Database): Promise<number> {
+  const result = (await db.execute(sql`
+    with candidates as (
+      select d.id, d.domain
+      from domains d
+      where d.status = 'live'
+        and (d.root_redirect is not null or d.not_found_redirect is not null)
+        and not exists (
+          select 1 from projection_outbox o
+          where o.link_id = d.id and o.processed_at is null
+        )
+    ), queued as (
+      insert into projection_outbox (link_id, operation, payload)
+      select id, ${DOMAIN_OP},
+             jsonb_build_object('domainId', id, 'host', lower(trim(domain)), 'operation', ${DOMAIN_OP}::text, 'reason', 'backfill')
+      from candidates
+      returning 1
+    )
+    select count(*)::int as n from queued
+  `)) as unknown as [{ n: number }];
+  return result[0]?.n ?? 0;
+}

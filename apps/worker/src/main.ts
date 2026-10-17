@@ -15,7 +15,7 @@ import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyval
 import "@aws-sdk/signature-v4a";
 import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
-import { NoProjection, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
+import { NoProjection, backfillDomainMeta, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
 import { KvsWriter } from "./jobs/kvs-projection.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
@@ -400,6 +400,15 @@ function everyN(seconds: number, job: () => Promise<unknown>) {
 
 async function main() {
   const { db } = await initDb();
+
+  if (process.argv.includes("--backfill-domain-meta")) {
+    // #713 item 5: one-off, idempotent; deploy the worker first (see outbox.ts).
+    const enqueued = await backfillDomainMeta(db);
+    const projection = await runProjection(db);
+    log.info({ enqueued, projection }, "domain-meta backfill complete");
+    await close();
+    return;
+  }
 
   if (process.argv.includes("--once")) {
     const projection = await runProjection(db);

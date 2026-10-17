@@ -1,6 +1,7 @@
 import { deserializeClickEvent, insertClickEvents, resolveDatabaseUrl, runMigrations, type Database } from "@snapurl/database";
 import { initDb, log, runFrequent, runMaintenance, runProjection } from "./main.js";
 import { backfillClickPartitions } from "./jobs/rollup.js";
+import { backfillDomainMeta } from "./jobs/outbox.js";
 
 /* The worker as a Lambda, dispatched by a `task` discriminator.
  *
@@ -19,6 +20,12 @@ import { backfillClickPartitions } from "./jobs/rollup.js";
  *                               DEFAULT partition, in bounded committed chunks
  *                               (see below). A one-time adoption/repair op an
  *                               operator triggers manually, on no schedule.
+ *   - `"backfill-domain-meta"` -> enqueue a domain op for every live domain
+ *                               with a root/404 redirect (#713 item 5), then
+ *                               drain, so their DOMAIN-META items exist under
+ *                               LINK_PROJECTION=dynamo. One-off, idempotent,
+ *                               on no schedule. Deploy the worker FIRST (see
+ *                               backfillDomainMeta in jobs/outbox.ts).
  *   - `"maintenance"`        -> runMaintenance only.
  *   - `"projection"`         -> runProjection only (#394: an on-demand drain
  *                               the API's ProjectionNudgeService invokes right
@@ -75,7 +82,7 @@ import { backfillClickPartitions } from "./jobs/rollup.js";
  * not the whole batch. The rollups then fold these rows as usual.
  */
 export interface WorkerEvent {
-  task?: "frequent" | "maintenance" | "rollup" | "migrate" | "backfill" | "projection";
+  task?: "frequent" | "maintenance" | "rollup" | "migrate" | "backfill" | "backfill-domain-meta" | "projection";
   /** Optional per-chunk day bound for the `backfill` task, forwarded to
    *  backfillClickPartitions as its chunkSize. Omitted uses the routine's own
    *  default (CLICK_EVENTS_BACKFILL_CHUNK_DAYS). Ignored by every other task. */
@@ -188,6 +195,15 @@ export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
        re-invoke if it was interrupted (it is idempotent). */
     const result = await backfillClickPartitions(db, workerEvent.chunkSize);
     return { task: "backfill", ...result };
+  }
+
+  if (workerEvent.task === "backfill-domain-meta") {
+    /* #713 item 5: one-off, idempotent. Enqueue the domain ops, then drain
+       right away on this same handle so the operator sees the outcome in the
+       response (anything left over drains on the next 1-minute run). */
+    const enqueued = await backfillDomainMeta(db);
+    const outbox = await runProjection(db);
+    return { task: "backfill-domain-meta", enqueued, outbox };
   }
 
   /* Everything else — the 1-minute frequent schedule, the "rollup" back-compat
