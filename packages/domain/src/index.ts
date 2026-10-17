@@ -6,3 +6,4 @@ export * from "./destination.js";
 export * from "./deep-link.js";
 export * from "./form.js";
 export * from "./hll.js";
+export * from "./bio.js";

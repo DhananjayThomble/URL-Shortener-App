@@ -51,8 +51,15 @@ export const EnvSchema = z.object({
   JWT_ACCESS_TTL: z.string().default("15m"),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().default(30),
 
-  /** Where the dashboard lives. Used for CORS and for links in emails. */
-  WEB_ORIGIN: z.string().default("http://localhost:3000"),
+  /** Where the dashboard lives. Used for CORS, for links in emails, and (since
+      #650) as the destination origin of every published bio page's managed
+      link — so it MUST be a valid absolute http(s) URL. The localhost default
+      is for local dev / CI; a real deployment sets its own origin. */
+  WEB_ORIGIN: z
+    .string()
+    .url("WEB_ORIGIN must be an absolute URL, e.g. https://app.example.com")
+    .refine((v) => /^https?:\/\//i.test(v), "WEB_ORIGIN must use http or https")
+    .default("http://localhost:3000"),
   /** OPTIONAL extra CORS origins, comma/space separated (e.g.
       chrome-extension://<id> for the browser extension). Empty by default, so
       production CORS stays exactly [WEB_ORIGIN] and current behaviour is
