@@ -4,6 +4,7 @@ import { NotFoundException } from "@nestjs/common";
 import { bioBlocks, bioPages, createDatabase, domains, eq, workspaces, type Database } from "@snapurl/database";
 import { BioPage, UpsertBioPageInput } from "@snapurl/contract";
 import { BioPagesService } from "./bio-pages.service.js";
+import { makeBioService } from "./bio-pages.test-harness.js";
 
 /* ============================================================
    The bio page editor's round trip, against a real Postgres.
@@ -52,7 +53,7 @@ describeDb("BioPagesService editor round trip and counters", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new BioPagesService(db);
+    service = makeBioService(db).service;
 
     const [ws] = await db
       .insert(workspaces)
@@ -133,12 +134,13 @@ describeDb("BioPagesService editor round trip and counters", () => {
 
   it("counts a view and a click on a live page", async () => {
     const before = await load();
-    const publicPage = await service.publicPage(slug);
+    const publicPage = await service.publicPage(domain, slug);
     const block = publicPage.blocks[0]!;
     const clicksBefore = (await db.select().from(bioBlocks).where(eq(bioBlocks.id, block.id)))[0]!.clicks;
 
-    await service.recordView(slug);
-    await service.recordClick(slug.toUpperCase(), block.id);
+    await service.recordView(domain, slug);
+    // Case-insensitive on both the domain and the slug.
+    await service.recordClick(domain.toUpperCase(), slug.toUpperCase(), block.id);
 
     const after = await load();
     expect(after.views).toBe(before.views + 1);
@@ -147,11 +149,11 @@ describeDb("BioPagesService editor round trip and counters", () => {
   });
 
   it("counts nothing for a draft page or a block from another page", async () => {
-    await expect(service.recordView(draftSlug)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.recordView(domain, draftSlug)).rejects.toBeInstanceOf(NotFoundException);
 
     const otherBlock = (await load(draftSlug)).blocks[0]!;
-    await expect(service.recordClick(slug, otherBlock.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(service.recordClick(slug, randomUUID())).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.recordClick(domain, slug, otherBlock.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.recordClick(domain, slug, randomUUID())).rejects.toBeInstanceOf(NotFoundException);
 
     const [draft] = await db.select().from(bioPages).where(eq(bioPages.slug, draftSlug));
     expect(draft!.views).toBe(0);

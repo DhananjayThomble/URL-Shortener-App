@@ -58,11 +58,23 @@ export class PublicController {
      A draft or missing page 404s here rather than 403ing, exactly like a
      form: whether a workspace has a page at an address is not a stranger's
      business. Only the profile and blocks a visitor is meant to click cross
-     this boundary — never the workspace's view/click analytics. */
+     this boundary — never the workspace's view/click analytics.
+
+     Per-domain (#650): a published bio page is addressed by (domain, slug),
+     and the managed link at <domain>/<slug> 302s a visitor here. The bare
+     `/b/<slug>` routes below are kept as a backward-compatible alias for
+     already-shared URLs; they resolve on a SYSTEM (shared) domain only — see
+     BioPagesService.publicPageBySlug. */
+  @Public()
+  @Get("bio-pages/by-domain/:domain/:slug")
+  bioPageByDomain(@Param("domain") domain: string, @Param("slug") slug: string) {
+    return this.bio.publicPage(domain, slug);
+  }
+
   @Public()
   @Get("bio-pages/:slug")
   bioPage(@Param("slug") slug: string) {
-    return this.bio.publicPage(slug);
+    return this.bio.publicPageBySlug(slug);
   }
 
   /* View and click counters for a published bio page. Bare increments — no
@@ -70,10 +82,30 @@ export class PublicController {
      below the global budget so one address cannot pump a page's numbers. */
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post("bio-pages/by-domain/:domain/:slug/view")
+  @HttpCode(204)
+  async bioPageViewByDomain(@Param("domain") domain: string, @Param("slug") slug: string) {
+    await this.bio.recordView(domain, slug);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post("bio-pages/by-domain/:domain/:slug/blocks/:blockId/click")
+  @HttpCode(204)
+  async bioBlockClickByDomain(
+    @Param("domain") domain: string,
+    @Param("slug") slug: string,
+    @Param("blockId", ParseUUIDPipe) blockId: string,
+  ) {
+    await this.bio.recordClick(domain, slug, blockId);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post("bio-pages/:slug/view")
   @HttpCode(204)
   async bioPageView(@Param("slug") slug: string) {
-    await this.bio.recordView(slug);
+    await this.bio.recordViewBySlug(slug);
   }
 
   @Public()
@@ -81,7 +113,7 @@ export class PublicController {
   @Post("bio-pages/:slug/blocks/:blockId/click")
   @HttpCode(204)
   async bioBlockClick(@Param("slug") slug: string, @Param("blockId", ParseUUIDPipe) blockId: string) {
-    await this.bio.recordClick(slug, blockId);
+    await this.bio.recordClickBySlug(slug, blockId);
   }
 
   /* 200 with `ok: false` rather than a 400 for a validation failure. The

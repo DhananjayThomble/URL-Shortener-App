@@ -450,7 +450,7 @@ export default function BioPagesPage() {
                   <div className="flex items-center gap-2 flex-wrap justify-end">
                     {page.status === "live" ? (
                       <a
-                        href={`/b/${encodeURIComponent(page.slug)}`}
+                        href={`/b/${encodeURIComponent(page.domain)}/${encodeURIComponent(page.slug)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-[12px] text-accent hover:underline"

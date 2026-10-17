@@ -1,4 +1,4 @@
-import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, links, lt, sql, type Database } from "@snapurl/database";
+import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, isNull, links, lt, sql, type Database } from "@snapurl/database";
 import { iso } from "./analytics.service.js";
 
 /* ============================================================
@@ -212,7 +212,9 @@ export class PostgresAnalyticsReader implements AnalyticsReader {
       .select({ slug: links.slug, value: sql<number>`sum(${clickDaily.clicks})::int` })
       .from(clickDaily)
       .innerJoin(links, eq(clickDaily.linkId, links.id))
-      .where(and(eq(clickDaily.workspaceId, workspaceId), gte(clickDaily.day, iso(start))))
+      // #650: managed bio links are infrastructure, not user links — exclude
+      // them from "top links" just as they are hidden from the links list.
+      .where(and(eq(clickDaily.workspaceId, workspaceId), gte(clickDaily.day, iso(start)), isNull(links.managedBioPageId)))
       .groupBy(links.slug)
       .orderBy(desc(sql`sum(${clickDaily.clicks})`))
       .limit(8);

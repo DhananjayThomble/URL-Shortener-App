@@ -129,6 +129,15 @@
   "/public/bio-pages/{slug}/view": [
     "POST"
   ],
+  "/public/bio-pages/by-domain/{domain}/{slug}": [
+    "GET"
+  ],
+  "/public/bio-pages/by-domain/{domain}/{slug}/blocks/{blockId}/click": [
+    "POST"
+  ],
+  "/public/bio-pages/by-domain/{domain}/{slug}/view": [
+    "POST"
+  ],
   "/public/forms/{slug}": [
     "GET",
     "POST"

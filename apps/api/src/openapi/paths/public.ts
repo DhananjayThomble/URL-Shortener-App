@@ -40,9 +40,19 @@ route({
 
 route({
   method: "get",
+  path: "/public/bio-pages/by-domain/{domain}/{slug}",
+  tag,
+  summary: "Get a published bio page by (domain, slug) — the per-domain route (#650)",
+  public: true,
+  params: SlugParam.extend({ domain: z.string() }),
+  responses: { 200: { description: "The public bio page: profile and blocks only", schema: refs.PublicBioPage } },
+});
+
+route({
+  method: "get",
   path: "/public/bio-pages/{slug}",
   tag,
-  summary: "Get a published bio page (404 for draft/missing — existence is not public)",
+  summary: "Backward-compatible slug alias (#650) — resolves on the shared/system domain only; 404 for draft/missing or a custom-domain-only slug",
   public: true,
   params: SlugParam,
   responses: { 200: { description: "The public bio page: profile and blocks only", schema: refs.PublicBioPage } },
@@ -50,9 +60,29 @@ route({
 
 route({
   method: "post",
+  path: "/public/bio-pages/by-domain/{domain}/{slug}/view",
+  tag,
+  summary: "Count one view of a published bio page by (domain, slug) (30/min per IP)",
+  public: true,
+  params: SlugParam.extend({ domain: z.string() }),
+  responses: { 204: { description: "Counted" } },
+});
+
+route({
+  method: "post",
+  path: "/public/bio-pages/by-domain/{domain}/{slug}/blocks/{blockId}/click",
+  tag,
+  summary: "Count one click on a block by (domain, slug) (30/min per IP)",
+  public: true,
+  params: SlugParam.extend({ domain: z.string(), blockId: z.uuid() }),
+  responses: { 204: { description: "Counted" } },
+});
+
+route({
+  method: "post",
   path: "/public/bio-pages/{slug}/view",
   tag,
-  summary: "Count one view of a published bio page (30/min per IP)",
+  summary: "Count one view via the slug alias — system domain only (30/min per IP)",
   public: true,
   params: SlugParam,
   responses: { 204: { description: "Counted" } },
@@ -62,7 +92,7 @@ route({
   method: "post",
   path: "/public/bio-pages/{slug}/blocks/{blockId}/click",
   tag,
-  summary: "Count one click on a block of a published bio page (30/min per IP)",
+  summary: "Count one click via the slug alias — system domain only (30/min per IP)",
   public: true,
   params: SlugParam.extend({ blockId: z.uuid() }),
   responses: { 204: { description: "Counted" } },

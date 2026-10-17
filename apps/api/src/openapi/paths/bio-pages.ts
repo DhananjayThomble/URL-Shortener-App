@@ -17,7 +17,10 @@ route({
   tag,
   summary: "Create or update the bio page for a (domain, slug)",
   body: refs.UpsertBioPageInput,
-  responses: { 200: { description: "The bio page", schema: refs.BioPage } },
+  responses: {
+    200: { description: "The bio page", schema: refs.BioPage },
+    409: { description: "Publishing would collide with a link (or another bio page) already at this domain/slug" },
+  },
 });
 
 route({
