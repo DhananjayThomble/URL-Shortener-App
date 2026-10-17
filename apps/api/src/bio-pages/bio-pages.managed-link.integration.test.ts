@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import {
   and,
   bioPages,
@@ -56,10 +56,13 @@ describeDb("BioPagesService managed link (#650)", () => {
   let workspaceId: string;
   let customDomainId: string;
   let systemDomainId: string;
+  let custom2DomainId: string;
 
   const stamp = Date.now();
   const customDomain = `bio-managed-${stamp}.example.com`;
   const systemDomain = `shared-${stamp}.snap.to`;
+  const custom2Domain = `bio-managed2-${stamp}.example.com`;
+  const verifyingDomain = `bio-verifying-${stamp}.example.com`;
 
   const input = (over: Partial<UpsertBioPageInput> & { domain: string; slug: string }) =>
     UpsertBioPageInput.parse({ profile: { name: "Grace Hopper", bio: "" }, blocks: [], ...over });
@@ -87,6 +90,15 @@ describeDb("BioPagesService managed link (#650)", () => {
       .values({ domain: systemDomain, isSystem: true, status: "live", ssl: "active" })
       .returning({ id: domains.id });
     systemDomainId = system!.id;
+
+    // A second live custom domain (for the move test) and a verifying one (for
+    // the publish-requires-live test).
+    const [custom2] = await db
+      .insert(domains)
+      .values({ workspaceId, domain: custom2Domain, status: "live", ssl: "active" })
+      .returning({ id: domains.id });
+    custom2DomainId = custom2!.id;
+    await db.insert(domains).values({ workspaceId, domain: verifyingDomain, status: "verifying", ssl: "pending" });
   });
 
   afterAll(async () => {
@@ -261,5 +273,70 @@ describeDb("BioPagesService managed link (#650)", () => {
     expect(visibleSlugs).not.toContain(slug);
     // ...and the managed link really does exist (so the exclusion is meaningful).
     expect(await db.select().from(links).where(eq(links.managedBioPageId, page.id))).toHaveLength(1);
+  });
+
+  it("an id-based save that MOVES the address deletes the old managed link and busts the OLD cache (#734 blockers 3+4)", async () => {
+    const slug = `move-${stamp}`;
+    const newSlug = `moved-${stamp}`;
+    const page = await harness.service.upsert(workspaceId, input({ domain: customDomain, slug, status: "live" }));
+    const [oldLink] = await db.select().from(links).where(eq(links.managedBioPageId, page.id));
+    expect(oldLink!.destination).toBe(`${WEB}/b/${customDomain}/${slug}`);
+
+    harness.busted.length = 0;
+    // Carry the page id and change BOTH domain and slug — a move, not a new page.
+    const moved = await harness.service.upsert(
+      workspaceId,
+      input({ id: page.id, domain: custom2Domain, slug: newSlug, status: "live" }),
+    );
+    expect(moved.id).toBe(page.id); // same page, not a second one
+
+    // Exactly one managed link, at the NEW address.
+    const owned = await db.select().from(links).where(eq(links.managedBioPageId, page.id));
+    expect(owned).toHaveLength(1);
+    expect(owned[0]!.domainId).toBe(custom2DomainId);
+    expect(owned[0]!.slug).toBe(newSlug);
+    expect(owned[0]!.destination).toBe(`${WEB}/b/${custom2Domain}/${newSlug}`);
+    // The OLD link row is gone...
+    expect(await db.select().from(links).where(eq(links.id, oldLink!.id))).toHaveLength(0);
+    // ...with a projection DELETE enqueued for it (worker drops the old key)...
+    expect(
+      (await db.select().from(projectionOutbox).where(eq(projectionOutbox.linkId, oldLink!.id))).some(
+        (o) => o.operation === "delete",
+      ),
+    ).toBe(true);
+    // ...and BOTH the old and new addresses were cache-busted.
+    expect(harness.busted.some((b) => b.host === customDomain && b.slug === slug)).toBe(true);
+    expect(harness.busted.some((b) => b.host === custom2Domain && b.slug === newSlug)).toBe(true);
+    // No stray second page was created at the old address.
+    const atOld = await db
+      .select()
+      .from(bioPages)
+      .where(and(eq(bioPages.domainId, customDomainId), eq(bioPages.slug, slug)));
+    expect(atOld).toHaveLength(0);
+  });
+
+  it("an id-based save for another workspace's page is a 404, not a cross-workspace move", async () => {
+    const [otherWs] = await db
+      .insert(workspaces)
+      .values({ name: "other", slug: `bio-other-${stamp}` })
+      .returning({ id: workspaces.id });
+    const page = await harness.service.upsert(workspaceId, input({ domain: customDomain, slug: `x-${stamp}`, status: "live" }));
+    // Target the SYSTEM domain (visible to every workspace) so it is the id
+    // scope — not the domain check — that refuses the cross-workspace move.
+    await expect(
+      harness.service.upsert(otherWs!.id, input({ id: page.id, domain: systemDomain, slug: `y-${stamp}`, status: "live" })),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await db.delete(workspaces).where(eq(workspaces.id, otherWs!.id));
+  });
+
+  it("publishing requires a live domain; a draft may sit on a verifying domain (#734 blocker 5)", async () => {
+    const slug = `verif-${stamp}`;
+    // A draft on a still-verifying domain is allowed and owns no managed link.
+    const draft = await harness.service.upsert(workspaceId, input({ domain: verifyingDomain, slug, status: "draft" }));
+    expect(await db.select().from(links).where(eq(links.managedBioPageId, draft.id))).toHaveLength(0);
+    // Publishing it is refused with the same shape as a link on an unverified domain.
+    await expect(
+      harness.service.upsert(workspaceId, input({ id: draft.id, domain: verifyingDomain, slug, status: "live" })),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -83,38 +83,83 @@ export class BioPagesService {
       .limit(1);
     if (!domain) throw new BadRequestException(`${input.domain} isn't a domain in this workspace.`);
 
-    const outcome = await this.db.transaction(async (tx) => {
-      const [existing] = await tx
-        .select({ id: bioPages.id })
-        .from(bioPages)
-        .where(and(eq(bioPages.domainId, domain.id), sql`lower(${bioPages.slug}) = ${input.slug.toLowerCase()}`))
-        .limit(1);
+    /* #650 Blocker 5 — a PUBLISHED page is served through a managed link, and
+       a link on a non-live domain does not resolve (the redirect's resolver
+       and the Dynamo projection both skip non-live domains, and nothing
+       reprojects when a domain later verifies). So publishing requires a live
+       domain, exactly as LinksService.resolveDomain does for ordinary links.
+       A DRAFT owns no link, so it may sit on any domain the workspace owns
+       while its custom domain is still verifying. */
+    if (input.status === "live" && domain.status !== "live") {
+      throw new BadRequestException(`${input.domain} isn't verified yet, so a published page on it wouldn't resolve.`);
+    }
 
+    const outcome = await this.db.transaction(async (tx) => {
+      /* #650 — resolve WHICH page this save targets.
+
+         With an `id` (the editor's existing page), the target is that page,
+         scoped to the caller's workspace, and the save may MOVE it to a new
+         (domain, slug). Without an id, the target is whatever page already
+         lives at (domain, slug) — a create-or-update by address. The
+         `bio_pages_domain_slug_key` unique index refuses a move onto an address
+         another page holds (surfaced as a 409). */
       let id: string;
-      if (existing) {
-        await tx
-          .update(bioPages)
-          .set({
-            status: input.status,
-            profileName: input.profile.name,
-            profileBio: input.profile.bio,
-            updatedAt: new Date(),
-          })
-          .where(eq(bioPages.id, existing.id));
-        id = existing.id;
+      if (input.id) {
+        const [byId] = await tx
+          .select({ id: bioPages.id })
+          .from(bioPages)
+          .where(and(eq(bioPages.id, input.id), eq(bioPages.workspaceId, workspaceId)))
+          .limit(1);
+        if (!byId) throw new NotFoundException("That bio page doesn't exist in this workspace.");
+        try {
+          await tx
+            .update(bioPages)
+            .set({
+              domainId: domain.id,
+              slug: input.slug,
+              status: input.status,
+              profileName: input.profile.name,
+              profileBio: input.profile.bio,
+              updatedAt: new Date(),
+            })
+            .where(eq(bioPages.id, byId.id));
+        } catch (err) {
+          if (isUniqueViolation(err)) throw this.slugInUse(input.domain, input.slug);
+          throw err;
+        }
+        id = byId.id;
       } else {
-        const [row] = await tx
-          .insert(bioPages)
-          .values({
-            workspaceId,
-            domainId: domain.id,
-            slug: input.slug,
-            status: input.status,
-            profileName: input.profile.name,
-            profileBio: input.profile.bio,
-          })
-          .returning();
-        id = row!.id;
+        const [existing] = await tx
+          .select({ id: bioPages.id })
+          .from(bioPages)
+          .where(and(eq(bioPages.domainId, domain.id), sql`lower(${bioPages.slug}) = ${input.slug.toLowerCase()}`))
+          .limit(1);
+
+        if (existing) {
+          await tx
+            .update(bioPages)
+            .set({
+              status: input.status,
+              profileName: input.profile.name,
+              profileBio: input.profile.bio,
+              updatedAt: new Date(),
+            })
+            .where(eq(bioPages.id, existing.id));
+          id = existing.id;
+        } else {
+          const [row] = await tx
+            .insert(bioPages)
+            .values({
+              workspaceId,
+              domainId: domain.id,
+              slug: input.slug,
+              status: input.status,
+              profileName: input.profile.name,
+              profileBio: input.profile.bio,
+            })
+            .returning();
+          id = row!.id;
+        }
       }
 
       /* Blocks are replaced wholesale rather than diffed.
@@ -159,7 +204,7 @@ export class BioPagesService {
          publish, so the `links_domain_slug_key` unique index is what decides
          whether this (domain, slug) is free. A live page owns a link at its
          address; a draft owns none. */
-      const bust = await this.reconcileManagedLink(tx, {
+      const busts = await this.reconcileManagedLink(tx, {
         bioPageId: id,
         workspaceId,
         domainId: domain.id,
@@ -168,16 +213,17 @@ export class BioPagesService {
         live: input.status === "live",
       });
 
-      return { id, bust };
+      return { id, busts };
     });
 
     // The managed-link projection and cache invalidation ride the EXISTING
-    // link paths (#650 item 2): nudge the worker to drain the outbox row the
-    // reconcile enqueued, and bust the redirect's hot-cache entry when a link
-    // was created, repointed or removed — never from inside the transaction.
-    if (outcome.bust) {
+    // link paths (#650 item 2): nudge the worker to drain the outbox rows the
+    // reconcile enqueued, and bust the redirect's hot-cache entry for every
+    // address that changed — the OLD and the NEW on a move — never from inside
+    // the transaction.
+    if (outcome.busts.length) {
       this.projectionNudge.nudge();
-      await this.cacheBust.bust(outcome.bust.domain, outcome.bust.slug);
+      for (const b of outcome.busts) await this.cacheBust.bust(b.domain, b.slug);
     }
 
     const all = await this.list(workspaceId);
@@ -205,47 +251,72 @@ export class BioPagesService {
   private async reconcileManagedLink(
     tx: Executor,
     args: { bioPageId: string; workspaceId: string; domainId: string; domainName: string; slug: string; live: boolean },
-  ): Promise<{ domain: string; slug: string } | null> {
+  ): Promise<Array<{ domain: string; slug: string }>> {
     const [owned] = await tx
-      .select({ id: links.id, slug: links.slug, destination: links.destination, domainId: links.domainId })
+      .select({
+        id: links.id,
+        slug: links.slug,
+        destination: links.destination,
+        domainId: links.domainId,
+        domainName: domains.domain,
+      })
       .from(links)
+      .innerJoin(domains, eq(links.domainId, domains.id))
       .where(eq(links.managedBioPageId, args.bioPageId))
       .limit(1);
 
     if (!args.live) {
       // Unpublish: the page owns no link while it is a draft.
-      if (!owned) return null;
+      if (!owned) return [];
       await this.enqueueManagedProjection(tx, owned.id, "delete");
       await tx.delete(links).where(eq(links.id, owned.id));
-      return { domain: args.domainName, slug: owned.slug };
+      return [{ domain: owned.domainName, slug: owned.slug }];
     }
 
     const destination = bioManagedDestination(this.env.WEB_ORIGIN, args.domainName, args.slug);
 
-    // Already owns a link: repoint/rename it to the page's current address.
-    // The slug or domain can change if the page was moved before this publish.
     if (owned) {
       const moved = owned.domainId !== args.domainId || owned.slug.toLowerCase() !== args.slug.toLowerCase();
       const repointed = owned.destination !== destination;
-      if (!moved && !repointed) return null;
-      try {
-        await tx
-          .update(links)
-          .set({ domainId: args.domainId, slug: args.slug, destination, updatedAt: new Date() })
-          .where(eq(links.id, owned.id));
-      } catch (err) {
-        if (isUniqueViolation(err)) throw this.slugInUse(args.domainName, args.slug);
-        throw err;
+      if (!moved && !repointed) return [];
+
+      /* A MOVE changes the short URL's address. The projection worker and the
+         CloudFront KVS are keyed by (host, slug), not by link id, so repointing
+         the same row in place would leave the OLD (host, slug) key live in
+         Dynamo/KVS forever (#734 Blocker 4). Instead delete the old link (which
+         enqueues a projection DELETE for the old address) and create a new one
+         (an UPSERT for the new address), and bust BOTH caches. A pure repoint
+         (same address, new destination — only possible if WEB_ORIGIN changed)
+         is an in-place update. */
+      if (moved) {
+        await this.enqueueManagedProjection(tx, owned.id, "delete");
+        await tx.delete(links).where(eq(links.id, owned.id));
+        await this.insertManagedLink(tx, args, destination);
+        return [
+          { domain: owned.domainName, slug: owned.slug },
+          { domain: args.domainName, slug: args.slug },
+        ];
       }
+
+      // Same address, new destination: update in place.
+      await tx.update(links).set({ destination, updatedAt: new Date() }).where(eq(links.id, owned.id));
       await this.enqueueManagedProjection(tx, owned.id, "upsert");
-      // Bust the old address too if it moved; the new one is covered by the
-      // caller's single bust. A move is rare, so one extra bust is cheap.
-      if (moved) await this.cacheBust.bust(args.domainName, owned.slug);
-      return { domain: args.domainName, slug: args.slug };
+      return [{ domain: args.domainName, slug: args.slug }];
     }
 
-    // No managed link yet: create one. A collision with a user link (or a
-    // sibling bio page's link) violates links_domain_slug_key.
+    // No managed link yet: create one.
+    await this.insertManagedLink(tx, args, destination);
+    return [{ domain: args.domainName, slug: args.slug }];
+  }
+
+  /** Insert a managed link row for a published page and enqueue its projection.
+   *  A collision with a user link (or a sibling bio page's link) violates
+   *  links_domain_slug_key and surfaces as a 409. */
+  private async insertManagedLink(
+    tx: Executor,
+    args: { bioPageId: string; workspaceId: string; domainId: string; domainName: string; slug: string },
+    destination: string,
+  ): Promise<void> {
     let linkId: string;
     try {
       const [row] = await tx
@@ -270,7 +341,6 @@ export class BioPagesService {
       throw err;
     }
     await this.enqueueManagedProjection(tx, linkId, "upsert");
-    return { domain: args.domainName, slug: args.slug };
   }
 
   private slugInUse(domain: string, slug: string): ConflictException {
