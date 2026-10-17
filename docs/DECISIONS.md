@@ -1336,6 +1336,54 @@ trade.
 
 ---
 
+## Part 4c — Lighthouse performance baseline (#475)
+
+**Decision:** measure web performance from a **production** `next build` + `next start`,
+on the clean GitHub ubuntu runner, via a dedicated advisory Lighthouse CI workflow —
+never from `next dev`.
+
+**Why dev-mode numbers were invalid.** Every Lighthouse score taken before #475 was
+collected against `next dev`. The dev server serves un-minified, un-code-split JavaScript,
+runs React in development mode, and injects Hot Module Replacement and the error overlay.
+That inflates bundle size several-fold and adds main-thread work that does not exist in
+production, so dev-mode LCP (observed 15–19 s) and performance score (38–41) describe the
+dev toolchain, not the shipped site. They are not a baseline; they are noise. Only a
+`next build` artifact served by `next start` is representative of what a visitor loads.
+
+**What is measured.** The five **statically prerendered** marketing routes only:
+`/`, `/pricing`, `/product`, `/for-developers`, `/self-host`. These render with no API
+call, so no API server has to run during the Lighthouse pass — the bundle is self-contained.
+`NEXT_PUBLIC_API_URL` is still set to a non-localhost value (`http://api.snapurl.test:3001/api/v1`,
+reserved `.test` TLD) purely to satisfy `web/next.config.ts`, which refuses a production
+build with an unset or localhost API URL; nothing on these routes ever resolves it.
+
+**How.** `.github/workflows/lighthouse.yml` is a standalone workflow, triggered on
+`pull_request` for `web/**` changes and on `workflow_dispatch`. It is **not** part of
+`verify.yml` and is **absent from the `ci-gate` job's `needs:`**, and the job is
+`continue-on-error: true` with warn-level assertions, so it can never block or redden the
+required `CI gate`. It builds the prod bundle, serves it with `next start`, maps the `.test`
+hosts to loopback through `/etc/hosts` (runners permit `sudo`; this avoids lhci's
+whitespace-splitting of Chrome's `--host-resolver-rules`, which corrupts the
+`MAP *.snapurl.test 127.0.0.1` rule), runs `@lhci/cli@0.15.1` with `numberOfRuns: 3`
+(median) and `--no-sandbox`, and uploads the report as an artifact.
+
+**Budgets** (`web/lighthouserc.json`, all **warn-level**, median across 3 runs):
+
+| Metric | Budget | Basis |
+| --- | --- | --- |
+| `resource-summary:script:size` | 143,360 B (140 kB) | `next build` First Load JS was 114 kB (`/`) and 118 kB (others), uncompressed parse size; budget set with ~15 % headroom over the largest route. Gzipped transfer bytes (what this audit measures) are smaller, so this is a safe upper bound. |
+| `largest-contentful-paint` | 2,500 ms | Provisional (the "good" Core Web Vitals threshold). **To be recalibrated** from the first CI medians. |
+| `total-blocking-time` | 300 ms | Provisional (the "good" threshold). **To be recalibrated** from the first CI medians. |
+
+The script-byte budget is the deterministic gate-worthy signal. LCP and TBT are environment-sensitive
+and start provisional; the first real CI run's medians replace these placeholders. The overall
+Lighthouse performance score is deliberately **not** asserted — it is a noisy composite.
+
+**Not covered here.** Authenticated `(app)` routes need a login script to measure and are
+tracked as a separate follow-up (see the issue referencing #475).
+
+---
+
 ## Part 5 — Open questions for you
 
 1. **Is the v1 Mongo database still live?** Decides whether the import script matters (G9).
