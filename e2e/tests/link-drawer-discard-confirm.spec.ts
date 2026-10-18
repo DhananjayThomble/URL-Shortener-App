@@ -150,12 +150,11 @@ for (const vp of VIEWPORTS) {
       await expect(anyConfirm(page)).toHaveCount(0);
     });
 
-    test("create: whitespace-only input is not a change worth asking about", async ({ page }) => {
+    test("create: whitespace-only input counts as typed (it asks; nothing is lost by answering Keep editing)", async ({ page }) => {
       const { drawer } = await openCreate(page);
       await destination(drawer).fill("   ");
       await page.keyboard.press("Escape");
-      await expect(drawer).toBeHidden();
-      await expect(anyConfirm(page)).toHaveCount(0);
+      await expect(confirm(page, "Discard this link?")).toBeVisible();
     });
 
     test("create: input on another tab counts (Tags live on Destination, UTM on its own tab)", async ({ page }) => {
