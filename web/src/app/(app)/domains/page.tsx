@@ -8,6 +8,8 @@ import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { full } from "@/lib/utils";
 import { canEditDomainRedirects, parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
 import { canDisconnectDomain, domainSslView, domainStatusView } from "@/lib/domain-state";
+import { dnsSteps } from "@/lib/domain-dns";
+import { DnsSetupCard } from "@/components/domains/dns-setup-card";
 
 /**
  * Edit a domain's root and 404 redirects (#648).
@@ -109,7 +111,7 @@ export default function DomainsPage() {
   const editButtons = useRef(new Map<string, HTMLButtonElement>());
 
   const domains = data ?? [];
-  const pending = domains.find((d) => d.status === "verifying");
+  const pendingDomains = domains.filter((d) => d.status === "verifying" && dnsSteps(d).length > 0);
   const editingDomain = domains.find((d) => d.id === editing && !d.shared && canEditRedirects);
 
   function closeEditor() {
@@ -316,46 +318,11 @@ export default function DomainsPage() {
         </Card>
       ) : null}
 
-      {pending?.dns ? (
-        <Card>
-          <CardHeader
-            title={`Finish setting up ${pending.domain}`}
-            right={
-              <div className="flex items-center gap-2">
-                <Chip tone="warn">1 step left</Chip>
-                <Button size="sm" onClick={() => verify(pending.id)} disabled={verifyDomain.isPending}>
-                  {verifyDomain.isPending ? "Checking…" : "Check now"}
-                </Button>
-              </div>
-            }
-          />
-          <CardBody>
-            <p className="m-0 mb-3.5 text-[13.5px] text-ink-2">
-              Add this record at your DNS provider, then check again. DNS changes can take a few minutes to propagate.
-            </p>
-            <TableWrap label={`DNS record for ${pending.domain}`}>
-              <Table className="min-w-[420px]">
-                <thead>
-                  <tr>
-                    <Th>Type</Th>
-                    <Th>Name</Th>
-                    <Th>Value</Th>
-                    <Th>TTL</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <Td className="text-ink font-medium font-mono">{pending.dns.type}</Td>
-                    <Td className="font-mono">{pending.dns.name}</Td>
-                    <Td className="font-mono text-accent">{pending.dns.value}</Td>
-                    <Td className="font-mono">{pending.dns.ttl}</Td>
-                  </tr>
-                </tbody>
-              </Table>
-            </TableWrap>
-          </CardBody>
-        </Card>
-      ) : null}
+      {/* Every domain still waiting on DNS gets its own setup card (#784) —
+          not just the first — with both records and a Copy on each value. */}
+      {pendingDomains.map((d) => (
+        <DnsSetupCard key={d.id} domain={d} checking={verifyDomain.isPending} onCheck={() => verify(d.id)} />
+      ))}
     </>
   );
 }
