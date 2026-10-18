@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AnalyticsRange } from "./types";
 import type {
   AbuseReport,
   Analytics,
@@ -603,26 +604,63 @@ function findLink(idOrSlug: string) {
 
 /**
  * GET /analytics. With `linkId` the real API scopes every number — totals,
- * series and breakdowns — to that link; the workspace-wide ANALYTICS fixture
- * would otherwise show every link the workspace's whole traffic (#768). The
- * fixture serves one window whatever `range` says, so a scoped copy is the
- * link's own counters spread over the same shape. Unknown link: the workspace
- * figures, as before.
+ * series and breakdowns — to that link AND to the selected range; the
+ * workspace-wide ANALYTICS fixture would otherwise show, for any link and any
+ * range, the whole workspace's all-time traffic (#768).
+ *
+ * The fixture has no real event history to aggregate, so it DERIVES a window:
+ * the link's all-time `clicks` is the 12m (widest) figure, and shorter ranges
+ * are a deterministic fraction of it (a 24h slice is a sliver of a year). This
+ * keeps the two things the issue is about honest in fixtures mode too — the
+ * headline total changes with the range and is never the all-time counter
+ * (except at 12m, by construction), and every breakdown sums to that total.
+ * Unknown link: the workspace figures, as before.
  */
+const RANGE_FRACTION: Record<AnalyticsRange, number> = {
+  "24h": 0.02,
+  "7d": 0.1,
+  "30d": 0.28,
+  "90d": 0.6,
+  "12m": 1,
+};
+
 function analyticsFixture(path: string): Analytics {
-  const linkId = new URLSearchParams(path.split("?")[1] ?? "").get("linkId");
+  const params = new URLSearchParams(path.split("?")[1] ?? "");
+  const linkId = params.get("linkId");
   const link = linkId ? findLink(linkId) : undefined;
   if (!link) return ANALYTICS;
 
-  const k = link.clicks / ANALYTICS.totals.clicks;
+  const range = AnalyticsRange.catch("30d").parse(params.get("range"));
+  const fraction = RANGE_FRACTION[range];
+  // The window's clicks: all-time scaled down to the range. `base` maps every
+  // other number (uniques, breakdowns, series) off the same window so they
+  // stay internally consistent — the breakdowns always sum to totals.clicks.
+  const windowClicks = range === "12m" ? link.clicks : Math.round(link.clicks * fraction);
+  const base = ANALYTICS.totals.clicks || 1;
+  const k = windowClicks / base;
   const scale = (n: number) => Math.round(n * k);
-  const scaleRows = <T extends { value: number }>(rows: T[]): T[] => rows.map((r) => ({ ...r, value: scale(r.value) }));
+
+  /* Scale a breakdown and then correct the largest row so the rows sum to
+     exactly windowClicks — rounding each row independently would otherwise
+     drift a few clicks off the headline, which is the very mismatch #768 is
+     about. */
+  const scaleRows = <T extends { value: number }>(rows: T[]): T[] => {
+    if (!rows.length) return [];
+    const scaled = rows.map((r) => ({ ...r, value: scale(r.value) }));
+    const drift = windowClicks - scaled.reduce((n, r) => n + r.value, 0);
+    let topIdx = 0;
+    for (let i = 1; i < scaled.length; i++) if (scaled[i].value > scaled[topIdx].value) topIdx = i;
+    scaled[topIdx] = { ...scaled[topIdx], value: Math.max(0, scaled[topIdx].value + drift) };
+    return scaled;
+  };
+
+  const allTimeUnique = link.uniqueClicks ?? Math.round(ANALYTICS.totals.unique * (link.clicks / base));
   return {
     ...ANALYTICS,
     totals: {
       ...ANALYTICS.totals,
-      clicks: link.clicks,
-      unique: link.uniqueClicks ?? scale(ANALYTICS.totals.unique),
+      clicks: windowClicks,
+      unique: range === "12m" ? allTimeUnique : Math.round(allTimeUnique * fraction),
       scans: scale(ANALYTICS.totals.scans),
       conversions: scale(ANALYTICS.totals.conversions),
       blocked: 0,

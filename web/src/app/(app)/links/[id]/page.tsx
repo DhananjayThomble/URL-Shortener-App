@@ -185,6 +185,7 @@ export default function LinkDetailPage() {
         </Tile>
         <Tile
           label="Conversions"
+          scope={`last ${scope}`}
           value={conversions === undefined ? "—" : full(conversions)}
           {...(() => {
             const d = deltaFor(a?.deltas.conversions, range);

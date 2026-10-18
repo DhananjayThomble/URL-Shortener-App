@@ -39,7 +39,7 @@ const blank = { countries: [], cities: [], devices: [], browsers: [], referrers:
 /** One analytics reply per range. Each is internally consistent: the country rows sum to totals.clicks. */
 const BY_RANGE = {
   "24h": {
-    totals: { clicks: 41, unique: 30, scans: 0, conversions: 0, blocked: 0 },
+    totals: { clicks: 41, unique: 30, scans: 0, conversions: 3, blocked: 0 },
     deltas: { clicks: null, unique: null, scans: null, conversions: null },
     series: [{ date: "2026-10-18", clicks: 41, unique: 30, scans: 0 }],
     ...blank,
@@ -131,6 +131,10 @@ for (const [name, use] of [
       // The breakdown beneath adds up to the headline it sits under.
       expect(await breakdownSum(card(page, "Countries"))).toBe(9207);
 
+      // The Conversions tile is range-scoped too, so it states its window —
+      // the review's blocking finding was that it did not.
+      await expect(tile(page, "Conversions")).toContainText("30d");
+
       expect(api.callsTo("GET", "/analytics").at(-1)!.query.get("linkId")).toBe(LINK_ID);
 
       // Each other window re-scopes the whole page together.
@@ -145,6 +149,9 @@ for (const [name, use] of [
         await expect(clicks).toContainText(range);
         if (deltaText !== "vs prev 24h") await expect(clicks).toContainText(deltaText);
         await expect(clicks).toContainText("21,504 all-time");
+        // Conversions keeps its scope label on every range, including 24h where
+        // its delta is null (the review's second blocking finding).
+        await expect(tile(page, "Conversions")).toContainText(range);
         expect(await breakdownSum(card(page, "Countries"))).toBe(Number(clickValue.replace(/,/g, "")));
       }
     });
