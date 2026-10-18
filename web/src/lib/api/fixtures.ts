@@ -4,6 +4,7 @@ import { ApiError } from "./client";
 import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry";
 // The subpath, not the barrel: the barrel pulls node:crypto into the browser bundle.
 import { lifecycleGate } from "@snapurl/domain/destination";
+import { initialsOf } from "@snapurl/domain/initials";
 import type {
   AbuseReport,
   Analytics,
@@ -1282,7 +1283,7 @@ export async function fixtureRequest<T>(
     });
     if (existing) {
       Object.assign(existing, { status: body.status, blocks });
-      existing.profile = { ...existing.profile, name: body.profile.name, bio: body.profile.bio };
+      existing.profile = { name: body.profile.name, bio: body.profile.bio, initials: initialsOf(body.profile.name) };
       data = existing;
     } else {
       const page: BioPage = {
@@ -1296,7 +1297,7 @@ export async function fixtureRequest<T>(
         profile: {
           name: body.profile.name,
           bio: body.profile.bio,
-          initials: body.profile.name.slice(0, 2).toUpperCase(),
+          initials: initialsOf(body.profile.name),
         },
       };
       bioStore.unshift(page);

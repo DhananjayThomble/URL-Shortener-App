@@ -114,4 +114,17 @@ describe("initialsOf", () => {
     expect(initialsOf("")).toBe("?");
     expect(initialsOf("   ")).toBe("?");
   });
+
+  /* #788 — an avatar shows letters, never the punctuation of a pasted name. */
+  it("never renders markup or punctuation as an initial", () => {
+    expect(initialsOf("QA <User>")).toBe("QU");
+    expect(initialsOf("<b>Ada</b> Lovelace")).toBe("BL");
+    expect(initialsOf("<script>")).toBe("SC");
+  });
+
+  it("never splits an emoji and skips it as an initial", () => {
+    expect(initialsOf("🎉 Ada")).toBe("AD");
+    expect(initialsOf("Ada 🎉")).toBe("AD");
+    expect(initialsOf("🎉")).toBe("?");
+  });
 });
