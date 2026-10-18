@@ -21,10 +21,16 @@ function fakeDb() {
       returning: async () => [{ id: "wh-1", endpoint: "https://hooks.example.com/in", events: ["link.created"] }],
     }),
   }));
-  return { db: { insert } as unknown as Database, insert };
+  // #783: the webhook row and its audit entry share one transaction, which
+  // the fake runs against itself so both inserts are still counted.
+  const db: Record<string, unknown> = { insert };
+  const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(db));
+  db.transaction = transaction;
+  return { db: db as unknown as Database, insert, transaction };
 }
 
 const input = (endpoint: string) => ({ endpoint, events: ["link.created"] }) as never;
+const auditActor = { userId: null, label: "admin@example.com" };
 
 describe("DevelopersService.createWebhook — SSRF guard (#622)", () => {
   beforeEach(() => lookupMock.mockReset());
@@ -49,9 +55,12 @@ describe("DevelopersService.createWebhook — SSRF guard (#622)", () => {
 
   it("saves an endpoint that resolves to a public address", async () => {
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
-    const { db, insert } = fakeDb();
-    const created = await new DevelopersService(db).createWebhook("ws-1", input("https://hooks.example.com/in"));
-    expect(insert).toHaveBeenCalledOnce();
+    const { db, insert, transaction } = fakeDb();
+    const created = await new DevelopersService(db).createWebhook("ws-1", input("https://hooks.example.com/in"), auditActor);
+    // #783: the webhook row, then its audit entry, in one transaction. A
+    // refused endpoint (above) still writes neither.
+    expect(insert).toHaveBeenCalledTimes(2);
+    expect(transaction).toHaveBeenCalledOnce();
     expect(created.secret).toMatch(/^whsec_/);
   });
 });

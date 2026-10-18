@@ -19,7 +19,7 @@ export class DomainsController {
   @Roles("admin")
   @Scope("domains:write")
   add(@Actor() actor: RequestActor, @Body(zodBody(AddDomainInput)) input: AddDomainInput) {
-    return this.domains.add(actor.workspaceId, input);
+    return this.domains.add(actor.workspaceId, input, toActor(actor));
   }
 
   @Post(":id/verify")
@@ -48,6 +48,6 @@ export class DomainsController {
   @Scope("domains:write")
   @HttpCode(204)
   async remove(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
-    await this.domains.remove(actor.workspaceId, id);
+    await this.domains.remove(actor.workspaceId, id, toActor(actor));
   }
 }

@@ -4,7 +4,7 @@ import { resolveTxt } from "node:dns/promises";
 import { and, domainProjectionOp, domains, eq, isNull, links, normaliseHost, projectionOutbox, sql, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain, UpdateDomainInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
-import { recordActivity, type Actor } from "../common/activity.js";
+import { auditInTransaction, recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
 import { ENV, type Env } from "../config/env.js";
@@ -129,7 +129,7 @@ export class DomainsService {
     return rows.map((row) => this.toDto(row, byDomain.get(row.id) ?? 0));
   }
 
-  async add(workspaceId: string, input: AddDomainInput): Promise<Domain> {
+  async add(workspaceId: string, input: AddDomainInput, actor: Actor): Promise<Domain> {
     const domain = input.domain.toLowerCase().trim();
 
     /* Globally unique, not per-workspace. Two workspaces both claiming snap.to
@@ -165,6 +165,16 @@ export class DomainsService {
       if (inserted!.rootRedirect || inserted!.notFoundRedirect) {
         await tx.insert(projectionOutbox).values(domainProjectionOp(inserted!.id, inserted!.domain));
       }
+      /* #783 — connecting a domain never reached the team page's activity
+         list. Same transaction: a failed audit insert rolls the connect back. */
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "domain.added",
+        targetType: "domain",
+        targetId: inserted!.id,
+        metadata: { domain: inserted!.domain },
+      });
       return inserted!;
     });
     if (row.rootRedirect || row.notFoundRedirect) this.projectionNudge.nudge();
@@ -384,7 +394,7 @@ export class DomainsService {
     return this.toDto(updated, count?.n ?? 0);
   }
 
-  async remove(workspaceId: string, id: string): Promise<void> {
+  async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
     const [system] = await this.db
       .select({ isSystem: domains.isSystem })
       .from(domains)
@@ -424,6 +434,17 @@ export class DomainsService {
          slugs with the old redirects after it was disconnected. The worker
          sees the row gone and deletes the item by payload.host. */
       await tx.insert(projectionOutbox).values(domainProjectionOp(result[0]!.id, result[0]!.domain));
+      /* #783 — only reached for a row this workspace actually deleted (the
+         predicate above 404s anyone else's domain), and in the same
+         transaction, so a failed audit insert keeps the domain connected. */
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "domain.removed",
+        targetType: "domain",
+        targetId: result[0]!.id,
+        metadata: { domain: result[0]!.domain },
+      });
       return result[0]!;
     });
     if (removed) this.projectionNudge.nudge();

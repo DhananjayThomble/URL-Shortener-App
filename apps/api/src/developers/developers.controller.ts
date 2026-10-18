@@ -3,6 +3,7 @@ import { CreateApiKeyInput, CreateWebhookInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, type RequestActor } from "../auth/auth.guard.js";
 import { DevelopersService } from "./developers.service.js";
+import { toActor } from "../common/activity.js";
 
 @Controller()
 export class DevelopersController {
@@ -17,7 +18,7 @@ export class DevelopersController {
   @Post("api-keys")
   @Roles("admin")
   createKey(@Actor() actor: RequestActor, @Body(zodBody(CreateApiKeyInput)) input: CreateApiKeyInput) {
-    return this.developers.createKey(actor.workspaceId, actor.userId, input);
+    return this.developers.createKey(actor.workspaceId, toActor(actor), input);
   }
 
   /* :id parsed as a UUID at the edge, same as LinksController — a malformed
@@ -28,7 +29,7 @@ export class DevelopersController {
   @Roles("admin")
   @HttpCode(204)
   async revokeKey(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
-    await this.developers.revokeKey(actor.workspaceId, id);
+    await this.developers.revokeKey(actor.workspaceId, id, toActor(actor));
   }
 
   @Get("webhooks")
@@ -40,13 +41,13 @@ export class DevelopersController {
   @Post("webhooks")
   @Roles("admin")
   createWebhook(@Actor() actor: RequestActor, @Body(zodBody(CreateWebhookInput)) input: CreateWebhookInput) {
-    return this.developers.createWebhook(actor.workspaceId, input);
+    return this.developers.createWebhook(actor.workspaceId, input, toActor(actor));
   }
 
   @Delete("webhooks/:id")
   @Roles("admin")
   @HttpCode(204)
   async removeWebhook(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
-    await this.developers.removeWebhook(actor.workspaceId, id);
+    await this.developers.removeWebhook(actor.workspaceId, id, toActor(actor));
   }
 }

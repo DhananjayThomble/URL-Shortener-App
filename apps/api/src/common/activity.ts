@@ -5,6 +5,7 @@ import {
   type Executor,
   type WebhookEvent,
 } from "@snapurl/database";
+import type { AuditAction } from "@snapurl/domain";
 
 /* ============================================================
    Recording that something happened.
@@ -31,14 +32,49 @@ export function toActor(actor: { userId: string | null; label: string }): Actor 
 export interface ActivityInput {
   workspaceId: string;
   actor: Actor;
-  /** Omit to emit a webhook without an audit row. */
-  auditAction?: string;
+  /** Omit to emit a webhook without an audit row. Typed to the closed set in
+   *  @snapurl/domain so a key with no human copy cannot be written (#783). */
+  auditAction?: AuditAction;
   /** Omit to write an audit row without a webhook. */
   webhookEvent?: WebhookEvent;
   targetType?: string;
   targetId?: string;
   /** Goes to describe() for the audit sentence, and to the webhook body. */
   metadata?: Record<string, unknown>;
+}
+
+export interface AuditInput {
+  workspaceId: string;
+  actor: Actor;
+  auditAction: AuditAction;
+  targetType?: string;
+  targetId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Write the audit entry for one change INSIDE the change's own transaction.
+ *
+ * **This throws, on purpose.** Pass the transaction handle that applies the
+ * change: if the audit insert fails, the transaction rolls back with it, so
+ * the action and its record either both exist or neither does (#783 review).
+ * The caller sees an error for a change that did NOT happen, and a retry is
+ * safe — unlike recordActivity, where the change has already committed and a
+ * failed audit leaves an applied action with no record but a log line.
+ *
+ * Use it for every audit write that sits next to its mutation; recordActivity
+ * remains for the webhook queue and the older post-commit callers.
+ */
+export async function auditInTransaction(tx: Executor, input: AuditInput): Promise<void> {
+  await writeAuditEntry(tx, {
+    workspaceId: input.workspaceId,
+    actorId: input.actor.userId,
+    actorLabel: input.actor.label,
+    action: input.auditAction,
+    targetType: input.targetType ?? null,
+    targetId: input.targetId ?? null,
+    metadata: input.metadata ?? null,
+  });
 }
 
 /**
