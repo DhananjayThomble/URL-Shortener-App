@@ -57,9 +57,9 @@ async function watchHeaderFlash(page: Page, signedIn: boolean) {
     ([wrong]) => {
       (window as unknown as { __wrongHeaderPainted: boolean }).__wrongHeaderPainted = false;
       const tick = () => {
-        for (const el of document.querySelectorAll(`header .${wrong}`)) {
+        document.querySelectorAll(`header .${wrong}`).forEach((el) => {
           if (getComputedStyle(el).display !== "none") (window as unknown as { __wrongHeaderPainted: boolean }).__wrongHeaderPainted = true;
-        }
+        });
         requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
