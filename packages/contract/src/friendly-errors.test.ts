@@ -9,6 +9,7 @@ import {
   dedupeIssuesByField,
   fieldLabel,
   friendlyApiMessage,
+  friendlyIssueMessage,
   issuesToSentence,
 } from "./index.js";
 
@@ -70,7 +71,7 @@ describe("default validation copy", () => {
 
   it("explains list problems", () => {
     expect(messages(CreateWebhookInput, { endpoint: "https://example.com/h", events: [] })).toEqual([
-      "Events needs at least one item",
+      "Events must have at least one item",
     ]);
     expect(messages(z.object({ tags: z.array(z.string()).max(2) }), { tags: ["a", "b", "c"] })).toEqual([
       "Tags can have at most 2 items",
@@ -146,13 +147,67 @@ describe("one message per field", () => {
   });
 });
 
+/* Review of PR #837: a strict object rejects an unknown key at the ROOT, whose
+   zod path is empty. Dropping "which key" makes AnalyticsQuery's `rnge` typo
+   (its documented invariant: "a 400 naming the offending key") undiscoverable
+   to an API-key client. The key must survive in the sentence AND in issues[]. */
+describe("strict objects keep the offending key", () => {
+  const Strict = z.object({ range: z.string().optional() }).strict();
+  const parse = (schema: z.ZodType, input: unknown) => {
+    const r = schema.safeParse(input);
+    if (r.success) throw new Error("rejected expected");
+    return r.error.issues;
+  };
+
+  it("names the unknown key in the sentence and exposes it as issues[].path", () => {
+    expect(dedupeIssuesByField(parse(Strict, { rnge: "7d" }))).toEqual([
+      { path: "rnge", message: "“rnge” isn't a field we recognise", code: "unrecognized_key" },
+    ]);
+  });
+
+  it("reports every unknown key, one issue each", () => {
+    expect(dedupeIssuesByField(parse(Strict, { from: "a", to: "b" })).map((i) => i.path)).toEqual(["from", "to"]);
+  });
+
+  it("addresses a nested unknown key by its full path", () => {
+    const Nested = z.object({ filter: z.object({ a: z.string().optional() }).strict() });
+    expect(dedupeIssuesByField(parse(Nested, { filter: { bad: 1 } })).map((i) => i.path)).toEqual(["filter.bad"]);
+  });
+
+  it("does not collapse two different root-level problems into one", () => {
+    const Two = z.object({}).superRefine((_v, ctx) => {
+      ctx.addIssue({ code: "custom", message: "First root problem" });
+      ctx.addIssue({ code: "custom", message: "Second root problem" });
+    });
+    expect(dedupeIssuesByField(parse(Two, {})).map((i) => i.message)).toEqual(["First root problem", "Second root problem"]);
+  });
+
+  it("keeps the key in the sentence from friendlyIssueMessage and in a legacy server message", () => {
+    expect(friendlyIssueMessage({ code: "unrecognized_keys", keys: ["rnge"], path: [] })).toBe("“rnge” isn't a field we recognise");
+    expect(friendlyApiMessage('Unrecognized key: "rnge"')).toBe("“rnge” isn't a field we recognise");
+  });
+
+  it("does not echo an enormous key back unbounded in the sentence", () => {
+    const [issue] = dedupeIssuesByField(parse(Strict, { ["k".repeat(500)]: 1 }));
+    expect(issue!.message.length).toBeLessThan(120);
+  });
+});
+
+describe("list-length copy is grammatical for a plural subject", () => {
+  it("says 'must have at least one item', not 'Events needs'", () => {
+    expect(messages(CreateWebhookInput, { endpoint: "https://example.com/h", events: [] })).toEqual([
+      "Events must have at least one item",
+    ]);
+  });
+});
+
 describe("friendlyApiMessage — messages from a server that predates this change", () => {
   it.each([
     ["name: Too big: expected string to have <=80 characters", "Name must be 80 characters or fewer"],
     ["name: Too small: expected string to have >=1 characters", "Name is required"],
     ["email: Invalid input: expected string, received undefined", "Email is required"],
     ["email: Invalid email address", "Enter a valid email address"],
-    ["events: Too small: expected array to have >=1 items", "Events needs at least one item"],
+    ["events: Too small: expected array to have >=1 items", "Events must have at least one item"],
     ["tags: Too big: expected array to have <=5 items", "Tags can have at most 5 items"],
     ["retentionYears: Too small: expected number to be >=1", "Retention must be at least 1"],
     ["destination: Enter an absolute http(s) URL", "Enter an absolute http(s) URL"],

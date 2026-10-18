@@ -69,7 +69,7 @@ test.describe("Journey 792 — plain validation copy", () => {
     expect(priv.status).toBe(400);
     expect(priv.json.message).toEqual(["That host isn't allowed (private, loopback or link-local address)"]);
     const noEvents = await post("/webhooks", { endpoint: "https://example.com/hook", events: [] }, session.accessToken);
-    expect(noEvents.json.message).toEqual(["Events needs at least one item"]);
+    expect(noEvents.json.message).toEqual(["Events must have at least one item"]);
 
     // A mistyped destination used to produce three contradictory messages.
     const wsRes = await fetch(`${API_URL}/workspaces/current`, { headers: { authorization: `Bearer ${session.accessToken}` } });

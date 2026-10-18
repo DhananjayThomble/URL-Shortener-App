@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BadRequestException } from "@nestjs/common";
 import {
   AddDomainInput,
+  AnalyticsQuery,
   BulkCreateLinksInput,
   CreateWebhookInput,
   PasswordResetRequestInput,
@@ -71,8 +72,22 @@ describe("validation errors reach people as plain sentences", () => {
 
   it("/developers: no events selected", () => {
     const body = rejection(CreateWebhookInput, { endpoint: "https://example.com/hook", events: [] });
-    expect(body.message).toEqual(["Events needs at least one item"]);
+    expect(body.message).toEqual(["Events must have at least one item"]);
     expectHuman(body);
+  });
+
+  /* Review of PR #837: analytics:read API keys hit this strict schema; a typo'd
+     query param must still tell the machine WHICH key was rejected. */
+  it("/analytics: a misspelled query param is named in the message and in issues[]", () => {
+    const body = rejection(AnalyticsQuery, { rnge: "7d" });
+    expect(body.message).toEqual(["“rnge” isn't a field we recognise"]);
+    expect(body.issues).toEqual([{ path: "rnge", message: "“rnge” isn't a field we recognise", code: "unrecognized_key" }]);
+  });
+
+  it("/analytics: several unsupported params are each reported", () => {
+    const body = rejection(AnalyticsQuery, { from: "2026-01-01", to: "2026-02-01", range: "7d" });
+    expect(body.issues.map((i) => i.path)).toEqual(["from", "to"]);
+    expect(body.message).toHaveLength(2);
   });
 
   it("/domains: an empty domain", () => {
