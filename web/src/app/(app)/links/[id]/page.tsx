@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/toast";
 import { toastCopy } from "@/lib/toasts";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
+import { plural } from "@/lib/plural";
 import { copy, formatDate, formatDelta, full, NO_VALUE, pct, shortUrlHref } from "@/lib/utils";
 import { headlineStats, RANGE_SCOPE } from "@/lib/link-detail-stats";
 import { detailLoadErrorKind } from "@/lib/load-error";
@@ -251,7 +252,7 @@ export default function LinkDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader title="Routing" right={<Chip tone="accent">{l.rules.length} rules</Chip>} />
+          <CardHeader title="Routing" right={<Chip tone="accent">{plural(l.rules.length, "rule")}</Chip>} />
           <CardBody className="flex flex-col gap-3">
             {l.rules.length === 0 ? (
               <p className="text-[13px] text-ink-3 m-0">Every visitor goes straight to the destination.</p>
