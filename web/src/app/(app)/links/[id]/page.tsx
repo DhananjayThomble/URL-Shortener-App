@@ -4,12 +4,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
-import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, Tile } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Chip, ErrorState, NotFoundState, Skeleton, Tabs, Tile } from "@/components/ui";
 import { EditLinkDrawer } from "@/components/links/edit-link-drawer";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { copy, formatDate, formatDelta, full, NO_VALUE, pct, shortUrlHref } from "@/lib/utils";
 import { headlineStats, RANGE_SCOPE } from "@/lib/link-detail-stats";
+import { detailLoadErrorKind } from "@/lib/load-error";
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
   "24h": "prev 24h",
@@ -49,7 +50,35 @@ export default function LinkDetailPage() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  if (link.isError) return <Card><ErrorState message={(link.error as Error).message} onRetry={() => link.refetch()} /></Card>;
+  if (link.isError) {
+    /* A link that is not there — or is in another workspace, which the API
+       reports identically — cannot be fixed by retrying (#790). Fixed copy, not
+       the server's message, so the two cases read alike. */
+    const kind = detailLoadErrorKind(link.error);
+    if (kind === "not-found")
+      return (
+        <Card>
+          <NotFoundState
+            title="Link not found"
+            body="This link doesn't exist, or you don't have access to it. It may have been deleted."
+            backHref="/links"
+            backLabel="Back to links"
+          />
+        </Card>
+      );
+    if (kind === "forbidden")
+      return (
+        <Card>
+          <NotFoundState
+            title="You can't open this link"
+            body="You don't have permission to view it."
+            backHref="/links"
+            backLabel="Back to links"
+          />
+        </Card>
+      );
+    return <Card><ErrorState message={(link.error as Error).message} onRetry={() => link.refetch()} /></Card>;
+  }
   if (link.isLoading || !link.data) return <Skeleton className="h-[420px]" />;
 
   const l = link.data;

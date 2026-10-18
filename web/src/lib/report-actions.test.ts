@@ -47,7 +47,7 @@ describe("replaceReport", () => {
   it("swaps the updated report in place, keeping order and every other row", () => {
     const list = [report("a", "open"), report("b", "open"), report("c", "reviewed")];
     const next = replaceReport(list, report("b", "dismissed"));
-    expect(next.map((r) => `${r.id}:${r.status}`)).toEqual(["a:open", "b:dismissed", "c:reviewed"]);
+    expect(next!.map((r) => `${r.id}:${r.status}`)).toEqual(["a:open", "b:dismissed", "c:reviewed"]);
   });
 
   it("does not mutate its input", () => {
