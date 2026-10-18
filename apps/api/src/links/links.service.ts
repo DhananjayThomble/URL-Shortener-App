@@ -13,7 +13,15 @@ import type {
   RedirectType,
   UpdateLinkInput,
 } from "@snapurl/contract";
-import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
+import {
+  EXPIRY_SKEW_TOLERANCE_MS,
+  SLUG_RETRY_LIMIT,
+  generateSlug,
+  isSlugAvailableShape,
+  validateExpiry,
+  validateRoutingChain,
+  validateSchedule,
+} from "@snapurl/domain";
 import { DB, READ_DB } from "../database/database.module.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { ProjectionNudgeService } from "./projection-nudge.service.js";
@@ -332,7 +340,12 @@ export class LinksService {
       }
       const row = parsed.data;
 
-      const problems = [...validateRoutingChain(row.rules), ...validateSchedule(row.activatesAt, row.expiresAt)];
+      const problems = [
+        ...validateRoutingChain(row.rules),
+        ...validateSchedule(row.activatesAt, row.expiresAt),
+        // Same as a single create (#754): a row expiring in the past would be born expired.
+        ...validateExpiry(row.expiresAt),
+      ];
       if (row.slug) {
         const shape = isSlugAvailableShape(row.slug);
         // isSlugAvailableShape returns { ok: boolean; reason?: string } rather
@@ -633,6 +646,10 @@ export class LinksService {
     const problems = [
       ...validateRoutingChain(input.rules),
       ...validateSchedule(input.activatesAt, input.expiresAt),
+      /* #754: a new link whose expiry has already passed is born expired.
+         Not applied to a clone, which copies its source's window as it
+         stands and has no field to change it — see #812. */
+      ...(clonedFrom ? [] : validateExpiry(input.expiresAt)),
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
 
@@ -763,6 +780,13 @@ export class LinksService {
         input.activatesAt !== undefined ? input.activatesAt : existing.activatesAt,
         input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt,
       ),
+      /* #754: a CHANGED expiry must not already have passed. The row's own
+         expiry sent back unchanged is not judged, so a link that has since
+         expired stays editable (the edit drawer sends every field). The
+         one-minute tolerance lets "expire it now" through on edit. */
+      ...(input.expiresAt !== undefined
+        ? validateExpiry(input.expiresAt, { previous: existing.expiresAt, toleranceMs: EXPIRY_SKEW_TOLERANCE_MS })
+        : []),
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
 
