@@ -44,7 +44,10 @@ test.describe("Journey 25 — login ?next= (#775)", () => {
     await signIn(page, email);
     await expect(page).toHaveURL(`${baseURL}${target}`, { timeout: 20_000 });
     // The page is really that link's detail page, not just the URL.
-    await expect(page.getByText(link.slug, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+    // The slug renders as a text node beside a "<domain>/" span inside the h1,
+    // so match the heading's full text rather than an exact text node.
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(`${link.domain}/${link.slug}`, { timeout: 20_000 });
+    await expect(page.getByText("https://example.com/j25-deep").first()).toBeVisible();
     await page.screenshot({ path: info.outputPath(`deep-link-landed-${info.project.name}.png`), fullPage: false });
   });
 
