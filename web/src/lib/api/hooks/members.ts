@@ -32,12 +32,16 @@ export function useChangeMemberRole() {
   return useMutation({
     mutationFn: ({ id, role }: { id: string; role: MemberRole }) =>
       request(`/members/${id}`, z.undefined(), { method: "PATCH", body: { role } }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.members });
-      qc.invalidateQueries({ queryKey: qk.audit });
-      // The caller may have just changed their own role, which gates the UI.
-      qc.invalidateQueries({ queryKey: qk.me });
-    },
+    /* Returned, so the mutation stays pending until the refetch lands: the team
+       page reads the new role from the list, and without this it would show the
+       old one for a beat after the change succeeded (#781). */
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.members }),
+        qc.invalidateQueries({ queryKey: qk.audit }),
+        // The caller may have just changed their own role, which gates the UI.
+        qc.invalidateQueries({ queryKey: qk.me }),
+      ]),
   });
 }
 
