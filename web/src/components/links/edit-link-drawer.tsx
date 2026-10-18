@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Toggle } from "@/components/ui";
-import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { EDIT_TABS as TABS, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { normalizeLinkFormValues } from "@/components/links/link-form-values";
 import { useUpdateLink } from "@/lib/api/hooks";
 import { expiryProblem } from "@/lib/expiry-input";
 import { UpdateLinkInput, type CreateLinkFormValues, type Link } from "@/lib/api/types";
@@ -131,7 +132,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
       setTab("access");
       return;
     }
-    const patch = { ...toUpdateInput(blankOptionalUrlsToUndefined(values), removePassword), archived };
+    const patch = { ...toUpdateInput(normalizeLinkFormValues(values), removePassword), archived };
     // UpdateLinkInput validates every field this patch can carry (it is
     // CreateLinkInput minus domain/slug, which toUpdateInput never sends).
     // Checked here, not via a zodResolver, because the resolver's inferred
@@ -229,6 +230,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               control={control}
               watch={watch}
               formState={formState}
+              clearErrors={form.clearErrors}
               qrValue={shortUrlHref(link.domain, link.slug)}
               formMode="edit"
               originalExpiresAt={link.expiresAt ?? null}

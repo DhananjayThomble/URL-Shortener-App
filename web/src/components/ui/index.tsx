@@ -126,6 +126,9 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
       className={cn(
         "w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[13px] text-ink",
         "placeholder:text-ink-3 focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash",
+        /* A disabled input reads as switched off — the same dimmed look + cursor the rest of the
+           app gives a disabled control (settings page, Button), not the browser's default. */
+        "disabled:opacity-60 disabled:cursor-not-allowed",
         className,
       )}
       {...props}
@@ -310,16 +313,20 @@ export function Toggle({
   onChange,
   title,
   description,
+  controls,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   title: React.ReactNode;
   description?: React.ReactNode;
+  /** Space-separated ids of the inputs this switch turns on and off (aria-controls), when it gates any. */
+  controls?: string;
 }) {
   return (
     <button
       type="button"
       aria-pressed={checked}
+      aria-controls={controls}
       onClick={() => onChange(!checked)}
       className="flex items-start gap-[11px] px-[13px] py-3 border border-line rounded-[var(--radius-sm)] bg-surface-2 text-left hover:border-line-2 transition-colors"
     >
