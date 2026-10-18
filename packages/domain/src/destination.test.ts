@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REDIRECT_STATUS, buildDestination, cacheHeadersFor, deriveStatus, lifecycleGate } from "./destination.js";
+import { REDIRECT_STATUS, buildDestination, cacheHeadersFor, deriveStatus, lifecycleGate, effectiveGate, effectiveGateFromState } from "./destination.js";
 import { isBot, parseBrowser, parseDevice, parseLanguage, parseReferrerHost, visitorHash } from "./visitor.js";
 import { RESERVED_SLUGS, generateSlug, isSlugAvailableShape } from "./slug.js";
 
@@ -307,5 +307,65 @@ describe("lifecycleGate", () => {
 
   it("ignores an unparseable date rather than blocking the link", () => {
     expect(lifecycleGate({ archived: false, expiresAt: "not a date" }, now)).toBeNull();
+  });
+});
+
+/* #764 — the FULL redirect gate order, flagged included, shared with the
+   public "+" preview. These pin the precedence the compound-state preview bug
+   got wrong: flagged outranks every lifecycle gate but not archived. */
+describe("effectiveGate", () => {
+  const now = new Date("2026-06-15T12:00:00Z");
+  const past = "2026-06-14T12:00:00Z";
+  const future = "2026-06-16T12:00:00Z";
+
+  it("routes a live, clean link (null)", () => {
+    expect(effectiveGate({ archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
+  });
+
+  it("reports flagged above every lifecycle gate", () => {
+    expect(effectiveGate({ archived: false, safeBrowsingStatus: "flagged", expiresAt: past }, now)).toBe("flagged");
+    expect(effectiveGate({ archived: false, safeBrowsingStatus: "flagged", clickLimit: 1, clicks: 1 }, now)).toBe("flagged");
+    expect(effectiveGate({ archived: false, safeBrowsingStatus: "flagged", activatesAt: future }, now)).toBe("flagged");
+  });
+
+  it("reports archived above flagged, as the redirect does", () => {
+    expect(effectiveGate({ archived: true, safeBrowsingStatus: "flagged", expiresAt: past }, now)).toBe("archived");
+  });
+
+  it("falls through to the lifecycle gate when not flagged", () => {
+    expect(effectiveGate({ archived: false, safeBrowsingStatus: "clean", expiresAt: past }, now)).toBe("expired");
+    expect(effectiveGate({ archived: false, expiresAt: past }, now)).toBe("expired"); // safeBrowsingStatus omitted
+  });
+});
+
+describe("effectiveGateFromState", () => {
+  it("archived wins even when flagged", () => {
+    expect(effectiveGateFromState(true, "archived")).toBe("archived");
+  });
+  it("flagged wins over a lower lifecycle state", () => {
+    expect(effectiveGateFromState(true, "expired")).toBe("flagged");
+    expect(effectiveGateFromState(true, "active")).toBe("flagged");
+    expect(effectiveGateFromState(true, null)).toBe("flagged");
+  });
+  it("passes a lifecycle gate through when not flagged", () => {
+    expect(effectiveGateFromState(false, "click_limit")).toBe("click_limit");
+    expect(effectiveGateFromState(false, "active")).toBeNull();
+    expect(effectiveGateFromState(false, null)).toBeNull();
+  });
+  it("agrees with effectiveGate for every flagged × lifecycle pair", () => {
+    const now = new Date("2026-06-15T12:00:00Z");
+    const parts: Array<[string, Record<string, unknown>]> = [
+      ["active", { archived: false }],
+      ["expired", { archived: false, expiresAt: "2026-06-14T12:00:00Z" }],
+      ["click_limit", { archived: false, clickLimit: 1, clicks: 1 }],
+      ["scheduled", { archived: false, activatesAt: "2026-06-16T12:00:00Z" }],
+      ["archived", { archived: true }],
+    ];
+    for (const [lifecycle, redirectShape] of parts) {
+      for (const flagged of [false, true]) {
+        const viaGate = effectiveGate({ ...redirectShape, safeBrowsingStatus: flagged ? "flagged" : "clean" }, now);
+        expect(effectiveGateFromState(flagged, lifecycle as "active"), `${lifecycle} flagged=${flagged}`).toBe(viaGate);
+      }
+    }
   });
 });

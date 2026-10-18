@@ -1,4 +1,6 @@
 import type { PublicLinkLock, PublicLinkPreview, PublicLinkState } from "@snapurl/contract";
+import type { EffectiveGate } from "@snapurl/domain/destination";
+import { effectiveGateFromState } from "@snapurl/domain/destination";
 import type { TrustState } from "./trust-state";
 
 /* What the public trust page (/p/<slug>) may say about where a link goes.
@@ -89,7 +91,12 @@ export function shortLinkUrl(shortUrl: string): URL {
  * An API that predates these fields (deploy skew) sends no `state`: that reads
  * as active with no rules, exactly the page as it was. */
 export type PreviewOutcome = {
+  /** The API's lifecycle state, for the date row. NOT the precedence driver —
+   *  that is `gate`, which also carries archived/flagged. */
   state: PublicLinkState;
+  /** The effective gate, in the redirect's precedence (archived > flagged >
+   *  lifecycle). `null` means a visitor reaches the destination/routing. */
+  gate: EffectiveGate | null;
   /** Replaces the Safe Browsing heading when the link does not work. */
   blocked: { heading: string; icon: string; where: string } | null;
   continueTo: { href: string; label: string; muted: boolean } | null;
@@ -101,10 +108,8 @@ export type PreviewOutcome = {
 const RULES_NOTE =
   "This link has routing rules, so some visitors are sent to a different page — for example by country, device or language.";
 
-function blockedCopy(state: Exclude<PublicLinkState, "active">, hasFallback: boolean | null | undefined) {
+function lifecycleCopy(state: "expired" | "click_limit" | "scheduled", hasFallback: boolean | null | undefined) {
   switch (state) {
-    case "archived":
-      return { heading: "This link is no longer active", icon: "⏸", where: "Nowhere. The owner has archived this link." };
     case "click_limit":
       return {
         heading: "This link has reached its click limit",
@@ -136,7 +141,34 @@ function blockedCopy(state: Exclude<PublicLinkState, "active">, hasFallback: boo
   }
 }
 
-export function previewOutcome(preview: PublicLinkPreview, trust: Pick<TrustState, "kind" | "continueLabel">): PreviewOutcome {
+/**
+ * Decide the trust page's outcome in the SAME precedence the redirect uses.
+ *
+ * The precedence driver is `effectiveGate` from @snapurl/domain — archived,
+ * then flagged, then the lifecycle gates — not the lifecycle state alone. The
+ * compound-state bug the reviewer caught was reversing this: a flagged+expired
+ * link was rendered "expired" with a fallback promise, but the redirect bounces
+ * it to the warning page before any fallback and before routing runs. So:
+ *
+ * - When the effective gate is `flagged`, the page shows the flagged state and
+ *   NOTHING a higher-priority gate prevents: no lifecycle fallback claim, and
+ *   no rules note (the flagged gate stops routing from ever running). The only
+ *   way on is "Continue anyway" straight to the destination, matching the
+ *   redirect, which lets a visitor through the warning to the destination.
+ * - A lifecycle gate (expired / click limit / scheduled) shows its own state;
+ *   only expiry and scheduling have a fallback, reached back through the short
+ *   link so the redirect picks it.
+ * - A live link shows the destination (or the password form), with a rules
+ *   note and short-link Continue when it has routing rules.
+ *
+ * `warningParam` is the redirect's `?warning=unsafe`, which escalates a link to
+ * flagged exactly as `trustState` does (#647); feeding it in keeps the gate in
+ * step with the heading.
+ */
+export function previewOutcome(
+  preview: PublicLinkPreview,
+  trust: Pick<TrustState, "kind" | "continueLabel">,
+): PreviewOutcome {
   const state: PublicLinkState = preview.state ?? "active";
   const view = previewView(preview);
   const viaShortLink = shortLinkUrl(preview.shortUrl).toString();
@@ -148,45 +180,56 @@ export function previewOutcome(preview: PublicLinkPreview, trust: Pick<TrustStat
         : state === "active" && preview.expiresAt
           ? { label: "Expires", at: preview.expiresAt }
           : null;
-  const none = { continueTo: null, passwordForm: false, rulesNote: null, dateRow } as const;
 
-  // Archived beats everything, the flag included: the redirect answers 410.
-  if (state === "archived") return { state, blocked: blockedCopy(state, false), ...none };
+  /* The one precedence decision, mirroring apps/redirect gateFor via the
+     domain's shared ordering. `trust.kind` already folds in both the
+     safeBrowsing field and the ?warning=unsafe param (trustState, #647), so it
+     is the authoritative flagged signal — a plain safeBrowsing read could not
+     see the param. */
+  const flagged = trust.kind === "flagged";
+  const gate = effectiveGateFromState(flagged, state);
 
-  /* Flagged: the redirect bounces every visit back here with a warning, before
-     any other gate or the password. Going through the short link would loop,
-     and so would the password form (#800). The only way on is the old
-     "Continue anyway" straight to the destination, and only while the link
-     itself still works. */
-  if (trust.kind === "flagged") {
-    if (state !== "active") return { state, blocked: blockedCopy(state, preview.hasFallback), ...none };
+  const none = { state, continueTo: null, passwordForm: false, rulesNote: null, dateRow } as const;
+
+  if (gate === "archived") {
+    return { ...none, gate, blocked: { heading: "This link is no longer active", icon: "⏸", where: "Nowhere. The owner has archived this link." } };
+  }
+
+  if (gate === "flagged") {
+    /* Flagged outranks every lifecycle gate and routing. Show the flagged
+       heading (the caller renders it from `trust`, so blocked is null) and
+       claim nothing lower-priority: no fallback, no rules note. The only way
+       on is Continue anyway, straight to the destination — through the short
+       link would loop on the warning bounce, and so would a password form
+       (#800). Offered only when a destination is actually present. */
     return {
-      state,
-      blocked: null,
       ...none,
+      gate,
+      blocked: null,
       continueTo:
         view.kind === "open" ? { href: view.destination, label: `${trust.continueLabel} ${view.host} →`, muted: true } : null,
-      rulesNote: preview.hasRules ? RULES_NOTE : null,
     };
   }
 
-  if (state !== "active") {
-    // Only a date gate has a fallback; the redirect answers a click limit with 410.
-    const fallback = state === "expired" || state === "scheduled" ? preview.hasFallback : false;
+  if (gate) {
+    // A lifecycle gate. Only expiry and scheduling have a fallback.
+    const hasFallback = gate === "expired" || gate === "scheduled" ? preview.hasFallback : false;
     return {
-      state,
-      blocked: blockedCopy(state, fallback),
       ...none,
-      continueTo: fallback === true ? { href: viaShortLink, label: "Continue to the owner's page →", muted: false } : null,
+      gate,
+      blocked: lifecycleCopy(gate, hasFallback),
+      continueTo: hasFallback === true ? { href: viaShortLink, label: "Continue to the owner's page →", muted: false } : null,
     };
   }
 
-  if (view.kind === "locked") return { state, blocked: null, ...none, passwordForm: true, rulesNote: preview.hasRules ? RULES_NOTE : null };
-
+  // Live, not flagged.
+  if (view.kind === "locked") {
+    return { ...none, gate, blocked: null, passwordForm: true, rulesNote: preview.hasRules ? RULES_NOTE : null };
+  }
   return {
-    state,
-    blocked: null,
     ...none,
+    gate,
+    blocked: null,
     rulesNote: preview.hasRules ? RULES_NOTE : null,
     continueTo: preview.hasRules
       ? { href: viaShortLink, label: `Continue to ${preview.shortUrl} →`, muted: false }

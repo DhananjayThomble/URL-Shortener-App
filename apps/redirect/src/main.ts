@@ -15,7 +15,7 @@ import {
   parseReferrerHost,
   visitorHash,
   clientIpFromXff,
-  lifecycleGate,
+  effectiveGate,
 } from "@snapurl/domain";
 import { createCacheStore, type CacheDriver } from "@snapurl/cache";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -398,10 +398,11 @@ app.get("/", async (request, reply) => {
  *  disagree: a link that has already expired reports expired even if it also
  *  has an activation date still ahead of it. */
 function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
-  if (link.archived) return "archived";
-  if (link.safeBrowsingStatus === "flagged") return "flagged";
-  /* The rest lives in @snapurl/domain so the public "+" preview reports the
-     same verdict the redirect acts on (#764).
+  /* The whole order — archived, flagged, then the lifecycle gates — lives in
+     @snapurl/domain's effectiveGate so the public "+" preview reports the same
+     verdict the redirect acts on, in the same precedence (#764). A flagged
+     link that is also expired is bounced to the warning page before any
+     fallback, which is exactly the ordering the preview must not reverse.
 
      The click count is the last rollup's, not a live one, so a hard cap can be
      overshot by a handful under concurrency. A synchronous read-modify-write
@@ -415,7 +416,7 @@ function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "
      compares it against the clock, so the link starts working at exactly that
      moment with no job having to fire — which is the whole point of storing a
      date rather than a flag someone has to flip. */
-  return lifecycleGate(link);
+  return effectiveGate(link);
 }
 
 function isValidUnlockToken(token: string, linkId: string): boolean {

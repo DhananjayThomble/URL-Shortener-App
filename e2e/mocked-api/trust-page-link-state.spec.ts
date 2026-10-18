@@ -103,6 +103,21 @@ test.describe("public trust page: link state (#764)", () => {
     await expectNoWayToDestination(page);
   });
 
+  test("flagged + expired + fallback + rules: reads as flagged, not expired — no fallback or rules claim", async ({ page }) => {
+    // The redirect bounces a flagged link to the warning page before any
+    // lifecycle fallback and before routing (apps/redirect/src/main.ts). The
+    // preview must mirror that, not report the lower-priority expiry.
+    await open(page, { state: "expired", safeBrowsing: "flagged", hasFallback: true, hasRules: true }, "?warning=unsafe");
+    await expect(page.getByRole("heading", { name: "This link has been flagged as unsafe" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "This link has expired" })).toHaveCount(0);
+    await expect(page.getByText(/sends visitors to a different page/)).toHaveCount(0);
+    await expect(page.getByText(/some visitors are sent to a different page/)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /owner's page/ })).toHaveCount(0);
+    // The only way on is Continue anyway, straight to the destination.
+    const cont = page.getByRole("link", { name: /^Continue anyway to / });
+    await expect(cont).toHaveAttribute("href", DEST);
+  });
+
   test("a protected, expired link shows the expiry, not the password form", async ({ page }) => {
     await open(page, { state: "expired", passwordProtected: true, destination: null, hasFallback: null }, "?unlock=1");
     await expect(page.getByRole("heading", { name: "This link has expired" })).toBeVisible();

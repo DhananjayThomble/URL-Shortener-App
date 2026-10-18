@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PublicLinkPreview } from "@snapurl/contract";
+import { effectiveGate } from "@snapurl/domain/destination";
 import { needsLockLookup, previewOutcome, previewView, trustPage } from "./link-preview";
 
 /* Oracle: PublicLinkPreview in packages/contract/src/public.ts — a protected
@@ -154,6 +155,7 @@ describe("previewOutcome (#764)", () => {
   it("active, no rules: Continue straight to the destination, as before", () => {
     expect(at({})).toEqual({
       state: "active",
+      gate: null,
       blocked: null,
       continueTo: { href: "https://acme.com/sale", label: "Continue to acme.com →", muted: false },
       passwordForm: false,
@@ -228,22 +230,71 @@ describe("previewOutcome (#764)", () => {
     expect(at({ state: "expired", hasRules: true }).rulesNote).toBeNull();
   });
 
-  it("flagged + active: the old Continue anyway to the destination, never through the short link (it would loop)", () => {
+  it("flagged + active + rules: Continue anyway to the destination, and NO rules note (the flagged gate stops routing)", () => {
     const o = at({ hasRules: true }, FLAGGED);
+    expect(o.gate).toBe("flagged");
     expect(o.continueTo).toEqual({ href: "https://acme.com/sale", label: "Continue anyway to acme.com →", muted: true });
-    expect(o.rulesNote).not.toBeNull();
+    // The redirect bounces to the warning page before routing runs, so the
+    // page must not claim visitors may be routed elsewhere.
+    expect(o.rulesNote).toBeNull();
   });
 
   it("flagged + protected: no password form, which would loop back here (#800)", () => {
     const o = at({ passwordProtected: true, destination: null }, FLAGGED);
+    expect(o.gate).toBe("flagged");
     expect(o.passwordForm).toBe(false);
     expect(o.continueTo).toBeNull();
   });
 
-  it("flagged + expired: the expiry, and no Continue anyway to a link the owner has ended", () => {
-    const o = at({ state: "expired", hasFallback: true }, FLAGGED);
-    expect(o.blocked?.heading).toBe("This link has expired");
+  it("flagged + expired + fallback + rules: reads as flagged, with NO expiry/fallback/rules claim", () => {
+    const o = at({ state: "expired", hasFallback: true, hasRules: true }, FLAGGED);
+    // The redirect answers the warning bounce before the expiry fallback and
+    // before routing, so the preview must say flagged, not expired.
+    expect(o.gate).toBe("flagged");
+    expect(o.blocked).toBeNull(); // the caller renders the flagged heading from `trust`
+    expect(o.rulesNote).toBeNull();
+    // No "owner's page" / short-link fallback Continue, and none to the destination.
+    expect(o.continueTo).toEqual({ href: "https://acme.com/sale", label: "Continue anyway to acme.com →", muted: true });
+    expect(JSON.stringify(o)).not.toContain("owner's page");
+  });
+
+  it("flagged + archived: archived still wins over the flag, as in the redirect", () => {
+    const o = at({ state: "archived" }, FLAGGED);
+    expect(o.gate).toBe("archived");
+    expect(o.blocked?.heading).toBe("This link is no longer active");
     expect(o.continueTo).toBeNull();
+  });
+
+  /* The compound-state matrix: the effective gate the page shows must equal the
+     redirect's gateFor for every (flagged, lifecycle) pair. Pinned against the
+     domain's own effectiveGate so a future reorder of either side is caught. */
+  it("effective gate matches the redirect's gateFor for every flagged × lifecycle pair", () => {
+    const now = new Date("2026-06-15T12:00:00Z");
+    const past = "2026-06-14T12:00:00Z";
+    const future = "2026-06-16T12:00:00Z";
+    type Lifecycle = "active" | "expired" | "click_limit" | "scheduled" | "archived";
+    type RedirectShape = { archived: boolean; expiresAt?: string; clickLimit?: number; clicks?: number; activatesAt?: string };
+    const cases: Record<Lifecycle, Partial<PublicLinkPreview> & { _redirect: RedirectShape }> = {
+      active: { state: "active", _redirect: { archived: false } },
+      expired: { state: "expired", expiresAt: past, _redirect: { archived: false, expiresAt: past } },
+      click_limit: { state: "click_limit", _redirect: { archived: false, clickLimit: 1, clicks: 1 } },
+      scheduled: { state: "scheduled", activatesAt: future, _redirect: { archived: false, activatesAt: future } },
+      archived: { state: "archived", _redirect: { archived: true } },
+    };
+    for (const [, c] of Object.entries(cases)) {
+      const { _redirect, ...preview } = c;
+      for (const flagged of [false, true]) {
+        // What the redirect's gateFor would return for the same link.
+        const redirectGate = effectiveGate({ ..._redirect, safeBrowsingStatus: flagged ? "flagged" : "clean" }, now);
+        const o = previewOutcome({ ...base, ...preview } as PublicLinkPreview, flagged ? FLAGGED : CLEAN);
+        expect(o.gate, `${preview.state} flagged=${flagged}`).toBe(redirectGate);
+        // A gate higher than a lifecycle one must suppress lifecycle claims.
+        if (o.gate === "flagged" || o.gate === "archived") {
+          expect(o.rulesNote, `${preview.state} flagged=${flagged} rulesNote`).toBeNull();
+          expect(JSON.stringify(o)).not.toContain("owner's page");
+        }
+      }
+    }
   });
 
   it("deploy skew — an older API with none of the new fields: exactly the old page", () => {
