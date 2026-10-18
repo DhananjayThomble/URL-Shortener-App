@@ -2,13 +2,14 @@
 
 import { PageHead } from "@/components/app-shell";
 import { Funnel, Sparkline } from "@/components/charts";
-import { Card, CardBody, CardHeader, Chip, ErrorState, Segmented, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
+import { ButtonLink, Card, CardBody, CardHeader, Chip, EmptyState, ErrorState, Segmented, Skeleton, Table, TableWrap, Td, Th, Tile } from "@/components/ui";
 import { useConversions } from "@/lib/api/hooks";
+import { API_URL } from "@/lib/api/client";
 import type { AnalyticsRange, ConversionsReport } from "@snapurl/contract";
 import Link from "next/link";
 import { useState } from "react";
 import { excludedLine, excludedNotice, formatMoney } from "@/lib/money";
-import { formatDelta, full, NO_VALUE, ratioPct } from "@/lib/utils";
+import { formatDelta, full, NO_VALUE, ratePct, ratioRate } from "@/lib/utils";
 
 /** A tile's delta line: the period change, plus the rate against clicks when there is one. */
 function tileDelta(delta: number | null, rate?: string) {
@@ -49,6 +50,8 @@ function ExcludedNotice({ excluded, currency }: { excluded: ConversionsReport["e
 export default function ConversionsPage() {
   const [range, setRange] = useState<AnalyticsRange>("30d");
   const { data, isLoading, isError, error, refetch } = useConversions(range);
+  // Nothing at any funnel step: a funnel of four empty bars says nothing.
+  const noFunnel = data ? data.totals.clicks + data.totals.leads + data.totals.signups + data.totals.paid === 0 : false;
 
   return (
     <>
@@ -86,9 +89,9 @@ export default function ConversionsPage() {
 
           <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
             <Tile label="Clicks" value={full(data.totals.clicks)} {...tileDelta(data.deltas.clicks)} />
-            <Tile label="Leads" value={full(data.totals.leads)} {...tileDelta(data.deltas.leads, ratioPct(data.totals.leads, data.totals.clicks))} />
-            <Tile label="Signups" value={full(data.totals.signups)} {...tileDelta(data.deltas.signups, ratioPct(data.totals.signups, data.totals.clicks))} />
-            <Tile label="Paid" value={full(data.totals.paid)} {...tileDelta(data.deltas.paid, ratioPct(data.totals.paid, data.totals.clicks, 2))} />
+            <Tile label="Leads" value={full(data.totals.leads)} {...tileDelta(data.deltas.leads, ratioRate(data.totals.leads, data.totals.clicks))} />
+            <Tile label="Signups" value={full(data.totals.signups)} {...tileDelta(data.deltas.signups, ratioRate(data.totals.signups, data.totals.clicks))} />
+            <Tile label="Paid" value={full(data.totals.paid)} {...tileDelta(data.deltas.paid, ratioRate(data.totals.paid, data.totals.clicks))} />
             <Tile label="Revenue" value={formatMoney(data.totals.revenue, data.currency)} {...tileDelta(data.deltas.revenue)}>
               <Sparkline values={data.revenueSeries} width={160} height={26} />
             </Tile>
@@ -98,20 +101,42 @@ export default function ConversionsPage() {
             <Card>
               <CardHeader title="Funnel" right={<Chip>Click → revenue</Chip>} />
               <CardBody>
-                <Funnel
-                  steps={[
-                    { label: "Clicks", value: data.totals.clicks },
-                    { label: "Leads", value: data.totals.leads, pct: shareOf(data.totals.leads, data.totals.clicks) },
-                    { label: "Signups", value: data.totals.signups, pct: shareOf(data.totals.signups, data.totals.clicks) },
-                    { label: "Paid", value: data.totals.paid, pct: shareOf(data.totals.paid, data.totals.clicks) },
-                  ]}
-                />
+                {noFunnel ? (
+                  <EmptyState
+                    icon="⛛"
+                    title="No clicks in this range"
+                    body="The funnel fills in once people click your links. Try a longer range, or share a link to get started."
+                    action={<ButtonLink href="/links" variant="primary">Create a link</ButtonLink>}
+                  />
+                ) : (
+                  <Funnel
+                    label="Conversion funnel"
+                    steps={[
+                      { label: "Clicks", value: data.totals.clicks },
+                      { label: "Leads", value: data.totals.leads, pct: shareOf(data.totals.leads, data.totals.clicks) },
+                      { label: "Signups", value: data.totals.signups, pct: shareOf(data.totals.signups, data.totals.clicks) },
+                      { label: "Paid", value: data.totals.paid, pct: shareOf(data.totals.paid, data.totals.clicks) },
+                    ]}
+                  />
+                )}
               </CardBody>
             </Card>
 
             <Card>
               <CardHeader title="Tracked events" />
               <CardBody className="flex flex-col gap-[9px]">
+                {data.events.length === 0 ? (
+                  <EmptyState
+                    icon="◎"
+                    title="No events tracked yet"
+                    body="Leads, signups and sales show up here once your site reports them to the API."
+                    action={
+                      <ButtonLink href={`${API_URL}/docs`} target="_blank" rel="noopener noreferrer">
+                        Read the API docs
+                      </ButtonLink>
+                    }
+                  />
+                ) : null}
                 {data.events.map((e) => (
                   <div key={e.id} className="flex items-center gap-[11px] px-[11px] py-[9px] border border-line rounded-[var(--radius-sm)]">
                     <Chip tone={e.kind === "custom" ? "default" : "teal"}>{e.kind}</Chip>
@@ -128,34 +153,45 @@ export default function ConversionsPage() {
 
           <Card>
             <CardHeader title="Revenue by link" />
-            <TableWrap label="Revenue by link">
-              <Table>
-                <thead>
-                  <tr>
-                    <Th>Link</Th>
-                    <Th>Campaign</Th>
-                    <Th>Clicks</Th>
-                    <Th>Signups</Th>
-                    <Th>CVR</Th>
-                    <Th>Revenue</Th>
-                    <Th>Rev / click</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.byLink.map((r) => (
-                    <tr key={r.link}>
-                      <Td className="text-ink font-medium font-mono">{r.link}</Td>
-                      <Td>{r.campaign}</Td>
-                      <Td className="tnum">{full(r.clicks)}</Td>
-                      <Td className="tnum">{full(r.signups)}</Td>
-                      <Td className="tnum">{r.cvr}%</Td>
-                      <Td className="tnum text-ink font-medium">{formatMoney(r.revenue, data.currency)}</Td>
-                      <Td className="tnum">{r.clicks > 0 ? formatMoney(Math.round(r.revenue / r.clicks), data.currency) : NO_VALUE}</Td>
+            {data.byLink.length === 0 ? (
+              <CardBody>
+                <EmptyState
+                  icon="₹"
+                  title="No revenue by link yet"
+                  body="Each link's signups, conversion rate and revenue are listed here once a conversion is attributed to it."
+                  action={<ButtonLink href="/links">Go to your links</ButtonLink>}
+                />
+              </CardBody>
+            ) : (
+              <TableWrap label="Revenue by link">
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Link</Th>
+                      <Th>Campaign</Th>
+                      <Th>Clicks</Th>
+                      <Th>Signups</Th>
+                      <Th>CVR</Th>
+                      <Th>Revenue</Th>
+                      <Th>Rev / click</Th>
                     </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </TableWrap>
+                  </thead>
+                  <tbody>
+                    {data.byLink.map((r) => (
+                      <tr key={r.link}>
+                        <Td className="text-ink font-medium font-mono">{r.link}</Td>
+                        <Td>{r.campaign}</Td>
+                        <Td className="tnum">{full(r.clicks)}</Td>
+                        <Td className="tnum">{full(r.signups)}</Td>
+                        <Td className="tnum">{r.clicks > 0 ? ratePct(r.cvr) : NO_VALUE}</Td>
+                        <Td className="tnum text-ink font-medium">{formatMoney(r.revenue, data.currency)}</Td>
+                        <Td className="tnum">{r.clicks > 0 ? formatMoney(Math.round(r.revenue / r.clicks), data.currency) : NO_VALUE}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </TableWrap>
+            )}
           </Card>
         </>
       )}

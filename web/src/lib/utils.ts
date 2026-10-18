@@ -38,6 +38,25 @@ export function ratioPct(num: number, den: number, digits = 1): string {
 }
 
 /**
+ * A conversion RATE (already a percentage) as shown anywhere on the conversions
+ * page: tiles, funnel and the by-link table all go through this one function, so
+ * the same number never reads "0.00%" in one place and "0.0%" in another (#789).
+ * One decimal; a real, non-zero rate that one decimal would round to 0.0 reads
+ * "<0.1%" (it is not zero, and "0.0%" would say it is); no value reads as a dash.
+ */
+export function ratePct(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return NO_VALUE;
+  if (value > 0 && value < 0.05) return "<0.1%";
+  return pct(value, 1);
+}
+
+/** `num / den` as a conversion rate (see ratePct); a dash when there is nothing to divide by. */
+export function ratioRate(num: number, den: number): string {
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return NO_VALUE;
+  return ratePct((num / den) * 100);
+}
+
+/**
  * Fraction of the previous funnel step that did not make it to this one, as a
  * percentage. null when the previous step is zero (or either value is not a
  * finite number): there was nothing to drop off from. A negative result means

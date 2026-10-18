@@ -110,7 +110,7 @@ for (const vp of VIEWPORTS) {
       await noHorizontalOverflow(page);
     });
 
-    test("/developers: while webhooks load, and when they fail, it never claims there are none", async ({ page }) => {
+    test("/developers: a failed webhooks load is an error with Try again, never 'no webhooks'", async ({ page }) => {
       await mockApi(page, {
         ...common,
         "GET /api-keys": ok([]),
@@ -161,7 +161,7 @@ for (const vp of VIEWPORTS) {
         // And it does not sit on the bar: the bar is as narrow as 8% of the card, so a
         // label drawn over it is light-on-light once the text outgrows the bar.
         const row = el.locator('xpath=ancestor::li[1]');
-        const bar = row.locator('[data-funnel-bar]');
+        const bar = row.locator('[aria-hidden="true"]');
         const b = (await bar.boundingBox())!;
         expect(box.y + box.height, `${label} overlaps its bar`).toBeLessThanOrEqual(b.y + 0.5);
       }
@@ -185,7 +185,7 @@ for (const vp of VIEWPORTS) {
       // 6/10000 = 0.06% and 2/10000 = 0.02%: both below the one-decimal grid.
       await expect(main).toContainText("0.1%");
       await expect(main).not.toContainText(/\d\.\d\d%/);
-      await expect(main).not.toContainText("0.0%");
+      // A true zero (Leads) is "0.0%"; a real rate below the grid is "<0.1%", never "0.0%" or "0.02%".
       await expect(main.getByText("<0.1%").first()).toBeVisible();
     });
   });
