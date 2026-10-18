@@ -39,6 +39,20 @@ export const ClickLimitInput = z
   .min(1, "Click limit must be at least 1")
   .max(CLICK_LIMIT_MAX, "Click limit can't be more than 2,147,483,647");
 
+/**
+ * A link's `expiresAt` / `activatesAt` on the way IN (#754). Any string a
+ * JavaScript `Date` can read — which is exactly what the API does with it —
+ * and `""`, which has always meant "no date". Anything else ("not-a-date")
+ * used to reach `new Date(value)` and fail in Postgres as a 500.
+ *
+ * Shape only: whether an expiry has already passed needs "now" and, on edit,
+ * the stored value, so it is the domain's `validateExpiry`, not this.
+ * Deliberately not applied to `Link` (the response): stored rows must load.
+ */
+export const LinkDateInput = z
+  .string()
+  .refine((value) => value === "" || !Number.isNaN(Date.parse(value)), "Enter a valid date.");
+
 /** One rule in a link's routing chain. First match wins. */
 export const RoutingRule = z.object({
   id: z.string(),
@@ -143,12 +157,12 @@ export const CreateLinkInput = z.object({
      302" from "the caller said nothing", so the setting was ignored. */
   redirectType: RedirectType.optional(),
   rules: z.array(RoutingRule).default([]),
-  expiresAt: z.string().nullable().optional(),
+  expiresAt: LinkDateInput.nullable().optional(),
   /* Guarded like every other URL-bearing field: the redirect service emits this
      verbatim as its Location header for an expired link, so an unguarded value
      here is a redirect target chosen by whoever created the link. */
   expiresTo: HttpUrl.nullable().optional(),
-  activatesAt: z.string().nullable().optional(),
+  activatesAt: LinkDateInput.nullable().optional(),
   /* Same as expiresTo, for a link that is not live yet. */
   scheduledTo: HttpUrl.nullable().optional(),
   clickLimit: ClickLimitInput.nullable().optional(),
