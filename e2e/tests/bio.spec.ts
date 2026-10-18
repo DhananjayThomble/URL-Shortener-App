@@ -130,7 +130,7 @@ test.describe("bio pages", () => {
     await expect(page.getByRole("button", { name: "Move “E2E docs” up" })).toBeDisabled();
 
     // The preview follows the draft, in the same order.
-    const preview = page.locator("text=Powered by SnapURL").locator("..");
+    const preview = page.getByTestId("bio-preview");
     await expect(preview.getByText("E2E docs")).toBeVisible();
 
     await page.getByRole("button", { name: "Save changes" }).click();
@@ -154,7 +154,7 @@ test.describe("bio pages", () => {
 
     await page.getByLabel("Profile name").fill("Acme Studio");
     await page.getByLabel("Profile bio").fill("We make the tools.");
-    const preview = page.locator("text=Powered by SnapURL").locator("..");
+    const preview = page.getByTestId("bio-preview");
     await expect(preview.getByText("Acme Studio")).toBeVisible();
     await expect(preview.getByText("We make the tools.")).toBeVisible();
     await expect(preview.getByText("AS", { exact: true })).toBeVisible();
@@ -164,7 +164,8 @@ test.describe("bio pages", () => {
   });
 
   /* Regression for #497 item 1, added per PR #500 review: the phone-preview
-     footer ("Powered by SnapURL") composited text-ink-3 with opacity-70 down
+     footer (historically "Powered by SnapURL", now the shared "Built with SnapURL"
+     footer of the public page's component, #788) composited text-ink-3 with opacity-70 down
      to an effective 2.85:1 — an axe-core `serious` color-contrast violation
      (WCAG 2.2 AA SC 1.4.3). globals-contrast.test.ts's static source-regex
      catches the literal `opacity-70` string but not equivalent evasions that
@@ -177,14 +178,14 @@ test.describe("bio pages", () => {
      class list never could. Light theme only: dark still carries #462's two
      unrelated white-on-saturated-tone nodes, so this scopes to the caption's
      rule rather than the whole page. */
-  test("phone-preview 'Powered by SnapURL' caption has no color-contrast violation", async ({ page }) => {
+  test("preview footer caption has no color-contrast violation", async ({ page }) => {
     await page.goto("/bio");
-    await expect(page.getByText("Powered by SnapURL")).toBeVisible();
+    await expect(page.getByText("Built with SnapURL")).toBeVisible();
 
     const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
     const captionViolations = results.violations
       .flatMap((v) => v.nodes)
-      .filter((n) => n.html.includes("Powered by SnapURL"));
+      .filter((n) => n.html.includes("Built with SnapURL"));
     expect(captionViolations, JSON.stringify(captionViolations, null, 2)).toEqual([]);
   });
 
@@ -200,7 +201,7 @@ test.describe("bio pages", () => {
      dark-theme assertions, not here. */
   test("light theme /bio has zero color-contrast violations under the full axe ruleset", async ({ page }) => {
     await page.goto("/bio");
-    await expect(page.getByText("Powered by SnapURL")).toBeVisible();
+    await expect(page.getByText("Built with SnapURL")).toBeVisible();
 
     const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);

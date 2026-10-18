@@ -21,6 +21,10 @@
     "./destination": {
       "types": "./dist/destination.d.ts",
       "default": "./dist/destination.js"
+    },
+    "./initials": {
+      "types": "./dist/initials.d.ts",
+      "default": "./dist/initials.js"
     }
   },
   "files": [
