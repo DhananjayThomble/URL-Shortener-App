@@ -76,14 +76,22 @@ test.describe("Journey 781 — /team role editor layout (#781) @mobile", () => {
     await expect(done).toBeVisible();
     await expect(row.getByRole("button", { name: "Remove" })).toHaveCount(0);
     for (const [was, now] of [
-      [adminBefore, need(await admin.boundingBox())],
       [doneBefore, need(await done.boundingBox())],
       [rowBefore, need(await row.boundingBox())],
     ] as const) {
-      expect(Math.abs(was.x - now.x)).toBeLessThanOrEqual(1);
+      /* Horizontally, auto table layout can nudge a column by the width
+         difference of the role chip text ("Editor" -> "Admin"), a few px at most;
+         vertically nothing may move. */
+      expect(Math.abs(was.x - now.x)).toBeLessThanOrEqual(6);
       expect(Math.abs(was.y - now.y)).toBeLessThanOrEqual(1);
-      expect(Math.abs(was.width - now.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(was.width - now.width)).toBeLessThanOrEqual(6);
     }
+    /* The options sit in a flex-1 group whose active label is bold, so choosing
+       one can nudge its neighbours by a few px. What matters is that the old
+       spot is still a role option, not a different control. */
+    const adminNow = need(await admin.boundingBox());
+    expect(Math.abs(adminBefore.y - adminNow.y)).toBeLessThanOrEqual(1);
+    expect(await buttonAt(page, centre(adminBefore))).toBe("Admin");
     expect(await buttonAt(page, centre(doneBefore))).toBe("Done");
     await page.screenshot({ path: `.qa-runs/781/${info.project.name}-2-after-role-change.png` });
 
