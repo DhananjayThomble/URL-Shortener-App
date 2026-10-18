@@ -65,7 +65,7 @@ describeDb("DomainsService version-under-lock + verify() enqueue (#729 items 1, 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge } as never);
+    service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
     await db.insert(workspaces).values({ id: workspaceId, name: "v729", slug: `v729-${stamp}` });
   });
 

@@ -1,3 +1,4 @@
+import { isPreviewsOffRefusal } from "@snapurl/contract";
 import type { PublicLinkLock, PublicLinkPreview, PublicLinkState } from "@snapurl/contract";
 import type { EffectiveGate } from "@snapurl/domain/destination";
 import { effectiveGateFromState } from "@snapurl/domain/destination";
@@ -40,6 +41,7 @@ export type TrustPage =
   | { kind: "loading" }
   | { kind: "preview" }
   | { kind: "lock"; shortUrl: string }
+  | { kind: "off"; shortUrl: string | null; continueHref: string | null }
   | { kind: "error"; message: string };
 
 type QueryState<T> = { pending: boolean; data?: T; error?: unknown };
@@ -47,6 +49,25 @@ type QueryState<T> = { pending: boolean; data?: T; error?: unknown };
 /** The preview was refused because previews are off (the only 403 it sends). */
 export function needsLockLookup(previewError: unknown): boolean {
   return (previewError as { status?: unknown } | null | undefined)?.status === 403;
+}
+
+/** The preview was refused BECAUSE the owner turned previews off (#765) — not
+ *  just any 403. The API client rewrites every 403's `.message` to a generic
+ *  string, so this reads the response body it keeps on `.detail`. */
+export function isPreviewsOffError(previewError: unknown): boolean {
+  const e = previewError as { status?: unknown; detail?: unknown } | null | undefined;
+  return e?.status === 403 && isPreviewsOffRefusal(e.detail);
+}
+
+/** Where "continue" goes in the previews-off state: back through the short
+ *  link, so the redirect picks the destination and records the click. The page
+ *  never learns the destination. null when the short URL is unusable. */
+function continueThroughRedirect(shortUrl: string): string | null {
+  try {
+    return shortLinkUrl(shortUrl).toString();
+  } catch {
+    return null;
+  }
 }
 
 export function trustPage(input: {
@@ -60,6 +81,15 @@ export function trustPage(input: {
   if (!needsLockLookup(preview.error)) return previewError;
   if (lock.data?.passwordProtected) return { kind: "lock", shortUrl: lock.data.shortUrl };
   if (lock.pending && !lock.error) return { kind: "loading" };
+  /* #765 — previews are off and no password guards the link: a deliberate state,
+     not a failure, so no Try again. The lock reply, when we have it, only
+     supplies the short URL to come back through; an older API without the lock
+     route leaves the state with no way on rather than a guessed one. Any other
+     403 keeps the generic error. */
+  if (isPreviewsOffError(preview.error)) {
+    const shortUrl = lock.data?.shortUrl ?? null;
+    return { kind: "off", shortUrl, continueHref: shortUrl ? continueThroughRedirect(shortUrl) : null };
+  }
   return previewError;
 }
 
