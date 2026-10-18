@@ -1,4 +1,6 @@
 import { z } from "zod";
+// The subpath, not the barrel: the barrel pulls node:crypto into the browser bundle.
+import { lifecycleGate } from "@snapurl/domain/destination";
 import type {
   AbuseReport,
   Analytics,
@@ -527,6 +529,15 @@ const SESSION: AuthSession = {
 
 function previewFor(slug: string): PublicLinkPreview {
   const link = LINKS.find((l) => l.slug === slug) ?? LINKS[0];
+  // Mirrors PublicService.preview (#764): the redirect's own lifecycle verdict.
+  const gate = lifecycleGate({
+    archived: link.status === "archived",
+    expiresAt: link.expiresAt,
+    activatesAt: link.activatesAt,
+    clickLimit: link.clickLimit,
+    clicks: link.clicks,
+  });
+  const fallback = gate === "expired" ? link.expiresTo : gate === "scheduled" ? link.scheduledTo : null;
   return {
     shortUrl: `${link.domain}/${link.slug}`,
     // Mirrors PublicService.preview: a password guards the destination.
@@ -539,6 +550,12 @@ function previewFor(slug: string): PublicLinkPreview {
     scannedAt: link.safeBrowsing.checkedAt,
     setsCookies: false,
     redirectType: link.redirectType,
+    state: gate ?? "active",
+    expiresAt: link.expiresAt ?? null,
+    activatesAt: link.activatesAt ?? null,
+    hasRules: link.rules.length > 0,
+    // Never the fallback URL; not even the fact for a protected link (#802).
+    hasFallback: link.passwordProtected ? null : fallback != null,
   };
 }
 
