@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { ActionsTd, ActionsTh, Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Tabs, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, ButtonLink, Card, CardBody, CardHeader, Chip, EmptyState, ErrorState, Field, Input, Skeleton, Table, TableWrap, Tabs, Td, Th } from "@/components/ui";
 import {
   useApiKeys,
   useCreateApiKey,
@@ -18,8 +18,10 @@ import { snippets } from "@/lib/api-samples";
 const SNIPPETS = snippets(API_URL);
 
 export default function DevelopersPage() {
-  const { data: keys, isLoading } = useApiKeys();
-  const { data: hooks } = useWebhooks();
+  const keysQuery = useApiKeys();
+  const hooksQuery = useWebhooks();
+  const { data: keys, isLoading } = keysQuery;
+  const { data: hooks, isLoading: hooksLoading } = hooksQuery;
   const [lang, setLang] = useState<keyof typeof SNIPPETS>("curl");
 
   const createKey = useCreateApiKey();
@@ -227,6 +229,19 @@ export default function DevelopersPage() {
               <CardBody>
                 <Skeleton className="h-[160px]" />
               </CardBody>
+            ) : keysQuery.isError ? (
+              <ErrorState message={(keysQuery.error as Error).message} onRetry={() => keysQuery.refetch()} />
+            ) : (keys ?? []).length === 0 ? (
+              <EmptyState
+                icon="🔑"
+                title="No API keys yet"
+                body="A key lets a script or service call the API with only the scopes you choose. It is shown once, when you create it."
+                action={
+                  <Button variant="primary" onClick={() => { setNamingKey(true); setProblem(null); }}>
+                    Create an API key
+                  </Button>
+                }
+              />
             ) : (
               <TableWrap label="API keys">
                 <Table>
@@ -297,6 +312,24 @@ export default function DevelopersPage() {
                 </Button>
               }
             />
+            {hooksLoading ? (
+              <CardBody>
+                <Skeleton className="h-[120px]" />
+              </CardBody>
+            ) : hooksQuery.isError ? (
+              <ErrorState message={(hooksQuery.error as Error).message} onRetry={() => hooksQuery.refetch()} />
+            ) : (hooks ?? []).length === 0 ? (
+              <EmptyState
+                icon="⇄"
+                title="No webhooks yet"
+                body="A webhook sends a signed request to your server each time something happens, such as a link being created."
+                action={
+                  <Button variant="primary" onClick={() => { setAddingHook(true); setProblem(null); }}>
+                    Add a webhook endpoint
+                  </Button>
+                }
+              />
+            ) : (
             <TableWrap label="Webhooks">
               <Table>
                 <thead>
@@ -356,6 +389,7 @@ export default function DevelopersPage() {
                 </tbody>
               </Table>
             </TableWrap>
+            )}
           </Card>
         </div>
 

@@ -2,7 +2,7 @@
 
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import type { Breakdown, TimeseriesPoint } from "@/lib/api/types";
-import { cn, compact, dropOffLabel, full, NO_VALUE, pct } from "@/lib/utils";
+import { cn, compact, dropOffLabel, full, NO_VALUE, ratePct } from "@/lib/utils";
 
 /* ---------------- Sparkline ----------------
    Hand-rolled rather than Recharts: these render dozens per page in
@@ -159,34 +159,47 @@ export function BarList({ rows, mono = false }: { rows: Breakdown[]; mono?: bool
 }
 
 /* ---------------- Funnel ---------------- */
-export function Funnel({ steps }: { steps: { label: string; value: number; pct?: number | null }[] }) {
+/* The label and the figure sit ABOVE the bar, in ink on the card, never over it
+   (#789): the bar is as narrow as the step is small, and the old white-on-accent
+   label spilled past a narrow bar onto the pale card, where it vanished ("Signu"). */
+export function Funnel({
+  steps,
+  label = "Funnel",
+}: {
+  steps: { label: string; value: number; pct?: number | null }[];
+  label?: string;
+}) {
   const top = steps[0]?.value || 1;
   return (
-    <div className="flex flex-col">
+    <ol className="flex flex-col list-none m-0 p-0" aria-label={label}>
       {steps.map((s, i) => {
-        const width = Math.max(8, (s.value / top) * 100);
+        // A step with nothing in it has no bar; a step with something never vanishes.
+        const width = s.value > 0 ? Math.min(100, Math.max(2, (s.value / top) * 100)) : 0;
         const prev = steps[i - 1];
         return (
-          <div key={s.label}>
+          <li key={s.label}>
             {prev ? (
-              <div className="text-[11px] text-ink-3 pl-[13px] font-mono py-[2px]">{dropOffLabel(prev.value, s.value)}</div>
+              <div className="text-[11px] text-ink-3 font-mono py-[2px]">{dropOffLabel(prev.value, s.value)}</div>
             ) : null}
-            <div className="relative py-[11px]">
-              <div
-                className="h-9 bg-accent rounded-[var(--radius-sm)]"
-                style={{ width: `${width}%`, opacity: 1 - i * 0.16 }}
-              />
-              <div className="absolute inset-x-0 top-[11px] h-9 flex items-center justify-between px-[13px] text-[12.5px] font-semibold text-accent-ink">
-                <span>{s.label}</span>
-                <span className="tnum opacity-85">
+            <div className="py-[7px]">
+              <div className="flex items-baseline justify-between gap-3 mb-[6px] text-[12.5px]">
+                <span className="font-semibold text-ink min-w-0">{s.label}</span>
+                <span className="tnum text-ink-2 shrink-0">
                   {compact(s.value)}
-                  {s.pct === undefined ? "" : ` · ${s.pct === null ? NO_VALUE : pct(s.pct)}`}
+                  {s.pct === undefined ? "" : ` · ${s.pct === null ? NO_VALUE : ratePct(s.pct)}`}
                 </span>
               </div>
+              <div className="h-[14px] bg-surface-3 rounded-[var(--radius-sm)] overflow-hidden" aria-hidden="true">
+                <div
+                  data-funnel-bar=""
+                  className="h-full bg-accent rounded-[var(--radius-sm)]"
+                  style={{ width: `${width}%`, opacity: 1 - i * 0.16 }}
+                />
+              </div>
             </div>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }
