@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { z } from "zod";
 import { HttpUrl, isDeniedHost } from "./http-url.js";
-import { BulkLinkOutcome, CreateLinkInput, Link } from "./link.js";
+import { BulkLinkOutcome, CLICK_LIMIT_MAX, CreateLinkInput, Link } from "./link.js";
 
 /* Property tests for the contract schemas (issue #356). packages/contract is the
    single source of truth for every payload shape; these generate inputs biased
@@ -134,8 +134,10 @@ describe("tri-state nullable+optional fields keep all three states distinct", ()
   });
 
   it("clickLimit: undefined, null and a number stay distinct", () => {
+    // The number domain is the valid click limits, 1..CLICK_LIMIT_MAX (#758: 0, negatives,
+    // fractions and values past the Postgres integer are rejected - see click-limit.test.ts).
     fc.assert(
-      fc.property(fc.option(fc.option(fc.integer(), { nil: null }), { nil: undefined }), (value) => {
+      fc.property(fc.option(fc.option(fc.integer({ min: 1, max: CLICK_LIMIT_MAX }), { nil: null }), { nil: undefined }), (value) => {
         const parsed = CreateLinkInput.safeParse({ ...base, clickLimit: value });
         expect(parsed.success).toBe(true);
         if (parsed.success) expect(parsed.data.clickLimit).toStrictEqual(value);
