@@ -72,6 +72,26 @@ export const PublicLinkLock = z.object({
 });
 export type PublicLinkLock = z.infer<typeof PublicLinkLock>;
 
+/* #765 — the 403 GET /public/links/:slug/preview sends when the owner turned
+   public previews off (PublicService.preview). It is a deliberate state of the
+   trust page, not a failure, so the page must be able to tell it from any other
+   403 (a proxy, a WAF, a guard) — and the web client rewrites every 403's
+   `message` to a generic string, so only the response BODY can carry that.
+
+   `code` is the machine-readable form. The exact `message` is accepted too:
+   an API deployed before the code existed sends the same text, and a new web
+   build must still recognise it (deploy skew). Matched positively, like the
+   2FA credential messages: anything else is not a previews-off refusal. */
+export const PREVIEWS_OFF_CODE = "previews_off";
+export const PREVIEWS_OFF_MESSAGE = "The owner of this link has turned off public previews.";
+
+/** True when a 403 response body is the previews-off refusal. */
+export function isPreviewsOffRefusal(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const { code, message } = body as { code?: unknown; message?: unknown };
+  return code === PREVIEWS_OFF_CODE || (typeof message === "string" && message.trim() === PREVIEWS_OFF_MESSAGE);
+}
+
 /* G3 — CreateLinkInput accepted a password and Link reported
    passwordProtected, but nothing let a visitor supply one.
 
