@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { EXPIRY_IN_PAST_MESSAGE } from "@snapurl/domain";
+import { EXPIRY_IN_PAST_MESSAGE } from "@snapurl/domain/expiry";
 import { dateInputToIso, isoToDateInput } from "../components/links/link-form-values";
 import { expiryProblem } from "./expiry-input";
 

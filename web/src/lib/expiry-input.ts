@@ -1,4 +1,4 @@
-import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain";
+import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry";
 
 /* The "Expiry date" field of the create/edit link drawers (issue #754).
 

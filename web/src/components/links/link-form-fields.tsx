@@ -9,6 +9,7 @@ import type { CreateLinkFormValues, RedirectType } from "@/lib/api/types";
 import { dateInputToIso, isoToDateInput } from "@/components/links/link-form-values";
 import { formatTags, parseTags, reconcileTagsText } from "@/lib/tags-input";
 import { clickLimitFromText, clickLimitProblem, reconcileClickLimitText } from "@/lib/click-limit-input";
+import { expiryProblem } from "@/lib/expiry-input";
 
 export { blankOptionalUrlsToUndefined } from "@/components/links/link-form-values";
 
@@ -138,6 +139,7 @@ export function LinkFormFields({
   showBackHalf,
   passwordPlaceholder = "Leave blank for no password",
   passwordSlot,
+  originalExpiresAt = null,
 }: {
   tab: LinkFormTabId;
   /** Namespaces tabpanel/tab ids so create and edit drawers never collide if ever mounted together. */
@@ -154,6 +156,8 @@ export function LinkFormFields({
   passwordPlaceholder?: string;
   /** Rendered under the password input (edit mode: "remove password"). */
   passwordSlot?: React.ReactNode;
+  /** The expiry the link was opened with (edit), or null (create). Only a changed expiry is checked for being in the past (#754). */
+  originalExpiresAt?: string | null;
 }) {
   const destination = watch("destination");
   const utm = watch("utm");
@@ -329,20 +333,31 @@ export function LinkFormFields({
             )}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Expiry date" controlId={`${idPrefix}-expires-at`}>
-              <Controller
-                control={control}
-                name="expiresAt"
-                render={({ field }) => (
-                  <Input
-                    type="date"
-                    id={`${idPrefix}-expires-at`}
-                    value={isoToDateInput(field.value)}
-                    onChange={(e) => field.onChange(dateInputToIso(e.target.value, true))}
-                  />
-                )}
-              />
-            </Field>
+            <Controller
+              control={control}
+              name="expiresAt"
+              render={({ field, fieldState }) => {
+                const controlId = `${idPrefix}-expires-at`;
+                /* #754: a day that has already passed is refused as soon as it is picked
+                   (a date is one discrete choice, not keystrokes), with the API's own rule
+                   and words. On edit, the link's own unchanged expiry is never flagged, so
+                   an expired link stays editable. See web/src/lib/expiry-input.ts. */
+                const error = expiryProblem(field.value, { original: originalExpiresAt }) ?? fieldState.error?.message;
+                return (
+                  <Field label="Expiry date" controlId={controlId} error={error}>
+                    <Input
+                      type="date"
+                      id={controlId}
+                      aria-invalid={error ? true : undefined}
+                      aria-describedby={error ? `${controlId}-hint` : undefined}
+                      value={isoToDateInput(field.value)}
+                      onChange={(e) => field.onChange(dateInputToIso(e.target.value, true))}
+                      onBlur={field.onBlur}
+                    />
+                  </Field>
+                );
+              }}
+            />
             <Field label="Then send visitors to" error={formState.errors.expiresTo?.message}>
               <Input {...register("expiresTo")} placeholder="acme.com/offers" className="font-mono text-[12.5px]" />
             </Field>

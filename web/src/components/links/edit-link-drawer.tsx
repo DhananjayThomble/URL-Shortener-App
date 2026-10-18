@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { Button, Toggle } from "@/components/ui";
 import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
 import { useUpdateLink } from "@/lib/api/hooks";
+import { expiryProblem } from "@/lib/expiry-input";
 import { UpdateLinkInput, type CreateLinkFormValues, type Link } from "@/lib/api/types";
 import { cn, shortUrlHref } from "@/lib/utils";
 
@@ -121,6 +122,15 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
 
   const onSubmit = handleSubmit(async (values) => {
     update.reset();
+    /* #754: a CHANGED expiry that has already passed is refused (the API would
+       too). The link's own expiry left as it is never blocks the save, so an
+       expired link's other fields stay editable. */
+    const expiry = expiryProblem(values.expiresAt, { original: link.expiresAt ?? null });
+    if (expiry) {
+      setError("expiresAt", { message: expiry });
+      setTab("access");
+      return;
+    }
     const patch = { ...toUpdateInput(blankOptionalUrlsToUndefined(values), removePassword), archived };
     // UpdateLinkInput validates every field this patch can carry (it is
     // CreateLinkInput minus domain/slug, which toUpdateInput never sends).
@@ -220,6 +230,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               watch={watch}
               formState={formState}
               qrValue={shortUrlHref(link.domain, link.slug)}
+              originalExpiresAt={link.expiresAt ?? null}
               passwordPlaceholder={link.passwordProtected ? "Type a new password to replace the current one" : "Leave blank for no password"}
               passwordSlot={
                 link.passwordProtected ? (

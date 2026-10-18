@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { EXPIRY_IN_PAST_MESSAGE, EXPIRY_SKEW_TOLERANCE_MS, deriveStatus, validateExpiry, validateSchedule } from "./destination.js";
+import { deriveStatus, validateSchedule } from "./destination.js";
+import { EXPIRY_IN_PAST_MESSAGE, EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "./expiry.js";
 
 /* Issue #754 — a link could be created with an expiry date in the past, so it
    was born expired (status "expired", every click a 410).

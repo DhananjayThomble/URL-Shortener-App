@@ -13,6 +13,10 @@
     "./routing": {
       "types": "./dist/routing.d.ts",
       "default": "./dist/routing.js"
+    },
+    "./expiry": {
+      "types": "./dist/expiry.d.ts",
+      "default": "./dist/expiry.js"
     }
   },
   "files": [
