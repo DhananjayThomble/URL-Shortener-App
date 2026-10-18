@@ -6,6 +6,7 @@ import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMe
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
 import { useRef, useState } from "react";
 import { cn, full, timeAgo } from "@/lib/utils";
+import { auditEntryText } from "@/lib/audit-entry";
 
 const PERMISSIONS: { label: string; roles: [boolean, boolean, boolean, boolean] }[] = [
   { label: "View links & analytics", roles: [true, true, true, true] },
@@ -298,7 +299,7 @@ export default function TeamPage() {
                 <div key={a.id} className="flex gap-[11px] items-baseline text-ink-2 leading-[1.5]">
                   <span className="font-mono text-ink-3 text-[11px] w-[84px] shrink-0">{timeAgo(a.at)}</span>
                   <span>
-                    <b className="text-ink font-semibold">{a.actor}</b> {a.action}
+                    <b className="text-ink font-semibold">{a.actor}</b> {auditEntryText(a.action)}
                   </span>
                 </div>
               ))}
