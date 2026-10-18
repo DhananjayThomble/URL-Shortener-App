@@ -357,7 +357,9 @@ for (const vp of viewports) {
       await drawer.getByRole("tab", { name: "Destination", exact: true }).click();
       await saveCreate(drawer).click();
       await expect(drawer).toBeVisible();
-      await expect(drawer.getByRole("tab", { name: "Access", exact: true })).toHaveAttribute("aria-selected", "true");
+      // The tab that holds the error is flagged "(has an error)" for screen readers.
+      await expect(drawer.getByRole("tab", { name: /^Access/ })).toHaveAttribute("aria-selected", "true");
+      await expect(drawer.getByRole("tab", { name: "Access (has an error)" })).toBeVisible();
       await expect(limitInput(drawer)).toHaveValue("0");
       expect(await errorText(drawer)).toContain("at least 1");
       expect(api.callsTo("POST", "/links")).toHaveLength(0);
