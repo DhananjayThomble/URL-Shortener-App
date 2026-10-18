@@ -774,7 +774,7 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
   /* ---- links ---- */
   else if (m(/^\/links$/) && method === "POST") {
-    const body = opts.body as { destination: string; domain: string; slug?: string };
+    const body = opts.body as { destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] };
     // Mirrors the server's 409 on a back-half already in use under the same
     // domain — needed so issue #640 (stale server error surviving a form
     // edit) is reproducible against fixtures, same as the bulk-create path
@@ -791,6 +791,8 @@ export async function fixtureRequest<T>(
       slug: body.slug || Math.random().toString(36).slice(2, 9),
       domain: body.domain,
       destination: body.destination,
+      // Mirrors LinksService: an omitted type gets the workspace default (#753).
+      redirectType: body.redirectType ?? WORKSPACE.defaultRedirect,
       title: null,
       comment: null,
       tags: [],
@@ -873,7 +875,9 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/forms$/)) {
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
-    const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
+    const body = opts.body as {
+      links: Array<{ destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] }>;
+    };
     /* Mirrors the server: every row's outcome is independent. A genuine
        validation problem (bad URL, or two rows in this batch wanting the
        same new back-half) fails only that row, without blocking any other
@@ -919,6 +923,8 @@ export async function fixtureRequest<T>(
         slug: row.slug || Math.random().toString(36).slice(2, 9),
         domain: row.domain,
         destination: row.destination,
+        // Mirrors LinksService.bulkCreate: omitted -> workspace default (#753).
+        redirectType: row.redirectType ?? WORKSPACE.defaultRedirect,
         title: null,
         comment: null,
         tags: [],
