@@ -15,6 +15,7 @@ import {
   parseReferrerHost,
   visitorHash,
   clientIpFromXff,
+  effectiveGate,
 } from "@snapurl/domain";
 import { createCacheStore, type CacheDriver } from "@snapurl/cache";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -25,6 +26,7 @@ import { CachingLinkResolver } from "./caching-resolver.js";
 import { listenForCacheBust } from "./cache-bust-listener.js";
 import { PostgresClickSink, SqsClickSink, type ClickSink } from "./click-sink.js";
 import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
+import { sendError } from "./error-page.js";
 
 /* ============================================================
    The redirect service.
@@ -290,7 +292,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   if (!link) {
     const domain = await resolver.resolveDomain(host);
     if (domain?.notFoundRedirect) return reply.redirect(domain.notFoundRedirect, 302);
-    return reply.code(404).type("text/plain").send("No such link.");
+    return sendError(request, reply, "not_found", { host, slug: rawSlug, webOrigin: WEB_ORIGIN });
   }
 
   const userAgent = (request.headers["user-agent"] as string) ?? "";
@@ -324,13 +326,20 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
        anything that cares to look. */
     if (blocked === "scheduled") {
       if (link.activatesAt) void reply.header("Retry-After", link.activatesAt.toUTCString());
-      return reply.code(404).type("text/plain").send("This link is not live yet.");
+      return sendError(request, reply, "scheduled", {
+        host,
+        slug: rawSlug,
+        activatesAt: link.activatesAt,
+        webOrigin: WEB_ORIGIN,
+      });
     }
 
-    return reply
-      .code(410)
-      .type("text/plain")
-      .send(blocked === "click_limit" ? "This link has reached its click limit." : "This link has expired.");
+    /* Archived links have always answered as expired (410), and still do. */
+    return sendError(request, reply, blocked === "click_limit" ? "click_limit" : "expired", {
+      host,
+      slug: rawSlug,
+      webOrigin: WEB_ORIGIN,
+    });
   }
 
   /* G3 — password-protected links.
@@ -386,7 +395,7 @@ app.get("/", async (request, reply) => {
   const host = (request.headers["x-forwarded-host"] as string) ?? request.headers.host ?? "";
   const domain = await resolver.resolveDomain(host);
   if (domain?.rootRedirect) return reply.redirect(domain.rootRedirect, 302);
-  return reply.code(404).type("text/plain").send("Nothing here.");
+  return sendError(request, reply, "root", { host, webOrigin: WEB_ORIGIN });
 });
 
 /** Everything that stops a click short of the destination, in the order the
@@ -397,23 +406,25 @@ app.get("/", async (request, reply) => {
  *  disagree: a link that has already expired reports expired even if it also
  *  has an activation date still ahead of it. */
 function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
-  if (link.archived) return "archived";
-  if (link.safeBrowsingStatus === "flagged") return "flagged";
-  if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) return "expired";
-  /* The count is the last rollup's, not a live one, so a hard cap can be
+  /* The whole order — archived, flagged, then the lifecycle gates — lives in
+     @snapurl/domain's effectiveGate so the public "+" preview reports the same
+     verdict the redirect acts on, in the same precedence (#764). A flagged
+     link that is also expired is bounced to the warning page before any
+     fallback, which is exactly the ordering the preview must not reverse.
+
+     The click count is the last rollup's, not a live one, so a hard cap can be
      overshot by a handful under concurrency. A synchronous read-modify-write
      here would cost more latency than the accuracy is worth. Note the
      CachingLinkResolver freezes link.clicks for up to LINK_CACHE_TTL_SECONDS
      on a cache hit, so on the hot path the overshoot window widens by that
      TTL on top of the rollup lag; still bounded, still cheaper than a live
-     count, and the short TTL keeps it small. */
-  if (link.clickLimit != null && link.clicks >= link.clickLimit) return "click_limit";
-  /* Nothing schedules this. The row carries a date and every request compares
-     it against the clock, so the link starts working at exactly that moment
-     with no job having to fire — which is the whole point of storing a date
-     rather than a flag someone has to flip. */
-  if (link.activatesAt && link.activatesAt.getTime() > Date.now()) return "scheduled";
-  return null;
+     count, and the short TTL keeps it small.
+
+     Nothing schedules activation. The row carries a date and every request
+     compares it against the clock, so the link starts working at exactly that
+     moment with no job having to fire — which is the whole point of storing a
+     date rather than a flag someone has to flip. */
+  return effectiveGate(link);
 }
 
 function isValidUnlockToken(token: string, linkId: string): boolean {

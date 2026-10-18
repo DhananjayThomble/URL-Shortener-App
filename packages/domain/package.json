@@ -13,6 +13,10 @@
     "./routing": {
       "types": "./dist/routing.d.ts",
       "default": "./dist/routing.js"
+    },
+    "./destination": {
+      "types": "./dist/destination.d.ts",
+      "default": "./dist/destination.js"
     }
   },
   "files": [
