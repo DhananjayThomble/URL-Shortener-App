@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { AbuseReport, type UpdateAbuseReportInput } from "@snapurl/contract";
+import { replaceReport } from "../../report-actions";
 import { request } from "../client";
 import { qk } from "./keys";
 
@@ -24,6 +25,10 @@ export function useReviewReport() {
   return useMutation({
     mutationFn: ({ id, ...input }: UpdateAbuseReportInput & { id: string }) =>
       request(`/reports/${id}`, AbuseReport, { method: "PATCH", body: input }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.reports }),
+    onSuccess: (updated) => {
+      // Show the server's copy straight away (#790), then refetch to pick up anything else.
+      qc.setQueryData<AbuseReport[]>(qk.reports, (old) => replaceReport(old, updated));
+      return qc.invalidateQueries({ queryKey: qk.reports });
+    },
   });
 }
