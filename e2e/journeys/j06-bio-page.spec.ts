@@ -23,7 +23,7 @@ import {
 } from "./helpers";
 
 test.describe("Journey 6 — Bio page", () => {
-  test("create a bio page as draft, publish it, verify live in API", async ({ page }) => {
+  test("create a bio page as draft, publish it, verify live in API @mobile", async ({ page }) => {
     /* ---- Setup ---- */
     const session = await registerUser(makeEmail("j6"));
     await seedAccount(page, session);
@@ -132,12 +132,30 @@ test.describe("Journey 6 — Bio page", () => {
     expect(((await perDomainRes.json()) as { profile: { name: string } }).profile.name).toBe("J6 Journey Bio");
 
     // The managed link is NOT in the user's links list (read-only infrastructure).
-    const linksRes = await fetch(`${API_URL}/links?limit=200`, {
-      headers: { authorization: `Bearer ${session.accessToken}` },
-    });
-    const linksBody = (await linksRes.json()) as { items: Array<{ slug: string; destination: string }> };
+    // GET /links caps `limit` at 100 (ListLinksQuery) and answers 400 above it,
+    // so walk every page with the cursor and assert each response is OK before
+    // reading `items` (#845). Absence is only proven once the whole list is read.
+    const listedSlugs: string[] = [];
+    let cursor: string | null | undefined;
+    let pages = 0;
+    do {
+      const qs = new URLSearchParams({ limit: "100" });
+      if (cursor) qs.set("cursor", cursor);
+      const linksRes = await fetch(`${API_URL}/links?${qs.toString()}`, {
+        headers: { authorization: `Bearer ${session.accessToken}` },
+      });
+      expect(linksRes.ok, `GET /links?${qs.toString()} should succeed (got ${linksRes.status})`).toBe(true);
+      const linksBody = (await linksRes.json()) as {
+        items: Array<{ slug: string; destination: string }>;
+        nextCursor?: string | null;
+      };
+      listedSlugs.push(...linksBody.items.map((l) => l.slug));
+      cursor = linksBody.nextCursor;
+      pages += 1;
+    } while (cursor && pages < 50);
+    expect(cursor ?? null, "the links list should be fully paged").toBeNull();
     expect(
-      linksBody.items.some((l) => l.slug === slug),
+      listedSlugs.includes(slug),
       "the managed bio link must not appear in the links list",
     ).toBe(false);
 
