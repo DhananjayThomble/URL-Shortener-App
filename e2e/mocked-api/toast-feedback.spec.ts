@@ -137,8 +137,9 @@ const rowFor = (page: Page, slug: string): Locator =>
 const archiveButton = (page: Page, slug: string) =>
   rowFor(page, slug).getByRole("button", { name: `Archive link snap.to/${slug}`, exact: true });
 
-/** The toast region(s): polite `status` for success, `alert` for errors. */
-const statusRegion = (page: Page) => page.getByRole("region", { name: /notifications/i }).getByRole("status");
+/** The two live regions inside the Notifications landmark: polite (success) and assertive (errors). */
+const polite = (page: Page) => page.getByRole("region", { name: /notifications/i }).locator('[aria-live="polite"]');
+const assertive = (page: Page) => page.getByRole("region", { name: /notifications/i }).locator('[aria-live="assertive"]');
 const toastItems = (page: Page) => page.getByTestId("toast");
 const toast = (page: Page, text: RegExp | string) => toastItems(page).filter({ hasText: text });
 
@@ -159,16 +160,17 @@ for (const vp of viewports) {
       await page.goto("/links");
       await expect(rowFor(page, "alpha")).toBeVisible();
 
-      /* The live region must already exist and be empty BEFORE the action: a region
+      /* The live regions must already exist and be empty BEFORE the action: a region
          inserted together with its text is often not announced. */
-      await expect(page.getByRole("region", { name: /notifications/i })).toBeAttached();
+      await expect(polite(page)).toBeAttached();
+      await expect(assertive(page)).toBeAttached();
       await expect(toastItems(page)).toHaveCount(0);
 
       await archiveButton(page, "alpha").click();
 
       const t = toast(page, "Archived snap.to/alpha");
       await expect(t).toBeVisible();
-      await expect(statusRegion(page).filter({ has: t })).toHaveCount(1);
+      await expect(polite(page).filter({ has: t })).toHaveCount(1);
       await expect(rowFor(page, "alpha")).toHaveCount(0);
       expect(api.callsTo("PATCH", "/links/lnk_alpha")[0].body).toMatchObject({ archived: true });
 
@@ -208,8 +210,7 @@ for (const vp of viewports) {
       /* The link is still there: nothing changed. */
       await expect(rowFor(page, "alpha")).toBeVisible();
       /* ...and the person is told, via the assertive region. */
-      const err = page.getByRole("region", { name: /notifications/i }).getByRole("alert");
-      await expect(err).toContainText("Couldn't archive snap.to/alpha");
+      await expect(assertive(page).getByTestId("toast")).toContainText("Couldn't archive snap.to/alpha");
     });
 
     test("a failed Undo says so instead of claiming the link is back", async ({ page }) => {
@@ -225,7 +226,7 @@ for (const vp of viewports) {
           : route.fallback(),
       );
       await t.getByRole("button", { name: "Undo" }).click();
-      await expect(page.getByRole("alert").filter({ hasText: "Couldn't restore snap.to/alpha" })).toBeVisible();
+      await expect(assertive(page).getByTestId("toast")).toContainText("Couldn't restore snap.to/alpha");
       await expect(toast(page, "Restored snap.to/alpha")).toHaveCount(0);
     });
 
@@ -320,7 +321,7 @@ for (const vp of viewports) {
       await page.goto("/links/lnk_alpha");
       await page.getByRole("button", { name: "Delete this link" }).click();
       await page.getByRole("button", { name: "Delete for good" }).click();
-      await expect(page.getByRole("alert").filter({ hasText: "Something went wrong" })).toBeVisible();
+      await expect(page.getByRole("alert").filter({ hasText: "Something went wrong" })).toBeVisible(); // the page's own inline error
       await expect(page).toHaveURL(/\/links\/lnk_alpha$/);
       await expect(toast(page, /Deleted/)).toHaveCount(0);
     });

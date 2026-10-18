@@ -4,12 +4,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
 import { tabsWithErrors } from "@/components/links/link-form-values";
 import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { seededRedirectType } from "@/lib/new-link-redirect-type";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
+import { toastCopy } from "@/lib/toasts";
 import { cn, shortUrlHref } from "@/lib/utils";
 
 type TabId = LinkFormTabId;
@@ -49,6 +51,7 @@ export function CreateLinkDrawer({
   const { data: domains } = useDomains();
   const { data: workspace, isPending: workspacePending } = useWorkspace();
   const create = useCreateLink();
+  const toast = useToast();
   const drawerRef = useRef<HTMLElement>(null);
 
   // `onClose` is passed as a fresh inline closure by the parent on every one
@@ -246,7 +249,8 @@ export function CreateLinkDrawer({
     // react-hook-form's resolver) still drops the stale server error.
     create.reset();
     try {
-      await create.mutateAsync(values);
+      const created = await create.mutateAsync(values);
+      toast.show({ message: toastCopy.created(created) });
       onClose();
     } catch {
       /* surfaced below via create.error */
