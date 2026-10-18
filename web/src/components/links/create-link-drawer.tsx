@@ -8,6 +8,7 @@ import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type L
 import { tabsWithErrors } from "@/components/links/link-form-values";
 import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
+import { seededRedirectType } from "@/lib/new-link-redirect-type";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
 import { cn, shortUrlHref } from "@/lib/utils";
 
@@ -17,7 +18,9 @@ type TabId = LinkFormTabId;
    rebuild it when seeding a destination from the #660 hero deep link, instead
    of handing react-hook-form a partial object that would blank every other
    field. `domain` is intentionally "" here and filled from the workspace's own
-   domains by the effect below. */
+   domains by the effect below. `redirectType` is only the fallback while the
+   workspace loads; the workspace's own Default redirect type replaces it
+   (#753). */
 const BLANK_LINK_FORM: CreateLinkFormValues = {
   destination: "",
   domain: "",
@@ -62,6 +65,8 @@ export function CreateLinkDrawer({
   // moment instead of the element that actually opened the drawer.
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  /** Whether this open of the drawer has applied the workspace's default redirect type yet (#753). */
+  const redirectSeeded = useRef(false);
 
   const form = useForm<CreateLinkFormValues, unknown, CreateLinkInput>({
     // Wraps zodResolver so an untouched expiresTo/scheduledTo ("" — see
@@ -71,7 +76,7 @@ export function CreateLinkDrawer({
     defaultValues: BLANK_LINK_FORM,
   });
 
-  const { register, handleSubmit, control, watch, reset, setValue, getValues, formState } = form;
+  const { register, handleSubmit, control, watch, reset, setValue, getValues, getFieldState, formState } = form;
   const domain = watch("domain");
   const slug = watch("slug");
 
@@ -167,6 +172,7 @@ export function CreateLinkDrawer({
   // its blank default; the back-half domain is still chosen by the effect below.
   useEffect(() => {
     reset({ ...BLANK_LINK_FORM, ...(initialDestination ? { destination: initialDestination } : {}) });
+    redirectSeeded.current = false;
     setTab("dest");
     create.reset();
     // `create` is a stable mutation object; re-running on it would loop.
@@ -193,6 +199,19 @@ export function CreateLinkDrawer({
     const chosen = defaultDomainFor(domains, workspace?.defaultDomain);
     if (chosen) setValue("domain", chosen);
   }, [open, domains, domain, workspace, workspacePending, getValues, setValue]);
+
+  // #753 — preselect the workspace's "Default redirect type" ("Applies to new
+  // links"). Seeded once per open, after the reset above (declared after it, so
+  // it runs after it in the same commit), and only once the workspace has
+  // loaded; a type the user already picked in this drawer is never overwritten.
+  useEffect(() => {
+    if (!open || workspacePending || redirectSeeded.current) return;
+    redirectSeeded.current = true;
+    const seeded = seededRedirectType(workspace?.defaultRedirect, getFieldState("redirectType", formState).isDirty);
+    if (seeded) setValue("redirectType", seeded);
+    // `formState` is passed to getFieldState so dirtiness is subscribed; it may
+    // be a new proxy each render, which only re-runs this cheap guarded check.
+  }, [open, workspace, workspacePending, getFieldState, formState, setValue]);
 
   // `useMutation` returns a brand-new result object on every render (its
   // `mutate`/`mutateAsync` are wrapped per call, see @tanstack/react-query's

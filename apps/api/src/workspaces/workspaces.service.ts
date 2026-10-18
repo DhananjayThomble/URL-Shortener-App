@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, clickDaily, domains, eq, gte, links, sql, workspaces, type Database } from "@snapurl/database";
 import type { UpdateWorkspaceInput, Workspace } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
@@ -56,16 +56,69 @@ export class WorkspacesService {
     if (input.publicPreviews !== undefined) patch.publicPreviews = input.publicPreviews;
     if (input.currency !== undefined) patch.currency = input.currency.toUpperCase();
 
+    /* Resolved BEFORE anything is written: a refused domain rejects the whole
+       PATCH, so a 400 never leaves the other fields half-saved (#779). */
     if (input.defaultDomain !== undefined) {
-      const [domain] = await this.db
-        .select({ id: domains.id })
-        .from(domains)
-        .where(and(sql`lower(${domains.domain}) = ${input.defaultDomain.toLowerCase()}`, sql`(${domains.workspaceId} = ${workspaceId} or ${domains.isSystem} = true)`))
-        .limit(1);
-      if (domain) patch.defaultDomainId = domain.id;
+      const domainId = await this.resolveDefaultDomain(workspaceId, input.defaultDomain);
+      if (domainId !== undefined) patch.defaultDomainId = domainId;
     }
 
     await this.db.update(workspaces).set(patch).where(eq(workspaces.id, workspaceId));
     return this.current(workspaceId);
+  }
+
+  /**
+   * The id to store as the workspace's default domain, `undefined` for "leave
+   * it as it is", or a 400.
+   *
+   * A default domain pre-fills every "new link" form, so it has to be one a
+   * link can actually be created on — the same rule links.service
+   * resolveDomain enforces: a domain this workspace owns or the shared system
+   * domain, and one that is `live`. Anything else is refused. Another
+   * workspace's domain gets exactly the same answer as an unknown one, so the
+   * message does not reveal that it exists.
+   *
+   * The value is normalised the way a hostname compares: trimmed,
+   * case-insensitive, a trailing dot ignored.
+   *
+   * Sending back the CURRENT default is never an error, even if it has since
+   * stopped being live (or the workspace has none): clients send the whole
+   * settings form, so a person changing only their currency must not be
+   * blocked by a domain they did not touch.
+   */
+  private async resolveDefaultDomain(workspaceId: string, raw: string): Promise<string | undefined> {
+    const wanted = raw.trim().toLowerCase().replace(/\.+$/, "");
+
+    const [current] = await this.db
+      .select({ id: domains.id, domain: domains.domain })
+      .from(workspaces)
+      .leftJoin(domains, eq(domains.id, workspaces.defaultDomainId))
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    const currentName = current?.domain?.toLowerCase().replace(/\.+$/, "") ?? "";
+    if (wanted === currentName) return undefined;
+
+    if (!wanted) throw new BadRequestException("Choose a default domain.");
+
+    const [row] = await this.db
+      .select({ id: domains.id, domain: domains.domain, status: domains.status })
+      .from(domains)
+      .where(
+        and(
+          sql`lower(${domains.domain}) = ${wanted}`,
+          // Either this workspace owns it, or it is the shared system domain.
+          sql`(${domains.workspaceId} = ${workspaceId} or ${domains.isSystem} = true)`,
+        ),
+      )
+      .limit(1);
+
+    if (!row) {
+      const shown = raw.trim().length > 100 ? `${raw.trim().slice(0, 100)}…` : raw.trim();
+      throw new BadRequestException(`${shown} isn't a domain in this workspace.`);
+    }
+    if (row.status !== "live") {
+      throw new BadRequestException(`${row.domain} isn't verified yet, so links on it wouldn't resolve.`);
+    }
+    return row.id;
   }
 }

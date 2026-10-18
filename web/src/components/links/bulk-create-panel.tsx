@@ -26,7 +26,8 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
   async function submit() {
     if (!rows.length || !chosenDomain || tooMany) return;
     // The rest of CreateLinkInput's defaults are applied by the server; only
-    // what a row can actually express is sent.
+    // what a row can actually express is sent. No redirectType: the server
+    // gives an omitted one the workspace's Default redirect type (#753).
     const links = rows.map(
       (r) =>
         ({
@@ -34,7 +35,6 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
           domain: chosenDomain,
           ...(r.slug ? { slug: r.slug } : {}),
           tags: [],
-          redirectType: "302",
           rules: [],
           forwardQuery: true,
           deepLink: false,
