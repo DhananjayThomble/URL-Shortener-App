@@ -1,6 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   AuthSession,
@@ -20,15 +22,66 @@ import {
   type TotpVerifyInput,
 } from "@snapurl/contract";
 import { request, tokens } from "../client";
+import { signedInTarget } from "../../safe-next";
+import { hasStoredSession } from "../../session-hint";
 import { qk } from "./keys";
 
-export function useMe() {
+export function useMe(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: qk.me,
     queryFn: () => request("/auth/me", AuthUser),
     retry: false,
     staleTime: 5 * 60_000,
+    enabled: opts.enabled ?? true,
   });
+}
+
+/**
+ * /login and /register: if the visitor is already signed in, send them on
+ * (#777) — to the safe `?next=`, else the dashboard.
+ *
+ * It asks the API (GET /auth/me) rather than trusting the stored tokens. A
+ * token that is merely PRESENT may be expired or revoked; redirecting on that
+ * alone would send the visitor to the dashboard guard, which would send them
+ * straight back here — a loop. Verified this way, the three outcomes are:
+ *   - session good        -> router.replace(target); never the form.
+ *   - expired/revoked     -> /auth/me 401 -> the client's refresh fails and
+ *                            clears the tokens -> the form is shown.
+ *   - API down (5xx/net)  -> the form is shown and the tokens are kept; no
+ *                            redirect happens, so nothing can bounce.
+ * A visitor with no stored token makes no request at all.
+ *
+ * The probe settles once. A sign-in made on this page afterwards sets the
+ * `me` cache itself and must not trigger a second navigation on top of the
+ * form's own.
+ *
+ * `checking` is true while the verification is in flight, so the page can show
+ * a status instead of a form that is about to disappear.
+ */
+export function useRedirectIfSignedIn(nextParam: string | null): { checking: boolean } {
+  const router = useRouter();
+  const [probing, setProbing] = useState(false);
+  const [settled, setSettled] = useState(false);
+  const settledRef = useRef(false);
+  // Before first paint (layout effect), so a signed-in visitor never sees the
+  // form flash up. After mount, never during render: localStorage does not
+  // exist on the server.
+  useLayoutEffect(() => {
+    if (hasStoredSession()) setProbing(true);
+  }, []);
+  const me = useMe({ enabled: probing });
+  useEffect(() => {
+    if (!probing || settledRef.current) return;
+    if (me.isSuccess) {
+      settledRef.current = true;
+      router.replace(signedInTarget(nextParam));
+    } else if (me.isError) {
+      settledRef.current = true;
+      setSettled(true);
+    }
+  }, [probing, me.isSuccess, me.isError, nextParam, router]);
+  // On success the page is being left, so `checking` stays true until it is.
+  return { checking: probing && !settled };
 }
 
 /**
