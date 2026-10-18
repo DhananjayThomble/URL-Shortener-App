@@ -18,6 +18,27 @@ export type LinkStatus = z.infer<typeof LinkStatus>;
 export const DeviceType = z.enum(["ios", "android", "desktop", "mobile"]);
 export type DeviceType = z.infer<typeof DeviceType>;
 
+/**
+ * The largest click limit a link can carry: the largest Postgres `integer`,
+ * which is what `links.click_limit` is stored as. A bigger number is not a
+ * "very high limit", it is a database overflow.
+ */
+export const CLICK_LIMIT_MAX = 2_147_483_647;
+
+/**
+ * A click limit on the way IN (create / edit). `null` or omitted means no
+ * limit; a number must be a whole number from 1 to CLICK_LIMIT_MAX. 0 would
+ * expire the link before its first click (`clicks >= clickLimit`) and a
+ * negative number is never reached, so neither is a limit anyone means.
+ * Deliberately not applied to `Link.clickLimit` (the response): rows saved
+ * before this was enforced must still load.
+ */
+export const ClickLimitInput = z
+  .number({ error: "Click limit must be a whole number" })
+  .int("Click limit must be a whole number")
+  .min(1, "Click limit must be at least 1")
+  .max(CLICK_LIMIT_MAX, "Click limit can't be more than 2,147,483,647");
+
 /** One rule in a link's routing chain. First match wins. */
 export const RoutingRule = z.object({
   id: z.string(),
@@ -130,7 +151,7 @@ export const CreateLinkInput = z.object({
   activatesAt: z.string().nullable().optional(),
   /* Same as expiresTo, for a link that is not live yet. */
   scheduledTo: HttpUrl.nullable().optional(),
-  clickLimit: z.number().nullable().optional(),
+  clickLimit: ClickLimitInput.nullable().optional(),
   password: z.string().nullable().optional(),
   forwardQuery: z.boolean().default(true),
   deepLink: z.boolean().default(false),
