@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AnalyticsRange } from "./types";
+import { ApiError } from "./client";
 import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry";
 // The subpath, not the barrel: the barrel pulls node:crypto into the browser bundle.
 import { lifecycleGate } from "@snapurl/domain/destination";
@@ -1106,7 +1107,11 @@ export async function fixtureRequest<T>(
     if (link) removeById(linkStore, link.id);
     data = undefined;
   } else if (m(/^\/links\/([^/]+)$/)) {
-    data = findLink(m(/^\/links\/([^/]+)$/)![1]) ?? LINKS[0];
+    // The API answers 404 for an unknown id (and for another workspace's, #790); falling
+    // back to the first link here hid the not-found state in fixtures mode.
+    const found = findLink(m(/^\/links\/([^/]+)$/)![1]);
+    if (!found) throw new ApiError(404, "That link doesn't exist, or isn't in this workspace.");
+    data = found;
   } else if (m(/^\/links$/)) {
     // Filtering is applied so the status tabs and the search box behave.
     const params = new URLSearchParams(path.split("?")[1] ?? "");

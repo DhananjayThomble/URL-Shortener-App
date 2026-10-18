@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
+import { PREPAINT_SESSION_HINT } from "@/lib/session-hint";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -36,7 +37,7 @@ r.style.setProperty('--accent-ink',dark?'#06152B':'#FFFFFF');
 if(s.density)r.style.setProperty('--density',s.density);
 if(s.radius){r.style.setProperty('--radius',s.radius);var p=parseInt(s.radius,10);r.style.setProperty('--radius-sm',p>2?Math.max(4,p-3)+'px':'2px')}
 if(s.reduceMotion)r.classList.add('reduce-motion');
-}catch(e){}})();`,
+}catch(e){}})();${PREPAINT_SESSION_HINT}`,
           }}
         />
       </head>

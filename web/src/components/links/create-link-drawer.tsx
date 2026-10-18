@@ -4,13 +4,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
-import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
-import { tabsWithErrors } from "@/components/links/link-form-values";
+import { useToast } from "@/components/ui/toast";
+import { EDIT_TABS as TABS, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { normalizeLinkFormValues, tabsWithErrors } from "@/components/links/link-form-values";
 import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { seededRedirectType } from "@/lib/new-link-redirect-type";
 import { expiryProblem } from "@/lib/expiry-input";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
+import { toastCopy } from "@/lib/toasts";
 import { cn, shortUrlHref } from "@/lib/utils";
 
 type TabId = LinkFormTabId;
@@ -50,6 +52,7 @@ export function CreateLinkDrawer({
   const { data: domains } = useDomains();
   const { data: workspace, isPending: workspacePending } = useWorkspace();
   const create = useCreateLink();
+  const toast = useToast();
   const drawerRef = useRef<HTMLElement>(null);
 
   // `onClose` is passed as a fresh inline closure by the parent on every one
@@ -71,12 +74,13 @@ export function CreateLinkDrawer({
 
   const form = useForm<CreateLinkFormValues, unknown, CreateLinkInput>({
     // Wraps zodResolver so an untouched expiresTo/scheduledTo ("" — see
-    // blankOptionalUrlsToUndefined's docblock) is treated as "not set"
+    // blankOptionalUrlsToUndefined's docblock) is treated as "not set", and a URL
+    // whose date switch is off is dropped (#759, normalizeLinkFormValues), all
     // before CreateLinkInput, unmodified, validates the rest. It also refuses
     // an expiry that has already passed (#754): that needs "now", so it is the
     // shared domain rule (expiryProblem), not a contract shape check.
     resolver: async (values, context, options) => {
-      const result = await zodResolver(CreateLinkInput)(blankOptionalUrlsToUndefined(values), context, options);
+      const result = await zodResolver(CreateLinkInput)(normalizeLinkFormValues(values), context, options);
       const expiry = expiryProblem(values.expiresAt, { mode: "create", original: null });
       if (!expiry) return result;
       return { values: {}, errors: { ...result.errors, expiresAt: { type: "validate", message: expiry } } };
@@ -254,7 +258,8 @@ export function CreateLinkDrawer({
     // react-hook-form's resolver) still drops the stale server error.
     create.reset();
     try {
-      await create.mutateAsync(values);
+      const created = await create.mutateAsync(values);
+      toast.show({ message: toastCopy.created(created) });
       onClose();
     } catch {
       /* surfaced below via create.error */
@@ -358,6 +363,7 @@ export function CreateLinkDrawer({
               control={control}
               watch={watch}
               formState={formState}
+              clearErrors={form.clearErrors}
               qrValue={shortUrlHref(domain, slug || "your-slug")}
               showBackHalf={
                 <Field

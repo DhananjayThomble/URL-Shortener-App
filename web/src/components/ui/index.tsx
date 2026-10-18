@@ -126,6 +126,9 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
       className={cn(
         "w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[13px] text-ink",
         "placeholder:text-ink-3 focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash",
+        /* A disabled input reads as switched off — the same dimmed look + cursor the rest of the
+           app gives a disabled control (settings page, Button), not the browser's default. */
+        "disabled:opacity-60 disabled:cursor-not-allowed",
         className,
       )}
       {...props}
@@ -310,16 +313,20 @@ export function Toggle({
   onChange,
   title,
   description,
+  controls,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   title: React.ReactNode;
   description?: React.ReactNode;
+  /** Space-separated ids of the inputs this switch turns on and off (aria-controls), when it gates any. */
+  controls?: string;
 }) {
   return (
     <button
       type="button"
       aria-pressed={checked}
+      aria-controls={controls}
       onClick={() => onChange(!checked)}
       className="flex items-start gap-[11px] px-[13px] py-3 border border-line rounded-[var(--radius-sm)] bg-surface-2 text-left hover:border-line-2 transition-colors"
     >
@@ -521,6 +528,37 @@ export function EmptyState({
       <h3 className="text-[16px] text-ink mb-[6px]">{title}</h3>
       {body ? <p className="m-0 mx-auto max-w-[42ch] text-[13.5px]">{body}</p> : null}
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A detail page whose record is not there for this person (404, another
+ * workspace's id, a malformed id) or that they may not open. Retrying cannot
+ * change the answer, so the only action is the way back — and the copy is fixed,
+ * never the server's message, so "doesn't exist" and "not yours" read alike.
+ */
+export function NotFoundState({
+  title,
+  body,
+  backHref,
+  backLabel,
+}: {
+  title: string;
+  body: string;
+  backHref: string;
+  backLabel: string;
+}) {
+  return (
+    <div className="text-center py-12 px-5">
+      <div className="text-[28px] mb-3" aria-hidden="true">
+        ⌀
+      </div>
+      <h3 className="text-[15px] text-ink mb-[6px]">{title}</h3>
+      <p className="m-0 mx-auto max-w-[46ch] text-[13px] text-ink-3">{body}</p>
+      <div className="mt-4 flex justify-center">
+        <ButtonLink href={backHref}>{backLabel}</ButtonLink>
+      </div>
     </div>
   );
 }

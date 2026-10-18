@@ -6,11 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AuthShell } from "@/components/auth/auth-shell";
+import { AuthShell, SessionCheck } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
-import { useRegister } from "@/lib/api/hooks";
-import { safeNext, withNext } from "@/lib/safe-next";
+import { useRedirectIfSignedIn, useRegister } from "@/lib/api/hooks";
+import { signedInTarget, withNext } from "@/lib/safe-next";
 
 const Schema = z.object({
   name: z.string().min(2, "What should we call you?"),
@@ -39,15 +39,25 @@ function RegisterForm() {
   const nextParam = useSearchParams().get("next");
   const signup = useRegister();
   const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
+  // #777 — already signed in? Verify the session and move on to `next`.
+  const { checking } = useRedirectIfSignedIn(nextParam);
 
   const onSubmit = handleSubmit(async (values) => {
     try {
       await signup.mutateAsync(values);
-      router.push(safeNext(nextParam));
+      router.push(signedInTarget(nextParam));
     } catch {
       /* surfaced from signup.error */
     }
   });
+
+  if (checking) {
+    return (
+      <AuthShell title="Start free" sub="Checking your session…">
+        <SessionCheck />
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell title="Start free" sub="No card. Links, QR codes and edits are never metered.">
