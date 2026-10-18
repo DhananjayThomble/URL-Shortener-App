@@ -68,7 +68,7 @@ function landmarkViolations(violations: Awaited<ReturnType<typeof runAxe>>["viol
     .flatMap((v) => v.nodes.map((n) => ({ rule: v.id, target: n.target.join(" "), html: n.html.slice(0, 200) })));
 }
 
-const MARKETING_ROUTES = ["/", "/product", "/for-developers", "/pricing", "/self-host"];
+const MARKETING_ROUTES = ["/", "/product", "/for-developers", "/pricing", "/self-host", "/terms", "/privacy"];
 
 const APP_ROUTES = ["/developers", "/team", "/bio", "/conversions"];
 

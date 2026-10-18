@@ -75,6 +75,15 @@ export function SiteFooter() {
 
       <div className="mt-12 flex flex-col sm:flex-row items-start sm:items-center gap-2 text-[12px] text-ink-3">
         <span>© {new Date().getFullYear()} SnapURL. MIT licensed.</span>
+        {/* #794 — legal pages (placeholder text, see components/marketing/legal-page.tsx). */}
+        <nav aria-label="Legal" className="flex gap-4 sm:ml-4">
+          <Link href="/terms" className="text-ink-2 hover:text-ink underline underline-offset-2">
+            Terms of Service
+          </Link>
+          <Link href="/privacy" className="text-ink-2 hover:text-ink underline underline-offset-2">
+            Privacy Policy
+          </Link>
+        </nav>
         <span className="sm:ml-auto">No tracking cookies. Export everything, always.</span>
       </div>
     </footer>
