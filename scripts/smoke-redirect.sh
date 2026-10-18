@@ -582,7 +582,12 @@ echo "== branded error pages (#766) =="
 # status codes do not move: 404 unknown / not-yet-live / root, 410 expired /
 # click-limited. Both variants are no-store (the CDN cache key ignores Accept).
 HTML_ACCEPT='text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-mklink "{\"destination\":\"https://example.com/gone-bare\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired-bare\",\"expiresAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+# #754: the API refuses an expiry already in the past, so this expired-page
+# fixture is created expiring a few seconds out and the assertions below wait
+# until that moment passes — the link expires for real, same as $RUN-expired.
+EXP_BARE_SOON_MS=$(node -pe 'Date.now() + 5000')
+EXP_BARE_SOON=$(EXP_BARE_SOON_MS="$EXP_BARE_SOON_MS" node -pe 'new Date(Number(process.env.EXP_BARE_SOON_MS)).toISOString()')
+mklink "{\"destination\":\"https://example.com/gone-bare\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired-bare\",\"expiresAt\":\"$EXP_BARE_SOON\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 EXP_BARE_ID="$LAST_ID"
 mklink "{\"destination\":\"https://example.com/limited\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-limit\",\"clickLimit\":1,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 LIMIT_ID="$LAST_ID"
@@ -633,6 +638,10 @@ check_error() {
 }
 
 check_error "unknown slug" "$RUN-nope" 404 "No such link." "We couldn&#39;t find that link"
+# Wait until $RUN-expired-bare's expiry (a few seconds after creation) has
+# passed, so the gate returns 410 rather than still redirecting (#754).
+EXP_BARE_WAIT_MS=$(EXP_BARE_SOON_MS="$EXP_BARE_SOON_MS" node -pe 'Math.max(0, Number(process.env.EXP_BARE_SOON_MS) + 1000 - Date.now())')
+[ "$EXP_BARE_WAIT_MS" -gt 0 ] && sleep "$(EXP_BARE_WAIT_MS="$EXP_BARE_WAIT_MS" node -pe '(Number(process.env.EXP_BARE_WAIT_MS) / 1000).toFixed(3)')"
 check_error "expired, no fallback" "$RUN-expired-bare" 410 "This link has expired." "This link has expired"
 check_error "not yet live, no fallback" "$RUN-scheduled-bare" 404 "This link is not live yet." "This link isn&#39;t live yet"
 check_error "domain root" "" 404 "Nothing here." "Nothing here"
