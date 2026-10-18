@@ -413,7 +413,8 @@ export const DOMAINS: Domain[] = [
     domain: "snap.to",
     status: "live",
     ssl: "active",
-    sslRenewsAt: daysAgo(-77),
+    // Mirrors the API: the built-in shared domain has no per-workspace renewal date (#782).
+    sslRenewsAt: null,
     links: 1022,
     rootRedirect: "https://acme.com",
     notFoundRedirect: "https://acme.com/404",
