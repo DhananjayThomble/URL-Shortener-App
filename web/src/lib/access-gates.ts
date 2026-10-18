@@ -20,13 +20,6 @@
 
 export type AccessGate = "activatesAt" | "expiresAt" | "clickLimit";
 
-/** The title of each gate's switch, as the user reads it. */
-export const GATE_TITLES: Record<AccessGate, string> = {
-  activatesAt: "Go live on a date",
-  expiresAt: "Expire on a date",
-  clickLimit: "Expire after a click limit",
-};
-
 /**
  * Placeholders of the two "send visitors to" inputs. They are examples of what to TYPE, so
  * each is a value the contract's HttpUrl guard accepts as it stands: with a scheme. (They
@@ -37,9 +30,9 @@ export const FALLBACK_URL_PLACEHOLDERS = {
   expiresTo: "https://acme.com/offers",
 } as const;
 
-/** What a gated text input shows while its switch is off: which switch to turn on. */
-export function gateOffPlaceholder(gate: AccessGate): string {
-  return `Turn on "${GATE_TITLES[gate]}" above`;
+/** What a gated text input shows while its switch is off. Short on purpose: the half-width "send visitors to" inputs clip anything longer, and the switch is directly above. */
+export function gateOffPlaceholder(_gate: AccessGate): string {
+  return "Turn on the switch above";
 }
 
 /**

@@ -184,7 +184,7 @@ for (const vp of viewports) {
         expect(body.expiresTo).toBe(gone);
       });
 
-      test("with every switch off, every gated input is disabled the same way; Password is not gated and stays enabled", async ({ page }, testInfo) => {
+      test("with every switch off, every gated input is disabled the same way; Password is not gated and stays enabled", async ({ page }) => {
         await installApi(page);
         const drawer = await openCreate(page);
 
@@ -207,12 +207,8 @@ for (const vp of viewports) {
         // the text inputs say what to do, in one phrase
         for (const g of [gated[1], gated[3], gated[4]]) {
           const placeholder = (await g.input(drawer).getAttribute("placeholder")) ?? "";
-          expect(placeholder, g.name).toMatch(/^Turn on ".+" above$/);
+          expect(placeholder, g.name).toBe("Turn on the switch above");
         }
-        await testInfo.attach(`access-gates-off-${vp.name}-${theme}`, {
-          body: await drawer.screenshot(),
-          contentType: "image/png",
-        });
       });
 
       test("each switch enables exactly its own inputs, and switching it off disables them again", async ({ page }) => {

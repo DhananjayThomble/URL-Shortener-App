@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { CreateLinkInput, HttpUrl } from "@snapurl/contract";
 import {
   FALLBACK_URL_PLACEHOLDERS,
-  GATE_TITLES,
   dropUngatedUrls,
   gateOffPlaceholder,
   isGateOn,
@@ -46,10 +45,11 @@ describe("fallback URL placeholders", () => {
 });
 
 describe("gateOffPlaceholder", () => {
-  it("names the switch that has to be turned on", () => {
-    expect(gateOffPlaceholder("activatesAt")).toContain(GATE_TITLES.activatesAt);
-    expect(gateOffPlaceholder("expiresAt")).toContain(GATE_TITLES.expiresAt);
-    expect(gateOffPlaceholder("clickLimit")).toContain(GATE_TITLES.clickLimit);
+  it("points at the switch above, in words short enough for a half-width input", () => {
+    for (const gate of ["activatesAt", "expiresAt", "clickLimit"] as const) {
+      expect(gateOffPlaceholder(gate)).toBe("Turn on the switch above");
+      expect(gateOffPlaceholder(gate).length).toBeLessThanOrEqual(28);
+    }
   });
 
   it("is never itself a value that could be mistaken for a URL example", () => {
