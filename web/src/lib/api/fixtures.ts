@@ -600,6 +600,43 @@ function findLink(idOrSlug: string) {
   return linkStore.find((l) => l.id === idOrSlug || l.slug === idOrSlug);
 }
 
+/**
+ * GET /analytics. With `linkId` the real API scopes every number — totals,
+ * series and breakdowns — to that link; the workspace-wide ANALYTICS fixture
+ * would otherwise show every link the workspace's whole traffic (#768). The
+ * fixture serves one window whatever `range` says, so a scoped copy is the
+ * link's own counters spread over the same shape. Unknown link: the workspace
+ * figures, as before.
+ */
+function analyticsFixture(path: string): Analytics {
+  const linkId = new URLSearchParams(path.split("?")[1] ?? "").get("linkId");
+  const link = linkId ? findLink(linkId) : undefined;
+  if (!link) return ANALYTICS;
+
+  const k = link.clicks / ANALYTICS.totals.clicks;
+  const scale = (n: number) => Math.round(n * k);
+  const scaleRows = <T extends { value: number }>(rows: T[]): T[] => rows.map((r) => ({ ...r, value: scale(r.value) }));
+  return {
+    ...ANALYTICS,
+    totals: {
+      ...ANALYTICS.totals,
+      clicks: link.clicks,
+      unique: link.uniqueClicks ?? scale(ANALYTICS.totals.unique),
+      scans: scale(ANALYTICS.totals.scans),
+      conversions: scale(ANALYTICS.totals.conversions),
+      blocked: 0,
+    },
+    series: ANALYTICS.series.map((p) => ({ ...p, clicks: scale(p.clicks), unique: scale(p.unique), scans: scale(p.scans ?? 0) })),
+    countries: scaleRows(ANALYTICS.countries),
+    cities: scaleRows(ANALYTICS.cities),
+    devices: scaleRows(ANALYTICS.devices),
+    browsers: scaleRows(ANALYTICS.browsers),
+    referrers: scaleRows(ANALYTICS.referrers),
+    tags: [],
+    topLinks: [],
+  };
+}
+
 function removeById<T extends { id: string }>(store: T[], id: string) {
   const i = store.findIndex((row) => row.id === id);
   if (i >= 0) store.splice(i, 1);
@@ -996,7 +1033,7 @@ export async function fixtureRequest<T>(
     data = { items, total: items.length, nextCursor: null };
   }
   /* ---- analytics and conversions ---- */
-  else if (m(/^\/analytics/)) data = ANALYTICS;
+  else if (m(/^\/analytics/)) data = analyticsFixture(path);
   else if (m(/^\/conversions$/) && method === "POST") {
     const body = opts.body as RecordConversionInput;
     data = { id: uid("cnv"), recorded: Boolean(body.name) };
