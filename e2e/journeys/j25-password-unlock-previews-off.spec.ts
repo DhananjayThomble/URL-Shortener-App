@@ -56,19 +56,24 @@ test.describe("Journey 25 — previews off, password-protected link @mobile", ()
     expect(created.status, `POST /links → ${await created.clone().text()}`).toBe(201);
     expect(((await created.json()) as { passwordProtected?: boolean }).passwordProtected).toBe(true);
 
-    /* ---- 1. The redirect bounces to the unlock page, without the destination ---- */
+    /* ---- 1. The redirect bounces to the unlock page, carrying the host it
+            resolved the slug on (#800), without the destination ---- */
     const bounce = await fetch(`${REDIRECT_URL}/${slug}`, { redirect: "manual" });
     expect(bounce.status).toBe(302);
     const location = bounce.headers.get("location") ?? "";
-    expect(location).toMatch(new RegExp(`/p/${slug}\\?unlock=1$`));
+    expect(location).toMatch(new RegExp(`/p/${slug}\\?unlock=1&host=`));
+    const bounceHost = new URL(location).searchParams.get("host") ?? "";
+    expect(bounceHost, "the bounce carries the resolved host").toBeTruthy();
     expect(location + (await bounce.text())).not.toContain(marker);
 
-    /* ---- 2. Every public response before the password withholds it ---- */
-    const preview = await fetch(`${API_URL}/public/links/${slug}/preview`);
+    /* ---- 2. Every public response before the password withholds it. The page
+            calls these host-scoped (#800); so do we here. ---- */
+    const q = `?host=${encodeURIComponent(bounceHost)}`;
+    const preview = await fetch(`${API_URL}/public/links/${slug}/preview${q}`);
     expect(preview.status, "preview with previews off").toBe(403);
     expect(await preview.text()).not.toContain(marker);
 
-    const lock = await fetch(`${API_URL}/public/links/${slug}/lock`);
+    const lock = await fetch(`${API_URL}/public/links/${slug}/lock${q}`);
     expect(lock.status).toBe(200);
     const lockText = await lock.text();
     expect(lockText).not.toContain(marker);

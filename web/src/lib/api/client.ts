@@ -122,8 +122,11 @@ const ANONYMOUS_CREDENTIAL_PATH = /^\/(auth\/2fa\/verify|public\/links\/[^/]+\/u
 const CREDENTIAL_CHECK_WITH_SESSION = "/auth/2fa/disable";
 
 export function isCredentialRejection(path: string, message: string): boolean {
-  if (AUTH_CREDENTIAL_PATHS.has(path) || ANONYMOUS_CREDENTIAL_PATH.test(path)) return true;
-  return path === CREDENTIAL_CHECK_WITH_SESSION && isTotpDisableCredentialRejection(message);
+  // Match on the route only — a query string (e.g. the #800 ?host= on unlock)
+  // is not part of the path the server routes on, and must not defeat the match.
+  const route = path.split("?")[0]!;
+  if (AUTH_CREDENTIAL_PATHS.has(route) || ANONYMOUS_CREDENTIAL_PATH.test(route)) return true;
+  return route === CREDENTIAL_CHECK_WITH_SESSION && isTotpDisableCredentialRejection(message);
 }
 
 function messageOf(detail: unknown, fallback: string): string {

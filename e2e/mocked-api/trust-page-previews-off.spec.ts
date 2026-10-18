@@ -218,7 +218,8 @@ test.describe("public trust page: previews off, password-protected link (#762)",
     });
     await page.goto("/p/vault?unlock=1&warning=unsafe");
     // The warning is shown; the form is not.
-    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByText("This link has been flagged as unsafe")).toBeVisible();
+    await expect(page.getByText(/reported and flagged as potentially dangerous/)).toBeVisible();
     await expect(page.getByText("This link is password protected")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Unlock and continue" })).toHaveCount(0);
     await expect(page.getByPlaceholder("Password")).toHaveCount(0);
