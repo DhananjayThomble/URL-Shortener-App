@@ -17,6 +17,10 @@
     "./expiry": {
       "types": "./dist/expiry.d.ts",
       "default": "./dist/expiry.js"
+    },
+    "./destination": {
+      "types": "./dist/destination.d.ts",
+      "default": "./dist/destination.js"
     }
   },
   "files": [

@@ -1,7 +1,8 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { and, domains, eq, links, sql, users, workspaces, type Database } from "@snapurl/database";
+import { and, domains, eq, linkCounters, links, routingRules, sql, users, workspaces, type Database } from "@snapurl/database";
 import type { PublicLinkLock, PublicLinkPreview, UnlockLinkResult } from "@snapurl/contract";
+import { lifecycleGate } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "../auth/token.service.js";
@@ -19,10 +20,12 @@ export class PublicService {
    * anyone can see where a link goes before clicking it, except where the owner
    * put a password on it.
    *
-   * Deliberately narrow: it returns where the link goes and whether it is safe,
-   * and nothing about the workspace, the tags, the click count or the routing
-   * rules. Those would leak a customer's campaign structure to anyone who can
-   * guess a slug.
+   * Deliberately narrow: it returns where the link goes, whether it is safe
+   * and whether it works right now, and nothing about the workspace, the tags,
+   * the click count or the routing rules themselves. Those would leak a
+   * customer's campaign structure to anyone who can guess a slug. The one
+   * thing said about rules is that they exist (#764), because without it the
+   * page names a destination some visitors will never reach.
    */
   async preview(slug: string, host?: string): Promise<PublicLinkPreview> {
     const filters = [sql`lower(${links.slug}) = ${slug.toLowerCase()}`];
@@ -34,11 +37,14 @@ export class PublicService {
         domain: domains,
         workspace: workspaces,
         creator: users.name,
+        clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
+        hasRules: sql<boolean>`exists (select 1 from ${routingRules} where ${routingRules.linkId} = ${links.id})`,
       })
       .from(links)
       .innerJoin(domains, eq(links.domainId, domains.id))
       .innerJoin(workspaces, eq(links.workspaceId, workspaces.id))
       .leftJoin(users, eq(links.createdBy, users.id))
+      .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
       .where(and(...filters))
       .limit(1);
 
@@ -57,6 +63,22 @@ export class PublicService {
        way through for these, and it hands back a token, never the URL. */
     const passwordProtected = row.link.passwordHash != null;
 
+    /* #764 — what a visitor gets, by the redirect's own rule, so this page can
+       no longer call an expired link "safe to open". The fallback is reported
+       only as a fact, never its URL, and only for the states whose gate uses
+       one (a click limit and archiving answer 410). For a protected link not
+       even the fact: whether its fallbacks sit behind the password is open
+       (#802), so the preview neither confirms nor denies one. */
+    const gate = lifecycleGate({
+      archived: row.link.archivedAt != null,
+      expiresAt: row.link.expiresAt,
+      activatesAt: row.link.activatesAt,
+      clickLimit: row.link.clickLimit,
+      clicks: Number(row.clicks),
+    });
+    const fallback =
+      gate === "expired" ? row.link.expiresTo : gate === "scheduled" ? row.link.scheduledTo : null;
+
     return {
       shortUrl: `${row.domain.domain}/${row.link.slug}`,
       destination: passwordProtected ? null : row.link.destination,
@@ -69,6 +91,11 @@ export class PublicService {
       // Not a stored flag — a statement about how the redirect actually behaves.
       setsCookies: false,
       redirectType: row.link.redirectType as PublicLinkPreview["redirectType"],
+      state: gate ?? "active",
+      expiresAt: row.link.expiresAt?.toISOString() ?? null,
+      activatesAt: row.link.activatesAt?.toISOString() ?? null,
+      hasRules: Boolean(row.hasRules),
+      hasFallback: passwordProtected ? null : fallback != null,
     };
   }
 
