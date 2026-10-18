@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Tabs, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Tabs, Td, Th } from "@/components/ui";
 import {
   useApiKeys,
   useCreateApiKey,
@@ -236,7 +236,7 @@ export default function DevelopersPage() {
                       <Th>Key</Th>
                       <Th>Scopes</Th>
                       <Th>Last used</Th>
-                      <Th />
+                      <ActionsTh />
                     </tr>
                   </thead>
                   <tbody>
@@ -252,7 +252,7 @@ export default function DevelopersPage() {
                           </span>
                         </Td>
                         <Td>{k.lastUsed ?? "Never"}</Td>
-                        <Td className="text-right whitespace-nowrap">
+                        <ActionsTd>
                           {confirmKey === k.id ? (
                             <>
                               <Button size="sm" variant="ghost" onClick={() => setConfirmKey(null)}>
@@ -279,7 +279,7 @@ export default function DevelopersPage() {
                               Revoke
                             </Button>
                           )}
-                        </Td>
+                        </ActionsTd>
                       </tr>
                     ))}
                   </tbody>
@@ -304,7 +304,7 @@ export default function DevelopersPage() {
                     <Th>Endpoint</Th>
                     <Th>Events</Th>
                     <Th>Status</Th>
-                    <Th />
+                    <ActionsTh />
                   </tr>
                 </thead>
                 <tbody>
@@ -323,7 +323,7 @@ export default function DevelopersPage() {
                           {w.detail}
                         </Chip>
                       </Td>
-                      <Td className="text-right whitespace-nowrap">
+                      <ActionsTd>
                         {confirmHook === w.id ? (
                           <>
                             <Button size="sm" variant="ghost" onClick={() => setConfirmHook(null)}>
@@ -350,7 +350,7 @@ export default function DevelopersPage() {
                             Delete
                           </Button>
                         )}
-                      </Td>
+                      </ActionsTd>
                     </tr>
                   ))}
                 </tbody>
