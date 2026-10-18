@@ -295,7 +295,11 @@ export function CreateLinkDrawer({
           </button>
         </div>
 
-        <div role="tablist" aria-label="Link settings" className="flex gap-px px-5 border-b border-line overflow-x-auto">
+        {/* #785 — the global `.flex > * { min-width: 0 }` reset let the six tabs shrink
+            below their label, so "Destination" and "Routing" ran into each other. Tabs
+            are `shrink-0` instead, and the strip scrolls sideways (scroll-snap, a gap
+            between neighbours, the 20px gutter kept on both ends). */}
+        <div role="tablist" aria-label="Link settings" className="flex gap-1 px-5 border-b border-line overflow-x-auto overscroll-x-contain">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -321,7 +325,7 @@ export function CreateLinkDrawer({
                 document.getElementById(`create-link-tab-${nextId}`)?.focus();
               }}
               className={cn(
-                "px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 -mb-px whitespace-nowrap transition-colors",
+                "shrink-0 px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 -mb-px whitespace-nowrap transition-colors",
                 tab === t.id ? "text-accent border-accent font-semibold" : "text-ink-3 border-transparent hover:text-ink",
               )}
             >
@@ -376,7 +380,8 @@ export function CreateLinkDrawer({
                     <select
                       {...register("domain")}
                       aria-label="Short-link domain"
-                      className="px-[11px] py-[9px] bg-surface-3 border border-line-2 border-r-0 rounded-l-[var(--radius-sm)] font-mono text-[12.5px] text-ink-2 focus:outline-none"
+                      className="min-w-0 max-w-[55%] shrink truncate px-[11px] py-[9px] bg-surface-3 border border-line-2 border-r-0 rounded-l-[var(--radius-sm)] font-mono text-[12.5px] text-ink-2 focus:outline-none"
+                      title={domain}
                     >
                       {(domains ?? []).map((d) => (
                         <option key={d.id} value={d.domain} disabled={!isUsableForLinks(d)}>
@@ -389,7 +394,7 @@ export function CreateLinkDrawer({
                       id="create-link-slug"
                       aria-describedby="create-link-slug-hint"
                       placeholder="spring-sale"
-                      className="rounded-l-none font-mono text-[12.5px]"
+                      className="min-w-[120px] flex-1 rounded-l-none font-mono text-[12.5px]"
                       spellCheck={false}
                     />
                   </div>
@@ -400,11 +405,11 @@ export function CreateLinkDrawer({
 
           <div className="flex items-center gap-[10px] px-5 py-[14px] border-t border-line bg-surface-2">
             {create.isError ? (
-              <span className="text-[12px] text-bad">{(create.error as Error).message}</span>
+              <span className="min-w-0 text-[12px] text-bad">{(create.error as Error).message}</span>
             ) : (
-              <span className="text-[11.5px] text-ink-3">Links are never metered — only clicks are.</span>
+              <span className="min-w-0 text-[11.5px] text-ink-3">Links are never metered — only clicks are.</span>
             )}
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex shrink-0 gap-2">
               <Button type="button" onClick={onClose}>
                 Cancel
               </Button>
