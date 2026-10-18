@@ -6,6 +6,7 @@ import { QrPreview } from "@/components/qr/qr-preview";
 import { Button, Card, CardBody, CardHeader, Field, Segmented, Skeleton, Toggle } from "@/components/ui";
 import { useLinks } from "@/lib/api/hooks";
 import { buildQrSvg } from "@/lib/qr-compose";
+import { eclHelp } from "@/lib/qr-ecl";
 import { readAccent, saveBlob, svgToPngBlob } from "@/lib/qr-export";
 import { cn, shortUrlHref } from "@/lib/utils";
 
@@ -20,6 +21,8 @@ export default function QrStudioPage() {
   const [logo, setLogo] = useState(true);
   const [busy, setBusy] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const eclInfo = eclHelp(ecl, logo);
 
   const link = links[selected];
   const value = link ? shortUrlHref(link.domain, link.slug) : "";
@@ -105,15 +108,30 @@ export default function QrStudioPage() {
                       aria-label={`Foreground colour ${c}`}
                       onClick={() => setFg(c)}
                       style={{ background: c }}
+                      /* Every swatch carries a theme-token outline (--ink-3: >= 3:1 on every surface in
+                         both themes, WCAG 1.4.11), so the near-black one no longer vanishes into the
+                         dark card (#774). The picked one adds a gap + --ink ring. */
                       className={cn(
-                        "w-[26px] h-[26px] rounded-[var(--radius-sm)] border-2 shadow-[inset_0_0_0_1px_rgb(0_0_0/0.12)]",
-                        fg === c ? "border-ink" : "border-transparent",
+                        "w-[26px] h-[26px] rounded-[var(--radius-sm)] border border-ink-3",
+                        fg === c && "shadow-[0_0_0_2px_var(--surface),0_0_0_4px_var(--ink)]",
                       )}
                     />
                   ))}
                 </div>
               </Field>
-              <Field label="Error correction" help="Q tolerates a centre logo and light print wear." controlId="qr-error-correction">
+              <Field
+                label="Error correction"
+                controlId="qr-error-correction"
+                help={
+                  <>
+                    <span data-testid="qr-ecl-help">{eclInfo.text}</span>
+                    {/* Always mounted so assistive tech announces the notice when it appears. */}
+                    <span role="status" data-testid="qr-ecl-notice" className="block text-amber">
+                      {eclInfo.notice}
+                    </span>
+                  </>
+                }
+              >
                 <Segmented
                   id="qr-error-correction"
                   aria-label="Error correction"

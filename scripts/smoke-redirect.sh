@@ -251,7 +251,12 @@ mklink "{\"destination\":\"https://example.com/utm\",\"domain\":\"$LINK_DOMAIN\"
 mklink "{\"destination\":\"https://example.com/noforward\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-noforward\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":false,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/perm\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-perm\",\"tags\":[],\"redirectType\":\"301\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/locked\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-locked\",\"password\":\"hunter2\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
-mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"2020-01-01T00:00:00.000Z\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+# #754: the API refuses an expiry that has already passed, so the expired-gate
+# fixture is created expiring a few seconds from now and the gate assertions
+# below wait until that moment has passed — the link expires for real.
+EXPIRES_SOON_MS=$(node -pe 'Date.now() + 5000')
+EXPIRES_SOON=$(EXPIRES_SOON_MS="$EXPIRES_SOON_MS" node -pe 'new Date(Number(process.env.EXPIRES_SOON_MS)).toISOString()')
+mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"$EXPIRES_SOON\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled-bare\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
@@ -318,6 +323,9 @@ fi
 
 echo
 echo "== gates =="
+# Let the expired-gate fixture's expiry (a few seconds after it was created) pass.
+WAIT_MS=$(EXPIRES_SOON_MS="$EXPIRES_SOON_MS" node -pe 'Math.max(0, Number(process.env.EXPIRES_SOON_MS) + 1000 - Date.now())')
+[ "$WAIT_MS" -gt 0 ] && sleep "$(node -pe "($WAIT_MS / 1000).toFixed(3)")"
 contains "expired link uses expiresTo (G5)" "example.com/moved" "$(loc "$RUN-expired")"
 contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "$RUN-scheduled")"
 # 404 rather than 410: nothing is gone, it has not started. And no fallback
@@ -566,6 +574,111 @@ else ok "a redirect is a redirect, not an interstitial"; fi
 BODY_BYTES=$(curl -s "$RD/$RUN-plain" | wc -c | tr -d '[:space:]')
 if [ "$BODY_BYTES" -lt 256 ]; then ok "the redirect carries no page to hang a pixel on ($BODY_BYTES bytes)";
 else bad "redirect body is large enough to be a page" "$BODY_BYTES bytes"; fi
+
+echo
+echo "== branded error pages (#766) =="
+# A dead end answers browsers (Accept: text/html) with a small branded HTML page
+# and every other client with the exact plain-text sentence it always got. The
+# status codes do not move: 404 unknown / not-yet-live / root, 410 expired /
+# click-limited. Both variants are no-store (the CDN cache key ignores Accept).
+HTML_ACCEPT='text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+# #754: the API refuses an expiry already in the past, so this expired-page
+# fixture is created expiring a few seconds out and the assertions below wait
+# until that moment passes — the link expires for real, same as $RUN-expired.
+EXP_BARE_SOON_MS=$(node -pe 'Date.now() + 5000')
+EXP_BARE_SOON=$(EXP_BARE_SOON_MS="$EXP_BARE_SOON_MS" node -pe 'new Date(Number(process.env.EXP_BARE_SOON_MS)).toISOString()')
+mklink "{\"destination\":\"https://example.com/gone-bare\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired-bare\",\"expiresAt\":\"$EXP_BARE_SOON\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+EXP_BARE_ID="$LAST_ID"
+mklink "{\"destination\":\"https://example.com/limited\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-limit\",\"clickLimit\":1,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+LIMIT_ID="$LAST_ID"
+wait_for_projection "'$EXP_BARE_ID','$LIMIT_ID'" "error-page fixtures projected"
+
+# errpage <path> <accept|-> -> sets EP_STATUS, EP_TYPE, EP_CACHE, EP_VARY,
+# EP_CSP, EP_RETRY and EP_BODY. "-" sends curl's default Accept (*/*).
+errpage() {
+  local path="$1" accept="$2" hdr body
+  hdr=$(mktemp); body=$(mktemp)
+  if [ "$accept" = "-" ]; then
+    curl -s -D "$hdr" -o "$body" "$RD/$path" 2>/dev/null
+  else
+    curl -s -D "$hdr" -o "$body" -H "Accept: $accept" -H "User-Agent: $BROWSER_UA" "$RD/$path" 2>/dev/null
+  fi
+  EP_STATUS=$(awk '/^HTTP/{s=$2} END{print s}' "$hdr")
+  h() { tr -d '\r' < "$hdr" | awk -v n="$1" 'tolower($0) ~ "^"n":" {sub(/^[^:]*: */,""); v=$0} END{print v}'; }
+  EP_TYPE=$(h content-type); EP_CACHE=$(h cache-control); EP_VARY=$(h vary)
+  EP_CSP=$(h content-security-policy); EP_RETRY=$(h retry-after)
+  EP_BODY=$(cat "$body")
+  rm -f "$hdr" "$body"
+}
+
+# check_error <label> <path> <status> <legacy plain-text body> <html title>
+check_error() {
+  local label="$1" path="$2" status="$3" text="$4" title="$5" accept
+  for accept in - "application/json"; do
+    errpage "$path" "$accept"
+    expect "$label: non-browser ($accept) keeps status $status" "$status" "$EP_STATUS"
+    expect "$label: non-browser ($accept) keeps the legacy body" "$text" "$EP_BODY"
+    contains "$label: non-browser ($accept) is text/plain" "^text/plain" "$EP_TYPE"
+    expect "$label: non-browser ($accept) is no-store" "no-store" "$EP_CACHE"
+  done
+  errpage "$path" "$HTML_ACCEPT"
+  expect "$label: browser keeps status $status" "$status" "$EP_STATUS"
+  expect "$label: browser gets text/html; charset=utf-8" "text/html; charset=utf-8" "$EP_TYPE"
+  contains "$label: browser page carries the branded title" "<h1>$title</h1>" "$EP_BODY"
+  contains "$label: browser page is a full document" "^<!doctype html>" "$EP_BODY"
+  contains "$label: browser page has a locked-down CSP" "default-src 'none'" "$EP_CSP"
+  expect "$label: browser page is no-store" "no-store" "$EP_CACHE"
+  expect "$label: browser page varies on Accept" "Accept" "$EP_VARY"
+  if echo "$EP_BODY" | grep -qiE '<script|<link|<img|src='; then
+    bad "$label: browser page loads no external asset or script" "$(echo "$EP_BODY" | head -c 300)"
+  else ok "$label: browser page loads no external asset or script"; fi
+  local bytes; bytes=$(printf '%s' "$EP_BODY" | wc -c | tr -d '[:space:]')
+  if [ "$bytes" -lt 4096 ]; then ok "$label: browser page is tiny ($bytes bytes)";
+  else bad "$label: browser page is tiny" "$bytes bytes"; fi
+}
+
+check_error "unknown slug" "$RUN-nope" 404 "No such link." "We couldn&#39;t find that link"
+# Wait until $RUN-expired-bare's expiry (a few seconds after creation) has
+# passed, so the gate returns 410 rather than still redirecting (#754).
+EXP_BARE_WAIT_MS=$(EXP_BARE_SOON_MS="$EXP_BARE_SOON_MS" node -pe 'Math.max(0, Number(process.env.EXP_BARE_SOON_MS) + 1000 - Date.now())')
+[ "$EXP_BARE_WAIT_MS" -gt 0 ] && sleep "$(EXP_BARE_WAIT_MS="$EXP_BARE_WAIT_MS" node -pe '(Number(process.env.EXP_BARE_WAIT_MS) / 1000).toFixed(3)')"
+check_error "expired, no fallback" "$RUN-expired-bare" 410 "This link has expired." "This link has expired"
+check_error "not yet live, no fallback" "$RUN-scheduled-bare" 404 "This link is not live yet." "This link isn&#39;t live yet"
+check_error "domain root" "" 404 "Nothing here." "Nothing here"
+
+# Retry-After survives in both variants for a scheduled link.
+errpage "$RUN-scheduled-bare" -;            expect "scheduled: plain keeps Retry-After" "Thu, 01 Jan 2099 00:00:00 GMT" "$EP_RETRY"
+errpage "$RUN-scheduled-bare" "$HTML_ACCEPT"; expect "scheduled: page keeps Retry-After" "Thu, 01 Jan 2099 00:00:00 GMT" "$EP_RETRY"
+contains "scheduled: page says when it goes live" "Thu, 01 Jan 2099 00:00:00 GMT</time>" "$EP_BODY"
+# The page shows the short link that was followed.
+errpage "$RUN-expired-bare" "$HTML_ACCEPT"
+contains "expired: page shows the followed short link" "<code>$LINK_DOMAIN/$RUN-expired-bare</code>" "$EP_BODY"
+
+# Click limit: the gate reads link_counters, which only the worker's rollup
+# writes. Seed the count directly where the DB is reachable and the redirect
+# reads Postgres (a projected backend would need a re-projection); elsewhere skip.
+if [ "$DB_AVAILABLE" -eq 1 ] && [ "${LINK_PROJECTION:-none}" != "dynamo" ] && [ -n "$LIMIT_ID" ]; then
+  dbq "insert into link_counters (link_id, clicks, unique_clicks) values ('$LIMIT_ID', 1, 1) on conflict (link_id) do update set clicks = 1, unique_clicks = 1" >/dev/null
+  check_error "click limit reached" "$RUN-limit" 410 "This link has reached its click limit." "This link has reached its click limit"
+else
+  skip "click-limit error page: needs direct DB access on a Postgres-read profile"
+fi
+
+# The only reflected values are HTML-escaped: a script-shaped slug is inert.
+errpage "$RUN-%3Cscript%3Ealert(1)%3C%2Fscript%3E" "$HTML_ACCEPT"
+expect "a script-shaped slug is still a 404" "404" "$EP_STATUS"
+if echo "$EP_BODY" | grep -q "<script>alert"; then
+  bad "a script-shaped slug is HTML-escaped on the page" "$(echo "$EP_BODY" | grep -o '<code>.*</code>')"
+else
+  contains "a script-shaped slug is HTML-escaped on the page" "&lt;script&gt;alert(1)&lt;/script&gt;" "$EP_BODY"
+fi
+
+# A browser following a LIVE link still gets a bare redirect, never a page.
+RH=$(curl -s -o /dev/null -D - -H "Accept: $HTML_ACCEPT" -H "User-Agent: $BROWSER_UA" "$RD/$RUN-plain" | tr -d '\r')
+contains "a browser following a live link still gets the 302" "^HTTP/[0-9.]* 302" "$RH"
+if echo "$RH" | grep -qi "content-type: *text/html"; then
+  bad "a browser's redirect is not an HTML page" "$(echo "$RH" | head -3)"
+else ok "a browser's redirect is not an HTML page"; fi
 
 echo
 echo "----------------------------------------"
