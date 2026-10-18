@@ -15,7 +15,7 @@ import { MOCK_USER, MOCK_WORKSPACE, fakeAccessToken, mockApi, seedMockSession, t
    browser sends in POST /links and PATCH /links/:id (the contract's
    CreateLinkInput / UpdateLinkInput), plus what the drawer shows after saving.
    Oracle for the saved shape: packages/contract/src/link.ts (`tags: string[]`).
-   The real-API round trip is journey j25-link-tags-typed.spec.ts. */
+   The real-API round trip is journey j752-link-tags-typed.spec.ts. */
 
 const SLUG = "tagged";
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -158,6 +158,9 @@ for (const vp of viewports) {
       const tags = tagsInput(drawer);
       await tags.click();
       await tags.pressSequentially(" , a,, b ,a, 🚀 launch,  ,");
+      // Leaving the field tidies what was typed into the list that will be saved.
+      await drawer.getByLabel("Destination URL").click();
+      await expect(tags).toHaveValue("a, b, 🚀 launch");
       await drawer.getByRole("button", { name: "Create link" }).click();
       await expect(drawer).toBeHidden();
       expect((api.callsTo("POST", "/links")[0].body as { tags: string[] }).tags).toEqual(["a", "b", "🚀 launch"]);
