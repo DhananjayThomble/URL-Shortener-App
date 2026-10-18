@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { EXPIRY_IN_PAST_MESSAGE } from "@snapurl/domain";
-import { dateInputToIso, isoToDateInput } from "@/components/links/link-form-values";
+import { dateInputToIso, isoToDateInput } from "../components/links/link-form-values";
 import { expiryProblem } from "./expiry-input";
 
 /* Issue #754 — the drawer's "Expiry date" let you pick a day that has already
