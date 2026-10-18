@@ -648,7 +648,7 @@ export class LinksService {
       ...validateSchedule(input.activatesAt, input.expiresAt),
       /* #754: a new link whose expiry has already passed is born expired.
          Not applied to a clone, which copies its source's window as it
-         stands — see clone(). */
+         stands and has no field to change it — see #812. */
       ...(clonedFrom ? [] : validateExpiry(input.expiresAt)),
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
