@@ -291,6 +291,8 @@ for (const vp of viewports) {
       await expect(limitInput(drawer)).toHaveValue("-5");
 
       await drawer.getByRole("button", { name: "Close" }).click();
+      // The drawer holds an unsaved "-5": closing asks (#761); this test is about what a re-open shows.
+      await page.getByRole("alertdialog", { name: "Discard your changes?" }).getByRole("button", { name: "Discard", exact: true }).click();
       await expect(drawer).toBeHidden();
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       const again = page.getByRole("dialog", { name: new RegExp(`Edit .+/${SLUG}`) });
