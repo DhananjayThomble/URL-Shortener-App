@@ -85,3 +85,62 @@ export function resubmitText(rows: readonly BulkRow[], outcomes: readonly RowOut
     .map((r) => r.row.line)
     .join("\n");
 }
+
+/** The part of `BulkLinkOutcome` the report reads (kept structural so this
+ *  file does not depend on the contract package). */
+export type BulkOutcome =
+  | { ok: true; index: number; link: { domain: string; slug: string } }
+  | { ok: false; index: number; destination: string; error: string };
+
+export type BulkReportItem =
+  | { kind: "created"; domain: string; slug: string }
+  /** `line` is the row's line number in the box AFTER the resubmit text is put
+   *  back (1-based), so "Line 2" points at what the user will see. */
+  | { kind: "failed"; line: number; destination: string; error: string };
+
+export type BulkReport = { created: number; failed: number; items: BulkReportItem[] };
+
+/** Shown for a row the response did not mention. It is kept in the box rather
+ *  than dropped, but it may already exist, so the user is told to look first. */
+export const UNREPORTED_ROW_ERROR = "No result came back for this row. Check the links list before sending it again.";
+
+/**
+ * Everything the panel needs after a response: the text to put back into the
+ * box (`rowsToResubmit`'s rows, as typed) and one report item per submitted
+ * row, in submitted order. Failed rows are numbered by their place in the new
+ * text, because the created rows no longer appear in it.
+ */
+export function summarizeBulkResult(
+  batch: readonly BulkRow[],
+  outcomes: readonly BulkOutcome[],
+): { text: string; report: BulkReport } {
+  const byIndex = new Map<number, BulkOutcome>();
+  for (const o of outcomes) {
+    if (o.index < 0 || o.index >= batch.length) continue;
+    const prev = byIndex.get(o.index);
+    // A success wins, as in rowsToResubmit.
+    if (!prev || (o.ok && !prev.ok)) byIndex.set(o.index, o);
+  }
+  const remaining = rowsToResubmit(batch, outcomes);
+  const lineOf = new Map(remaining.map((r, i) => [r.index, i + 1]));
+
+  const items: BulkReportItem[] = [];
+  for (let index = 0; index < batch.length; index++) {
+    const o = byIndex.get(index);
+    if (o?.ok) {
+      items.push({ kind: "created", domain: o.link.domain, slug: o.link.slug });
+    } else {
+      items.push({
+        kind: "failed",
+        line: lineOf.get(index)!,
+        destination: (o && o.destination) || batch[index]!.destination,
+        error: o ? o.error : UNREPORTED_ROW_ERROR,
+      });
+    }
+  }
+  const created = items.filter((i) => i.kind === "created").length;
+  return {
+    text: remaining.map((r) => r.row.line).join("\n"),
+    report: { created, failed: items.length - created, items },
+  };
+}

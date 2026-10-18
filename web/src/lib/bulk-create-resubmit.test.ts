@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseBulkRows, parseRows, resubmitText, rowsToResubmit, type RowOutcome } from "./bulk-create-rows";
+import {
+  parseBulkRows,
+  parseRows,
+  resubmitText,
+  rowsToResubmit,
+  summarizeBulkResult,
+  UNREPORTED_ROW_ERROR,
+  type BulkOutcome,
+  type RowOutcome,
+} from "./bulk-create-rows";
 
 /* #755 — after a partial failure the whole textarea was sent again, and every
    row WITHOUT a back-half was created a second time (the API can only dedupe by
@@ -120,5 +129,74 @@ describe("rowsToResubmit", () => {
   it("is not tripped by a destination with commas in its query string", () => {
     const r = parseBulkRows("https://x.org/s?tags=a,b,c\nhttps://x.org/t?tags=d,e, pricing");
     expect(resubmitText(r, [bad(0), ok(1)])).toBe("https://x.org/s?tags=a,b,c");
+  });
+});
+
+describe("summarizeBulkResult", () => {
+  const batch = parseBulkRows(LIST);
+  const created = (index: number, slug: string): BulkOutcome => ({ ok: true, index, link: { domain: "snap.to", slug } });
+  const failed = (index: number, destination: string, error: string): BulkOutcome => ({ ok: false, index, destination, error });
+  const REPORTED: BulkOutcome[] = [
+    created(0, "gen1"),
+    created(1, "summer-sale"),
+    failed(2, "not a url", "destination: Enter an absolute http(s) URL"),
+    created(3, "gen2"),
+    failed(4, "https://acme.com/winter", "snap.to/taken already exists."),
+  ];
+
+  it("the reported shape: 3 created, 2 failed, the text holds just the failures", () => {
+    const { text, report } = summarizeBulkResult(batch, REPORTED);
+    expect(text).toBe(["not a url", "https://acme.com/winter, taken"].join("\n"));
+    expect(report.created).toBe(3);
+    expect(report.failed).toBe(2);
+  });
+
+  it("keeps submitted order, and numbers failures by their line in the NEW text", () => {
+    const { report } = summarizeBulkResult(batch, REPORTED);
+    expect(report.items).toEqual([
+      { kind: "created", domain: "snap.to", slug: "gen1" },
+      { kind: "created", domain: "snap.to", slug: "summer-sale" },
+      { kind: "failed", line: 1, destination: "not a url", error: "destination: Enter an absolute http(s) URL" },
+      { kind: "created", domain: "snap.to", slug: "gen2" },
+      { kind: "failed", line: 2, destination: "https://acme.com/winter", error: "snap.to/taken already exists." },
+    ]);
+  });
+
+  it("everything created: empty text, no failures", () => {
+    const { text, report } = summarizeBulkResult(batch.slice(0, 2), [created(0, "a"), created(1, "b")]);
+    expect(text).toBe("");
+    expect(report).toMatchObject({ created: 2, failed: 0 });
+  });
+
+  it("everything failed: the text is the whole list again, lines numbered 1..n", () => {
+    const outs = batch.map((b, i) => failed(i, b.destination, "nope"));
+    const { text, report } = summarizeBulkResult(batch, outs);
+    expect(text).toBe(LIST);
+    expect(report.created).toBe(0);
+    expect(report.items.map((i) => (i.kind === "failed" ? i.line : 0))).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("a row the response skipped is kept, flagged as unreported, and counted as not created", () => {
+    const { text, report } = summarizeBulkResult(batch.slice(0, 2), [created(0, "a")]);
+    expect(text).toBe("https://acme.com/summer, summer-sale");
+    expect(report.items[1]).toEqual({
+      kind: "failed",
+      line: 1,
+      destination: "https://acme.com/summer",
+      error: UNREPORTED_ROW_ERROR,
+    });
+    expect(report.failed).toBe(1);
+  });
+
+  it("falls back to the typed destination when the server echoed an empty one", () => {
+    const { report } = summarizeBulkResult(batch.slice(0, 1), [failed(0, "", "bad")]);
+    expect(report.items[0]).toMatchObject({ kind: "failed", destination: "https://acme.com/spring" });
+  });
+
+  it("identical lines are reported per row, not merged", () => {
+    const dup = parseBulkRows("https://acme.com/same\nhttps://acme.com/same");
+    const { text, report } = summarizeBulkResult(dup, [created(0, "g1"), failed(1, "https://acme.com/same", "nope")]);
+    expect(text).toBe("https://acme.com/same");
+    expect(report.items.map((i) => i.kind)).toEqual(["created", "failed"]);
   });
 });
