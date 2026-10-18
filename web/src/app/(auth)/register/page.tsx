@@ -61,7 +61,10 @@ function RegisterForm() {
           </div>
         </>
       ) : null}
-      <form onSubmit={onSubmit} className="flex flex-col gap-3.5">
+      {/* noValidate: the zod resolver is the one validator. Without it the
+          browser's native bubble pre-empts the inline message for type="email"
+          (#794), so a form showed two styles at once. */}
+      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-3.5">
         <Field label="Name" error={formState.errors.name?.message}>
           <Input {...register("name")} autoComplete="name" placeholder="Priya Raman" />
         </Field>
@@ -75,6 +78,19 @@ function RegisterForm() {
         <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={signup.isPending}>
           {signup.isPending ? "Creating your workspace…" : "Create account"}
         </Button>
+        {/* Wording is deliberately neutral — no consent checkbox and no "I agree"
+            until the maintainer decides how consent should work (#794). */}
+        <p className="text-[11.5px] text-ink-3 text-center m-0 leading-[1.6]">
+          Your account is covered by the{" "}
+          <Link href="/terms" className="text-accent font-semibold">
+            Terms of Service
+          </Link>{" "}
+          and the{" "}
+          <Link href="/privacy" className="text-accent font-semibold">
+            Privacy Policy
+          </Link>
+          .
+        </p>
         <p className="text-[12.5px] text-ink-3 text-center m-0">
           Already have an account?{" "}
           <Link href={withNext("/login", nextParam)} className="text-accent font-semibold">
