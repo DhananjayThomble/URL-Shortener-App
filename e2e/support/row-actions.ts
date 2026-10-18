@@ -15,6 +15,8 @@ export type Reach = {
   inside: boolean;
   /** The topmost element at the button's centre is the button itself (or a child). */
   hit: boolean;
+  /** Description of the element that is on top instead, when `hit` is false. */
+  coveredBy: string | null;
   box: Rect | null;
   scroller: Rect | null;
   viewportWidth: number;
@@ -29,10 +31,14 @@ export async function reach(el: Locator): Promise<Reach> {
   const box = await el.boundingBox();
   const scroller = await scrollerOf(el).boundingBox();
   const viewportWidth = el.page().viewportSize()?.width ?? 0;
-  const hit = await el.evaluate((n) => {
+  const { hit, coveredBy } = await el.evaluate((n) => {
     const r = n.getBoundingClientRect();
     const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return !!top && (top === n || n.contains(top));
+    const ok = !!top && (top === n || n.contains(top));
+    // Say WHAT is on top, so a failure names the culprit instead of just "false".
+    const describe = (e: Element | null) =>
+      e ? `<${e.tagName.toLowerCase()} class="${String(e.getAttribute("class") ?? "").slice(0, 80)}">` : "nothing";
+    return { hit: ok, coveredBy: ok ? null : describe(top) };
   });
   const rect = (b: { x: number; y: number; width: number; height: number } | null): Rect | null =>
     b ? { left: b.x, right: b.x + b.width, top: b.y, bottom: b.y + b.height } : null;
@@ -45,12 +51,34 @@ export async function reach(el: Locator): Promise<Reach> {
     bx.right <= sx.right + 1 &&
     bx.left >= -1 &&
     bx.right <= viewportWidth + 1;
-  return { inside, hit, box: bx, scroller: sx, viewportWidth };
+  return { inside, hit, coveredBy, box: bx, scroller: sx, viewportWidth };
+}
+
+/** Bring `el` clear of the sticky app topbar by scrolling the PAGE vertically only.
+
+   Why: a click can leave the row anywhere in the viewport (Playwright scrolls the
+   Cancel button of the redirect editor into view, and a confirm state can grow
+   the cell by a button), and the page's 56px sticky topbar then covers a button
+   that is perfectly reachable — the user just scrolls up. That is a vertical
+   page-scroll concern, orthogonal to what #786 tests (horizontal clipping inside
+   the table scroller), so it must not read as "covered". Only window.scrollBy(0, y)
+   is used: unlike scrollIntoView it never moves the table scroller sideways, so a
+   control clipped by horizontal overflow is still caught by `inside`. */
+async function clearStickyTopbar(el: Locator): Promise<void> {
+  await el.evaluate((n) => {
+    const r = n.getBoundingClientRect();
+    const topbar = document.querySelector("header");
+    const clear = (topbar ? topbar.getBoundingClientRect().bottom : 0) + 8;
+    if (r.top < clear || r.bottom > window.innerHeight) {
+      window.scrollBy(0, r.top - Math.max(clear, (window.innerHeight - r.height) / 2));
+    }
+  });
 }
 
 /** Assert `el` is fully visible where it stands (no scrolling) and that the pixel at its centre is the control. */
 export async function expectReachable(el: Locator, what: string): Promise<void> {
   await expect(el, `${what}: attached`).toBeAttached();
+  await clearStickyTopbar(el);
   const r = await reach(el);
   expect(r.inside, `${what}: inside the table's visible area ${JSON.stringify(r)}`).toBe(true);
   expect(r.hit, `${what}: nothing covers it ${JSON.stringify(r)}`).toBe(true);
