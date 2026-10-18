@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Controller, type Control, type FieldErrors, type UseFormRegister, type UseFormWatch } from "react-hook-form";
+import { Controller, type Control, type FieldErrors, type UseFormClearErrors, type UseFormRegister, type UseFormWatch } from "react-hook-form";
 import { Button, Field, Input, SectionLabel, Segmented, Toggle } from "@/components/ui";
 import { QrPreview } from "@/components/qr/qr-preview";
 import { RoutingRulesEditor } from "@/components/links/routing-rules-editor";
@@ -10,6 +10,7 @@ import { dateInputToIso, isoToDateInput } from "@/components/links/link-form-val
 import { formatTags, parseTags, reconcileTagsText } from "@/lib/tags-input";
 import { clickLimitFromText, clickLimitProblem, reconcileClickLimitText } from "@/lib/click-limit-input";
 import { expiryProblem } from "@/lib/expiry-input";
+import { FALLBACK_URL_PLACEHOLDERS, gateOffPlaceholder, isGateOn, switchGate } from "@/lib/access-gates";
 
 export { blankOptionalUrlsToUndefined } from "@/components/links/link-form-values";
 
@@ -100,7 +101,7 @@ function ClickLimitField({
         spellCheck={false}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${controlId}-hint` : undefined}
-        disabled={value == null}
+        disabled={!isGateOn("clickLimit", value)}
         value={shown}
         onChange={(e) => {
           setText(e.target.value);
@@ -111,7 +112,7 @@ function ClickLimitField({
           setText(reconcileClickLimitText("", value)); // tidy " 007 " into "7" once the user leaves the field
           onBlur();
         }}
-        placeholder={value == null ? "Turn on the click limit above" : "e.g. 100"}
+        placeholder={isGateOn("clickLimit", value) ? "e.g. 100" : gateOffPlaceholder("clickLimit")}
         className="font-mono text-[12.5px]"
       />
     </Field>
@@ -135,6 +136,7 @@ export function LinkFormFields({
   control,
   watch,
   formState,
+  clearErrors,
   qrValue,
   showBackHalf,
   passwordPlaceholder = "Leave blank for no password",
@@ -149,6 +151,8 @@ export function LinkFormFields({
   control: Control<CreateLinkFormValues>;
   watch: UseFormWatch<CreateLinkFormValues>;
   formState: { errors: FieldErrors<CreateLinkFormValues> };
+  /** Lets the Access tab drop a URL's validation error when the switch that gates the URL is turned off (#759). */
+  clearErrors: UseFormClearErrors<CreateLinkFormValues>;
   /** What the QR tab encodes — already-known short link for edit, draft domain/slug for create. */
   qrValue: string;
   /** Renders the back-half (domain + slug) fields on the Destination tab. Off in edit mode — see module doc. */
@@ -165,6 +169,17 @@ export function LinkFormFields({
   const destination = watch("destination");
   const utm = watch("utm");
 
+  /* The Access tab's switches (#759). Each gates inputs of its own, which are disabled while it is
+     off; a switch turned off and on again gives back the value it had instead of a new default.
+     What was set is remembered here (this component lives as long as the drawer is open, so a
+     new drawer starts clean; a tab switch does not unmount it). */
+  const activatesAt = watch("activatesAt");
+  const expiresAt = watch("expiresAt");
+  const clickLimit = watch("clickLimit");
+  const goLiveOn = isGateOn("activatesAt", activatesAt);
+  const expiryOn = isGateOn("expiresAt", expiresAt);
+  const limitOn = isGateOn("clickLimit", clickLimit);
+  const [remembered, setRemembered] = useState<{ activatesAt?: string | null; expiresAt?: string | null; clickLimit?: number | string | null }>({});
   const finalUrl = (() => {
     if (!destination) return "";
     const params = new URLSearchParams();
@@ -293,8 +308,14 @@ export function LinkFormFields({
             name="activatesAt"
             render={({ field }) => (
               <Toggle
-                checked={Boolean(field.value)}
-                onChange={(v) => field.onChange(v ? new Date(Date.now() + 7 * 864e5).toISOString() : null)}
+                checked={goLiveOn}
+                onChange={(on) => {
+                  const next = switchGate<string>(on, field.value, remembered.activatesAt, new Date(Date.now() + 7 * 864e5).toISOString());
+                  setRemembered((r) => ({ ...r, activatesAt: next.remembered }));
+                  if (!on) clearErrors("scheduledTo"); // its URL is out of play with the date
+                  field.onChange(next.value);
+                }}
+                controls={`${idPrefix}-activates-at ${idPrefix}-scheduled-to`}
                 title="Go live on a date"
                 description="The short link exists straight away — print it, share it — but does not carry anyone to the destination until then."
               />
@@ -309,27 +330,50 @@ export function LinkFormFields({
                   <Input
                     type="date"
                     id={`${idPrefix}-activates-at`}
+                    disabled={!goLiveOn}
                     value={isoToDateInput(field.value)}
                     onChange={(e) => field.onChange(dateInputToIso(e.target.value, false))}
                   />
                 )}
               />
             </Field>
-            <Field
-              label="Until then, send visitors to"
-              help="Leave blank and they get a plain 'not live yet' page."
-              error={formState.errors.scheduledTo?.message}
-            >
-              <Input {...register("scheduledTo")} placeholder="acme.com/coming-soon" className="font-mono text-[12.5px]" />
-            </Field>
+            {(() => {
+              const controlId = `${idPrefix}-scheduled-to`;
+              const error = goLiveOn ? formState.errors.scheduledTo?.message : undefined;
+              return (
+                <Field
+                  label="Until then, send visitors to"
+                  controlId={controlId}
+                  help="Leave blank and they get a plain 'not live yet' page."
+                  error={error}
+                >
+                  <Input
+                    {...register("scheduledTo")}
+                    id={controlId}
+                    disabled={!goLiveOn}
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={`${controlId}-hint`}
+                    placeholder={goLiveOn ? FALLBACK_URL_PLACEHOLDERS.scheduledTo : gateOffPlaceholder("activatesAt")}
+                    className="font-mono text-[12.5px]"
+                    spellCheck={false}
+                  />
+                </Field>
+              );
+            })()}
           </div>
           <Controller
             control={control}
             name="expiresAt"
             render={({ field }) => (
               <Toggle
-                checked={Boolean(field.value)}
-                onChange={(v) => field.onChange(v ? new Date(Date.now() + 30 * 864e5).toISOString() : null)}
+                checked={expiryOn}
+                onChange={(on) => {
+                  const next = switchGate<string>(on, field.value, remembered.expiresAt, new Date(Date.now() + 30 * 864e5).toISOString());
+                  setRemembered((r) => ({ ...r, expiresAt: next.remembered }));
+                  if (!on) clearErrors("expiresTo"); // its URL is out of play with the date
+                  field.onChange(next.value);
+                }}
+                controls={`${idPrefix}-expires-at ${idPrefix}-expires-to`}
                 title="Expire on a date"
                 description="The link stops working after the date you pick."
               />
@@ -351,6 +395,7 @@ export function LinkFormFields({
                     <Input
                       type="date"
                       id={controlId}
+                      disabled={!expiryOn}
                       aria-invalid={error ? true : undefined}
                       aria-describedby={error ? `${controlId}-hint` : undefined}
                       value={isoToDateInput(field.value)}
@@ -361,17 +406,44 @@ export function LinkFormFields({
                 );
               }}
             />
-            <Field label="Then send visitors to" error={formState.errors.expiresTo?.message}>
-              <Input {...register("expiresTo")} placeholder="acme.com/offers" className="font-mono text-[12.5px]" />
-            </Field>
+            {(() => {
+              const controlId = `${idPrefix}-expires-to`;
+              const error = expiryOn ? formState.errors.expiresTo?.message : undefined;
+              return (
+                <Field label="Then send visitors to" controlId={controlId} error={error}>
+                  <Input
+                    {...register("expiresTo")}
+                    id={controlId}
+                    disabled={!expiryOn}
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? `${controlId}-hint` : undefined}
+                    placeholder={expiryOn ? FALLBACK_URL_PLACEHOLDERS.expiresTo : gateOffPlaceholder("expiresAt")}
+                    className="font-mono text-[12.5px]"
+                    spellCheck={false}
+                  />
+                </Field>
+              );
+            })()}
           </div>
           <Controller
             control={control}
             name="clickLimit"
             render={({ field }) => (
               <Toggle
-                checked={field.value != null}
-                onChange={(v) => field.onChange(v ? 500 : null)}
+                checked={limitOn}
+                onChange={(on) => {
+                  /* Only a real limit is worth remembering; a half-typed "abc" or 0 is not. */
+                  const next = switchGate<number | string>(
+                    on,
+                    field.value,
+                    remembered.clickLimit,
+                    500,
+                    (n) => typeof n === "number" && clickLimitProblem(n) === undefined,
+                  );
+                  setRemembered((r) => ({ ...r, clickLimit: next.remembered }));
+                  field.onChange(next.value);
+                }}
+                controls={`${idPrefix}-click-limit`}
                 title="Expire after a click limit"
                 description="Useful for limited redemptions and private betas."
               />

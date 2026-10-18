@@ -216,8 +216,9 @@ test.describe("Journey 13 — Full link edit and archive", () => {
     await tab(drawer, "Routing");
     await drawer.getByRole("button", { name: "Remove rule 1" }).click();
     await tab(drawer, "Access");
-    await drawer.getByRole("button", { name: /Expire on a date/ }).click(); // off
+    // #759: the URL input is disabled once the expiry is off, so empty it first, then switch the expiry off.
     await drawer.getByPlaceholder("acme.com/offers").fill("");
+    await drawer.getByRole("button", { name: /Expire on a date/ }).click(); // off
     await drawer.getByRole("button", { name: /Remove password/ }).click();
     await tab(drawer, "UTM");
     await drawer.getByLabel("utm_source").fill("");

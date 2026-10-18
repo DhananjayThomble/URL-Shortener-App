@@ -1,5 +1,7 @@
 /* Pure helpers shared by the create/edit link forms (kept free of UI imports so they unit-test cheaply). */
 
+import { dropUngatedUrls } from "../../lib/access-gates";
+
 /**
  * `register("expiresTo")` / `register("scheduledTo")` are plain uncontrolled
  * inputs with no default value, so an untouched field reads back as `""`,
@@ -40,6 +42,25 @@ export function blankOptionalUrlsToUndefined<
     utm: withoutBlanks(values.utm),
     social: withoutBlanks(values.social),
   };
+}
+
+/**
+ * What both drawers hand to the contract schema (and, on edit, to the PATCH): the form's
+ * values with the Access tab's gated URLs dropped when their switch is off (#759 — see
+ * dropUngatedUrls), then with blank optional strings read as "not set".
+ */
+export function normalizeLinkFormValues<
+  T extends {
+    expiresAt?: unknown;
+    activatesAt?: unknown;
+    expiresTo?: unknown;
+    scheduledTo?: unknown;
+    password?: unknown;
+    utm?: unknown;
+    social?: unknown;
+  },
+>(values: T): T {
+  return blankOptionalUrlsToUndefined(dropUngatedUrls(values));
 }
 
 /** The tab ids of the link form (kept here, UI-free, so `tabsWithErrors` unit-tests cheaply). */
