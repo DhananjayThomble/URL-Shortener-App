@@ -6,6 +6,7 @@ import * as React from "react";
 import { Button } from "@/components/ui";
 import { useLinks, useLogout, useMe, useMyWorkspaces, useSwitchWorkspace, useWorkspace } from "@/lib/api/hooks";
 import { importHref } from "@/lib/import";
+import { isEditableTarget, isMacPlatform, isSearchShortcut, searchShortcutFor } from "@/lib/search-shortcut";
 import { cn, compact } from "@/lib/utils";
 
 type Counts = { links?: number; bio?: number; domains?: number; members?: number };
@@ -397,12 +398,56 @@ export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => v
  * aria-activedescendant; results are a role="listbox" of role="option" rows.
  * ArrowUp/Down move the active option, Enter opens it, Escape closes. The
  * dropdown closes on outside-click and on route change.
+ *
+ * Shortcut (issue #791): Cmd+K on Mac, Ctrl+K elsewhere focuses the input (and
+ * selects what is in it). The hint shows the platform's own modifier; it is
+ * decided on the client only (server snapshot = null → no hint rendered until
+ * hydration), so server and client markup always agree. The shortcut stays out of
+ * other text fields and of open modals, and does nothing where the search is not
+ * shown (phones). The pure matching lives in web/src/lib/search-shortcut.ts.
  */
+function useIsMac(): boolean | null {
+  return React.useSyncExternalStore(
+    () => () => {},
+    () => {
+      const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+      return isMacPlatform({
+        userAgentDataPlatform: nav.userAgentData?.platform,
+        platform: nav.platform,
+        userAgent: nav.userAgent,
+      });
+    },
+    () => null,
+  );
+}
+
 function TopbarSearch() {
   const router = useRouter();
   const pathname = usePathname();
   const wrapRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
   const listId = React.useId();
+  const isMac = useIsMac();
+  const shortcut = isMac === null ? null : searchShortcutFor(isMac);
+
+  React.useEffect(() => {
+    if (isMac === null) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isSearchShortcut(event, isMac)) return;
+      const input = inputRef.current;
+      // Not shown (below the sm breakpoint the wrapper is display:none): leave
+      // the key alone rather than swallow it for a control nobody can see.
+      if (!input || input.getClientRects().length === 0) return;
+      // Typing somewhere else, or a modal is open over the page: not ours.
+      if (input !== event.target && isEditableTarget(event.target as HTMLElement | null)) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault(); // Chrome's Ctrl+K would otherwise jump to the address bar.
+      input.focus();
+      input.select();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isMac]);
 
   const [raw, setRaw] = React.useState("");
   const [query, setQuery] = React.useState("");
@@ -491,8 +536,10 @@ function TopbarSearch() {
       <div className="flex-1 flex items-center gap-2 px-[11px] py-[6px] bg-surface-2 border border-line rounded-[var(--radius-sm)] text-[13px] focus-within:border-line-2">
         <span aria-hidden className="text-ink-3">⌕</span>
         <input
+          ref={inputRef}
           type="text"
           role="combobox"
+          aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
           aria-expanded={showDropdown}
           aria-controls={listId}
           aria-autocomplete="list"
@@ -507,9 +554,14 @@ function TopbarSearch() {
           onKeyDown={onKeyDown}
           className="flex-1 min-w-0 bg-transparent outline-none text-ink placeholder:text-ink-3 truncate"
         />
-        <kbd className="ml-auto font-mono text-[10px] px-[5px] py-px border border-line-2 rounded-[4px] text-ink-3 hidden sm:block">
-          ⌘K
-        </kbd>
+        {shortcut ? (
+          <kbd
+            aria-hidden
+            className="ml-auto font-mono text-[10px] px-[5px] py-px border border-line-2 rounded-[4px] text-ink-3 hidden sm:block whitespace-nowrap"
+          >
+            {shortcut.hint}
+          </kbd>
+        ) : null}
       </div>
 
       {showDropdown ? (
