@@ -8,6 +8,7 @@ import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Seg
 import { useUpdateWorkspace, useMe, useWorkspace } from "@/lib/api/hooks";
 import { importHref } from "@/lib/import";
 import { canChangeWorkspaceCurrency, currencyOptions } from "@/lib/money";
+import { FOREVER_YEARS } from "@/lib/retention";
 import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn, compact } from "@/lib/utils";
 import { TwoFactorCard } from "./two-factor-card";
@@ -15,7 +16,6 @@ import { TwoFactorCard } from "./two-factor-card";
 /* Retention is offered as three choices but stored as a number of years, so
    "Forever" has to land on something. 100 is the contract's maximum and is
    past the lifetime of any link anyone is planning for. */
-const FOREVER_YEARS = 100;
 const retentionValue = (years: number) => (years >= FOREVER_YEARS ? "forever" : String(years));
 
 type Draft = Pick<
