@@ -994,7 +994,7 @@ export async function fixtureRequest<T>(
     if (folder) items = items.filter((l) => l.folder === folder);
     if (search) {
       items = items.filter((l) =>
-        [l.slug, l.destination, l.title ?? "", l.comment ?? ""].some((f) => f.toLowerCase().includes(search)),
+        [l.slug, l.destination, l.title ?? "", l.comment ?? "", ...l.tags].some((f) => f.toLowerCase().includes(search)),
       );
     }
     // One page, so nextCursor is always null — enough to exercise the field

@@ -20,6 +20,7 @@ import { ProjectionNudgeService } from "./projection-nudge.service.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
+import { escapeLike } from "../common/sql-like.js";
 import { assertNoSsrfDnsTarget, resolvesToDeniedAddress } from "../common/ssrf-guard.js";
 import {
   SPARKLINE_DAYS,
@@ -113,8 +114,22 @@ export class LinksService {
     }
 
     if (query.search) {
-      const needle = `%${query.search}%`;
-      filters.push(sql`(${links.slug} ilike ${needle} or ${links.destination} ilike ${needle} or ${links.title} ilike ${needle})`);
+      /* #756 — the top-bar placeholder promises "tags", so a tag is searchable
+         like slug/destination/title. `exists (… unnest …)` rather than a join
+         keeps one row per link however many of its tags match, so `total` and
+         the keyset cursor are unaffected.
+
+         The term is escaped (and each ilike says `escape '\'`) so a typed `%`
+         or `_` matches itself instead of acting as a wildcard — otherwise
+         searching "_" returned every link, and "my_slug" also matched
+         "myXslug". */
+      const needle = `%${escapeLike(query.search)}%`;
+      filters.push(
+        sql`(${links.slug} ilike ${needle} escape '\\'
+          or ${links.destination} ilike ${needle} escape '\\'
+          or ${links.title} ilike ${needle} escape '\\'
+          or exists (select 1 from unnest(${links.tags}) as search_tag(tag) where search_tag.tag ilike ${needle} escape '\\'))`,
+      );
     }
     if (query.tag) filters.push(sql`${query.tag} = any(${links.tags})`);
     if (query.folder) filters.push(eq(links.folder, query.folder));
