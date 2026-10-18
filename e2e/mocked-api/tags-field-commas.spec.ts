@@ -149,7 +149,7 @@ for (const vp of viewports) {
       expect((api.callsTo("POST", "/links")[0].body as { tags: string[] }).tags).toEqual(["spring sale", "campaign/q3"]);
     });
 
-    test("create: stray separators, repeats and blanks are cleaned up in what is saved", async ({ page }) => {
+    test("create: stray separators and blanks are cleaned up in what is saved (repeats are kept)", async ({ page }) => {
       const api = await installApi(page);
       const drawer = await openCreate(page);
       await drawer.getByLabel("Destination URL").fill("https://example.com/landing");
@@ -160,10 +160,10 @@ for (const vp of viewports) {
       await tags.pressSequentially(" , a,, b ,a, 🚀 launch,  ,");
       // Leaving the field tidies what was typed into the list that will be saved.
       await drawer.getByLabel("Destination URL").click();
-      await expect(tags).toHaveValue("a, b, 🚀 launch");
+      await expect(tags).toHaveValue("a, b, a, 🚀 launch");
       await drawer.getByRole("button", { name: "Create link" }).click();
       await expect(drawer).toBeHidden();
-      expect((api.callsTo("POST", "/links")[0].body as { tags: string[] }).tags).toEqual(["a", "b", "🚀 launch"]);
+      expect((api.callsTo("POST", "/links")[0].body as { tags: string[] }).tags).toEqual(["a", "b", "a", "🚀 launch"]);
     });
 
     test("create: leaving the field empty sends no tags", async ({ page }) => {

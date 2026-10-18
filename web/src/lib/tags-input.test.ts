@@ -9,9 +9,9 @@ import { formatTags, parseTags, reconcileTagsText } from "./tags-input";
    Tag semantics come from what already consumes tags: the links filter is an
    exact `= any(tags)` match and the Analytics → Tags breakdown groups with
    `group by tag` (both case-sensitive), and the list page builds its tag
-   options with `new Set(...)`. So "Spring" and "spring" are two tags;
-   only an exact repeat is a duplicate (and must be dropped: the breakdown
-   unnests the array, so a repeated tag would count a link's clicks twice).
+   options with `new Set(...)`. So "Spring" and "spring" are two tags. The
+   helper only splits, trims and drops empty entries: it neither collapses
+   inner whitespace nor removes repeats (out of scope for #752).
    packages/contract defines `tags` as `z.array(z.string())` with no length or
    count limit, so the helper adds none of its own. */
 
@@ -27,9 +27,10 @@ describe("parseTags", () => {
     expect(parseTags("spring sale, summer sale")).toEqual(["spring sale", "summer sale"]);
   });
 
-  it("collapses a run of whitespace inside a tag to one space", () => {
-    expect(parseTags("spring   sale")).toEqual(["spring sale"]);
-    expect(parseTags("spring\t sale")).toEqual(["spring sale"]);
+  it("keeps inner whitespace inside a tag exactly as typed (no collapsing)", () => {
+    expect(parseTags("spring   sale")).toEqual(["spring   sale"]);
+    expect(parseTags("spring\t sale")).toEqual(["spring\t sale"]);
+    expect(parseTags("  spring   sale , b")).toEqual(["spring   sale", "b"]);
   });
 
   it("is empty for empty and whitespace-only input", () => {
@@ -47,11 +48,10 @@ describe("parseTags", () => {
     expect(parseTags(" , , ")).toEqual([]);
   });
 
-  it("drops an exact duplicate and keeps the first occurrence's position", () => {
-    expect(parseTags("a, b, a")).toEqual(["a", "b"]);
-    expect(parseTags("a,a,a")).toEqual(["a"]);
-    // equal after trimming / whitespace collapsing
-    expect(parseTags("a b, a   b")).toEqual(["a b"]);
+  it("does not de-duplicate: repeated tags are kept as typed", () => {
+    expect(parseTags("a, b, a")).toEqual(["a", "b", "a"]);
+    expect(parseTags("a,a,a")).toEqual(["a", "a", "a"]);
+    expect(parseTags("a b, a   b")).toEqual(["a b", "a   b"]);
   });
 
   it("treats tags that differ only by case as different tags (filter and analytics are case-sensitive)", () => {

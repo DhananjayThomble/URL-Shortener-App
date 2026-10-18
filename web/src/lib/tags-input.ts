@@ -10,28 +10,22 @@
    `parseTags(text)` as the form value. `reconcileTagsText` is the one place
    that decides whether the raw text still describes the form value.
 
-   Tag semantics are the ones the rest of the system already has, not new
-   rules: the links filter (`= any(tags)`), the Analytics -> Tags breakdown
-   (`group by tag`) and the list page's tag options (`new Set`) all compare
-   tags exactly, so tags that differ only by case are different tags. An exact
-   repeat is dropped — the breakdown unnests the array, so a repeat would count
-   that link's clicks twice. packages/contract has no length or count limit on
-   `tags` (`z.array(z.string())`), so none is imposed here. */
+   Scope is deliberately minimal: split on separators, trim each entry, drop
+   empty entries. Nothing else about a tag is rewritten — tag values are
+   compared exactly (case-sensitive) by the rest of the system, inner
+   whitespace is kept as typed, and repeats are not removed.
+   packages/contract has no length or count limit on `tags`
+   (`z.array(z.string())`), so none is imposed here. */
 
 /** Separators: a comma, or a line break (pasting a list one-per-line). */
 const SEPARATOR = /[,\r\n]/;
 
 /** Text typed into the field -> the tags it describes. */
 export function parseTags(text: string): string[] {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const part of text.split(SEPARATOR)) {
-    const tag = part.replace(/\s+/g, " ").trim();
-    if (tag === "" || seen.has(tag)) continue;
-    seen.add(tag);
-    tags.push(tag);
-  }
-  return tags;
+  return text
+    .split(SEPARATOR)
+    .map((part) => part.trim())
+    .filter((tag) => tag !== "");
 }
 
 /** Tags -> the text to show for them. */
