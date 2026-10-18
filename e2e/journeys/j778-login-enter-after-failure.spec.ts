@@ -5,9 +5,11 @@
  * Enter appeared to send no request, while clicking "Sign in" worked.
  *
  * This journey counts the REAL network requests the browser makes:
- *   password step: wrong password by click, wrong again by Enter in the
- *                  password field, then the right one by Enter in the EMAIL field;
- *   2FA step:      wrong code by click, wrong again by Enter, right one by Enter.
+ *   password step: wrong password by click, wrong again by Enter with NO click or
+ *                  refocus in between (the reported symptom), then the right one
+ *                  by Enter in the EMAIL field;
+ *   2FA step:      wrong code by click, wrong again by Enter with no click in
+ *                  between, a third by Enter in the field, then the right one.
  * Every Enter must produce exactly one more request, and the right credentials
  * must sign in.
  *
@@ -19,7 +21,7 @@
  *   - the URL after the final Enter.
  *
  * Throttles (5/min per IP on /auth/login AND /auth/2fa/verify): each project does
- * 4 logins and 3 verifies; the mobile project starts after a pause so the two
+ * 4 logins and 4 verifies; the mobile project starts after a pause so the two
  * never share a window. Requires the staging stack + web on :3000.
  */
 
@@ -85,11 +87,12 @@ test.describe("Journey 778 — Enter after a failed login", () => {
     await expect(signIn).toBeEnabled();
     await page.screenshot({ path: info.outputPath(`after-failed-click-${info.project.name}.png`) });
 
-    /* ---- 2. Edit the password, press Enter in the password field ---- */
-    await password.fill(`${RUN_PASSWORD}-typo2`);
-    await password.press("Enter");
+    /* ---- 2. Enter, with NO click in between — the reported symptom ---- */
+    await page.keyboard.press("Enter");
     await expect.poll(() => statuses(sent), { timeout: 15_000 }).toEqual([401, 401]);
     await expect(error).toBeVisible();
+    // Focus is back in the field to fix, not lost on <body>.
+    await expect(password).toBeFocused();
 
     /* ---- 3. Fix it, press Enter in the EMAIL field (implicit submission from another field) ---- */
     await password.fill(RUN_PASSWORD);
@@ -130,18 +133,23 @@ test.describe("Journey 778 — Enter after a failed login", () => {
     await expect(page.getByText(/isn't right/i)).toBeVisible();
     await page.screenshot({ path: info.outputPath(`2fa-after-failed-click-${info.project.name}.png`) });
 
-    /* ---- 2. Edit the code, Enter ---- */
-    await code.fill(wrong2);
-    await code.press("Enter");
+    /* ---- 2. Enter with NO click in between — the reported symptom ---- */
+    await page.keyboard.press("Enter");
     await expect.poll(() => statuses(verifies), { timeout: 15_000 }).toEqual([401, 401]);
     await expect(page.getByText(/isn't right/i)).toBeVisible();
+    await expect(code).toBeFocused();
 
-    /* ---- 3. Right code, Enter ---- */
+    /* ---- 3. Edit the code, Enter ---- */
+    await code.fill(wrong2);
+    await code.press("Enter");
+    await expect.poll(() => statuses(verifies), { timeout: 15_000 }).toEqual([401, 401, 401]);
+
+    /* ---- 4. Right code, Enter ---- */
     await code.fill(totpCode(secret));
     await code.press("Enter");
-    await expect.poll(() => statuses(verifies), { timeout: 15_000 }).toEqual([401, 401, 200]);
+    await expect.poll(() => statuses(verifies), { timeout: 15_000 }).toEqual([401, 401, 401, 200]);
     await expect(page).toHaveURL(`${baseURL}/links`, { timeout: 20_000 });
-    expect(verifies).toHaveLength(3);
+    expect(verifies).toHaveLength(4);
     expect(logins).toHaveLength(1);
     await page.screenshot({ path: info.outputPath(`2fa-signed-in-${info.project.name}.png`) });
   });
