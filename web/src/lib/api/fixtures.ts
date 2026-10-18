@@ -15,6 +15,7 @@ import type {
   Link,
   Member,
   MemberRole,
+  PublicLinkLock,
   PublicLinkPreview,
   RecordConversionInput,
   SubmitReportResult,
@@ -668,6 +669,7 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/unlock$/ },
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/report$/ },
   { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/preview$/ },
+  { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/lock$/ },
 ];
 
 
@@ -769,12 +771,30 @@ export async function fixtureRequest<T>(
   }
   /* ---- workspace ---- */
   else if (m(/^\/workspaces\/current$/) && method === "PATCH") {
-    Object.assign(WORKSPACE, opts.body as UpdateWorkspaceInput);
+    const body = { ...(opts.body as UpdateWorkspaceInput) };
+    /* Mirrors the API (#779): a default domain must be a live domain of the
+       workspace. A refusal rejects the whole PATCH, nothing is applied. The
+       value is compared trimmed, case-insensitively, ignoring a trailing dot;
+       re-sending the current default is always accepted. */
+    if (body.defaultDomain !== undefined) {
+      const norm = (v: string) => v.trim().toLowerCase().replace(/\.+$/, "");
+      const wanted = norm(body.defaultDomain);
+      if (wanted === norm(WORKSPACE.defaultDomain)) {
+        delete body.defaultDomain;
+      } else {
+        if (!wanted) throw new Error("Choose a default domain.");
+        const hit = domainStore.find((d) => norm(d.domain) === wanted);
+        if (!hit) throw new Error(`${body.defaultDomain.trim()} isn't a domain in this workspace.`);
+        if (hit.status !== "live") throw new Error(`${hit.domain} isn't verified yet, so links on it wouldn't resolve.`);
+        body.defaultDomain = hit.domain;
+      }
+    }
+    Object.assign(WORKSPACE, body);
     data = WORKSPACE;
   } else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
   /* ---- links ---- */
   else if (m(/^\/links$/) && method === "POST") {
-    const body = opts.body as { destination: string; domain: string; slug?: string };
+    const body = opts.body as { destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] };
     // Mirrors the server's 409 on a back-half already in use under the same
     // domain — needed so issue #640 (stale server error surviving a form
     // edit) is reproducible against fixtures, same as the bulk-create path
@@ -791,6 +811,8 @@ export async function fixtureRequest<T>(
       slug: body.slug || Math.random().toString(36).slice(2, 9),
       domain: body.domain,
       destination: body.destination,
+      // Mirrors LinksService: an omitted type gets the workspace default (#753).
+      redirectType: body.redirectType ?? WORKSPACE.defaultRedirect,
       title: null,
       comment: null,
       tags: [],
@@ -873,7 +895,9 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/forms$/)) {
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
-    const body = opts.body as { links: Array<{ destination: string; domain: string; slug?: string }> };
+    const body = opts.body as {
+      links: Array<{ destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] }>;
+    };
     /* Mirrors the server: every row's outcome is independent. A genuine
        validation problem (bad URL, or two rows in this batch wanting the
        same new back-half) fails only that row, without blocking any other
@@ -919,6 +943,8 @@ export async function fixtureRequest<T>(
         slug: row.slug || Math.random().toString(36).slice(2, 9),
         domain: row.domain,
         destination: row.destination,
+        // Mirrors LinksService.bulkCreate: omitted -> workspace default (#753).
+        redirectType: row.redirectType ?? WORKSPACE.defaultRedirect,
         title: null,
         comment: null,
         tags: [],
@@ -1249,6 +1275,10 @@ export async function fixtureRequest<T>(
     data = { ok: true } satisfies SubmitReportResult;
   } else if (m(/^\/public\/links\/([^/]+)\/preview$/)) {
     data = previewFor(m(/^\/public\/links\/([^/]+)\/preview$/)![1]);
+  } else if (m(/^\/public\/links\/([^/]+)\/lock$/)) {
+    // Mirrors PublicService.lock (#762): the short URL and the flag, never the destination.
+    const preview = previewFor(m(/^\/public\/links\/([^/]+)\/lock$/)![1]);
+    data = { shortUrl: preview.shortUrl, passwordProtected: preview.passwordProtected } satisfies PublicLinkLock;
   } else throw new Error(`No fixture for ${method} ${path}. Add one in src/lib/api/fixtures.ts.`);
 
   return schema.parse(data);

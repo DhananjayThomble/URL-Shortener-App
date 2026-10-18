@@ -62,6 +62,11 @@ describe("toApiError — credential checks added for #646", () => {
     expect(e.message).toBe("That password isn't right.");
   });
 
+  it("link unlock with a ?host= query (#800): still the server message, not session text", async () => {
+    const e = await err("/public/links/spring-sale/unlock?host=snap.to", "That password isn't right.");
+    expect(e.message).toBe("That password isn't right.");
+  });
+
   it("2FA sign-in verify: shows the server message", async () => {
     const e = await err("/auth/2fa/verify", "That sign-in attempt timed out. Start again.");
     expect(e.message).toBe("That sign-in attempt timed out. Start again.");

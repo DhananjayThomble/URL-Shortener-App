@@ -88,9 +88,19 @@ describe("prepareRows policy", () => {
   it("applies the chosen domain and safe CreateLinkInput defaults", () => {
     const [p] = prepareRows([base], "snapurl.in");
     expect(p!.input.domain).toBe("snapurl.in");
-    expect(p!.input.redirectType).toBe("302");
     expect(p!.input.forwardQuery).toBe(true);
     expect(p!.input.tags).toEqual([]);
+  });
+
+  it("omits redirectType so an imported link gets the workspace Default redirect type (#753)", () => {
+    // Was `redirectType: "302"`, which made Import ignore the workspace
+    // setting the same way the drawer and bulk create did (BUG-004 variant):
+    // a hardcoded 302 reached /links/bulk and the server stored it verbatim.
+    // Now the field is absent, so LinksService.bulkCreate falls back to the
+    // workspace's defaultRedirect, and an explicit type (none here) still wins.
+    const [p] = prepareRows([base], "snapurl.in");
+    expect(p!.input.redirectType).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(p!.input, "redirectType")).toBe(false);
   });
 
   it("keeps a valid back-half but drops one the contract rejects", () => {
