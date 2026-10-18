@@ -31,7 +31,13 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   use: { baseURL: BASE_URL, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    /* The public trust page is opened from a shared link, so mostly on a phone.
+       Only its specs run on the mobile project, to keep the lane short. Chromium
+       only: CI installs no WebKit for this lane, so iPhone runs stay local. */
+    { name: "pixel-7", use: { ...devices["Pixel 7"] }, testMatch: /trust-page-.*\.spec\.ts/ },
+  ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
     url: BASE_URL,

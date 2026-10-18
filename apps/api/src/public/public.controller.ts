@@ -26,6 +26,15 @@ export class PublicController {
     return this.publicService.preview(slug, host);
   }
 
+  /* #762 — the unlock form's own lookup, so it works with public previews
+     off. A plain indexed read like preview, so the global budget applies; the
+     password check it leads to is throttled on unlock below. */
+  @Public()
+  @Get("links/:slug/lock")
+  lock(@Param("slug") slug: string, @Query("host") host?: string) {
+    return this.publicService.lock(slug, host);
+  }
+
   /* 5/min per client IP, far tighter than the global 120/min. unlock verifies
      the link password with argon2id (19 MiB) on every call, so an unthrottled
      path is a free CPU-burn and a password-guessing oracle. Keyed on the
