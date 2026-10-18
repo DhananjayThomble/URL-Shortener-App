@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BioPageCard } from "@/components/bio/bio-page-card";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Chip, EmptyState, ErrorState, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useBioPages, useDeleteBioPage, useDomains, useUpsertBioPage, useWorkspace } from "@/lib/api/hooks";
 import { bioInputErrors } from "@/lib/bio-page";
 import { defaultDomainFor, domainOptionLabel } from "@/lib/domain-choice";
@@ -144,7 +144,7 @@ function move(blocks: DraftBlock[], from: number, to: number): DraftBlock[] {
 }
 
 export default function BioPagesPage() {
-  const { data, isLoading } = useBioPages();
+  const { data, isLoading, isError, error, refetch } = useBioPages();
   const { data: domains } = useDomains();
   const { data: workspace } = useWorkspace();
   const upsert = useUpsertBioPage();
@@ -319,6 +319,9 @@ export default function BioPagesPage() {
 
   const movableFrom = editing ? firstMovable(editing.blocks) : 0;
   const previewBlocks = editing?.blocks.filter((b) => b.kind !== "header") ?? [];
+  /* With no page there is nothing to preview, and a skeleton that never fills in is
+     worse than none (#789). Show the column while loading, or once a page exists. */
+  const showPreview = isLoading || Boolean(page);
 
   return (
     <>
@@ -362,6 +365,7 @@ export default function BioPagesPage() {
               <Field label="Back-half">
                 <Input
                   value={newPage.slug}
+                  autoFocus
                   placeholder="yourname"
                   className="font-mono text-[12.5px]"
                   onChange={(e) => { setNewPage((d) => ({ ...d, slug: e.target.value })); setProblem(null); }}
@@ -398,7 +402,7 @@ export default function BioPagesPage() {
         </Card>
       ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
+      <div className={showPreview ? "grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start" : "grid grid-cols-1 gap-4"}>
         <div className="flex flex-col gap-3.5">
           <Card>
             <CardHeader title="Your pages" right={<Chip>{pages.length} of unlimited</Chip>} />
@@ -406,6 +410,19 @@ export default function BioPagesPage() {
               <CardBody>
                 <Skeleton className="h-[160px]" />
               </CardBody>
+            ) : isError ? (
+              <ErrorState message={(error as Error).message} onRetry={() => refetch()} />
+            ) : pages.length === 0 ? (
+              <EmptyState
+                icon="◐"
+                title="Create your first bio page"
+                body="A bio page is one link that holds all the others. Start from a template, add your links, and publish it on your domain."
+                action={
+                  <Button variant="primary" onClick={() => { setCreating(true); setProblem(null); }}>
+                    Create your first page
+                  </Button>
+                }
+              />
             ) : (
               <TableWrap label="Your pages">
                 <Table>
@@ -692,6 +709,7 @@ export default function BioPagesPage() {
           ) : null}
         </div>
 
+        {showPreview ? (
         <Card className="lg:sticky lg:top-[120px]">
           <CardHeader title="Live preview" />
           <CardBody className="grid place-items-center bg-surface-2" data-testid="bio-preview">
@@ -724,6 +742,7 @@ export default function BioPagesPage() {
             )}
           </CardBody>
         </Card>
+        ) : null}
       </div>
     </>
   );
