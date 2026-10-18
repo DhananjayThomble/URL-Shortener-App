@@ -7,6 +7,7 @@ import {
   type FormFieldType,
   type FormStatus,
 } from "@snapurl/contract";
+import { plural } from "../../lib/plural";
 
 /* ============================================================
    Editor state for the forms create/edit drawer (#649), and the
@@ -88,7 +89,7 @@ export function overlongOptionMessage(options: string): string | null {
     .map((o) => o.trim())
     .filter(Boolean);
   const at = list.findIndex((o) => o.length > FORM_LIMITS.option);
-  return at === -1 ? null : `Option ${at + 1} must be ${FORM_LIMITS.option} characters or fewer`;
+  return at === -1 ? null : `Option ${at + 1} must be ${plural(FORM_LIMITS.option, "character")} or fewer`;
 }
 
 let seq = 0;

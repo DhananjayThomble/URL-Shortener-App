@@ -9,6 +9,7 @@ import { z } from "zod";
 import { AuthShell, SessionCheck } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
+import { plural } from "@/lib/plural";
 import { useRedirectIfSignedIn, useRegister } from "@/lib/api/hooks";
 import { signedInTarget, withNext } from "@/lib/safe-next";
 
@@ -22,7 +23,7 @@ const Schema = z.object({
   name: z
     .string()
     .min(2, "What should we call you?")
-    .max(NAME_MAX, `Name must be ${NAME_MAX} characters or fewer`),
+    .max(NAME_MAX, `Name must be ${plural(NAME_MAX, "character")} or fewer`),
   email: z.string().min(1, "Enter your email address").email("That doesn't look like an email address"),
   // Must match RegisterInput in @snapurl/contract. When this said 8, an
   // 8-character password passed client validation and then failed with a 400
@@ -31,7 +32,7 @@ const Schema = z.object({
   password: z
     .string()
     .min(12, "Use at least 12 characters — length beats complexity")
-    .max(PASSWORD_MAX, `Password must be ${PASSWORD_MAX} characters or fewer`),
+    .max(PASSWORD_MAX, `Password must be ${plural(PASSWORD_MAX, "character")} or fewer`),
 });
 type Values = z.infer<typeof Schema>;
 
