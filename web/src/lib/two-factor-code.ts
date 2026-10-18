@@ -24,28 +24,35 @@ const CODE_MAX = 40;
 // Whitespace (incl. NBSP) and every dash a keyboard, PDF or autocorrect substitutes.
 const SEPARATORS = /[\s\-\u2010-\u2015\u2212]+/g;
 
+// TotpService.verify strips /\s+/ and nothing else.
+const TOTP_WHITESPACE = /\s+/g;
+
 // Any ten ASCII letters/digits: a look-alike (O for 0) still reaches the server,
 // which gives the real answer, instead of a Verify button that silently stays off.
 const RECOVERY_SHAPE = /^[0-9A-Z]{10}$/;
 
 /** The exact string to send as `code`. */
 export function normaliseCode(mode: CodeMode, raw: string): string {
+  // TOTP: exactly what TotpService.verify does (whitespace only), so the client
+  // never turns a string the server would refuse into one it accepts.
+  if (mode === "totp") return raw.replace(TOTP_WHITESPACE, "");
   const bare = raw.replace(SEPARATORS, "");
-  if (mode === "totp") return bare;
   const upper = bare.toUpperCase();
   return upper.length === 10 ? `${upper.slice(0, 5)}-${upper.slice(5)}` : upper;
 }
 
 /** Whether Verify is enabled. */
 export function canSubmitCode(mode: CodeMode, raw: string): boolean {
-  const bare = raw.replace(SEPARATORS, "");
-  if (mode === "totp") return /^\d{6}$/.test(bare);
-  return RECOVERY_SHAPE.test(bare.toUpperCase());
+  if (mode === "totp") return /^\d{6}$/.test(raw.replace(TOTP_WHITESPACE, ""));
+  return RECOVERY_SHAPE.test(raw.replace(SEPARATORS, "").toUpperCase());
 }
 
 /** Applied on every keystroke/paste, so the field shows what will be sent. */
 export function sanitiseTyping(mode: CodeMode, raw: string): string {
-  if (mode === "totp") return raw.replace(/\D+/g, "").slice(0, 6);
+  // TOTP: drop whitespace only (as the server does) and keep every other
+  // character visible, so a stray letter or dash disables Verify instead of
+  // being silently removed. No truncation: a 7-digit paste is not a code.
+  if (mode === "totp") return raw.replace(TOTP_WHITESPACE, "").slice(0, CODE_MAX);
   return raw.toUpperCase().slice(0, CODE_MAX);
 }
 

@@ -27,10 +27,12 @@ describe("normaliseCode — totp", () => {
   it("keeps a plain six-digit code", () => {
     expect(normaliseCode("totp", "123456")).toBe("123456");
   });
-  it("strips the spaces and dashes authenticator apps display", () => {
+  it("strips whitespace only, exactly as TotpService.verify does", () => {
     expect(normaliseCode("totp", " 123 456 ")).toBe("123456");
-    expect(normaliseCode("totp", "123-456")).toBe("123456");
     expect(normaliseCode("totp", "123\u00a0456")).toBe("123456");
+    // Never widened: anything else is sent as typed so the server refuses it.
+    expect(normaliseCode("totp", "123-456")).toBe("123-456");
+    expect(normaliseCode("totp", "12a3456")).toBe("12a3456");
   });
   it("is empty for empty / whitespace-only input", () => {
     expect(normaliseCode("totp", "")).toBe("");
@@ -121,11 +123,17 @@ describe("canSubmitCode", () => {
 });
 
 describe("sanitiseTyping", () => {
-  it("totp: keeps digits only, at most six (a pasted '123 456' lands as 123456)", () => {
+  it("totp: drops whitespace only and never truncates or removes other characters", () => {
     expect(sanitiseTyping("totp", "123 456")).toBe("123456");
-    expect(sanitiseTyping("totp", "12a3")).toBe("123");
-    expect(sanitiseTyping("totp", "1234567890")).toBe("123456");
+    expect(sanitiseTyping("totp", "12a3")).toBe("12a3");
+    expect(sanitiseTyping("totp", "1234567890")).toBe("1234567890");
     expect(sanitiseTyping("totp", "")).toBe("");
+  });
+  it("totp: a string the server would refuse cannot be submitted", () => {
+    expect(canSubmitCode("totp", sanitiseTyping("totp", "12a3456"))).toBe(false);
+    expect(canSubmitCode("totp", sanitiseTyping("totp", "123-456"))).toBe(false);
+    expect(canSubmitCode("totp", sanitiseTyping("totp", "1234567"))).toBe(false);
+    expect(canSubmitCode("totp", sanitiseTyping("totp", "123 456"))).toBe(true);
   });
   it("recovery: uppercases but keeps the user's separators, capped at the contract max", () => {
     expect(sanitiseTyping("recovery", "abcde fghjk")).toBe("ABCDE FGHJK");
