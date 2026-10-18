@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { devices, expect, test, type Locator, type Page } from "@playwright/test";
 import { MOCK_USER, MOCK_WORKSPACE, mockApi, nestError, seedMockSession, type MockReply } from "../support/mock-api";
 
@@ -281,3 +282,23 @@ test.describe("Team > Change role (#781) — double submit", () => {
     expect(api.callsTo("PATCH", "/members/mem_arjun")).toHaveLength(1);
   });
 });
+
+for (const mode of ["light", "dark"] as const) {
+  test(`Team > Change role (#781) — the status and error lines meet colour contrast (${mode})`, async ({ page }) => {
+    await page.addInitScript((m) => {
+      window.localStorage.setItem("snapurl.appearance", JSON.stringify({ accent: "Cobalt", mode: m, density: "1", radius: "9px", reduceMotion: false }));
+    }, mode);
+    const { row } = await openTeam(page, { patchReply: (_id, role) => (role === "viewer" ? nestError(400, "This is the only owner. Make someone else an owner first.", "Bad Request") : null) });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", mode);
+    await row.getByRole("button", { name: "Change role" }).click();
+    await roleGroup(row).getByRole("button", { name: "Admin" }).click();
+    await expect(statusLine(page)).toContainText("Admin");
+    const scan = async () =>
+      (await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze()).violations;
+    expect(await scan(), "success line").toEqual([]);
+
+    await roleGroup(row).getByRole("button", { name: "Viewer" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "only owner" })).toBeVisible();
+    expect(await scan(), "error line").toEqual([]);
+  });
+}
