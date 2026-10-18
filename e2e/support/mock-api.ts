@@ -14,7 +14,7 @@ const REFRESH_KEY = "snapurl.refreshToken";
 export const API_PREFIX = "/api/v1";
 
 export type MockReply = { status: number; body?: unknown };
-export type MockRequest = { method: string; path: string; body: unknown; query: URLSearchParams };
+export type MockRequest = { method: string; path: string; body: unknown; query?: Record<string, string> };
 export type MockHandler = (req: MockRequest, nth: number) => MockReply;
 
 export type MockApi = {
@@ -88,8 +88,7 @@ export async function mockApi(page: Page, handlers: Record<string, MockReply | M
 
   await page.route(`**${API_PREFIX}/**`, async (route: Route) => {
     const req = route.request();
-    const url = new URL(req.url());
-    const path = url.pathname.slice(API_PREFIX.length);
+    const path = new URL(req.url()).pathname.slice(API_PREFIX.length);
     const method = req.method();
     let body: unknown = undefined;
     try {
@@ -97,7 +96,7 @@ export async function mockApi(page: Page, handlers: Record<string, MockReply | M
     } catch {
       /* no body, or not JSON */
     }
-    const rec: MockRequest = { method, path, body, query: url.searchParams };
+    const rec: MockRequest = { method, path, body, query: Object.fromEntries(new URL(req.url()).searchParams) };
     calls.push(rec);
 
     const key = `${method} ${path}`;

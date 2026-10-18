@@ -6,6 +6,7 @@ import { Sparkline } from "@/components/charts";
 import { Chip } from "@/components/ui";
 import { useCloneLink, useUpdateLink } from "@/lib/api/hooks";
 import type { Link, LinkStatus } from "@/lib/api/types";
+import { lifecycleSummary } from "@/lib/link-lifecycle";
 import { cn, compact, copy, faviconFor, formatDate, relativeDate, shortUrlHref } from "@/lib/utils";
 
 const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; label: (l: Link) => string }> = {
@@ -39,16 +40,9 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
 
   const meta = [
     `${link.redirectType} ${link.redirectType === "301" ? "permanent" : "temporary"}`,
-    /* A link that has not started yet is described by when it starts. Leading
-       with "Never expires" on something that does not work yet reads as though
-       it does. */
-    link.status === "scheduled" && link.activatesAt
-      ? `Goes live ${formatDate(link.activatesAt)}`
-      : link.expiresAt
-        ? `Expires ${formatDate(link.expiresAt)}`
-        : link.clickLimit
-          ? `Expires after ${compact(link.clickLimit)} clicks`
-          : "Never expires",
+    /* From the schedule fields, not `link.status`: an archived link's status is
+       just "archived", which used to hide its schedule (#760). */
+    lifecycleSummary(link),
     link.passwordProtected ? "Password protected" : null,
     link.deepLink ? "Deep linking on" : null,
     link.hideReferrer ? "Referrer hidden" : null,

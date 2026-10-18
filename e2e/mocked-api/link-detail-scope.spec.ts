@@ -109,7 +109,7 @@ for (const [name, use] of [
     test("headline totals, delta and breakdowns all describe the selected range; all-time is labelled", async ({ page }) => {
       const api = await mockApi(page, {
         ...common,
-        "GET /analytics": (req) => ({ status: 200, body: analyticsFor(req.query.get("range")) }),
+        "GET /analytics": (req) => ({ status: 200, body: analyticsFor(req.query?.range ?? null) }),
       });
       await page.goto(`/links/${LINK_ID}`);
 
@@ -135,7 +135,7 @@ for (const [name, use] of [
       // the review's blocking finding was that it did not.
       await expect(tile(page, "Conversions")).toContainText("30d");
 
-      expect(api.callsTo("GET", "/analytics").at(-1)!.query.get("linkId")).toBe(LINK_ID);
+      expect(api.callsTo("GET", "/analytics").at(-1)!.query?.linkId).toBe(LINK_ID);
 
       // Each other window re-scopes the whole page together.
       for (const [range, clickValue, uniqueValue, deltaText] of [
