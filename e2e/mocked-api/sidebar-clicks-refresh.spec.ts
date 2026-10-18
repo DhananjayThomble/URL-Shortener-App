@@ -46,6 +46,15 @@ async function clicksShown(page: Page): Promise<string | null> {
 
 const settled = (page: Page) => page.waitForLoadState("networkidle");
 
+/** What the browser does when the tab becomes visible again: a bubbling visibilitychange. */
+const refocus = (page: Page) =>
+  page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+
+/* On mobile, reading the count opens the drawer, and mounting a second reader would
+   itself refetch a stale value. So every refresh test first waits for the request
+   COUNT to move — proving the sidebar's own query fetched — and only then reads. */
+const requests = (api: MockApi) => () => api.callsTo("GET", PATH).length;
+
 for (const [name, use] of [
   ["desktop", { viewport: { width: 1440, height: 900 } }],
   // defaultBrowserType forces a new worker and cannot be set inside a describe.
@@ -62,13 +71,15 @@ for (const [name, use] of [
       await settled(page);
       expect(await clicksShown(page)).toBe("0");
 
+      const first = api.callsTo("GET", PATH).length;
       state.clicks = 1; // a rollup landed server-side
       await page.clock.runFor(INTERVAL_MS + 1_000);
+      await expect.poll(requests(api)).toBe(first + 1);
       await expect.poll(() => clicksShown(page)).toBe("1");
-      expect(api.callsTo("GET", PATH).length).toBeGreaterThanOrEqual(2);
 
       state.clicks = 2;
       await page.clock.runFor(INTERVAL_MS + 1_000);
+      await expect.poll(requests(api)).toBe(first + 2);
       await expect.poll(() => clicksShown(page)).toBe("2");
     });
 
@@ -84,7 +95,8 @@ for (const [name, use] of [
       state.clicks = 3;
       // Past staleTime but short of the interval, so only a focus can have fetched.
       await page.clock.runFor(STALE_MS + 5_000);
-      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await refocus(page);
+      await expect.poll(requests(api)).toBe(before + 1);
       await expect.poll(() => clicksShown(page)).toBe("3");
       expect(api.callsTo("GET", PATH).length).toBe(before + 1);
     });
@@ -97,18 +109,19 @@ for (const [name, use] of [
       await settled(page);
       const before = api.callsTo("GET", PATH).length;
 
-      for (let i = 0; i < 5; i++) {
-        await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-      }
+      for (let i = 0; i < 5; i++) await refocus(page);
       await page.clock.runFor(STALE_MS - 5_000);
-      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await refocus(page);
       await settled(page);
       expect(api.callsTo("GET", PATH).length).toBe(before);
 
-      // A minute of idle time is one request, not a stream.
-      await page.clock.runFor(INTERVAL_MS * 3 + 1_000);
-      await settled(page);
-      expect(api.callsTo("GET", PATH).length - before).toBeLessThanOrEqual(3);
+      // Three idle minutes is exactly one request per interval, not a stream.
+      for (let i = 1; i <= 3; i++) {
+        await page.clock.runFor(INTERVAL_MS);
+        await expect.poll(requests(api)).toBe(before + i);
+        await settled(page);
+        expect(api.callsTo("GET", PATH).length).toBe(before + i);
+      }
     });
 
     test("a refetch that fails keeps the last known count on screen", async ({ page }) => {
@@ -116,7 +129,7 @@ for (const [name, use] of [
       let failing = false;
       await page.clock.install();
       await seedMockSession(page, fakeAccessToken(MOCK_WORKSPACE.id));
-      await mockApi(page, {
+      const api = await mockApi(page, {
         "GET /auth/me": { status: 200, body: MOCK_USER },
         "GET /auth/workspaces": { status: 200, body: [] },
         "GET /workspaces/current": () =>
@@ -132,8 +145,10 @@ for (const [name, use] of [
       await settled(page);
       expect(await clicksShown(page)).toBe("5");
 
+      const before = api.callsTo("GET", PATH).length;
       failing = true;
       await page.clock.runFor(INTERVAL_MS + 1_000);
+      await expect.poll(requests(api)).toBeGreaterThan(before);
       await settled(page);
       expect(await clicksShown(page)).toBe("5");
     });
