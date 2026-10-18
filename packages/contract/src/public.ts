@@ -19,6 +19,24 @@ export const PublicLinkPreview = z.object({
 });
 export type PublicLinkPreview = z.infer<typeof PublicLinkPreview>;
 
+/* #762 — the unlock flow's own payload, for GET /public/links/:slug/lock.
+
+   The redirect bounces a protected link to /p/<slug>?unlock=1, and the page
+   used to need the preview above to draw the password form. The preview is
+   refused when the owner turns public previews off, so those links could not be
+   opened at all. The previews switch hides a link's metadata (creator, dates,
+   scan state); it was never meant to switch the password off.
+
+   So this is deliberately the minimum the form needs and nothing the switch
+   hides: the short URL to send the visitor back through with a token, and
+   whether a password guards it. Never the destination — that is what the
+   password protects, before or after previews. */
+export const PublicLinkLock = z.object({
+  shortUrl: z.string(),
+  passwordProtected: z.boolean(),
+});
+export type PublicLinkLock = z.infer<typeof PublicLinkLock>;
+
 /* G3 — CreateLinkInput accepted a password and Link reported
    passwordProtected, but nothing let a visitor supply one.
 

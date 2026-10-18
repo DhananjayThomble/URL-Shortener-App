@@ -142,6 +142,9 @@
     "GET",
     "POST"
   ],
+  "/public/links/{slug}/lock": [
+    "GET"
+  ],
   "/public/links/{slug}/preview": [
     "GET"
   ],

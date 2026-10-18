@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  PublicLinkLock,
   PublicLinkPreview,
   SubmitReportResult,
   UnlockLinkResult,
@@ -16,6 +17,20 @@ export function useLinkPreview(slug: string) {
     queryKey: qk.preview(slug),
     queryFn: () => request(`/public/links/${slug}/preview`, PublicLinkPreview, { anonymous: true }),
     enabled: Boolean(slug),
+  });
+}
+
+/**
+ * Whether a password guards a link (#762), for the unlock form when the preview
+ * was refused because the owner turned public previews off. Carries the short
+ * URL and the flag, never the destination. Only fetched when `enabled` — the
+ * page asks for it on a previews-off 403, nowhere else.
+ */
+export function useLinkLock(slug: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.lock(slug),
+    queryFn: () => request(`/public/links/${slug}/lock`, PublicLinkLock, { anonymous: true }),
+    enabled: Boolean(slug) && enabled,
   });
 }
 

@@ -15,6 +15,7 @@ import type {
   Link,
   Member,
   MemberRole,
+  PublicLinkLock,
   PublicLinkPreview,
   RecordConversionInput,
   SubmitReportResult,
@@ -668,6 +669,7 @@ export const FIXTURE_ROUTE_PATTERNS: ReadonlyArray<{ methods: string[]; pattern:
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/unlock$/ },
   { methods: ["POST"], pattern: /^\/public\/links\/([^/]+)\/report$/ },
   { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/preview$/ },
+  { methods: ["GET"], pattern: /^\/public\/links\/([^/]+)\/lock$/ },
 ];
 
 
@@ -1249,6 +1251,10 @@ export async function fixtureRequest<T>(
     data = { ok: true } satisfies SubmitReportResult;
   } else if (m(/^\/public\/links\/([^/]+)\/preview$/)) {
     data = previewFor(m(/^\/public\/links\/([^/]+)\/preview$/)![1]);
+  } else if (m(/^\/public\/links\/([^/]+)\/lock$/)) {
+    // Mirrors PublicService.lock (#762): the short URL and the flag, never the destination.
+    const preview = previewFor(m(/^\/public\/links\/([^/]+)\/lock$/)![1]);
+    data = { shortUrl: preview.shortUrl, passwordProtected: preview.passwordProtected } satisfies PublicLinkLock;
   } else throw new Error(`No fixture for ${method} ${path}. Add one in src/lib/api/fixtures.ts.`);
 
   return schema.parse(data);

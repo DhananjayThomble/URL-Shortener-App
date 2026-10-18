@@ -1,7 +1,7 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, domains, eq, links, sql, users, workspaces, type Database } from "@snapurl/database";
-import type { PublicLinkPreview, UnlockLinkResult } from "@snapurl/contract";
+import type { PublicLinkLock, PublicLinkPreview, UnlockLinkResult } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "../auth/token.service.js";
@@ -70,6 +70,35 @@ export class PublicService {
       setsCookies: false,
       redirectType: row.link.redirectType as PublicLinkPreview["redirectType"],
     };
+  }
+
+  /* #762 — what the unlock form needs, and only that.
+
+     The redirect sends a protected link's visitor to /p/<slug>?unlock=1. The
+     page drew the password form from preview(), which is refused when the
+     owner turns public previews off — so with previews off a protected link
+     could not be opened at all. Previews are a privacy setting for the "+"
+     trust page; the password is what guards the destination, and turning one
+     off must not turn the other off.
+
+     Not gated by either previews switch, so it carries nothing those switches
+     hide: the short URL to come back through with a token, and whether a
+     password guards it. Never the destination, and nothing about the creator,
+     dates or scan state. Existence is no news: the redirect itself already
+     answers for the slug. */
+  async lock(slug: string, host?: string): Promise<PublicLinkLock> {
+    const filters = [sql`lower(${links.slug}) = ${slug.toLowerCase()}`];
+    if (host) filters.push(sql`lower(${domains.domain}) = ${host.toLowerCase()}`);
+
+    const [row] = await this.db
+      .select({ slug: links.slug, domain: domains.domain, passwordHash: links.passwordHash })
+      .from(links)
+      .innerJoin(domains, eq(links.domainId, domains.id))
+      .where(and(...filters))
+      .limit(1);
+
+    if (!row) throw new NotFoundException("That link doesn't exist.");
+    return { shortUrl: `${row.domain}/${row.slug}`, passwordProtected: row.passwordHash != null };
   }
 
   /* G3 — password-protected links had no way to submit a password.
