@@ -123,8 +123,15 @@ describe("tri-state nullable+optional fields keep all three states distinct", ()
     // Note: expiresAt is .nullable().optional() on the INPUT schema. (comment is
     // deliberately optional-only on CreateLinkInput even though Link.comment is
     // nullable — an intentional input/response asymmetry, not a bug.)
+    // The string domain is the readable dates plus "" (#754: a string that is not a
+    // date at all is rejected — see link-dates.test.ts). Past dates are still valid
+    // INPUT here; refusing a past expiry is the domain's validateExpiry.
+    const dateString = fc.oneof(
+      fc.constant(""),
+      fc.date({ min: new Date("1970-01-01T00:00:00.000Z"), max: new Date("9999-12-31T23:59:59.999Z"), noInvalidDate: true }).map((d) => d.toISOString()),
+    );
     fc.assert(
-      fc.property(fc.option(fc.option(fc.string({ maxLength: 40 }), { nil: null }), { nil: undefined }), (value) => {
+      fc.property(fc.option(fc.option(dateString, { nil: null }), { nil: undefined }), (value) => {
         const parsed = CreateLinkInput.safeParse({ ...base, expiresAt: value });
         expect(parsed.success).toBe(true);
         if (parsed.success) expect(parsed.data.expiresAt).toStrictEqual(value);
