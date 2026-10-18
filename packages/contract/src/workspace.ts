@@ -49,6 +49,10 @@ export const UpdateWorkspaceInput = z
   .partial();
 export type UpdateWorkspaceInput = z.infer<typeof UpdateWorkspaceInput>;
 
+/** One DNS record the customer has to create at their DNS provider. */
+export const DnsRecord = z.object({ type: z.string(), name: z.string(), value: z.string(), ttl: z.number() });
+export type DnsRecord = z.infer<typeof DnsRecord>;
+
 export const Domain = z.object({
   id: z.string(),
   domain: z.string(),
@@ -62,10 +66,14 @@ export const Domain = z.object({
    *  404 redirects cannot be changed by any one workspace (#648), and it cannot
    *  be disconnected. Optional so older payloads still parse; absent = false. */
   shared: z.boolean().optional(),
-  dns: z
-    .object({ type: z.string(), name: z.string(), value: z.string(), ttl: z.number() })
-    .nullable()
-    .optional(),
+  /** The ownership (TXT) record that proves the domain is the workspace's. */
+  dns: DnsRecord.nullable().optional(),
+  /** The record that points traffic at SnapURL (#784): a CNAME to the host this
+   *  deployment serves redirects from (A / AAAA when that host is a bare IP).
+   *  Deployment-specific, so it comes from the API rather than the web bundle.
+   *  Null for the shared domain, which IS that host. Optional so payloads from
+   *  an API built before #784 still parse; absent = nothing to show. */
+  routing: DnsRecord.nullable().optional(),
 });
 export type Domain = z.infer<typeof Domain>;
 
