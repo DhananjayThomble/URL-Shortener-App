@@ -16,7 +16,8 @@ export class PublicService {
 
   /**
    * The trust page at /p/[slug]. No authentication — the whole point is that
-   * anyone can see where a link goes before clicking it.
+   * anyone can see where a link goes before clicking it, except where the owner
+   * put a password on it.
    *
    * Deliberately narrow: it returns where the link goes and whether it is safe,
    * and nothing about the workspace, the tags, the click count or the routing
@@ -50,9 +51,16 @@ export class PublicService {
       throw new ForbiddenException("The owner of this link has turned off public previews.");
     }
 
+    /* A password guards the destination itself. Returning it here let anyone
+       read where a protected link goes, and follow it without the password or
+       a recorded click, from a page that needs no session. Unlock is the only
+       way through for these, and it hands back a token, never the URL. */
+    const passwordProtected = row.link.passwordHash != null;
+
     return {
       shortUrl: `${row.domain.domain}/${row.link.slug}`,
-      destination: row.link.destination,
+      destination: passwordProtected ? null : row.link.destination,
+      passwordProtected,
       createdAt: row.link.createdAt.toISOString(),
       createdBy: row.creator ?? row.workspace.name,
       verifiedDomain: row.domain.status === "live",

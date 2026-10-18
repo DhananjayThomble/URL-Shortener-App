@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button, Chip, ErrorState, Field, Input, Skeleton } from "@/components/ui";
 import { useLinkPreview, useReportLink, useUnlockLink } from "@/lib/api/hooks";
+import { previewView } from "@/lib/link-preview";
 import { trustState } from "@/lib/trust-state";
 import { formatDate, relativeDate } from "@/lib/utils";
 
@@ -22,10 +23,17 @@ export default function LinkPreviewPage() {
   /* G3 — the redirect service bounces a password-protected link here as
      ?unlock=1 and waits for the visitor to come back with ?k=<token>. The
      page ignored the parameter entirely, so those links were unreachable:
-     the redirect sent people to a page that offered no way to continue. */
+     the redirect sent people to a page that offered no way to continue.
+
+     Whether the password form shows is decided by the preview itself
+     (`passwordProtected`), not by the parameter: the "+" preview of a protected
+     link needs the form too, and a stale ?unlock=1 on a link whose password
+     was removed must not ask for one. The parameter only decides whether the
+     form takes focus — the visitor came here to unlock, not to inspect. */
   const searchParams = useSearchParams();
   const unlockRequested = searchParams.get("unlock") === "1";
   const { data, isLoading, isError, error, refetch } = useLinkPreview(slug);
+  const view = data ? previewView(data) : null;
   /* A flagged link redirects here with ?warning=unsafe. The preview's own
      status is the source of truth; the param only escalates it (#647). */
   const trust = trustState(data?.safeBrowsing ?? "pending", searchParams.get("warning"));
@@ -108,7 +116,13 @@ export default function LinkPreviewPage() {
 
             <div className="px-6 py-[18px] bg-surface-2 border-b border-line">
               <div className="font-mono text-[9.5px] tracking-[0.13em] uppercase text-ink-3 mb-[7px]">Where it goes</div>
-              <div className="font-mono text-[13.5px] break-all text-ink leading-[1.6]">{data.destination}</div>
+              {view?.kind === "open" ? (
+                <div className="font-mono text-[13.5px] break-all text-ink leading-[1.6]">{view.destination}</div>
+              ) : (
+                <div className="text-[13.5px] text-ink-2 leading-[1.6]">
+                  🔒 Hidden until you enter the password. The owner protected this link.
+                </div>
+              )}
             </div>
 
             <div className="px-6">
@@ -150,7 +164,7 @@ export default function LinkPreviewPage() {
               ))}
             </div>
 
-            {unlockRequested ? (
+            {view?.kind === "locked" ? (
               <div className="px-6 pt-[18px] pb-[6px]">
                 <Field
                   label="This link is password protected"
@@ -160,7 +174,7 @@ export default function LinkPreviewPage() {
                   <Input
                     type="password"
                     value={password}
-                    autoFocus
+                    autoFocus={unlockRequested}
                     placeholder="Password"
                     onChange={(e) => { setPassword(e.target.value); setProblem(null); }}
                     onKeyDown={(e) => { if (e.key === "Enter") void submitPassword(); }}
@@ -178,25 +192,21 @@ export default function LinkPreviewPage() {
             ) : null}
 
             <div className="px-6 pt-[18px] pb-[22px] flex flex-col gap-[9px]">
-              <a
-                href={data.destination}
-                rel="noopener noreferrer nofollow"
-                className={`px-[13px] py-[11px] rounded-[var(--radius-sm)] font-semibold text-[13px] text-center ${
-                  trust.kind === "flagged"
-                    ? "bg-surface border border-line-2 text-ink-2 hover:bg-surface-3"
-                    : "bg-accent text-accent-ink"
-                }`}
-              >
-                {trust.continueLabel}{" "}
-                {(() => {
-                  try {
-                    return new URL(data.destination).hostname;
-                  } catch {
-                    return "the destination";
-                  }
-                })()}{" "}
-                →
-              </a>
+              {/* No direct link for a locked one: the href would be the very URL
+                  the password guards. Unlock above goes through the redirect. */}
+              {view?.kind === "open" ? (
+                <a
+                  href={view.destination}
+                  rel="noopener noreferrer nofollow"
+                  className={`px-[13px] py-[11px] rounded-[var(--radius-sm)] font-semibold text-[13px] text-center ${
+                    trust.kind === "flagged"
+                      ? "bg-surface border border-line-2 text-ink-2 hover:bg-surface-3"
+                      : "bg-accent text-accent-ink"
+                  }`}
+                >
+                  {trust.continueLabel} {view.host} →
+                </a>
+              ) : null}
               {reported ? (
                 <Chip tone="good" dot>
                   Report received — thank you
