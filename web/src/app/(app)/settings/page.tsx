@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { ACCENTS, useAppearance, type Mode } from "@/components/theme/theme-provider";
 import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
@@ -11,7 +11,9 @@ import { useToast } from "@/components/ui/toast";
 import { importHref } from "@/lib/import";
 import { toastCopy } from "@/lib/toasts";
 import { canChangeWorkspaceCurrency, currencyOptions } from "@/lib/money";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FOREVER_YEARS } from "@/lib/retention";
+import { retentionLoweringWarning, type RetentionWarning } from "@/lib/retention-change";
 import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn, compact } from "@/lib/utils";
 import { TwoFactorCard } from "./two-factor-card";
@@ -72,8 +74,45 @@ export default function SettingsPage() {
 
   const dirty = Boolean(ws && draft && JSON.stringify(draft) !== JSON.stringify(draftOf(ws)));
 
-  async function submit() {
+  /* Saving a SHORTER click-data retention is what makes the maintenance pass
+     delete the older raw clicks, permanently (#780). Nothing is deleted while a
+     segment is merely picked -- the choice is only a draft until "Save changes"
+     -- so that is the moment to ask. Cancelling puts the stored retention back
+     and leaves every other unsaved edit alone. */
+  const [retentionWarning, setRetentionWarning] = useState<RetentionWarning | null>(null);
+  const submitting = useRef(false);
+
+  function requestSave() {
     if (!draft || !ws) return;
+    const warning = retentionLoweringWarning(ws.retentionYears, draft.retentionYears);
+    if (warning) {
+      setRetentionWarning(warning);
+      return;
+    }
+    void submit();
+  }
+
+  function cancelRetentionChange() {
+    setRetentionWarning(null);
+    setDraft((d) => (d && ws ? { ...d, retentionYears: ws.retentionYears } : d));
+  }
+
+  function confirmRetentionChange() {
+    setRetentionWarning(null);
+    void submit();
+  }
+
+  async function submit() {
+    if (!draft || !ws || submitting.current) return;
+    submitting.current = true;
+    try {
+      await send(draft, ws);
+    } finally {
+      submitting.current = false;
+    }
+  }
+
+  async function send(draft: Draft, ws: Workspace) {
     // Which control the person changed decides where a refusal is shown; read
     // before the await, while draft and ws are still the pair that was sent.
     const changed = {
@@ -199,7 +238,7 @@ export default function SettingsPage() {
                     </select>
                   </Field>
                   <div className="flex items-center gap-2">
-                    <Button variant="primary" onClick={submit} disabled={!dirty || save.isPending}>
+                    <Button variant="primary" onClick={requestSave} disabled={!dirty || save.isPending}>
                       {save.isPending ? "Saving…" : "Save changes"}
                     </Button>
                     {dirty ? (
@@ -436,6 +475,16 @@ export default function SettingsPage() {
           </Card>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={retentionWarning !== null}
+        title={retentionWarning?.title ?? ""}
+        body={retentionWarning?.body ?? ""}
+        confirmLabel="Delete older data and save"
+        onConfirm={confirmRetentionChange}
+        onCancel={cancelRetentionChange}
+        fallbackFocus={() => document.querySelector<HTMLElement>('#settings-retention [aria-pressed="true"]')}
+      />
     </>
   );
 }
