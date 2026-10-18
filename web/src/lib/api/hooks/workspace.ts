@@ -23,7 +23,25 @@ import {
 } from "../client";
 import { qk } from "./keys";
 
-export function useWorkspace() {
+/** How fresh the live usage figure is kept (#771). The click rollup lands about every
+ *  30 s, so asking more often than that cannot show anything newer. */
+export const LIVE_WORKSPACE_STALE_MS = 30_000;
+/** Poll cadence for the live usage figure. React Query pauses it in a hidden tab. */
+export const LIVE_WORKSPACE_REFETCH_MS = 60_000;
+
+/**
+ * The current workspace.
+ *
+ * `live` is for the one reader that shows `clicksUsed` and stays mounted for the
+ * whole session (the sidebar). Every other field changes only through the user's
+ * own Settings save, which writes the cache, so the 5-minute staleTime is right
+ * for them; but `clicksUsed` moves server-side while the page is open, and
+ * without this the sidebar kept the first value until a full reload (#771).
+ * `live` re-requests on focus (once stale) and on a slow interval; the query is
+ * shared, so Settings → Usage catches up through the same fetch.
+ */
+export function useWorkspace(options?: { live?: boolean }) {
+  const live = options?.live ?? false;
   return useQuery({
     queryKey: qk.workspace,
     queryFn: async () => {
@@ -32,7 +50,8 @@ export function useWorkspace() {
       noteRenderedWorkspace(workspace.id);
       return workspace;
     },
-    staleTime: 5 * 60_000,
+    staleTime: live ? LIVE_WORKSPACE_STALE_MS : 5 * 60_000,
+    ...(live ? { refetchInterval: LIVE_WORKSPACE_REFETCH_MS, refetchOnWindowFocus: true } : {}),
   });
 }
 
