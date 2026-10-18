@@ -12,10 +12,21 @@ import {
 import { request } from "../client";
 import { qk } from "./keys";
 
-export function useLinkPreview(slug: string) {
+/* #800 — the host the slug was resolved on, carried through from the redirect's
+   /p/<slug>?host= bounce. One slug can live on several domains (uniqueness is
+   (domain_id, lower(slug))), so a hostless lookup can pick the wrong domain's
+   link. The query is scoped by host, and the host is part of the cache key so
+   two domains' same slug do not share a cached answer. An empty host sends no
+   parameter — the API falls back to a slug-only lookup, so older links still
+   work (deploy skew). */
+function withHost(path: string, host?: string): string {
+  return host ? `${path}?host=${encodeURIComponent(host)}` : path;
+}
+
+export function useLinkPreview(slug: string, host?: string) {
   return useQuery({
-    queryKey: qk.preview(slug),
-    queryFn: () => request(`/public/links/${slug}/preview`, PublicLinkPreview, { anonymous: true }),
+    queryKey: qk.preview(slug, host),
+    queryFn: () => request(withHost(`/public/links/${slug}/preview`, host), PublicLinkPreview, { anonymous: true }),
     enabled: Boolean(slug),
   });
 }
@@ -24,12 +35,13 @@ export function useLinkPreview(slug: string) {
  * Whether a password guards a link (#762), for the unlock form when the preview
  * was refused because the owner turned public previews off. Carries the short
  * URL and the flag, never the destination. Only fetched when `enabled` — the
- * page asks for it on a previews-off 403, nowhere else.
+ * page asks for it on a previews-off 403, nowhere else. Scoped to the resolved
+ * host (#800), so a same-slug link on another domain is never consulted.
  */
-export function useLinkLock(slug: string, enabled: boolean) {
+export function useLinkLock(slug: string, enabled: boolean, host?: string) {
   return useQuery({
-    queryKey: qk.lock(slug),
-    queryFn: () => request(`/public/links/${slug}/lock`, PublicLinkLock, { anonymous: true }),
+    queryKey: qk.lock(slug, host),
+    queryFn: () => request(withHost(`/public/links/${slug}/lock`, host), PublicLinkLock, { anonymous: true }),
     enabled: Boolean(slug) && enabled,
   });
 }
@@ -46,10 +58,14 @@ export function useLinkLock(slug: string, enabled: boolean) {
  *
  * Deliberately no cache write: an unlock token is a credential, not page data.
  */
-export function useUnlockLink(slug: string) {
+export function useUnlockLink(slug: string, host?: string) {
   return useMutation({
     mutationFn: (input: UnlockLinkInput) =>
-      request(`/public/links/${slug}/unlock`, UnlockLinkResult, { method: "POST", body: input, anonymous: true }),
+      request(withHost(`/public/links/${slug}/unlock`, host), UnlockLinkResult, {
+        method: "POST",
+        body: input,
+        anonymous: true,
+      }),
   });
 }
 

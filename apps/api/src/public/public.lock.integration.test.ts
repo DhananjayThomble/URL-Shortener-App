@@ -71,6 +71,9 @@ describeDb("PublicService — unlocking a password-protected link (#762)", () =>
   const ws = { on: "", off: "" };
   const ids: Record<string, string> = {};
   const slug = (name: string) => `${name}-${stamp}`;
+  /* #800 — one slug, two domains. Mixed case so the same lookups also prove
+     case-insensitivity holds under host scoping. */
+  const COLLIDE = `Vault-${stamp}`;
 
   async function seedWorkspace(key: "on" | "off") {
     const [w] = await db
@@ -119,6 +122,19 @@ describeDb("PublicService — unlocking a password-protected link (#762)", () =>
       passwordHash: hash,
       expiresAt: new Date(Date.now() - 60_000),
     });
+
+    /* #800 — the same slug on two different domains. Uniqueness is
+       (domain_id, lower(slug)), so this is allowed, and a hostless lookup can
+       answer for the wrong row. Each row has its OWN password, so a lookup
+       scoped to the wrong host would reject the right password. */
+    const onHash = await argon2.hash(`${PASSWORD}-on`, ARGON);
+    const offHash = await argon2.hash(`${PASSWORD}-off`, ARGON);
+    await db
+      .insert(links)
+      .values({ workspaceId: ws.on, domainId: onDomain, slug: COLLIDE, destination: dest("collide-on"), passwordHash: onHash });
+    await db
+      .insert(links)
+      .values({ workspaceId: ws.off, domainId: offDomain, slug: COLLIDE, destination: dest("collide-off"), passwordHash: offHash });
   });
 
   afterAll(async () => {
@@ -228,5 +244,48 @@ describeDb("PublicService — unlocking a password-protected link (#762)", () =>
     // Old web only ever calls preview + unlock; neither changed shape.
     const preview = await service.preview(slug("on-locked"));
     expect(Object.keys(preview).sort()).toEqual(Object.keys(PublicLinkPreview.shape).sort());
+  });
+
+  /* #800 — the same slug lives on two domains with two different passwords.
+     Every public call must be scoped to the host the redirect resolved, or it
+     answers for the wrong domain's link: the correct password gets rejected,
+     the wrong short URL is handed back, or (previews off vs on) the wrong
+     privacy answer is given. Host comes in URL-encoded and mixed-case from the
+     redirect, so the lookups exercise case-insensitivity too. */
+  describe("same slug on two domains is scoped by host", () => {
+    const onHost = `on.${domainName}`;
+    const offHost = `off.${domainName}`;
+
+    it("lock(): each host gets its own domain's short URL, mixed case and all", async () => {
+      const onLock = await service.lock(COLLIDE.toLowerCase(), onHost.toUpperCase());
+      expect(onLock).toEqual({ shortUrl: `${onHost}/${COLLIDE}`, passwordProtected: true });
+      const offLock = await service.lock(COLLIDE, offHost);
+      expect(offLock).toEqual({ shortUrl: `${offHost}/${COLLIDE}`, passwordProtected: true });
+      expect(onLock.shortUrl).not.toBe(offLock.shortUrl);
+    });
+
+    it("unlock(): the right password for a host unlocks it and is rejected on the other host", async () => {
+      const onToken = await service.unlock(COLLIDE, `${PASSWORD}-on`, onHost);
+      const onClaims = await jwt.verifyAsync<{ sub: string }>(onToken.unlockToken, { secret: env.JWT_ACCESS_SECRET });
+      const offToken = await service.unlock(COLLIDE, `${PASSWORD}-off`, offHost);
+      const offClaims = await jwt.verifyAsync<{ sub: string }>(offToken.unlockToken, { secret: env.JWT_ACCESS_SECRET });
+      // Two distinct links — the tokens are bound to different ids.
+      expect(onClaims.sub).not.toBe(offClaims.sub);
+      // on's password is NOT off's password: scoped to the right host it fails.
+      await expect(service.unlock(COLLIDE, `${PASSWORD}-on`, offHost)).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.unlock(COLLIDE, `${PASSWORD}-off`, onHost)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it("preview(): the privacy answer follows the resolved host, not whichever row sorts first", async () => {
+      // on's workspace allows previews; off's does not. Scoped correctly, the
+      // on-host preview resolves (destination still null — it is protected) and
+      // the off-host preview is refused. A hostless lookup could answer either.
+      const onPreview = await service.preview(COLLIDE, onHost);
+      expect(onPreview).toMatchObject({ passwordProtected: true, destination: null });
+      expect(wire(onPreview)).not.toContain(MARK);
+      const err = await rejection(() => service.preview(COLLIDE, offHost));
+      expect(err.getStatus()).toBe(403);
+      expect(wire(err)).not.toContain(MARK);
+    });
   });
 });

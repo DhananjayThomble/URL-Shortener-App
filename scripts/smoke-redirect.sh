@@ -340,6 +340,21 @@ TOKEN=$(curl -s -X POST "$API/public/links/$RUN-locked/unlock" -H 'Content-Type:
 contains "unlock token opens the link (G3)" "example.com/locked" "$(loc "$RUN-locked?k=$TOKEN")"
 contains "a token for another link is refused" "unlock=1" "$(loc "$RUN-locked?k=not-a-real-token")"
 
+# #800 — the unlock and "+" bounces must carry the host the slug was resolved
+# on, so /p/<slug> scopes preview/lock/unlock to the right domain when the same
+# slug exists on two domains. The host is URL-encoded (':' -> %3A).
+ENC_HOST=$(printf '%s' "$LINK_DOMAIN" | sed 's/:/%3A/g')
+contains "locked bounce carries the originating host (#800)" "host=$ENC_HOST" "$(loc "$RUN-locked")"
+contains "the + preview bounce carries the originating host (#800)" "host=$ENC_HOST" "$(loc "$RUN-plain+")"
+# And the host-scoped public calls still answer, so the plumbing is end to end.
+contains "host-scoped lock says the link is protected (#800)" '"passwordProtected":true' \
+  "$(curl -s "$API/public/links/$RUN-locked/lock?host=$LINK_DOMAIN")"
+contains "host-scoped preview still shows an open link's destination (#800)" "example.com/plain" \
+  "$(curl -s "$API/public/links/$RUN-plain/preview?host=$LINK_DOMAIN")"
+HOST_TOKEN=$(curl -s -X POST "$API/public/links/$RUN-locked/unlock?host=$LINK_DOMAIN" -H 'Content-Type: application/json' \
+  -d '{"password":"hunter2"}' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).unlockToken||""')
+contains "host-scoped unlock token opens the link (#800)" "example.com/locked" "$(loc "$RUN-locked?k=$HOST_TOKEN")"
+
 echo
 echo "== immediate cache invalidation on delete/flag (#470, #426) =="
 # The real-stack acceptance criterion both #578 and #589's review rounds

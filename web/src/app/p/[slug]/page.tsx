@@ -32,11 +32,17 @@ export default function LinkPreviewPage() {
      form takes focus — the visitor came here to unlock, not to inspect. */
   const searchParams = useSearchParams();
   const unlockRequested = searchParams.get("unlock") === "1";
-  const { data, error, isPending, refetch } = useLinkPreview(slug);
+  /* #800 — the redirect bounces here with ?host=<the domain it resolved the
+     slug on>. One slug can live on several domains, so preview/lock/unlock
+     must be scoped to that same host or they can answer for a different
+     domain's link (wrong password rejected, wrong short URL). Empty when an
+     older redirect bounced without it; the API then falls back to slug-only. */
+  const host = searchParams.get("host") ?? undefined;
+  const { data, error, isPending, refetch } = useLinkPreview(slug, host);
   /* #762 — with public previews off the preview 403s; the lock route (never
      the destination, not gated by the switch) says whether to draw the bare
      password form instead of an error. Asked for on that 403 only. */
-  const lock = useLinkLock(slug, needsLockLookup(error));
+  const lock = useLinkLock(slug, needsLockLookup(error), host);
   const page = trustPage({
     preview: { pending: isPending, data, error },
     lock: { pending: lock.isPending, data: lock.data, error: lock.error },
@@ -48,7 +54,7 @@ export default function LinkPreviewPage() {
   /* A flagged link redirects here with ?warning=unsafe. The preview's own
      status is the source of truth; the param only escalates it (#647). */
   const trust = trustState(data?.safeBrowsing ?? "pending", searchParams.get("warning"));
-  const unlock = useUnlockLink(slug);
+  const unlock = useUnlockLink(slug, host);
   const report = useReportLink(slug);
 
   const [password, setPassword] = useState("");
@@ -213,7 +219,9 @@ export default function LinkPreviewPage() {
             <div className="px-6 py-[18px] bg-surface-2 border-b border-line">
               <div className="font-mono text-[9.5px] tracking-[0.13em] uppercase text-ink-3 mb-[7px]">Where it goes</div>
               <div className="text-[13.5px] text-ink-2 leading-[1.6]">
-                🔒 Hidden until you enter the password. The owner protected this link.
+                {trust.kind === "flagged"
+                  ? "🔒 Hidden. This link was flagged, so we don't send anyone to it."
+                  : "🔒 Hidden until you enter the password. The owner protected this link."}
               </div>
             </div>
             <div className="px-6">
@@ -224,7 +232,13 @@ export default function LinkPreviewPage() {
                 </span>
               </div>
             </div>
-            {passwordForm}
+            {/* #800 — a flagged link reaches here via ?warning=unsafe, and the
+                redirect's flagged gate runs BEFORE the password gate: even with
+                the right password the redirect would bounce the visitor
+                straight back here. Offering the form would be an endless loop,
+                so a flagged link shows the warning and the report control only,
+                never the password form. */}
+            {trust.kind === "flagged" ? null : passwordForm}
             <div className="px-6 pt-[18px] pb-[22px] flex flex-col gap-[9px]">{reportControls}</div>
           </>
         ) : data ? (
