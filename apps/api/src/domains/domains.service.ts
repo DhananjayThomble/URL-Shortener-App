@@ -388,9 +388,14 @@ export class DomainsService {
     const [system] = await this.db
       .select({ isSystem: domains.isSystem })
       .from(domains)
-      .where(eq(domains.id, id))
+      /* Ownership first (#840): only the caller's own domain, or the shared one
+         (to refuse it by name). Anything else is a 404 before the link count
+         below is read, so another workspace's id answers exactly like an id
+         that does not exist. */
+      .where(and(eq(domains.id, id), sql`(${domains.workspaceId} = ${workspaceId}::uuid or ${domains.isSystem} = true)`))
       .limit(1);
-    if (system?.isSystem) {
+    if (!system) throw new NotFoundException("That domain isn't connected to this workspace.");
+    if (system.isSystem) {
       throw new ConflictException("That's a shared SnapURL domain — it isn't yours to disconnect.");
     }
 
