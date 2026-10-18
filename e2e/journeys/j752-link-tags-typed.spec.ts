@@ -60,7 +60,7 @@ test.describe("Journey 752 — Typing tags into the link drawers", () => {
     await signIn(page, session);
 
     await page.goto("/links");
-    await page.getByRole("button", { name: /New link/ }).first().click();
+    await page.getByRole("button", { name: /New link|Create a link/ }).first().click();
     const drawer = page.getByRole("dialog", { name: "Create a link" });
     await expect(drawer).toBeVisible();
     await drawer.getByLabel("Destination URL").fill(DEST);
