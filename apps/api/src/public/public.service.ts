@@ -1,7 +1,7 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, domains, eq, linkCounters, links, routingRules, sql, users, workspaces, type Database } from "@snapurl/database";
-import type { PublicLinkLock, PublicLinkPreview, UnlockLinkResult } from "@snapurl/contract";
+import { PREVIEWS_OFF_CODE, PREVIEWS_OFF_MESSAGE, type PublicLinkLock, type PublicLinkPreview, type UnlockLinkResult } from "@snapurl/contract";
 import { lifecycleGate } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
@@ -54,7 +54,15 @@ export class PublicService {
        for everything, and an individual link can opt out. Either one off means
        no preview — the more private setting wins. */
     if (!row.workspace.publicPreviews || !row.link.publicPreview) {
-      throw new ForbiddenException("The owner of this link has turned off public previews.");
+      /* The body carries a machine-readable code (#765): the trust page shows a
+         deliberate "previews are turned off" state for this refusal, and the
+         web client rewrites every 403's message, so only the body can say. */
+      throw new ForbiddenException({
+        statusCode: 403,
+        message: PREVIEWS_OFF_MESSAGE,
+        error: "Forbidden",
+        code: PREVIEWS_OFF_CODE,
+      });
     }
 
     /* A password guards the destination itself. Returning it here let anyone
