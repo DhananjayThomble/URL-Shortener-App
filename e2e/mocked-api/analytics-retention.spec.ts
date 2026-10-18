@@ -86,6 +86,8 @@ for (const [name, use] of [
       await goTo(page, "Settings", /\/settings$/);
       await page.getByRole("button", { name: "1 year" }).click();
       await page.getByRole("button", { name: "Save changes" }).click();
+      // #780: a shorter window asks before it deletes anything.
+      await page.getByRole("alertdialog").getByRole("button", { name: "Delete older data and save" }).click();
       await expect.poll(() => api.callsTo("PATCH", "/workspaces/current").length).toBe(1);
       expect(api.callsTo("PATCH", "/workspaces/current")[0]!.body).toMatchObject({ retentionYears: 1 });
 

@@ -101,7 +101,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     await fillBasics(drawer, slug);
 
     await tab(drawer, "Access");
-    await expect(drawer.getByPlaceholder("acme.com/offers")).toBeVisible(); // the tab really mounted
+    await expect(drawer.getByLabel("Then send visitors to")).toBeVisible(); // the tab really mounted
 
     const post = page.waitForRequest(isCreatePost, { timeout: 15_000 });
     await drawer.getByRole("button", { name: "Create link" }).click();
@@ -125,6 +125,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     let drawer = await openCreate(page);
     await fillBasics(drawer, slugFor("b0"));
     await tab(drawer, "Access");
+    await drawer.getByRole("button", { name: /Expire on a date/ }).click(); // #759: the URL input is disabled until the expiry is on
     await drawer.getByPlaceholder("acme.com/offers").fill("not a url");
     await drawer.getByRole("button", { name: "Cancel" }).click();
     await expect(drawer).toBeHidden();
@@ -135,7 +136,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     await expect(drawer).toBeVisible();
     await expect(drawer.getByLabel("Destination URL")).toHaveValue("");
     await tab(drawer, "Access");
-    await expect(drawer.getByPlaceholder("acme.com/offers")).toHaveValue("");
+    await expect(drawer.getByLabel("Then send visitors to")).toHaveValue("");
     await tab(drawer, "Destination");
 
     const slug = slugFor("b");
@@ -154,6 +155,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     await fillBasics(drawer, slug);
 
     await tab(drawer, "Access");
+    await drawer.getByRole("button", { name: /Expire on a date/ }).click(); // #759: the URL input is disabled until the expiry is on
     await drawer.getByPlaceholder("acme.com/offers").fill("not a url");
 
     let posted = false;
@@ -163,7 +165,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     await drawer.getByRole("button", { name: "Create link" }).click();
 
     // Field-level error on the Access tab...
-    const field = drawer.getByPlaceholder("acme.com/offers");
+    const field = drawer.getByLabel("Then send visitors to");
     await expect(field).toHaveAttribute("aria-invalid", "true");
     await expect(drawer.getByText("Enter an absolute http(s) URL")).toBeVisible();
     // ...and a dialog-level message that names the tab, even from another tab.

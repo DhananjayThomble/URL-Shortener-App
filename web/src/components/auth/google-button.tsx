@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { useOAuthSignIn } from "@/lib/api/hooks";
-import { safeNext } from "@/lib/safe-next";
+import { signedInTarget } from "@/lib/safe-next";
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
@@ -97,7 +97,7 @@ export function GoogleButton({
             // Same union, same narrowing as password login (useLogin):
             // a 2FA challenge is not yet a session.
             if ("challenge" in result) return;
-            router.push(safeNext(next));
+            router.push(signedInTarget(next));
           })
           .catch((err: unknown) => setError(err instanceof Error ? err.message : "Google sign-in failed. Try again."));
       },

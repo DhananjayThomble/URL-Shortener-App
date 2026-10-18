@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Toggle } from "@/components/ui";
-import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { useToast } from "@/components/ui/toast";
+import { EDIT_TABS as TABS, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { normalizeLinkFormValues } from "@/components/links/link-form-values";
 import { useUpdateLink } from "@/lib/api/hooks";
 import { expiryProblem } from "@/lib/expiry-input";
 import { UpdateLinkInput, type CreateLinkFormValues, type Link } from "@/lib/api/types";
+import { toastCopy } from "@/lib/toasts";
 import { cn, shortUrlHref } from "@/lib/utils";
 
 type TabId = LinkFormTabId;
@@ -29,6 +32,7 @@ type TabId = LinkFormTabId;
 export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose: () => void; link: Link }) {
   const [tab, setTab] = useState<TabId>("dest");
   const update = useUpdateLink();
+  const toast = useToast();
   const drawerRef = useRef<HTMLElement>(null);
 
   // Same ref-indirection as CreateLinkDrawer's onCloseRef: the parent
@@ -131,7 +135,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
       setTab("access");
       return;
     }
-    const patch = { ...toUpdateInput(blankOptionalUrlsToUndefined(values), removePassword), archived };
+    const patch = { ...toUpdateInput(normalizeLinkFormValues(values), removePassword), archived };
     // UpdateLinkInput validates every field this patch can carry (it is
     // CreateLinkInput minus domain/slug, which toUpdateInput never sends).
     // Checked here, not via a zodResolver, because the resolver's inferred
@@ -148,7 +152,8 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
       return;
     }
     try {
-      await update.mutateAsync({ id: link.id, ...parsed.data });
+      const saved = await update.mutateAsync({ id: link.id, ...parsed.data });
+      toast.show({ message: toastCopy.updated(saved) });
       onClose();
     } catch {
       /* surfaced below via update.error */
@@ -229,6 +234,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               control={control}
               watch={watch}
               formState={formState}
+              clearErrors={form.clearErrors}
               qrValue={shortUrlHref(link.domain, link.slug)}
               formMode="edit"
               originalExpiresAt={link.expiresAt ?? null}
