@@ -10,6 +10,7 @@ import { Button, Card, EmptyState, ErrorState, Input, Skeleton, Tabs } from "@/c
 import { useDomains, useExportLinks, useLinks } from "@/lib/api/hooks";
 import type { ListLinksQuery } from "@snapurl/contract";
 import { IMPORT_QUERY_PARAM } from "@/lib/import";
+import { countedDomains, plural } from "@/lib/plural";
 import { cn, full } from "@/lib/utils";
 
 const FILTERS = [
@@ -117,9 +118,10 @@ export default function LinksPage() {
         title="Links"
         sub={
           data
-            ? `${full(data.total)} links across ${domains?.length ?? 0} domains · ${full(
+            ? `${plural(data.total, "link")} across ${plural(countedDomains(domains).length, "domain")} · ${plural(
                 links.reduce((a, l) => a + l.clicks, 0),
-              )} clicks on this page`
+                "click",
+              )} on this page`
             : "Loading…"
         }
         actions={
@@ -275,7 +277,7 @@ export default function LinksPage() {
                 ← Previous
               </Button>
               <span className="text-[12px] text-ink-3">
-                Page {page} of {full(data?.total ?? 0)} links
+                Page {page} of {plural(data?.total ?? 0, "link")}
               </span>
               <Button
                 disabled={!data?.nextCursor || isFetching}
