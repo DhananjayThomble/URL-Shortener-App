@@ -116,7 +116,11 @@ export const CreateLinkInput = z.object({
   tags: z.array(z.string()).default([]),
   folder: z.string().optional(),
   comment: z.string().max(280).optional(),
-  redirectType: RedirectType.default("302"),
+  /* Deliberately no `.default()` (#753). Omitted means "use the workspace's
+     Default redirect type", which only the API can resolve; a contract
+     default here filled 302 before the service could tell "the caller chose
+     302" from "the caller said nothing", so the setting was ignored. */
+  redirectType: RedirectType.optional(),
   rules: z.array(RoutingRule).default([]),
   expiresAt: z.string().nullable().optional(),
   /* Guarded like every other URL-bearing field: the redirect service emits this
