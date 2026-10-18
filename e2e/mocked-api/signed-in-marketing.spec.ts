@@ -91,7 +91,9 @@ const pathOf = (url: string) => {
 function recordNavigations(page: Page): string[] {
   const urls: string[] = [];
   page.on("framenavigated", (f) => {
-    if (f === page.mainFrame()) urls.push(f.url());
+    // Next.js re-writes the current URL once on hydration (a same-document "navigation");
+    // that is not a visit.
+    if (f === page.mainFrame() && urls[urls.length - 1] !== f.url()) urls.push(f.url());
   });
   return urls;
 }
