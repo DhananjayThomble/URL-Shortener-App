@@ -4,7 +4,7 @@ import { PageHead } from "@/components/app-shell";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember, useWorkspace } from "@/lib/api/hooks";
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cn, full, timeAgo } from "@/lib/utils";
 
 const PERMISSIONS: { label: string; roles: [boolean, boolean, boolean, boolean] }[] = [
@@ -29,6 +29,8 @@ const INVITE_ROLES: { value: Exclude<MemberRole, "owner">; label: string }[] = [
 
 const ROLE_OPTIONS: { value: MemberRole; label: string }[] = [...INVITE_ROLES, { value: "owner", label: "Owner" }];
 
+const roleLabel = (r: MemberRole) => ROLE_OPTIONS.find((o) => o.value === r)?.label ?? r;
+
 export default function TeamPage() {
   const { data: members, isLoading } = useMembers();
   const { data: workspace } = useWorkspace();
@@ -44,6 +46,11 @@ export default function TeamPage() {
   const [problem, setProblem] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  /* Outcome of the last role change. Shown under the Members table, never above
+     it, so reporting it cannot move the row being edited (#781). */
+  const [roleNote, setRoleNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  // A ref, not state: a double click delivers its second click before a re-render.
+  const roleInFlight = useRef(false);
 
   async function sendInvite() {
     const parsed = InviteMemberInput.safeParse({ email: email.trim(), role });
@@ -61,16 +68,24 @@ export default function TeamPage() {
     }
   }
 
-  async function setMemberRole(id: string, next: MemberRole) {
+  async function setMemberRole(m: { id: string; name: string; role: MemberRole }, next: MemberRole) {
+    /* #781: the editor stays open after a change (it closes only on Done / Esc),
+       so a second click aimed at Done can never land on "Remove", which is not on
+       the row while the editor is open. The outcome is reported in a reserved
+       line below the table rather than in a card above it, so nothing shifts. */
+    if (next === m.role || roleInFlight.current) return;
+    roleInFlight.current = true;
     setProblem(null);
+    setRoleNote(null);
     try {
-      await changeRole.mutateAsync({ id, role: next });
-      setEditing(null);
+      await changeRole.mutateAsync({ id: m.id, role: next });
+      setRoleNote({ kind: "ok", text: `${m.name}'s role is now ${roleLabel(next)}.` });
     } catch (err) {
       // "This is the only owner" arrives here, and is the whole reason the
       // API refuses rather than letting a workspace become unadministrable.
-      setProblem((err as Error).message);
-      setEditing(null);
+      setRoleNote({ kind: "error", text: (err as Error).message });
+    } finally {
+      roleInFlight.current = false;
     }
   }
 
@@ -196,11 +211,15 @@ export default function TeamPage() {
                     </Td>
                     <Td className="text-right whitespace-nowrap">
                       {editing === m.id ? (
-                        <div className="inline-flex items-center gap-2">
+                        <div
+                          className="inline-flex items-center gap-2"
+                          onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
+                        >
                           <Segmented
                             aria-label={`Role for ${m.email}`}
-                            value={m.role}
-                            onChange={(next) => setMemberRole(m.id, next)}
+                            /* While the change is in flight show the role being set, not the old one. */
+                            value={changeRole.isPending && changeRole.variables?.id === m.id ? changeRole.variables.role : m.role}
+                            onChange={(next) => void setMemberRole(m, next)}
                             options={ROLE_OPTIONS}
                           />
                           <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
@@ -218,10 +237,10 @@ export default function TeamPage() {
                         </>
                       ) : (
                         <>
-                          <Button size="sm" variant="ghost" onClick={() => { setEditing(m.id); setProblem(null); }}>
+                          <Button size="sm" variant="ghost" onClick={() => { setEditing(m.id); setConfirming(null); setProblem(null); setRoleNote(null); }}>
                             Change role
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => { setConfirming(m.id); setProblem(null); }}>
+                          <Button size="sm" variant="ghost" onClick={() => { setConfirming(m.id); setProblem(null); setRoleNote(null); }}>
                             Remove
                           </Button>
                         </>
@@ -233,6 +252,12 @@ export default function TeamPage() {
             </Table>
           </TableWrap>
         )}
+        {/* Always mounted so the live regions announce, and always tall enough for
+            one line so reporting a role change never moves anything. */}
+        <div className="px-4 py-2 min-h-[2.25rem] text-[12.5px]">
+          <span role="status" className="block text-good">{roleNote?.kind === "ok" ? roleNote.text : ""}</span>
+          <span role="alert" className="block text-bad">{roleNote?.kind === "error" ? roleNote.text : ""}</span>
+        </div>
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 items-start">
