@@ -1,12 +1,14 @@
 "use client";
 
 import NextLink from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Sparkline } from "@/components/charts";
 import { Chip } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { useCloneLink, useUpdateLink } from "@/lib/api/hooks";
 import type { Link, LinkStatus } from "@/lib/api/types";
 import { lifecycleSummary } from "@/lib/link-lifecycle";
+import { isRepeatClick, toastCopy } from "@/lib/toasts";
 import { cn, compact, copy, faviconFor, formatDate, relativeDate, shortUrlHref } from "@/lib/utils";
 
 const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; label: (l: Link) => string }> = {
@@ -37,6 +39,10 @@ export function LinkRow({
   const [copied, setCopied] = useState(false);
   const cloneLink = useCloneLink();
   const updateLink = useUpdateLink();
+  const toast = useToast();
+  /* Set synchronously on click: `isPending` only reaches the button after a
+     re-render, and a double click can land both clicks before that. */
+  const inFlight = useRef(false);
   const status = STATUS[link.status];
   const archived = link.status === "archived";
   const grid = variant === "grid";
@@ -47,8 +53,43 @@ export function LinkRow({
     setTimeout(() => setCopied(false), 1600);
   }
 
-  function toggleArchived() {
-    updateLink.mutate({ id: link.id, archived: !archived });
+  /* Archive is reversible, so the confirmation carries an Undo (#757). The toast
+     outlives this row -- the refetch removes it from the list -- so Undo is built
+     from `updateLink.mutateAsync` alone and touches no component state. */
+  async function setArchived(next: boolean) {
+    await updateLink.mutateAsync({ id: link.id, archived: next });
+  }
+
+  async function toggleArchived(e: React.MouseEvent) {
+    /* The row is removed on success, so the next one slides under the cursor: the
+       second click of a double click must not archive that link too. */
+    if (isRepeatClick(e.detail) || inFlight.current) return;
+    inFlight.current = true;
+    const next = !archived;
+    try {
+      await setArchived(next);
+    } catch {
+      toast.show({ tone: "error", message: next ? toastCopy.archiveFailed(link) : toastCopy.unarchiveFailed(link) });
+      return;
+    } finally {
+      inFlight.current = false;
+    }
+    if (!next) {
+      toast.show({ message: toastCopy.unarchived(link) });
+      return;
+    }
+    toast.show({
+      message: toastCopy.archived(link),
+      action: {
+        label: "Undo",
+        run: () => {
+          setArchived(false).then(
+            () => toast.show({ message: toastCopy.restored(link) }),
+            () => toast.show({ tone: "error", message: toastCopy.restoreFailed(link) }),
+          );
+        },
+      },
+    });
   }
 
   const meta = [

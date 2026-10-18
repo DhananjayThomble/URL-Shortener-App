@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { syncSessionHint } from "@/lib/session-hint";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
@@ -14,6 +15,17 @@ const NAV_LINKS = [
 
 export function SiteHeader({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
+
+  // #777 — the first paint already has the right header (the layout's pre-paint
+  // script). This keeps it right afterwards: on mount (a page restored from the
+  // back/forward cache can be stale) and when ANOTHER tab signs in or out
+  // (`storage` fires in the other tabs only; this tab's own changes go through
+  // client.ts#tokens).
+  useEffect(() => {
+    syncSessionHint();
+    window.addEventListener("storage", syncSessionHint);
+    return () => window.removeEventListener("storage", syncSessionHint);
+  }, []);
 
   return (
     <header className={cn("relative", className)}>
@@ -36,15 +48,21 @@ export function SiteHeader({ className }: { className?: string }) {
         <div className="ml-auto hidden md:flex gap-[9px] items-center">
           <Link
             href="/login"
-            className="px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold text-ink-2 hover:bg-surface-3 hover:text-ink"
+            className="auth-out px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             Sign in
           </Link>
           <Link
             href="/register"
-            className="px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold bg-accent text-accent-ink hover:bg-accent-2"
+            className="auth-out px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold bg-accent text-accent-ink hover:bg-accent-2"
           >
             Start free
+          </Link>
+          <Link
+            href="/links"
+            className="auth-in px-[13px] py-[7px] rounded-[var(--radius-sm)] text-[13px] font-semibold bg-accent text-accent-ink hover:bg-accent-2"
+          >
+            Go to dashboard
           </Link>
         </div>
 
@@ -81,16 +99,23 @@ export function SiteHeader({ className }: { className?: string }) {
           <Link
             href="/login"
             onClick={() => setOpen(false)}
-            className="px-[11px] py-[9px] rounded-[var(--radius-sm)] text-[14px] font-semibold text-ink-2 hover:bg-surface-3 hover:text-ink"
+            className="auth-out px-[11px] py-[9px] rounded-[var(--radius-sm)] text-[14px] font-semibold text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             Sign in
           </Link>
           <Link
             href="/register"
             onClick={() => setOpen(false)}
-            className="px-[11px] py-[9px] rounded-[var(--radius-sm)] text-[14px] font-semibold text-center bg-accent text-accent-ink hover:bg-accent-2"
+            className="auth-out px-[11px] py-[9px] rounded-[var(--radius-sm)] text-[14px] font-semibold text-center bg-accent text-accent-ink hover:bg-accent-2"
           >
             Start free
+          </Link>
+          <Link
+            href="/links"
+            onClick={() => setOpen(false)}
+            className="auth-in px-[11px] py-[9px] rounded-[var(--radius-sm)] text-[14px] font-semibold text-center bg-accent text-accent-ink hover:bg-accent-2"
+          >
+            Go to dashboard
           </Link>
         </div>
       ) : null}
