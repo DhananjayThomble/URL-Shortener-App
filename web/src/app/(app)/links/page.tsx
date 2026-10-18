@@ -153,14 +153,16 @@ export default function LinksPage() {
       ) : null}
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <div className="flex gap-2">
+        {/* #785 — wrap, and never let a chip shrink below its label (the global
+            `.flex > * { min-width: 0 }` reset otherwise squeezes "Scheduled" to "Schedule"). */}
+        <div className="flex flex-wrap gap-2">
           {FILTERS.map((f) => (
             <button
               key={f.value}
               aria-pressed={filter === f.value}
               onClick={() => setFilter(f.value)}
               className={cn(
-                "tap-target inline-flex items-center gap-[6px] px-[10px] py-[5px] border rounded-full text-[12.5px] transition-colors",
+                "tap-target shrink-0 whitespace-nowrap inline-flex items-center gap-[6px] px-[10px] py-[5px] border rounded-full text-[12.5px] transition-colors",
                 filter === f.value
                   ? "bg-ink text-surface border-ink font-semibold"
                   : "bg-surface border-line-2 text-ink-2 hover:border-ink-3 hover:text-ink",
