@@ -5,6 +5,7 @@ import {
   type Executor,
   type WebhookEvent,
 } from "@snapurl/database";
+import type { AuditAction } from "@snapurl/domain";
 
 /* ============================================================
    Recording that something happened.
@@ -31,8 +32,9 @@ export function toActor(actor: { userId: string | null; label: string }): Actor 
 export interface ActivityInput {
   workspaceId: string;
   actor: Actor;
-  /** Omit to emit a webhook without an audit row. */
-  auditAction?: string;
+  /** Omit to emit a webhook without an audit row. Typed to the closed set in
+   *  @snapurl/domain so a key with no human copy cannot be written (#783). */
+  auditAction?: AuditAction;
   /** Omit to write an audit row without a webhook. */
   webhookEvent?: WebhookEvent;
   targetType?: string;

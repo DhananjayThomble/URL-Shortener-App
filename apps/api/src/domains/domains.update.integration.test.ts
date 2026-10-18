@@ -262,13 +262,13 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
 
   it("connecting a domain WITH redirects enqueues its domain op; disconnecting enqueues one to drop the meta item", async () => {
     const host = `own-add-${stamp}.test`;
-    const dto = await service.add(own, { domain: host, rootRedirect: "https://example.org/at-create" });
+    const dto = await service.add(own, { domain: host, rootRedirect: "https://example.org/at-create" }, admin);
     const queued = await outboxFor(dto.id);
     expect(queued).toHaveLength(1);
     expect(queued[0]!.operation).toBe("domain");
     expect(queued[0]!.payload).toMatchObject({ domainId: dto.id, host });
 
-    await service.remove(own, dto.id);
+    await service.remove(own, dto.id, admin);
     const afterRemove = await outboxFor(dto.id);
     expect(afterRemove).toHaveLength(2);
     expect(afterRemove.at(-1)!.payload).toMatchObject({ domainId: dto.id, host });
@@ -301,7 +301,7 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
 
   it("refuses a self-loop at create time too", async () => {
     const host = `own-loop-add-${stamp}.test`;
-    await expect(service.add(own, { domain: host, notFoundRedirect: `https://${host}/x` })).rejects.toBeInstanceOf(
+    await expect(service.add(own, { domain: host, notFoundRedirect: `https://${host}/x` }, admin)).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });

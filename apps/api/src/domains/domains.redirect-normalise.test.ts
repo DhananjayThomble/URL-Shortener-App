@@ -136,7 +136,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
     const { db, inserted } = makeFakeDb("add");
     const service = new DomainsService(db, { nudge } as never);
 
-    const dto = await service.add("ws-1", { domain: "fresh.example", rootRedirect: idnHost });
+    const dto = await service.add("ws-1", { domain: "fresh.example", rootRedirect: idnHost }, actor);
 
     const written = inserted[0]!.rootRedirect;
     expect(written).toBe(new URL(idnHost).href);
@@ -148,7 +148,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
     const { db, inserted } = makeFakeDb("add");
     const service = new DomainsService(db, { nudge } as never);
 
-    await service.add("ws-1", { domain: "fresh.example", notFoundRedirect: cjkPath });
+    await service.add("ws-1", { domain: "fresh.example", notFoundRedirect: cjkPath }, actor);
 
     expect(inserted[0]!.notFoundRedirect).toBe(new URL(cjkPath).href);
     expect(inserted[0]!.notFoundRedirect).not.toBe(cjkPath);
@@ -175,7 +175,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
     const { db, inserted } = makeFakeDb("add");
     const service = new DomainsService(db, { nudge } as never);
 
-    await service.add("ws-1", { domain: "fresh.example", rootRedirect: ascii });
+    await service.add("ws-1", { domain: "fresh.example", rootRedirect: ascii }, actor);
 
     expect(inserted[0]!.rootRedirect).toBe(new URL(ascii).href);
   });
@@ -198,7 +198,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
     const { db, inserted } = makeFakeDb("add");
     const service = new DomainsService(db, { nudge } as never);
 
-    await service.add("ws-1", { domain: "fresh.example" });
+    await service.add("ws-1", { domain: "fresh.example" }, actor);
 
     expect(inserted[0]!.rootRedirect).toBeNull();
     expect(inserted[0]!.notFoundRedirect).toBeNull();

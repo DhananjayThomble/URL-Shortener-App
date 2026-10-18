@@ -25,6 +25,7 @@ function fakeDb() {
 }
 
 const input = (endpoint: string) => ({ endpoint, events: ["link.created"] }) as never;
+const auditActor = { userId: null, label: "admin@example.com" };
 
 describe("DevelopersService.createWebhook — SSRF guard (#622)", () => {
   beforeEach(() => lookupMock.mockReset());
@@ -50,8 +51,10 @@ describe("DevelopersService.createWebhook — SSRF guard (#622)", () => {
   it("saves an endpoint that resolves to a public address", async () => {
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
     const { db, insert } = fakeDb();
-    const created = await new DevelopersService(db).createWebhook("ws-1", input("https://hooks.example.com/in"));
-    expect(insert).toHaveBeenCalledOnce();
+    const created = await new DevelopersService(db).createWebhook("ws-1", input("https://hooks.example.com/in"), auditActor);
+    // #783: the webhook row, then its audit entry. A refused endpoint (above)
+    // still writes neither.
+    expect(insert).toHaveBeenCalledTimes(2);
     expect(created.secret).toMatch(/^whsec_/);
   });
 });

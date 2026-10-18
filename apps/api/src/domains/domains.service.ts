@@ -126,7 +126,7 @@ export class DomainsService {
     return rows.map((row) => this.toDto(row, byDomain.get(row.id) ?? 0));
   }
 
-  async add(workspaceId: string, input: AddDomainInput): Promise<Domain> {
+  async add(workspaceId: string, input: AddDomainInput, actor: Actor): Promise<Domain> {
     const domain = input.domain.toLowerCase().trim();
 
     /* Globally unique, not per-workspace. Two workspaces both claiming snap.to
@@ -165,6 +165,16 @@ export class DomainsService {
       return inserted!;
     });
     if (row.rootRedirect || row.notFoundRedirect) this.projectionNudge.nudge();
+
+    // #783 — connecting a domain never reached the team page's activity list.
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "domain.added",
+      targetType: "domain",
+      targetId: row.id,
+      metadata: { domain: row.domain },
+    });
 
     return this.toDto(row, 0);
   }
@@ -381,7 +391,7 @@ export class DomainsService {
     return this.toDto(updated, count?.n ?? 0);
   }
 
-  async remove(workspaceId: string, id: string): Promise<void> {
+  async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
     const [system] = await this.db
       .select({ isSystem: domains.isSystem })
       .from(domains)
@@ -419,6 +429,18 @@ export class DomainsService {
       return result[0]!;
     });
     if (removed) this.projectionNudge.nudge();
+
+    /* After the commit, and only for a row this workspace actually deleted —
+       the transaction above throws a 404 for anyone else's domain, so a
+       refused attempt writes nothing to either trail. */
+    await recordActivity(this.db, this.logger, {
+      workspaceId,
+      actor,
+      auditAction: "domain.removed",
+      targetType: "domain",
+      targetId: removed.id,
+      metadata: { domain: removed.domain },
+    });
   }
 
   private toDto(row: typeof domains.$inferSelect, linkCount: number): Domain {

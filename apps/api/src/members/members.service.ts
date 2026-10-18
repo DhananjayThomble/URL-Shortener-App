@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { randomBytes, createHash } from "node:crypto";
 import { and, auditLog, desc, eq, links, memberships, sql, users, type Database } from "@snapurl/database";
 import type { AuditEntry, InviteMemberInput, Member } from "@snapurl/contract";
+import { describeAuditAction, type AuditAction } from "@snapurl/domain";
 import { DB, READ_DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";
 import { RANK } from "../auth/auth.guard.js";
@@ -113,7 +114,10 @@ export class MembersService {
       .returning();
 
     await this.mail.sendInvite({ to: email, token, invitedBy: actorLabel });
-    await this.writeAudit(workspaceId, null, actorLabel, "member.invited", "membership", row!.id, { email });
+    await this.writeAudit(workspaceId, null, actorLabel, "member.invited", "membership", row!.id, {
+      email,
+      role: input.role,
+    });
 
     return {
       id: row!.id,
@@ -217,7 +221,11 @@ export class MembersService {
     }
 
     await this.db.update(memberships).set({ role }).where(eq(memberships.id, membershipId));
+    /* #783 — name whose role changed. The email is what GET /members already
+       shows every member of this workspace for this row (active or invited),
+       so the trail reveals nothing the team page does not. */
     await this.writeAudit(workspaceId, null, actorLabel, "member.role_changed", "membership", membershipId, {
+      email: target.email,
       from: target.role,
       to: role,
     });
@@ -268,7 +276,7 @@ export class MembersService {
     workspaceId: string,
     actorId: string | null,
     actorLabel: string,
-    action: string,
+    action: AuditAction,
     targetType?: string,
     targetId?: string,
     metadata?: Record<string, unknown>,
@@ -286,37 +294,9 @@ export class MembersService {
 }
 
 /** The audit list is read by people, not machines, so the stored action key is
- *  rendered as a sentence rather than shown raw. */
+ *  rendered as a sentence rather than shown raw. The copy lives in
+ *  @snapurl/domain (#783) so a key cannot be written without one, and the web
+ *  fixtures render the same sentences. */
 function describe(action: string, metadata: Record<string, unknown> | null): string {
-  const email = typeof metadata?.email === "string" ? metadata.email : null;
-  switch (action) {
-    case "member.invited":
-      return `Invited ${email ?? "a teammate"}`;
-    case "member.invite_resent":
-      return `Resent the invitation to ${email ?? "a teammate"}`;
-    case "member.joined":
-      return `${email ?? "A teammate"} joined as ${metadata?.role ?? "a member"}`;
-    case "member.removed":
-      return `Removed ${email ?? "a teammate"}`;
-    case "member.role_changed":
-      return `Changed a role from ${metadata?.from} to ${metadata?.to}`;
-    case "link.created":
-      return `Created ${metadata?.slug ?? "a link"}`;
-    case "link.updated":
-      return `Edited ${metadata?.slug ?? "a link"}`;
-    case "link.deleted":
-      return `Deleted ${metadata?.slug ?? "a link"}`;
-    case "domain.added":
-      return `Connected ${metadata?.domain ?? "a domain"}`;
-    case "domain.verified":
-      return `Verified ${metadata?.domain ?? "a domain"}`;
-    case "domain.updated":
-      return `Changed redirects on ${metadata?.domain ?? "a domain"}`;
-    case "apikey.created":
-      return `Created an API key`;
-    case "apikey.revoked":
-      return `Revoked an API key`;
-    default:
-      return action;
-  }
+  return describeAuditAction(action, metadata);
 }

@@ -34,6 +34,7 @@ import type {
   UserWorkspace,
 } from "@snapurl/contract";
 import { TOTP_DISABLE_NO_PASSWORD_MESSAGE, TOTP_DISABLE_WRONG_PASSWORD_MESSAGE } from "@snapurl/contract";
+import type { AuditAction } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "./token.service.js";
@@ -703,7 +704,7 @@ export class AuthService {
         workspaceId: row.workspaceId,
         actorId: user.id,
         actorLabel: user.email,
-        action: "member.joined",
+        action: "member.joined" satisfies AuditAction,
         targetType: "membership",
         targetId: invite.id,
         metadata: { email: user.email, role: row.role },
