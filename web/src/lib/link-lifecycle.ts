@@ -1,4 +1,5 @@
 import type { Link } from "./api/types";
+import { plural } from "./plural";
 import { compact, formatDate } from "./utils";
 
 /* The expiry / schedule summary a link row shows in its details line (#760).
@@ -29,7 +30,7 @@ export function lifecycleSummary(
   fmt: (iso: string) => string = formatDate,
 ): string {
   const limitReached = link.clickLimit != null && link.clicks >= link.clickLimit;
-  if (limitReached && link.clickLimit) return `Expired after ${compact(link.clickLimit)} clicks`;
+  if (limitReached && link.clickLimit) return `Expired after ${plural(link.clickLimit, "click", { format: compact })}`;
 
   const expires = parse(link.expiresAt);
   if (expires && expires.getTime() <= now.getTime()) return `Expired ${fmt(link.expiresAt as string)}`;
@@ -41,6 +42,6 @@ export function lifecycleSummary(
   if (activates && activates.getTime() > now.getTime()) return `Goes live ${fmt(link.activatesAt as string)}`;
 
   if (expires) return `Expires ${fmt(link.expiresAt as string)}`;
-  if (link.clickLimit) return `Expires after ${compact(link.clickLimit)} clicks`;
+  if (link.clickLimit) return `Expires after ${plural(link.clickLimit, "click", { format: compact })}`;
   return "Never expires";
 }

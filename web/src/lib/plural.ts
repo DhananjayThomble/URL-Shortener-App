@@ -1,5 +1,7 @@
 import type { Domain, Member } from "@snapurl/contract";
-import { full } from "./utils";
+
+// Same as utils.full; not imported from there because utils.ts uses plural().
+const group = (n: number) => n.toLocaleString();
 
 /*
  * #793 — one place that turns a number and a noun into "1 link" / "2 links".
@@ -26,7 +28,7 @@ export function pluralNoun(n: number, singular: string, plural: string = `${sing
 
 /** The number and its noun: plural(1, "link") → "1 link", plural(2431, "link") → "2,431 links". */
 export function plural(n: number, singular: string, opts: PluralOptions = {}): string {
-  const fmt = opts.format ?? full;
+  const fmt = opts.format ?? group;
   return `${fmt(n)} ${pluralNoun(n, singular, opts.plural)}`;
 }
 

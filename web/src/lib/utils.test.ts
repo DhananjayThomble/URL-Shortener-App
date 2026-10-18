@@ -74,6 +74,20 @@ describe("relativeDate / formatDate", () => {
     expect(relativeDate("2026-09-09T09:00:00.000Z")).toBe("3 hours ago");
     expect(relativeDate("2026-09-07T12:00:00.000Z")).toBe("2 days ago");
   });
+  it("uses the singular for exactly one unit (#793)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-09T12:00:00.000Z"));
+    expect(relativeDate("2026-09-09T11:00:00.000Z")).toBe("1 hour ago");
+    expect(relativeDate("2026-09-08T12:00:00.000Z")).toBe("1 day ago");
+    expect(relativeDate("2026-08-09T12:00:00.000Z")).toBe("1 month ago");
+    expect(relativeDate("2025-09-09T12:00:00.000Z")).toBe("1 year ago");
+  });
+  it("pluralises years by the rounded number shown, not by a month threshold (#793)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-09T12:00:00.000Z"));
+    // 18 months rounds to "2 years" — it used to read "2 year ago".
+    expect(relativeDate("2025-03-09T12:00:00.000Z")).toBe("2 years ago");
+  });
   it("echoes an unparseable input back unchanged", () => {
     expect(relativeDate("not-a-date")).toBe("not-a-date");
     expect(formatDate("not-a-date")).toBe("not-a-date");
