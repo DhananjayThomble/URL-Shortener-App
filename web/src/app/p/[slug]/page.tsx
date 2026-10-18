@@ -202,6 +202,63 @@ export default function LinkPreviewPage() {
             <Skeleton className="h-[70px]" />
             <Skeleton className="h-[180px]" />
           </div>
+        ) : page.kind === "off" ? (
+          /* #765 — previews are off and nothing guards the link: a deliberate
+             state, not a failure, so no Try again (retrying cannot change the
+             owner's setting). Nothing the switch hides is shown — no creator,
+             dates, scan state or destination. The only way on is back through
+             the short link, so the redirect decides and the click is counted.
+             A flagged link gets the unsafe warning and no way on: the redirect
+             bounces a flagged link straight back here (#800). */
+          <>
+            <div className="p-6 border-b border-line text-center">
+              <div
+                className={`w-[46px] h-[46px] rounded-[13px] grid place-items-center text-[21px] mx-auto mb-3.5 ${
+                  trust.kind === "flagged" ? trust.iconClass : "bg-accent-wash text-accent"
+                }`}
+              >
+                {trust.kind === "flagged" ? trust.icon : "🙈"}
+              </div>
+              <h2 className="text-[19px] font-bold">
+                {trust.kind === "flagged" ? trust.heading : "Previews are turned off"}
+              </h2>
+              {trust.notice ? (
+                <p role="alert" className="mt-2 text-[13px] leading-[1.6] text-bad">
+                  {trust.notice}
+                </p>
+              ) : null}
+            </div>
+            <div className="px-6 py-[18px] bg-surface-2 border-b border-line">
+              <div className="font-mono text-[9.5px] tracking-[0.13em] uppercase text-ink-3 mb-[7px]">Where it goes</div>
+              <div className="text-[13.5px] text-ink-2 leading-[1.6]">
+                {trust.kind === "flagged"
+                  ? "🔒 Hidden. This link was flagged, so we don't send anyone to it."
+                  : "🔒 Hidden. The owner of this link has turned off public previews, so we can't show you where it goes."}
+              </div>
+            </div>
+            {page.shortUrl ? (
+              <div className="px-6">
+                <div className="flex items-center gap-3 py-3 text-[13.5px]">
+                  <span className="text-ink-3 w-[118px] shrink-0">Short link</span>
+                  <span className="flex-1 flex items-center gap-2 justify-end text-right font-mono break-all">
+                    {page.shortUrl}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+            <div className="px-6 pt-[18px] pb-[22px] flex flex-col gap-[9px]">
+              {page.continueHref && trust.kind !== "flagged" ? (
+                <a
+                  href={page.continueHref}
+                  rel="noopener noreferrer nofollow"
+                  className="px-[13px] py-[11px] rounded-[var(--radius-sm)] font-semibold text-[13px] text-center bg-accent text-accent-ink"
+                >
+                  Continue to {page.shortUrl} →
+                </a>
+              ) : null}
+              {reportControls}
+            </div>
+          </>
         ) : page.kind === "lock" ? (
           /* #762 — previews are off, so nothing the owner hid: no creator,
              dates or scan state. Just the short link and the password. */
@@ -363,9 +420,15 @@ export default function LinkPreviewPage() {
       </div>
 
       <p className="text-center text-[11.5px] text-ink-3 mt-4 leading-[1.6]">
-        Anyone can see this page by adding <span className="font-mono text-accent">+</span> to the end of any SnapURL
-        link.
-        <br />
+        {/* #765 — with previews off the page shows nothing, so it must not
+            claim anyone can see it by adding "+". */}
+        {page.kind === "off" || page.kind === "lock" ? null : (
+          <>
+            Anyone can see this page by adding <span className="font-mono text-accent">+</span> to the end of any SnapURL
+            link.
+            <br />
+          </>
+        )}
         We do not set cookies, and we never sell click data.
       </p>
     </div>

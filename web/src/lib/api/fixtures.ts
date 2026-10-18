@@ -409,6 +409,9 @@ export const ANALYTICS: Analytics = {
   ],
 };
 
+/** The deployment's short domain: where a custom domain's CNAME must point. */
+const FIXTURE_ROUTING_TARGET = "snap.to";
+
 export const DOMAINS: Domain[] = [
   {
     id: "dom_snapto",
@@ -443,7 +446,8 @@ export const DOMAINS: Domain[] = [
     links: 14,
     rootRedirect: null,
     notFoundRedirect: null,
-    dns: { type: "CNAME", name: "@", value: "edge.snapurl.dev", ttl: 3600 },
+    dns: { type: "TXT", name: "_snapurl.acme.link", value: "snapurl-verify-3f9a1c7e5b2d4086a1c3e5f7092b4d6e", ttl: 300 },
+    routing: { type: "CNAME", name: "acme.link", value: FIXTURE_ROUTING_TARGET, ttl: 300 },
   },
 ];
 
@@ -1154,7 +1158,10 @@ export async function fixtureRequest<T>(
       links: 0,
       rootRedirect: body.rootRedirect ?? null,
       notFoundRedirect: body.notFoundRedirect ?? null,
-      dns: { type: "CNAME", name: body.domain, value: "edge.snapurl.in", ttl: 3600 },
+      // Mirrors domains.service.ts toDto: the TXT ownership proof, plus (#784)
+      // the record that routes traffic to the deployment's short domain.
+      dns: { type: "TXT", name: `_snapurl.${body.domain}`, value: `snapurl-verify-${uid("tok")}`, ttl: 300 },
+      routing: { type: "CNAME", name: body.domain, value: FIXTURE_ROUTING_TARGET, ttl: 300 },
     };
     domainStore.unshift(domain);
     data = domain;

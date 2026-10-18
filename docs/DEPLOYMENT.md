@@ -377,6 +377,20 @@ lives (Cloudflare, Route53, anywhere), and CloudFormation resumes once ACM
 sees it resolve. `RedirectDomain`'s output becomes the real domain once this
 is set, rather than "CNAME your short domain here."
 
+### Pointing a customer's own domain at the deployment
+
+A workspace admin adds a domain on **Domains**; the page then lists two DNS
+records to create, each with a Copy button: a TXT record that proves ownership,
+and a **routing** record that sends visitors to this deployment. The routing
+record is built by the API from `DEFAULT_DOMAIN` — the host the redirect
+service answers on in every profile (`SHORT_DOMAIN` on single-node, `defaultDomain` in
+the Helm chart, `default-domain` on AWS) — with any port dropped, because DNS
+has none. It is a CNAME to that host, or an A / AAAA record if the operator
+set `DEFAULT_DOMAIN` to a bare IP address. The web app never carries the
+target, so each deployment shows its own. A root (apex) domain can't hold a
+CNAME at many DNS providers; the page says to use an ALIAS, ANAME or
+"CNAME flattening" record with the same value, or a subdomain.
+
 ### Google OAuth
 
 Optional — unset means `OAuthService.enabled('google')` is `false` and

@@ -150,23 +150,28 @@ test.describe("public trust page: previews off, password-protected link (#762)",
     await expectPasswordForm(page);
   });
 
-  test("previews off, no password: the previews-off error, no password form", async ({ page }) => {
+  test("previews off, no password: the previews-off state (#765), no password form", async ({ page }) => {
     await mockApi(page, {
       "GET /public/links/open/preview": PREVIEWS_OFF,
       "GET /public/links/open/lock": { status: 200, body: { shortUrl: "snap.to/open", passwordProtected: false } },
     });
     await page.goto("/p/open?unlock=1");
-    await expect(page.getByText("That didn't load")).toBeVisible();
+    /* Used to be "That didn't load" + Try again — the old behaviour was the bug
+       (#765), so this now expects the deliberate state; the no-form assertion
+       stays. */
+    await expect(page.getByRole("heading", { name: "Previews are turned off" })).toBeVisible();
+    await expect(page.getByText("That didn't load")).toHaveCount(0);
     await expect(page.getByText("This link is password protected")).toHaveCount(0);
   });
 
-  test("deploy skew — API without the lock route: the previews-off error, no crash, no form", async ({ page }) => {
+  test("deploy skew — API without the lock route: the previews-off state, no crash, no form", async ({ page }) => {
     await mockApi(page, {
       "GET /public/links/vault/preview": PREVIEWS_OFF,
       "GET /public/links/vault/lock": NO_SUCH_ROUTE,
     });
     await page.goto("/p/vault?unlock=1");
-    await expect(page.getByText("That didn't load")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Previews are turned off" })).toBeVisible();
+    await expect(page.getByText("That didn't load")).toHaveCount(0);
     await expect(page.getByText("This link is password protected")).toHaveCount(0);
   });
 
