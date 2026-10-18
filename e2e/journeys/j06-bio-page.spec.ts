@@ -179,6 +179,9 @@ test.describe("Journey 6 — Bio page", () => {
     // The block is a real link to its destination. Clicking it is counted
     // (keepalive POST) before the browser leaves; stub the destination so the
     // test does not depend on the internet.
+    // 9d left anonPage on the 404 page; go back to the live page (the block
+    // link is only there). The same tab already counted its view in 9b.
+    await anonPage.goto(`/b/${slug}`, { waitUntil: "networkidle", timeout: 15_000 });
     await anonPage.route("https://example.com/**", (route) => route.fulfill({ body: "ok" }));
     const link = anonPage.getByRole("link", { name: "J6 destination" });
     await expect(link).toHaveAttribute("href", "https://example.com/j6");
@@ -194,12 +197,15 @@ test.describe("Journey 6 — Bio page", () => {
     /* ---- 10. The workspace sees the view and the click ---- */
     // Invariant: one visit is one view; one click on a block is one click on
     // that block. Only counters — the public shape still carries neither.
+    // This journey loads the live page three times (9b slug alias, 9c per-domain
+    // route, and the re-load just before the click), so three views are expected.
+    const PUBLIC_PAGE_VISITS = 3;
     await expect
       .poll(async () => {
         const res = await fetch(`${API_URL}/bio-pages`, { headers: { authorization: `Bearer ${session.accessToken}` } });
         const p = ((await res.json()) as ApiBioPage[]).find((x) => x.slug === slug);
         return [p?.views, p?.blocks[0]?.metric];
       })
-      .toEqual([1, "1 click"]);
+      .toEqual([PUBLIC_PAGE_VISITS, "1 click"]);
   });
 });
