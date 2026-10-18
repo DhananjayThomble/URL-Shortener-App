@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import * as argon2 from "argon2";
 import { createHash, randomBytes } from "node:crypto";
+import type { AuditAction } from "@snapurl/domain";
 import { dailyBreakdowns } from "./seed-breakdowns";
 
 /* Seeds a demo workspace with enough history that the dashboards look like a
@@ -155,7 +156,7 @@ async function main() {
       values (${workspace!.id}, 'Production', ${createHash("sha256").update(apiKey).digest("hex")},
               ${apiKey.slice(0, 15)}, ${apiKey.slice(-4)}, ${["links:read", "links:write", "analytics:read"]}, ${user!.id})`;
 
-    const audit: Array<[string, Record<string, unknown>, number]> = [
+    const audit: Array<[AuditAction, Record<string, unknown>, number]> = [
       ["link.created", { slug: "spring-sale" }, 3 * 3_600_000],
       ["apikey.created", {}, 86_400_000],
       ["member.invited", { email: "teammate@snapurl.local" }, 2 * 86_400_000],

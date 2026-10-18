@@ -3,6 +3,7 @@ import { UpsertBioPageInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, type RequestActor } from "../auth/auth.guard.js";
 import { BioPagesService } from "./bio-pages.service.js";
+import { toActor } from "../common/activity.js";
 
 @Controller("bio-pages")
 export class BioPagesController {
@@ -16,7 +17,7 @@ export class BioPagesController {
   @Put()
   @Roles("editor")
   upsert(@Actor() actor: RequestActor, @Body(zodBody(UpsertBioPageInput)) input: UpsertBioPageInput) {
-    return this.bio.upsert(actor.workspaceId, input);
+    return this.bio.upsert(actor.workspaceId, input, toActor(actor));
   }
 
   /* :id parsed as a UUID at the edge, same as LinksController — a malformed
@@ -27,6 +28,6 @@ export class BioPagesController {
   @Roles("editor")
   @HttpCode(204)
   async remove(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
-    await this.bio.remove(actor.workspaceId, id);
+    await this.bio.remove(actor.workspaceId, id, toActor(actor));
   }
 }

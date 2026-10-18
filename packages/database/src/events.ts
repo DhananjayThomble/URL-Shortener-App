@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Executor } from "./client.js";
+import type { AuditAction } from "@snapurl/domain";
 import { auditLog } from "./schema/index.js";
 
 /* ============================================================
@@ -61,9 +62,9 @@ export interface AuditEntryInput {
   workspaceId: string;
   actorId: string | null;
   actorLabel: string;
-  /** Rendered into a sentence by describe() in members.service.ts. A key with
-   *  no case there shows raw, so add one when you add an action. */
-  action: string;
+  /** One of the closed set in @snapurl/domain, each of which has human copy
+   *  (#783). The column is typed the same way, so a raw insert is held to it too. */
+  action: AuditAction;
   targetType?: string | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;
