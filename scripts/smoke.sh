@@ -49,7 +49,9 @@ check "duplicate email is rejected" 'already exists' "$BODY"
 
 BODY=$(curl -s -X POST "$API/auth/register" -H 'Content-Type: application/json' \
   -d '{"name":"Short","email":"short@example.com","password":"tiny"}')
-check "short password names the field" 'password:' "$BODY"
+check "short password names the field" '"path":"password"' "$BODY"
+# #792: the field is named in issues[].path; the message itself is a plain sentence, no `password: ` prefix.
+check "short password message has no field prefix" 'Use at least 12 characters' "$BODY"
 
 echo
 echo "== workspace =="
@@ -85,7 +87,9 @@ check "reserved slug is rejected" 'reserved' "$BODY"
 
 BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
   -d '{"destination":"not-a-url","domain":"localhost:3002","tags":[],"redirectType":"302","rules":[],"forwardQuery":true,"deepLink":false,"hideReferrer":false,"publicPreview":true}')
-check "bad destination names the field" 'destination:' "$BODY"
+check "bad destination names the field" '"path":"destination"' "$BODY"
+# #792: one plain sentence for the field, not a `destination: ` prefix repeated per rule.
+check "bad destination is one plain message" '"message":["Enter an absolute http(s) URL"]' "$BODY"
 
 BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
   -d '{"destination":"https://example.com/ab","domain":"localhost:3002","tags":[],"redirectType":"302","forwardQuery":true,"deepLink":false,"hideReferrer":false,"publicPreview":true,"rules":[{"id":"a","when":{},"then":"https://a.example.com","weight":60},{"id":"b","when":{},"then":"https://b.example.com","weight":30}]}')
