@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { and, asc, bioBlocks, bioPages, domains, eq, inArray, isUniqueViolation, links, projectionOutbox, sql, type Database, type Executor } from "@snapurl/database";
 import type { BioPage, PublicBioPage, UpsertBioPageInput } from "@snapurl/contract";
-import { bioManagedDestination, isSlugAvailableShape } from "@snapurl/domain";
+import { bioManagedDestination, isSlugAvailableShape, type AuditAction } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
+import { auditInTransaction, type Actor } from "../common/activity.js";
 import { ENV, type Env } from "../config/env.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
@@ -72,7 +73,7 @@ export class BioPagesService {
     });
   }
 
-  async upsert(workspaceId: string, input: UpsertBioPageInput): Promise<BioPage> {
+  async upsert(workspaceId: string, input: UpsertBioPageInput, actor: Actor): Promise<BioPage> {
     const shape = isSlugAvailableShape(input.slug);
     if (!shape.ok) throw new BadRequestException(shape.reason);
 
@@ -104,9 +105,12 @@ export class BioPagesService {
          `bio_pages_domain_slug_key` unique index refuses a move onto an address
          another page holds (surfaced as a 409). */
       let id: string;
+      /* #783 — the status the page had BEFORE this save (null for a new page),
+         so the audit entry can say created / published / unpublished. */
+      let priorStatus: string | null = null;
       if (input.id) {
         const [byId] = await tx
-          .select({ id: bioPages.id })
+          .select({ id: bioPages.id, status: bioPages.status })
           .from(bioPages)
           .where(and(eq(bioPages.id, input.id), eq(bioPages.workspaceId, workspaceId)))
           .limit(1);
@@ -128,9 +132,10 @@ export class BioPagesService {
           throw err;
         }
         id = byId.id;
+        priorStatus = byId.status;
       } else {
         const [existing] = await tx
-          .select({ id: bioPages.id, workspaceId: bioPages.workspaceId })
+          .select({ id: bioPages.id, workspaceId: bioPages.workspaceId, status: bioPages.status })
           .from(bioPages)
           .where(and(eq(bioPages.domainId, domain.id), sql`lower(${bioPages.slug}) = ${input.slug.toLowerCase()}`))
           .limit(1);
@@ -154,6 +159,7 @@ export class BioPagesService {
             })
             .where(eq(bioPages.id, existing.id));
           id = existing.id;
+          priorStatus = existing.status;
         } else {
           const [row] = await tx
             .insert(bioPages)
@@ -219,6 +225,28 @@ export class BioPagesService {
         domainName: domain.domain,
         slug: input.slug,
         live: input.status === "live",
+      });
+
+      /* #783 — creating or publishing a bio page never reached the team
+         page's activity list. One entry per save, naming what the save did to
+         the page's status, in the save's own transaction: a failed audit
+         insert rolls the save back rather than leaving it unrecorded. */
+      const nowLive = input.status === "live";
+      const auditAction: AuditAction =
+        priorStatus === null
+          ? "bio_page.created"
+          : nowLive && priorStatus !== "live"
+            ? "bio_page.published"
+            : !nowLive && priorStatus === "live"
+              ? "bio_page.unpublished"
+              : "bio_page.updated";
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction,
+        targetType: "bio_page",
+        targetId: id,
+        metadata: { domain: domain.domain, slug: input.slug, status: input.status },
       });
 
       return { id, busts };
@@ -501,7 +529,7 @@ export class BioPagesService {
     return page.page;
   }
 
-  async remove(workspaceId: string, id: string): Promise<void> {
+  async remove(workspaceId: string, id: string, actor: Actor): Promise<void> {
     /* Read the managed link's (domain, slug) BEFORE the delete so the
        cache-bust key still means something afterwards — once the rows are gone
        there is nothing left to join against for the domain string. We delete
@@ -511,7 +539,7 @@ export class BioPagesService {
        delete + bust its cache, the same invalidation the user-link delete path
        uses (#650 item 2), not a new one. */
     const row = await this.db
-      .select({ linkId: links.id, slug: links.slug, domain: domains.domain })
+      .select({ linkId: links.id, slug: links.slug, domain: domains.domain, pageSlug: bioPages.slug })
       .from(bioPages)
       .leftJoin(links, eq(links.managedBioPageId, bioPages.id))
       .innerJoin(domains, eq(bioPages.domainId, domains.id))
@@ -528,6 +556,15 @@ export class BioPagesService {
         await tx.delete(links).where(eq(links.id, managed.linkId));
       }
       await tx.delete(bioPages).where(and(eq(bioPages.id, id), eq(bioPages.workspaceId, workspaceId)));
+      // #783 — only reached for a page this workspace owned; same transaction.
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "bio_page.deleted",
+        targetType: "bio_page",
+        targetId: id,
+        metadata: { domain: managed.domain, slug: managed.pageSlug },
+      });
     });
 
     if (managed.linkId && managed.slug) {

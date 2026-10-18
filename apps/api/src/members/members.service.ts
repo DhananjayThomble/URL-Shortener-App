@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomBytes, createHash } from "node:crypto";
-import { and, auditLog, desc, eq, links, memberships, sql, users, type Database } from "@snapurl/database";
+import { and, auditLog, desc, eq, links, memberships, sql, users, writeAuditEntry, type Database, type Executor } from "@snapurl/database";
 import type { AuditEntry, InviteMemberInput, Member } from "@snapurl/contract";
+import { describeAuditAction, type AuditAction } from "@snapurl/domain";
 import { DB, READ_DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";
 import { RANK } from "../auth/auth.guard.js";
@@ -99,31 +100,39 @@ export class MembersService {
       .where(sql`lower(${users.email}) = ${email}`)
       .limit(1);
 
-    const [row] = await this.db
-      .insert(memberships)
-      .values({
-        workspaceId,
-        userId: user?.id ?? null,
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(memberships)
+        .values({
+          workspaceId,
+          userId: user?.id ?? null,
+          email,
+          role: input.role,
+          status: "invited",
+          inviteTokenHash: createHash("sha256").update(token).digest("hex"),
+          invitedAt: new Date(),
+        })
+        .returning();
+      // #783 review — the invitation and its audit row commit together.
+      await this.writeAudit(tx, workspaceId, null, actorLabel, "member.invited", "membership", inserted!.id, {
         email,
         role: input.role,
-        status: "invited",
-        inviteTokenHash: createHash("sha256").update(token).digest("hex"),
-        invitedAt: new Date(),
-      })
-      .returning();
+      });
+      return inserted!;
+    });
 
+    // After the commit: an email must never announce an invitation that rolled back.
     await this.mail.sendInvite({ to: email, token, invitedBy: actorLabel });
-    await this.writeAudit(workspaceId, null, actorLabel, "member.invited", "membership", row!.id, { email });
 
     return {
-      id: row!.id,
+      id: row.id,
       name: email,
       email,
       role: input.role,
       status: "invited",
       links: 0,
       lastActive: null,
-      invitedAt: row!.invitedAt?.toISOString() ?? null,
+      invitedAt: row.invitedAt?.toISOString() ?? null,
       twoFactor: false,
       initials: initialsOf(email),
     };
@@ -152,15 +161,17 @@ export class MembersService {
     // be used to accept an invitation.
     const token = randomBytes(32).toString("base64url");
     const invitedAt = new Date();
-    await this.db
-      .update(memberships)
-      .set({ inviteTokenHash: createHash("sha256").update(token).digest("hex"), invitedAt })
-      .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)));
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(memberships)
+        .set({ inviteTokenHash: createHash("sha256").update(token).digest("hex"), invitedAt })
+        .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)));
+      await this.writeAudit(tx, workspaceId, null, actorLabel, "member.invite_resent", "membership", membershipId, {
+        email: target.email,
+      });
+    });
 
     await this.mail.sendInvite({ to: target.email, token, invitedBy: actorLabel });
-    await this.writeAudit(workspaceId, null, actorLabel, "member.invite_resent", "membership", membershipId, {
-      email: target.email,
-    });
 
     return {
       id: target.id,
@@ -216,10 +227,22 @@ export class MembersService {
       }
     }
 
-    await this.db.update(memberships).set({ role }).where(eq(memberships.id, membershipId));
-    await this.writeAudit(workspaceId, null, actorLabel, "member.role_changed", "membership", membershipId, {
-      from: target.role,
-      to: role,
+    /* #783 — name whose role changed. The email is what GET /members already
+       shows every member of this workspace for this row (active or invited),
+       so the trail reveals nothing the team page does not.
+       #783 review — the role change and its audit row are ONE transaction: a
+       failed audit insert rolls the role back, so the caller's error describes
+       a change that did not happen and a retry is safe. */
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(memberships)
+        .set({ role })
+        .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)));
+      await this.writeAudit(tx, workspaceId, null, actorLabel, "member.role_changed", "membership", membershipId, {
+        email: target.email,
+        from: target.role,
+        to: role,
+      });
     });
   }
 
@@ -241,9 +264,13 @@ export class MembersService {
       }
     }
 
-    await this.db.delete(memberships).where(eq(memberships.id, membershipId));
-    await this.writeAudit(workspaceId, null, actorLabel, "member.removed", "membership", membershipId, {
-      email: target.email,
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(memberships)
+        .where(and(eq(memberships.id, membershipId), eq(memberships.workspaceId, workspaceId)));
+      await this.writeAudit(tx, workspaceId, null, actorLabel, "member.removed", "membership", membershipId, {
+        email: target.email,
+      });
     });
   }
 
@@ -264,16 +291,19 @@ export class MembersService {
     }));
   }
 
+  /** Throws by design: pass the transaction that applies the change, so a
+   *  failed insert rolls the change back with it (#783 review). */
   async writeAudit(
+    tx: Executor,
     workspaceId: string,
     actorId: string | null,
     actorLabel: string,
-    action: string,
+    action: AuditAction,
     targetType?: string,
     targetId?: string,
     metadata?: Record<string, unknown>,
   ) {
-    await this.db.insert(auditLog).values({
+    await writeAuditEntry(tx, {
       workspaceId,
       actorId,
       actorLabel,
@@ -286,37 +316,9 @@ export class MembersService {
 }
 
 /** The audit list is read by people, not machines, so the stored action key is
- *  rendered as a sentence rather than shown raw. */
+ *  rendered as a sentence rather than shown raw. The copy lives in
+ *  @snapurl/domain (#783) so a key cannot be written without one, and the web
+ *  fixtures render the same sentences. */
 function describe(action: string, metadata: Record<string, unknown> | null): string {
-  const email = typeof metadata?.email === "string" ? metadata.email : null;
-  switch (action) {
-    case "member.invited":
-      return `Invited ${email ?? "a teammate"}`;
-    case "member.invite_resent":
-      return `Resent the invitation to ${email ?? "a teammate"}`;
-    case "member.joined":
-      return `${email ?? "A teammate"} joined as ${metadata?.role ?? "a member"}`;
-    case "member.removed":
-      return `Removed ${email ?? "a teammate"}`;
-    case "member.role_changed":
-      return `Changed a role from ${metadata?.from} to ${metadata?.to}`;
-    case "link.created":
-      return `Created ${metadata?.slug ?? "a link"}`;
-    case "link.updated":
-      return `Edited ${metadata?.slug ?? "a link"}`;
-    case "link.deleted":
-      return `Deleted ${metadata?.slug ?? "a link"}`;
-    case "domain.added":
-      return `Connected ${metadata?.domain ?? "a domain"}`;
-    case "domain.verified":
-      return `Verified ${metadata?.domain ?? "a domain"}`;
-    case "domain.updated":
-      return `Changed redirects on ${metadata?.domain ?? "a domain"}`;
-    case "apikey.created":
-      return `Created an API key`;
-    case "apikey.revoked":
-      return `Revoked an API key`;
-    default:
-      return action;
-  }
+  return describeAuditAction(action, metadata);
 }
