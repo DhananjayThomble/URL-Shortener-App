@@ -21,11 +21,17 @@ const UNLIMITED = [
   "Engagement data and exports",
 ];
 
+/* #795 — "Retained analytics history" used to be the fourth item here, under
+   "None of these carry a limit". But retention is a setting (1 year, 3 years, or
+   the install's maximum — see Settings and SELF-HOSTING.md "Retention"), so it
+   cannot be claimed as limitless. It is explained in its own sentence below, and
+   the fourth item is something nothing in the product caps (Settings: Custom
+   domains — Unlimited, docs/DECISIONS.md "Billing"). The headline still says four. */
 const METERED_ELSEWHERE = [
   "Number of links you can keep",
   "How many QR codes you generate",
   "Edits to where a link points",
-  "Retained analytics history",
+  "Custom domains you can connect",
 ];
 
 export default function PricingPage() {
@@ -46,7 +52,7 @@ export default function PricingPage() {
           </h1>
           <p className="text-[16.5px] text-ink-2 max-w-[58ch] mx-auto mt-5">
             SnapURL is free right now, and the only number that moves is clicks. Links, aliases, QR codes, destination
-            edits, custom domains, team members and engagement data are unlimited and unmetered on every plan.
+            edits, custom domains, team members and engagement data are unlimited and unmetered.
           </p>
         </header>
 
@@ -58,7 +64,7 @@ export default function PricingPage() {
                   <div className="font-mono text-[10px] tracking-[0.11em] uppercase text-ink-3">Free</div>
                   <div className="font-display text-[40px] font-bold tracking-[-0.03em] leading-none mt-2">
                     $0
-                    <span className="text-[15px] text-ink-3 font-medium tracking-normal"> / forever, for now</span>
+                    <span className="text-[15px] text-ink-3 font-medium tracking-normal"> / free right now</span>
                   </div>
                 </div>
                 <Chip tone="good" dot>Live</Chip>
@@ -117,6 +123,10 @@ export default function PricingPage() {
                 </ul>
                 <p className="m-0 mt-4 text-[12px] text-ink-3 leading-[1.6]">
                   Not here. None of these carry a limit in SnapURL.
+                </p>
+                <p className="m-0 mt-3 text-[12px] text-ink-3 leading-[1.6]">
+                  Raw click data is kept for the retention period you choose in Settings — 1 year, 3 years, or the
+                  longest your install allows. The rollups behind your dashboards are kept regardless.
                 </p>
               </CardBody>
             </Card>
