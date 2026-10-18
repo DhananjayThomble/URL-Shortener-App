@@ -60,7 +60,7 @@ describeDb("audit trail on the team page (#783)", () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
     members = new MembersService(db, db, { sendInvite: async () => undefined } as never);
-    domainsService = new DomainsService(db, { nudge: () => undefined } as never);
+    domainsService = new DomainsService(db, { nudge: () => undefined } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
     developers = new DevelopersService(db);
     bio = makeBioService(db);
 
