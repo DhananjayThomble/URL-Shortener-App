@@ -61,11 +61,12 @@ test.describe("Journey — analytics blocked visits tile (#767)", () => {
     const session = await registerUser(makeEmail("j767"));
     const token = session.accessToken;
 
-    // 1. Three links: normal, expired (API accepts a past expiresAt), not yet live.
+    // 1. Three links: normal, expired, not yet live. The API refuses a past expiry (#754) but
+    //    takes "expire it now" — the current time, a few seconds behind by the time it lands.
     const ok = await createLink(token, { destination: "https://example.com/j767-ok" });
     const expired = await createLink(token, { destination: "https://example.com/j767-expired" });
     const scheduled = await createLink(token, { destination: "https://example.com/j767-scheduled" });
-    await patchLink(token, expired.id, { expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    await patchLink(token, expired.id, { expiresAt: new Date(Date.now() - 5_000).toISOString() });
     await patchLink(token, scheduled.id, { activatesAt: new Date(Date.now() + 7 * 86_400_000).toISOString() });
 
     // 2. One real-browser visit each; the gate answers 302 / 410 / 404.
