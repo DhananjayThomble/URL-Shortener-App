@@ -256,6 +256,24 @@ async function init(): Promise<void> {
 
 app.get("/health", async () => ({ status: "ok" }));
 
+/* The trust page at /p/<slug> on the web origin, carrying the host the slug
+   was resolved on (#762/#800 review).
+
+   One slug can exist on several domains — uniqueness is (domain_id,
+   lower(slug)) — so the trust page and the preview/lock/unlock calls it makes
+   must be scoped to the SAME domain the redirect resolved, or they can land on
+   a different domain's link: the password form may not appear, the correct
+   password can be rejected against the wrong row, or the visitor is sent back
+   through the wrong short URL. The host is URL-encoded; an empty host (direct
+   hit with no Host header) omits the parameter, and the API falls back to a
+   slug-only lookup, so links bounced by an older redirect keep working. */
+function trustPageUrl(slug: string, host: string, params: Record<string, string> = {}): string {
+  const query = new URLSearchParams(params);
+  if (host) query.set("host", host);
+  const qs = query.toString();
+  return `${WEB_ORIGIN}/p/${encodeURIComponent(slug)}${qs ? `?${qs}` : ""}`;
+}
+
 app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   const rawSlug = request.params.slug;
   const host = (request.headers["x-forwarded-host"] as string) ?? request.headers.host ?? "";
@@ -264,7 +282,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
      link to see where it goes before clicking. It is a redirect to the trust
      page rather than a render, so the preview lives entirely in the frontend. */
   if (rawSlug.endsWith("+")) {
-    return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug.slice(0, -1))}`, 302);
+    return reply.redirect(trustPageUrl(rawSlug.slice(0, -1), host), 302);
   }
 
   const link = await resolver.resolve(host, rawSlug);
@@ -295,7 +313,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
     if (blocked === "expired" && link.expiresTo) return reply.redirect(link.expiresTo, 302);
     if (blocked === "scheduled" && link.scheduledTo) return reply.redirect(link.scheduledTo, 302);
     if (blocked === "flagged") {
-      return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug)}?warning=unsafe`, 302);
+      return reply.redirect(trustPageUrl(rawSlug, host, { warning: "unsafe" }), 302);
     }
 
     /* 404, not 410, and not 503.
@@ -323,7 +341,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   if (link.hasPassword) {
     const token = (request.query as { k?: string } | undefined)?.k;
     if (!token || !isValidUnlockToken(token, link.id)) {
-      return reply.redirect(`${WEB_ORIGIN}/p/${encodeURIComponent(rawSlug)}?unlock=1`, 302);
+      return reply.redirect(trustPageUrl(rawSlug, host, { unlock: "1" }), 302);
     }
   }
 

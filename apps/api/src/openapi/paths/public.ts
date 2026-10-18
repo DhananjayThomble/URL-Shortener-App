@@ -15,6 +15,17 @@ route({
 });
 
 route({
+  method: "get",
+  path: "/public/links/{slug}/lock",
+  tag,
+  summary: "Whether a password guards a link — for the unlock form; not gated by public previews, never the destination",
+  public: true,
+  params: SlugParam,
+  query: z.object({ host: z.string().optional().describe("The domain the slug was resolved on") }),
+  responses: { 200: { description: "The short URL and whether it is password protected", schema: refs.PublicLinkLock } },
+});
+
+route({
   method: "post",
   path: "/public/links/{slug}/unlock",
   tag,
