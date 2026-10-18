@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import QRCode from "qrcode";
 import { PageHead } from "@/components/app-shell";
 import { QrPreview } from "@/components/qr/qr-preview";
 import { Button, Card, CardBody, CardHeader, Field, Segmented, Skeleton, Toggle } from "@/components/ui";
 import { useLinks } from "@/lib/api/hooks";
+import { buildQrSvg } from "@/lib/qr-compose";
+import { readAccent, saveBlob, svgToPngBlob } from "@/lib/qr-export";
 import { cn, shortUrlHref } from "@/lib/utils";
 
 const FOREGROUNDS = ["#0C1219", "#1F5FD4", "#0B6E80", "#5B4BC4"];
@@ -18,42 +19,26 @@ export default function QrStudioPage() {
   const [ecl, setEcl] = useState<"L" | "M" | "Q" | "H">("Q");
   const [logo, setLogo] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const link = links[selected];
   const value = link ? shortUrlHref(link.domain, link.slug) : "";
 
   const filename = useMemo(() => (link ? `${link.domain}-${link.slug}` : "snapurl"), [link]);
 
-  /** Downloads happen client-side; nothing round-trips through a server. */
+  /** Downloads happen client-side; nothing round-trips through a server. The file is the
+      preview's own composition (lib/qr-compose.ts): same quiet zone, same logo (#773). */
   async function download(format: "svg" | "png") {
     if (!value) return;
     setBusy(true);
+    setDownloadError(null);
     try {
-      let blob: Blob;
-      if (format === "svg") {
-        const svg = await QRCode.toString(value, {
-          type: "svg",
-          errorCorrectionLevel: ecl,
-          margin: 1,
-          width: 1024,
-          color: { dark: fg, light: "#FFFFFF" },
-        });
-        blob = new Blob([svg], { type: "image/svg+xml" });
-      } else {
-        const dataUrl = await QRCode.toDataURL(value, {
-          errorCorrectionLevel: ecl,
-          margin: 1,
-          width: 2048,
-          color: { dark: fg, light: "#FFFFFF" },
-        });
-        blob = await (await fetch(dataUrl)).blob();
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${filename}.${format}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const px = format === "svg" ? 1024 : 2048;
+      const svg = await buildQrSvg({ value, size: px, dark: fg, light: "#FFFFFF", ecl, logo, accent: readAccent() });
+      const blob = format === "svg" ? new Blob([svg], { type: "image/svg+xml" }) : await svgToPngBlob(svg, px);
+      saveBlob(blob, `${filename}.${format}`);
+    } catch {
+      setDownloadError("Couldn't prepare the download. Try again.");
     } finally {
       setBusy(false);
     }
@@ -156,6 +141,11 @@ export default function QrStudioPage() {
               <Button className="justify-between" disabled={busy || !value} onClick={() => download("png")}>
                 PNG <span className="font-mono text-[11px] text-ink-3">2048 px</span>
               </Button>
+              {downloadError ? (
+                <p role="alert" className="text-[12px] text-bad">
+                  {downloadError}
+                </p>
+              ) : null}
             </CardBody>
           </Card>
         </div>
