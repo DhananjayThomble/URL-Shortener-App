@@ -21,7 +21,7 @@ export default function LandingPage() {
         <header className="pt-[66px] pb-10 text-center">
           <div className="inline-flex items-center gap-2 px-[13px] py-[5px] rounded-full bg-accent-wash text-accent text-[12px] font-semibold mb-[22px]">
             <span className="w-[6px] h-[6px] rounded-full bg-current" />
-            MIT licensed · self-host in one command
+            MIT licensed · self-host with Docker Compose
           </div>
           <h1 className="text-[clamp(38px,6.4vw,68px)] leading-[1.03] font-extrabold tracking-[-0.032em]">
             Short links that
@@ -89,7 +89,7 @@ export default function LandingPage() {
             We count one.
           </h2>
           <p className="text-ink-2 max-w-[54ch] mx-auto mt-3 text-[15.5px]">
-            Links, QR codes, destination edits and &ldquo;engagement data&rdquo; are unlimited on every plan. The only
+            Links, QR codes, destination edits and &ldquo;engagement data&rdquo; are unlimited. The only
             number that moves is clicks.
           </p>
           <Link

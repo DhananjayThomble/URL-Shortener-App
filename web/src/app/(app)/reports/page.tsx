@@ -3,6 +3,7 @@
 import { PageHead } from "@/components/app-shell";
 import { Button, Card, Chip, EmptyState, ErrorState, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useReports, useReviewReport } from "@/lib/api/hooks";
+import { reportActions } from "@/lib/report-actions";
 import type { AbuseReportStatus } from "@snapurl/contract";
 import { formatDate } from "@/lib/utils";
 
@@ -80,33 +81,42 @@ export default function ReportsPage() {
                     <Td className="text-[12px] text-ink-3 whitespace-nowrap">{formatDate(r.createdAt)}</Td>
                     <Td className="text-right whitespace-nowrap">
                       <div className="inline-flex gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={review.isPending}
-                          aria-label={`Mark report on /${r.slug} reviewed`}
-                          onClick={() => review.mutate({ id: r.id, status: "reviewed" })}
-                        >
-                          Reviewed
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={review.isPending}
-                          aria-label={`Dismiss report on /${r.slug}`}
-                          onClick={() => review.mutate({ id: r.id, status: "dismissed" })}
-                        >
-                          Dismiss
-                        </Button>
-                        <Button
-                          size="sm"
-                          disabled={review.isPending || r.linkId === null}
-                          aria-label={`Flag the link for report on /${r.slug}`}
-                          title={r.linkId === null ? "This report's slug did not resolve to a link" : undefined}
-                          onClick={() => review.mutate({ id: r.id, flagLink: true })}
-                        >
-                          Flag link
-                        </Button>
+                        {reportActions(r.status).map((action) =>
+                          action === "reviewed" ? (
+                            <Button
+                              key={action}
+                              size="sm"
+                              variant="ghost"
+                              disabled={review.isPending}
+                              aria-label={`Mark report on /${r.slug} reviewed`}
+                              onClick={() => review.mutate({ id: r.id, status: "reviewed" })}
+                            >
+                              Reviewed
+                            </Button>
+                          ) : action === "dismiss" ? (
+                            <Button
+                              key={action}
+                              size="sm"
+                              variant="ghost"
+                              disabled={review.isPending}
+                              aria-label={`Dismiss report on /${r.slug}`}
+                              onClick={() => review.mutate({ id: r.id, status: "dismissed" })}
+                            >
+                              Dismiss
+                            </Button>
+                          ) : (
+                            <Button
+                              key={action}
+                              size="sm"
+                              disabled={review.isPending || r.linkId === null}
+                              aria-label={`Flag the link for report on /${r.slug}`}
+                              title={r.linkId === null ? "This report's slug did not resolve to a link" : undefined}
+                              onClick={() => review.mutate({ id: r.id, flagLink: true })}
+                            >
+                              Flag link
+                            </Button>
+                          ),
+                        )}
                       </div>
                     </Td>
                   </tr>
