@@ -156,3 +156,55 @@ test.describe("/developers webhooks (#792)", () => {
     await expect(name).toHaveValue("k".repeat(60));
   });
 });
+
+/* Review of PR #837: every forms-editor input with a server-side maximum must
+   stop at it, and the numbers are the contract's (FORM_LIMITS), so this asserts
+   the DOM attribute AND that typing past it is cut off. Dropdown options live in
+   one textarea, so the per-option limit is a live message instead. */
+test.describe("forms editor length limits (#792)", () => {
+  test("every capped input carries the contract's limit and stops typing there", async ({ page }) => {
+    const api = await mockApi(page, { ...BASE, "GET /forms": { status: 200, body: [] } });
+    await seedMockSession(page, fakeAccessToken(MOCK_WORKSPACE.id));
+    await page.goto("/forms");
+    await page.getByRole("button", { name: "New form" }).click();
+    await page.getByRole("button", { name: "+ Add a field" }).click();
+
+    const capped: Array<[string, number]> = [
+      ["Title", 160],
+      ["Description", 500],
+      ["Address", 64],
+      ["Field 1 label", 160],
+      ["Field 1 placeholder", 160],
+    ];
+    for (const [name, limit] of capped) {
+      const box = page.getByLabel(name, { exact: true });
+      await expect(box, name).toHaveAttribute("maxlength", String(limit));
+      await box.fill("a".repeat(limit + 40));
+      await expect(box, name).toHaveValue("a".repeat(limit));
+    }
+    expect(api.callsTo("POST", "/forms")).toHaveLength(0);
+  });
+
+  test("a dropdown option over the limit is called out as you type, and blocks saving", async ({ page }) => {
+    const api = await mockApi(page, { ...BASE, "GET /forms": { status: 200, body: [] } });
+    await seedMockSession(page, fakeAccessToken(MOCK_WORKSPACE.id));
+    await page.goto("/forms");
+    await page.getByRole("button", { name: "New form" }).click();
+    await page.getByLabel("Title", { exact: true }).fill("Survey");
+    await page.getByRole("button", { name: "+ Add a field" }).click();
+    await page.getByLabel("Field 1 label", { exact: true }).fill("Plan");
+    await page.getByLabel("Field 1 type", { exact: true }).selectOption("select");
+
+    const options = page.getByLabel("Field 1 options", { exact: true });
+    await options.fill(`Free\n${"x".repeat(161)}`);
+    await expect(page.getByText("Option 2 must be 160 characters or fewer")).toBeVisible();
+    await expect(options).toHaveAttribute("aria-invalid", "true");
+
+    await page.getByRole("button", { name: "Create form" }).click();
+    expect(api.callsTo("POST", "/forms")).toHaveLength(0);
+
+    await options.fill(`Free\n${"x".repeat(160)}`);
+    await expect(page.getByText("Option 2 must be 160 characters or fewer")).toHaveCount(0);
+    await expect(page.getByText("One option per line.")).toBeVisible();
+  });
+});
