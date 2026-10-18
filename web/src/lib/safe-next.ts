@@ -114,6 +114,21 @@ export function loginRedirectFor(loc: { pathname: string; search?: string; hash?
   return withNext("/login", target);
 }
 
+/**
+ * Where a visitor who is ALREADY signed in goes when they open /login or
+ * /register (#777): the safe `?next=`, else the dashboard.
+ *
+ * Same rules as any other `next` (safeNext), plus one: it never points at an
+ * auth page. Landing on /login again would re-run the "already signed in"
+ * check there, so a crafted `/login?next=/login` could not become a loop only
+ * by luck of the router; refusing it up front makes that structural.
+ */
+export function signedInTarget(raw: string | null | undefined): string {
+  const target = safeNext(raw);
+  const path = pathPart(target).replace(/\/+$/, "");
+  return AUTH_PATHS.has(path) ? "/links" : target;
+}
+
 /** `/login?next=…` / `/register?next=…`, or the bare route when there is no valid next. */
 export function withNext(route: "/login" | "/register", next: string | null | undefined): string {
   const target = safeNext(next, "");
