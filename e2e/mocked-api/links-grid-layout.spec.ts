@@ -1,4 +1,4 @@
-import { devices, expect, test, type Page } from "@playwright/test";
+import { devices, expect, test, type Page, type TestInfo } from "@playwright/test";
 import { MOCK_USER, MOCK_WORKSPACE, fakeAccessToken, mockApi, seedMockSession } from "../support/mock-api";
 
 /* E2E (#787): the Links page Grid view.
@@ -147,6 +147,11 @@ async function measure(page: Page): Promise<{ docOverflow: number; cards: CardMe
 }
 
 const { defaultBrowserType: _ignored, ...pixel7 } = devices["Pixel 7"];
+
+/* Viewport-only screenshots (never full-page). Set QA_SHOTS_DIR to keep them as evidence;
+   otherwise they go to the test's own output dir like any other artifact. */
+const shotPath = (info: TestInfo, name: string) =>
+  process.env.QA_SHOTS_DIR ? `${process.env.QA_SHOTS_DIR}/${name}` : info.outputPath(name);
 const VIEWPORTS = [
   { name: "390", use: { ...pixel7, viewport: { width: 390, height: 844 } } },
   { name: "pixel7-412", use: pixel7 },
@@ -174,7 +179,7 @@ for (const vp of VIEWPORTS) {
         const open = page.getByRole("button", { name: "Hide routing" });
         if (await open.count()) await open.first().click();
         await page.mouse.move(0, 0);
-        await page.screenshot({ path: info.outputPath(`${view}-${vp.name}-${scheme}.png`) });
+        await page.screenshot({ path: shotPath(info, `${view}-${vp.name}-${scheme}.png`) });
 
         const { docOverflow, cards } = await measure(page);
         info.attach("measurements", { body: JSON.stringify(cards, null, 2), contentType: "application/json" });
@@ -232,13 +237,15 @@ for (const scheme of ["light", "dark"] as const) {
       await page.getByRole("button", { name: "Grid", exact: true }).click();
       const cards = page.locator("article");
       await expect(cards).toHaveCount(LINKS.length);
+      /* The slug link keeps one unbroken accessible name ("snap.to/qa-full", not "snap.to/ qa-full"). */
+      await expect(cards.nth(0).getByRole("link", { name: "snap.to/qa-full", exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Hide routing" })).toHaveCount(0);
 
       const before = await cards.nth(1).boundingBox();
       await cards.nth(0).getByRole("button", { name: "Show routing" }).click();
       await expect(cards.nth(0).getByText("Routing chain")).toBeVisible();
       await page.mouse.move(0, 0);
-      await page.screenshot({ path: info.outputPath(`grid-expanded-1440-${scheme}.png`) });
+      await page.screenshot({ path: shotPath(info, `grid-expanded-1440-${scheme}.png`) });
       const after = await cards.nth(1).boundingBox();
       expect(after!.height, "neighbour card was stretched by the open card").toBeCloseTo(before!.height, 0);
     });

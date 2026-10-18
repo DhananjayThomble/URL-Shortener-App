@@ -73,11 +73,14 @@ export function LinkRow({
      + `min-w-0 max-w-full` lets the link shrink and `truncate` cuts the slug
      with an ellipsis; the domain gives way first (weighted shrink) so the
      back-half, the part people recognise, stays readable. The full short link
-     is in `title`. */
+     is in `title`. `aria-label` keeps the accessible name one unbroken
+     "domain/slug": as flex items the two spans would otherwise be read with a
+     space between them ("snap.to/ qa-full"). */
   const slugLink = (
     <NextLink
       href={`/links/${link.id}`}
       title={`${link.domain}/${link.slug}`}
+      aria-label={`${link.domain}/${link.slug}`}
       className="inline-flex items-baseline min-w-0 max-w-full whitespace-nowrap font-mono text-[14px] font-semibold tracking-[-0.01em] hover:underline"
     >
       <span className="text-ink-3 font-normal min-w-0 shrink-[8] truncate">{link.domain}/</span>
