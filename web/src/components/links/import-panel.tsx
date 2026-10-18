@@ -5,6 +5,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Field } from "@/components/ui
 import { useBulkCreateLinks, useDomains } from "@/lib/api/hooks";
 import type { BulkLinkOutcome } from "@snapurl/contract";
 import { IMPORT_SOURCES, getImportSource } from "@/lib/import";
+import { plural, hasHave } from "@/lib/plural";
 import { chunk, prepareRows, type PreparedRow } from "@/lib/import/to-links";
 import type { ParseResult } from "@/lib/import/types";
 
@@ -95,7 +96,7 @@ export function ImportPanel({ onClose, initialSourceId }: { onClose: () => void;
     <Card className="mb-3.5">
       <CardHeader
         title="Import links"
-        right={<Chip tone={parsed.errors.length ? "bad" : "default"}>{parsed.rows.length} rows</Chip>}
+        right={<Chip tone={parsed.errors.length ? "bad" : "default"}>{plural(parsed.rows.length, "row")}</Chip>}
       />
       <CardBody className="flex flex-col gap-3">
         <div className="flex items-end gap-3 flex-wrap">
@@ -166,7 +167,7 @@ export function ImportPanel({ onClose, initialSourceId }: { onClose: () => void;
           ) : null}
           {rewritten > 0 ? (
             <p className="m-0 text-ink-3">
-              {rewritten} row{rewritten === 1 ? "" : "s"} have a back-half SnapURL can’t use verbatim — a new one
+              {plural(rewritten, "row")} {hasHave(rewritten)} a back-half SnapURL can’t use verbatim — a new one
               will be generated for those.
             </p>
           ) : null}
@@ -174,7 +175,7 @@ export function ImportPanel({ onClose, initialSourceId }: { onClose: () => void;
 
         {parsed.errors.length ? (
           <div className="text-[12px] text-bad" role="alert">
-            {parsed.errors.length} row{parsed.errors.length === 1 ? "" : "s"} can’t be read and won’t be sent
+            {plural(parsed.errors.length, "row")} can’t be read and won’t be sent
             (e.g. no destination URL). Fix them in the file or paste to include them.
           </div>
         ) : null}
@@ -185,7 +186,7 @@ export function ImportPanel({ onClose, initialSourceId }: { onClose: () => void;
             onClick={submit}
             disabled={submitting || !prepared.length || !chosenDomain}
           >
-            {submitting ? "Importing…" : `Import ${prepared.length || ""} link${prepared.length === 1 ? "" : "s"}`}
+            {submitting ? "Importing…" : prepared.length ? `Import ${plural(prepared.length, "link")}` : "Import links"}
           </Button>
           <Button onClick={onClose}>Close</Button>
         </div>

@@ -6,6 +6,7 @@ import * as React from "react";
 import { Button } from "@/components/ui";
 import { useLinks, useLogout, useMe, useMyWorkspaces, useSwitchWorkspace, useWorkspace } from "@/lib/api/hooks";
 import { importHref } from "@/lib/import";
+import { plural } from "@/lib/plural";
 import { isEditableTarget, isMacPlatform, isSearchShortcut, searchShortcutFor } from "@/lib/search-shortcut";
 import { cn, compact } from "@/lib/utils";
 
@@ -591,7 +592,7 @@ function TopbarSearch() {
                   <span className="font-mono text-[13px] font-semibold text-ink truncate">
                     <span className="text-ink-3">{link.domain}/</span>
                     <span className="text-accent">{link.slug}</span>
-                    <span className="ml-2 font-sans font-normal text-ink-3 tnum">{compact(link.clicks)} clicks</span>
+                    <span className="ml-2 font-sans font-normal text-ink-3 tnum">{plural(link.clicks, "click", { format: compact })}</span>
                   </span>
                   <span className="text-[12px] text-ink-3 truncate">{link.destination}</span>
                 </li>

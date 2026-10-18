@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Domain } from "@snapurl/contract";
 import { Button, Card, CardBody, Chip } from "@/components/ui";
 import { dnsSteps } from "@/lib/domain-dns";
+import { plural } from "@/lib/plural";
 import { copy } from "@/lib/utils";
 
 /**
@@ -56,7 +57,7 @@ export function DnsSetupCard({
       <div className="flex flex-wrap items-center gap-x-[10px] gap-y-2 border-b border-line px-4 py-[13px]">
         <h3 className="min-w-0 break-all text-[14px] font-bold">{`Finish setting up ${domain.domain}`}</h3>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Chip tone="warn">{count === 1 ? "1 record to add" : `${count} records to add`}</Chip>
+          <Chip tone="warn">{`${plural(count, "record")} to add`}</Chip>
           <Button size="sm" onClick={onCheck} disabled={checking}>
             {checking ? "Checking…" : "Check now"}
           </Button>

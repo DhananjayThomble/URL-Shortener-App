@@ -5,6 +5,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Field } from "@/components/ui
 import { useBulkCreateLinks, useDomains } from "@/lib/api/hooks";
 import { parseBulkRows, parseRows, summarizeBulkResult, type BulkReport } from "@/lib/bulk-create-rows";
 import { friendlyApiMessage, type CreateLinkInput } from "@snapurl/contract";
+import { plural } from "@/lib/plural";
 
 const MAX_ROWS = 100;
 
@@ -82,7 +83,7 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
         <Field
           label="One link per line"
           help="Add a comma, then a space, then a back-half to choose one — otherwise we generate it. Only a comma followed by a space and a slug-shaped back-half (letters, numbers, dots, dashes or underscores) is treated that way, so a destination with commas in its query string is safe."
-          error={tooMany ? `That's ${rows.length} rows. Split it into batches of ${MAX_ROWS}.` : undefined}
+          error={tooMany ? `That's ${plural(rows.length, "row")}. Split it into batches of ${MAX_ROWS}.` : undefined}
         >
           <textarea
             value={text}
@@ -110,7 +111,7 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
             </select>
           </Field>
           <Button variant="primary" onClick={submit} disabled={bulk.isPending || !rows.length || tooMany}>
-            {bulk.isPending ? "Creating…" : `Create ${rows.length || ""} link${rows.length === 1 ? "" : "s"}`}
+            {bulk.isPending ? "Creating…" : rows.length ? `Create ${plural(rows.length, "link")}` : "Create links"}
           </Button>
           <Button onClick={onClose}>Close</Button>
         </div>
