@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { ACCENTS, useAppearance, type Mode } from "@/components/theme/theme-provider";
 import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
-import { useUpdateWorkspace, useMe, useWorkspace } from "@/lib/api/hooks";
+import { useUpdateWorkspace, useDomains, useMe, useWorkspace } from "@/lib/api/hooks";
+import { defaultDomainOptions, problemField, type ProblemField } from "@/lib/default-domain";
 import { importHref } from "@/lib/import";
 import { canChangeWorkspaceCurrency, currencyOptions } from "@/lib/money";
 import type { RedirectType, Workspace } from "@/lib/api/types";
@@ -41,6 +42,9 @@ export default function SettingsPage() {
   const { data: me } = useMe();
   // PATCH /workspaces/current is admin-or-owner; don't offer a control that would 403.
   const canChangeCurrency = canChangeWorkspaceCurrency(me?.role);
+  // Same gate, same endpoint: the default domain rides the same PATCH.
+  const canChangeDefaultDomain = canChangeCurrency;
+  const { data: domains, refetch: refetchDomains } = useDomains();
   const appearance = useAppearance();
   const save = useUpdateWorkspace();
 
@@ -50,6 +54,7 @@ export default function SettingsPage() {
      with the Save button. */
   const [draft, setDraft] = useState<Draft | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [problemAt, setProblemAt] = useState<ProblemField>("other");
 
   // Seeded once the workspace arrives, and re-seeded if it is refetched while
   // there is nothing unsaved to lose.
@@ -63,17 +68,29 @@ export default function SettingsPage() {
   };
 
   const dirty = Boolean(ws && draft && JSON.stringify(draft) !== JSON.stringify(draftOf(ws)));
-  // A failed save is reported under the control the person changed, so a refused
-  // currency change is not shown under the redirect type.
-  const currencyChanged = Boolean(ws && draft && draft.currency !== ws.currency.toUpperCase());
 
   async function submit() {
-    if (!draft) return;
+    if (!draft || !ws) return;
+    // Which control the person changed decides where a refusal is shown; read
+    // before the await, while draft and ws are still the pair that was sent.
+    const changed = {
+      defaultDomain: draft.defaultDomain !== ws.defaultDomain,
+      currency: draft.currency !== ws.currency.toUpperCase(),
+    };
     try {
-      await save.mutateAsync(draft);
+      const saved = await save.mutateAsync(draft);
+      // Start the form from what the server stored, not what was typed, so
+      // anything it normalised (case, a trailing dot) can't leave the form
+      // looking unsaved after a successful save.
+      setDraft(draftOf(saved));
       setProblem(null);
     } catch (err) {
-      setProblem((err as Error).message);
+      const message = (err as Error).message;
+      setProblemAt(problemField(message, changed));
+      setProblem(message);
+      // The list the select was built from may be stale (a domain removed or
+      // un-verified in another tab); fetch the current one.
+      void refetchDomains();
     }
   }
 
@@ -103,17 +120,39 @@ export default function SettingsPage() {
                       />
                     </Field>
                   </div>
-                  <Field label="Default domain">
-                    <Input
+                  <Field
+                    label="Default domain"
+                    controlId="settings-default-domain"
+                    help={
+                      canChangeDefaultDomain
+                        ? "New links start on this domain. Only verified domains are listed."
+                        : "Only owners and admins can change the default domain."
+                    }
+                    error={problem && problemAt === "defaultDomain" ? problem : undefined}
+                  >
+                    <select
+                      id="settings-default-domain"
+                      aria-describedby="settings-default-domain-hint"
+                      className={cn(
+                        "w-full px-[11px] py-[9px] rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 font-mono text-[12.5px] text-ink",
+                        "focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash",
+                        "disabled:opacity-60 disabled:cursor-not-allowed",
+                      )}
                       value={draft.defaultDomain}
+                      disabled={!canChangeDefaultDomain}
                       onChange={(e) => set("defaultDomain", e.target.value)}
-                      className="font-mono text-[12.5px]"
-                    />
+                    >
+                      {defaultDomainOptions(domains, draft.defaultDomain).map((o) => (
+                        <option key={o.value || "none"} value={o.value} disabled={o.disabled}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                   <Field
                     label="Default redirect type"
                     help="Applies to new links. Any link can override it."
-                    error={problem && !currencyChanged ? problem : undefined}
+                    error={problem && problemAt === "other" ? problem : undefined}
                     controlId="settings-default-redirect-type"
                   >
                     <Segmented<RedirectType>
@@ -131,7 +170,7 @@ export default function SettingsPage() {
                   </Field>
                   <Field
                     label="Workspace currency"
-                    error={problem && currencyChanged ? problem : undefined}
+                    error={problem && problemAt === "currency" ? problem : undefined}
                     help={
                       canChangeCurrency
                         ? "Revenue on Conversions is reported in this currency. Conversions recorded in another currency are listed as not counted — nothing is converted."
