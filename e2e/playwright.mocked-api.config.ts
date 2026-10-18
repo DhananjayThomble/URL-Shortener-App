@@ -38,7 +38,7 @@ export default defineConfig({
        deliberately absent: the verify.yml e2e lane installs chromium only, so
        an iPhone 15 (WebKit) project would fail to launch there. Mobile Safari
        is exercised as LOCAL evidence instead. */
-    { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /(login-next|signed-in-marketing|two-factor-recovery)\.spec\.ts/ },
+    { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /(login-next|login-enter-after-failure|signed-in-marketing|two-factor-recovery)\.spec\.ts/ },
     /* #794 — sign-up and the legal pages are opened from a phone as often as a
        desktop. Chromium only, like the projects around it; iPhone 15 stays local. */
     {
