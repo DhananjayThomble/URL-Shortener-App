@@ -106,7 +106,7 @@ describeDb("DomainsService.remove workspace scoping (#840)", () => {
 
     const foreign = await outcome(own, otherWithLinksId);
     expect(foreign).toEqual(missing);
-    // Nothing about the other workspace's link count leaks into the message.
+    // The message carries no per-domain detail.
     expect(foreign.message).not.toMatch(/\d/);
 
     const [still] = await db.select({ id: domains.id }).from(domains).where(eq(domains.id, otherWithLinksId));
