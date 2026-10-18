@@ -4,8 +4,9 @@ import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
 import { Button, ButtonLink, Card, CardBody, CardHeader, ErrorState, Segmented, Skeleton, Tabs, Tile } from "@/components/ui";
-import { useAnalytics, useExportLinks } from "@/lib/api/hooks";
+import { useAnalytics, useExportLinks, useWorkspace } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
+import { analyticsSubtitle } from "@/lib/retention";
 import { compact, formatDelta, full } from "@/lib/utils";
 
 export default function AnalyticsPage() {
@@ -13,12 +14,15 @@ export default function AnalyticsPage() {
   const [series, setSeries] = useState<"clicks" | "both">("both");
   const { data, isLoading, isError, error, refetch } = useAnalytics(range);
   const exportLinks = useExportLinks();
+  // #769 — the header states the workspace's own retention; until it is known
+  // (loading, or the request failed) the subtitle makes no retention claim.
+  const { data: workspace } = useWorkspace();
 
   return (
     <>
       <PageHead
         title="Analytics"
-        sub="No cookies set · click data never sold · 3 years retention"
+        sub={analyticsSubtitle(workspace?.retentionYears)}
         actions={
           <>
             {/* Was a dead "Last 30 days ▾" button, so 24h, 7d, 90d and 12m
