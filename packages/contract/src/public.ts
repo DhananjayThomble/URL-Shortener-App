@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { RedirectType, SafeBrowsingStatus } from "./link.js";
 
-/** The trust page at /p/[slug]. No auth — anyone can see where a link goes. */
+/** The trust page at /p/[slug]. No auth — anyone can see where a link goes,
+ *  unless the link has a password: the password is what guards the
+ *  destination, so a protected link's preview carries `destination: null` and
+ *  the only way through is the unlock flow below. */
 export const PublicLinkPreview = z.object({
   shortUrl: z.string(),
-  destination: z.string(),
+  destination: z.string().nullable(),
+  passwordProtected: z.boolean(),
   createdAt: z.string(),
   createdBy: z.string(),
   verifiedDomain: z.boolean(),

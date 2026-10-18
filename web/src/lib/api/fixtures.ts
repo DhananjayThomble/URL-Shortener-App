@@ -528,7 +528,9 @@ function previewFor(slug: string): PublicLinkPreview {
   const link = LINKS.find((l) => l.slug === slug) ?? LINKS[0];
   return {
     shortUrl: `${link.domain}/${link.slug}`,
-    destination: link.destination,
+    // Mirrors PublicService.preview: a password guards the destination.
+    destination: link.passwordProtected ? null : link.destination,
+    passwordProtected: link.passwordProtected,
     createdAt: link.createdAt,
     createdBy: WORKSPACE.name,
     verifiedDomain: true,

@@ -22,7 +22,9 @@ const SESSION_EXPIRED = /session has expired/i;
 
 const PREVIEW = {
   shortUrl: "snap.to/vault",
-  destination: "https://acme.com/private",
+  // A protected link's preview never carries its destination (PublicLinkPreview).
+  destination: null,
+  passwordProtected: true,
   createdAt: "2026-01-01T00:00:00.000Z",
   createdBy: "Mock Workspace",
   verifiedDomain: true,

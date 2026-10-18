@@ -9,16 +9,19 @@ import { seedSession } from "../support/session";
    visitor was never told the link was reported as dangerous.
 
    The public page needs no session. Fixtures mode serves /public/links/<slug>/preview
-   from web/src/lib/api/fixtures.ts: /p/spring-sale is a "clean" link, so the
-   ?warning=unsafe param is the ONLY thing that can turn it red — which is exactly
-   the signal the redirect sends. Selectors are accessible names / roles only.
+   from web/src/lib/api/fixtures.ts: /p/app is a "clean", unprotected link (seeded
+   unsuffixed in the real-stack lane too), so the ?warning=unsafe param is the
+   ONLY thing that can turn it red — which is exactly the signal the redirect
+   sends. (Not spring-sale: that fixture has a password, so its trust page
+   correctly offers no Continue link at all — see
+   mocked-api/trust-page-locked.spec.ts.) Selectors are accessible names / roles only.
    The redirect service itself is not in this suite (needs the staging stack). */
 
-const DEST = "https://acme.com/collections/spring-2026"; // fixtures' spring-sale destination
+const DEST = "https://apps.apple.com/acme/download"; // fixtures' (and seed-real's) app destination
 
 test.describe("public trust page: flagged link", () => {
   test("a normal visit says the link is safe and has no warning", async ({ page }) => {
-    await page.goto("/p/spring-sale");
+    await page.goto("/p/app");
     await expect(page.getByRole("heading", { name: "This link is safe to open" })).toBeVisible();
     await expect(page.getByText("No threats found")).toBeVisible();
     await expect(page.getByText("Flagged as unsafe")).toHaveCount(0);
@@ -28,7 +31,7 @@ test.describe("public trust page: flagged link", () => {
   });
 
   test("arriving from the redirect with ?warning=unsafe shows the red flagged state", async ({ page }) => {
-    await page.goto("/p/spring-sale?warning=unsafe");
+    await page.goto("/p/app?warning=unsafe");
 
     // Heading, status chip, and an alert explaining it — not the "unverified" copy.
     await expect(page.getByRole("heading", { name: "This link has been flagged as unsafe" })).toBeVisible();
@@ -52,7 +55,7 @@ test.describe("public trust page: flagged link", () => {
   });
 
   test("an unrecognised warning value never escalates or de-escalates the page", async ({ page }) => {
-    await page.goto("/p/spring-sale?warning=banana");
+    await page.goto("/p/app?warning=banana");
     await expect(page.getByRole("heading", { name: "This link is safe to open" })).toBeVisible();
     await expect(page.getByText(/flagged as potentially dangerous/)).toHaveCount(0);
   });

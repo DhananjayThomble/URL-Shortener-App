@@ -325,6 +325,16 @@ contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "
 expect "not-yet-live link with no fallback is 404" "404|" "$(loc "$RUN-scheduled-bare")"
 expect "a past activation date is simply live" "302|https://example.com/already" "$(loc "$RUN-activated")"
 contains "locked link is sent to unlock (G3)" "unlock=1" "$(loc "$RUN-locked")"
+# The public, unauthenticated preview must not hand out what the password guards.
+LOCKED_PREVIEW=$(curl -s "$API/public/links/$RUN-locked/preview")
+contains "locked link's preview says it is protected" '"passwordProtected":true' "$LOCKED_PREVIEW"
+if echo "$LOCKED_PREVIEW" | grep -q "example.com/locked"; then
+  bad "locked link's preview withholds the destination" "got [$LOCKED_PREVIEW]"
+else
+  ok "locked link's preview withholds the destination"
+fi
+contains "an open link's preview still shows its destination" "example.com/plain" \
+  "$(curl -s "$API/public/links/$RUN-plain/preview")"
 TOKEN=$(curl -s -X POST "$API/public/links/$RUN-locked/unlock" -H 'Content-Type: application/json' \
   -d '{"password":"hunter2"}' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).unlockToken||""')
 contains "unlock token opens the link (G3)" "example.com/locked" "$(loc "$RUN-locked?k=$TOKEN")"
