@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip, Field } from "@/components/ui";
 import { useBulkCreateLinks, useDomains } from "@/lib/api/hooks";
 import { parseBulkRows, parseRows, summarizeBulkResult, type BulkReport } from "@/lib/bulk-create-rows";
-import type { CreateLinkInput } from "@snapurl/contract";
+import { friendlyApiMessage, type CreateLinkInput } from "@snapurl/contract";
 
 const MAX_ROWS = 100;
 
@@ -168,7 +168,8 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
                       </span>
                       <span className="min-w-0">
                         <span className="font-mono text-ink-2 block truncate">{item.destination}</span>
-                        <span className="text-bad">{item.error}</span>
+                        {/* friendlyApiMessage: a row error from an older API still carries `destination: `. */}
+                        <span className="text-bad">{friendlyApiMessage(item.error)}</span>
                       </span>
                     </>
                   )}
