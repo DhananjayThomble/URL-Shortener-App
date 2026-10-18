@@ -23,6 +23,7 @@ export const qk = {
   webhooks: ["webhooks"] as const,
   bioPages: ["bio-pages"] as const,
   conversions: (range: string) => ["conversions", range] as const,
-  preview: (slug: string) => ["preview", slug] as const,
+  preview: (slug: string, host?: string) => ["preview", slug, host ?? ""] as const,
+  lock: (slug: string, host?: string) => ["lock", slug, host ?? ""] as const,
   reports: ["reports"] as const,
 };
