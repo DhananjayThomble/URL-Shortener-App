@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CreateLinkInput } from "../../lib/api/types";
-import { blankOptionalUrlsToUndefined, dateInputToIso, isoToDateInput, tabsWithErrors } from "./link-form-values";
+import { blankOptionalUrlsToUndefined, dateInputToIso, isoToDateInput, normalizeLinkFormValues, tabsWithErrors } from "./link-form-values";
 
 /* #644 — the edit drawer binds <input type="date"> to a full ISO timestamp.
    A plain register() rendered every existing date as blank. */
@@ -85,6 +85,47 @@ describe("empty Access-tab inputs vs CreateLinkInput (#645)", () => {
     const bad = CreateLinkInput.safeParse(blankOptionalUrlsToUndefined({ ...valid, scheduledTo: "not a url" }));
     expect(bad.success).toBe(false);
     if (!bad.success) expect(bad.error.issues[0].path[0]).toBe("scheduledTo");
+  });
+});
+
+/* #759 — the two "send visitors to" URLs belong to the date switches above them. The drawers
+   run the form through normalizeLinkFormValues, so a URL left behind a switch that is off
+   neither reaches the API (create) nor survives on the link (edit) nor fails validation. */
+describe("normalizeLinkFormValues (#759)", () => {
+  const valid = { destination: "https://example.com/a", domain: "snap.test", slug: "abc" };
+
+  it("drops each URL whose date is off, and still reads blank strings as not set", () => {
+    const out = normalizeLinkFormValues({
+      ...valid,
+      expiresAt: null,
+      expiresTo: "https://example.com/gone",
+      activatesAt: null,
+      scheduledTo: "",
+      password: "",
+    });
+    expect(out.expiresTo).toBeUndefined();
+    expect(out.scheduledTo).toBeUndefined();
+    expect(out.password).toBeUndefined();
+  });
+
+  it("keeps a URL whose date is on, and a typed-but-invalid one still fails so it can be shown", () => {
+    const on = { expiresAt: "2031-01-02T23:59:59.999Z", activatesAt: "2030-12-01T00:00:00.000Z" };
+    const ok = CreateLinkInput.safeParse(
+      normalizeLinkFormValues({ ...valid, ...on, expiresTo: "https://example.com/gone", scheduledTo: "https://example.com/soon" }),
+    );
+    expect(ok.success && ok.data.expiresTo).toBe("https://example.com/gone");
+    expect(ok.success && ok.data.scheduledTo).toBe("https://example.com/soon");
+
+    const bad = CreateLinkInput.safeParse(normalizeLinkFormValues({ ...valid, ...on, expiresTo: "acme.com/offers" }));
+    expect(bad.success).toBe(false);
+    if (!bad.success) expect(bad.error.issues[0].path[0]).toBe("expiresTo");
+  });
+
+  it("a scheme-less value behind an off switch cannot block the save", () => {
+    const parsed = CreateLinkInput.safeParse(
+      normalizeLinkFormValues({ ...valid, expiresAt: null, expiresTo: "acme.com/offers", activatesAt: null, scheduledTo: "acme.com/coming-soon" }),
+    );
+    expect(parsed.success).toBe(true);
   });
 });
 
