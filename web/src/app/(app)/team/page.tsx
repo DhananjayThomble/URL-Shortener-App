@@ -5,6 +5,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skel
 import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember, useWorkspace } from "@/lib/api/hooks";
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
 import { useRef, useState } from "react";
+import { memberSummary } from "@/lib/plural";
 import { cn, full, timeAgo } from "@/lib/utils";
 import { auditEntryText } from "@/lib/audit-entry";
 
@@ -105,7 +106,7 @@ export default function TeamPage() {
     <>
       <PageHead
         title="Team"
-        sub={`${members?.length ?? "—"} members in ${workspace?.name ?? "this workspace"} · every action is written to the audit log`}
+        sub={`${workspace?.name ?? "This workspace"} · ${members ? memberSummary(members) : "— members"} · every action is written to the audit log`}
         actions={
           <>
             <Button variant="primary" onClick={() => { setInviting((v) => !v); setProblem(null); }}>

@@ -7,6 +7,7 @@ import { CreateLinkDrawer } from "@/components/links/create-link-drawer";
 import { ToastProvider } from "@/components/ui/toast";
 import { NEW_LINK_QUERY_PARAM } from "@/lib/hero-shorten";
 import { useBioPages, useDomains, useLinks, useMe, useMembers, useWorkspaceChangeGuard } from "@/lib/api/hooks";
+import { countedDomains, memberCounts } from "@/lib/plural";
 import { loginRedirectFor } from "@/lib/safe-next";
 
 /**
@@ -79,8 +80,10 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
   const counts = {
     links: links?.total,
     bio: bio?.length,
-    domains: domains?.length,
-    members: members?.length,
+    // Sidebar badges count what the pages headline: usable domains, and people
+    // who are members (a pending invite is not one) — see lib/plural.ts (#793).
+    domains: domains ? countedDomains(domains).length : undefined,
+    members: members ? memberCounts(members).active : undefined,
   };
 
   return (

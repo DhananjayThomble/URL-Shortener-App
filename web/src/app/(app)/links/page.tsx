@@ -10,6 +10,7 @@ import { Button, Card, EmptyState, ErrorState, Input, Skeleton, Tabs } from "@/c
 import { useDomains, useExportLinks, useLinks } from "@/lib/api/hooks";
 import type { ListLinksQuery } from "@snapurl/contract";
 import { IMPORT_QUERY_PARAM } from "@/lib/import";
+import { countedDomains, plural } from "@/lib/plural";
 import { cn, full } from "@/lib/utils";
 
 const FILTERS = [
@@ -117,9 +118,10 @@ export default function LinksPage() {
         title="Links"
         sub={
           data
-            ? `${full(data.total)} links across ${domains?.length ?? 0} domains · ${full(
+            ? `${plural(data.total, "link")} across ${plural(countedDomains(domains).length, "domain")} · ${plural(
                 links.reduce((a, l) => a + l.clicks, 0),
-              )} clicks on this page`
+                "click",
+              )} on this page`
             : "Loading…"
         }
         actions={
@@ -153,14 +155,16 @@ export default function LinksPage() {
       ) : null}
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <div className="flex gap-2">
+        {/* #785 — wrap, and never let a chip shrink below its label (the global
+            `.flex > * { min-width: 0 }` reset otherwise squeezes "Scheduled" to "Schedule"). */}
+        <div className="flex flex-wrap gap-2">
           {FILTERS.map((f) => (
             <button
               key={f.value}
               aria-pressed={filter === f.value}
               onClick={() => setFilter(f.value)}
               className={cn(
-                "tap-target inline-flex items-center gap-[6px] px-[10px] py-[5px] border rounded-full text-[12.5px] transition-colors",
+                "tap-target shrink-0 whitespace-nowrap inline-flex items-center gap-[6px] px-[10px] py-[5px] border rounded-full text-[12.5px] transition-colors",
                 filter === f.value
                   ? "bg-ink text-surface border-ink font-semibold"
                   : "bg-surface border-line-2 text-ink-2 hover:border-ink-3 hover:text-ink",
@@ -273,7 +277,7 @@ export default function LinksPage() {
                 ← Previous
               </Button>
               <span className="text-[12px] text-ink-3">
-                Page {page} of {full(data?.total ?? 0)} links
+                Page {page} of {plural(data?.total ?? 0, "link")}
               </span>
               <Button
                 disabled={!data?.nextCursor || isFetching}
