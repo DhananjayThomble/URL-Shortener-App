@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import QRCode from "qrcode";
+import { buildQrSvg, type QrEcl } from "@/lib/qr-compose";
+import { readAccent } from "@/lib/qr-export";
 
-/* Renders a real, scannable QR as SVG. Unlike the prototype's decorative
-   stand-in this encodes the actual short link, so it can be exported and
-   printed straight from the UI. */
+/* Renders a real, scannable QR as SVG. It is the SAME composition the studio exports
+   (lib/qr-compose.ts: 4-module quiet zone, centre mark on a backing plate), so the
+   preview and the SVG/PNG downloads cannot drift apart (#773). */
 export function QrPreview({
   value,
   size = 196,
@@ -18,21 +19,25 @@ export function QrPreview({
   size?: number;
   dark?: string;
   light?: string;
-  ecl?: "L" | "M" | "Q" | "H";
+  ecl?: QrEcl;
   logo?: boolean;
 }) {
   const [svg, setSvg] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [accent, setAccent] = useState<string>(() => readAccent());
+
+  // The mark follows the viewer's accent; Settings → Appearance rewrites it on <html> at runtime.
+  useEffect(() => {
+    const sync = () => setAccent(readAccent());
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class", "data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    QRCode.toString(value || " ", {
-      type: "svg",
-      errorCorrectionLevel: ecl,
-      margin: 1,
-      width: size,
-      color: { dark, light },
-    })
+    buildQrSvg({ value, size, dark, light, ecl, logo, accent })
       .then((out) => {
         if (!cancelled) {
           setSvg(out);
@@ -45,7 +50,7 @@ export function QrPreview({
     return () => {
       cancelled = true;
     };
-  }, [value, size, dark, light, ecl]);
+  }, [value, size, dark, light, ecl, logo, accent]);
 
   if (error) {
     return (
@@ -59,26 +64,12 @@ export function QrPreview({
   }
 
   return (
-    <div className="relative inline-block leading-none" style={{ width: size, height: size }}>
-      <div
-        className="[&>svg]:block [&>svg]:w-full [&>svg]:h-full"
-        // qrcode's SVG output is generated locally from `value`, not fetched.
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
-      {logo && svg ? (
-        <span
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 grid place-items-center rounded-[6px] font-display font-extrabold text-white"
-          style={{
-            width: size * 0.2,
-            height: size * 0.2,
-            background: "var(--accent)",
-            fontSize: size * 0.12,
-            boxShadow: `0 0 0 ${size * 0.025}px ${light}`,
-          }}
-        >
-          S
-        </span>
-      ) : null}
-    </div>
+    <div
+      className="relative inline-block leading-none [&>svg]:block [&>svg]:w-full [&>svg]:h-full"
+      style={{ width: size, height: size }}
+      data-testid="qr-preview"
+      // The SVG is composed locally by buildQrSvg() from `value` and sanitised colours — nothing is fetched.
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   );
 }
