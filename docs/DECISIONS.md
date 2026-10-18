@@ -1519,6 +1519,33 @@ The perf scores (72–80) are shown as context, not asserted — lower than the 
 95–98 because these routes ship more interactive JavaScript, which is expected. The script-byte
 budget is the deterministic drift signal; LCP/TBT are anchored to real CI medians.
 
+### Redirect dead ends: an inline branded page for browsers, plain text for everyone else (#766)
+
+An unknown, expired, click-limited or not-yet-live short link (and a bare domain root) used to
+answer every client with a bare `text/plain` sentence — no branding, no explanation, no way on.
+
+**Decision:** `apps/redirect/src/error-page.ts` renders one ~1.8 KB self-contained HTML page from a
+string literal when `Accept` lists `text/html` (or `application/xhtml+xml`) with q > 0. Every other
+client — curl's `*/*`, `application/json`, monitors — keeps the exact legacy sentence, so nothing that
+parses those bodies breaks. Status codes are unchanged (404 unknown / scheduled / root, 410 expired /
+click-limited, `Retry-After` on scheduled) — a 302 to a web page was rejected because it changes
+what crawlers see. Hot-path rules hold: no dependency, no template engine, no file read per request,
+no external asset, no script. The echoed values (host, slug, activation date, web origin) are
+HTML-escaped; the page carries `default-src 'none'` with its stylesheet pinned by sha256 (no
+`unsafe-inline`), `frame-ancestors 'none'`, `nosniff`, `noindex`.
+
+**Two consequences for the AWS profile.** `accept` is added to `RedirectOrigReqPolicy`'s forwarded
+headers — without it the Lambda never sees Accept and every visitor behind CloudFront gets plain
+text. It is NOT added to the cache key (successful redirects must not fragment by browser Accept);
+instead both error variants send `Cache-Control: no-store` + `Vary: Accept`, so the 1–5 s edge TTL can
+never hand one client's variant to another. The CloudFront Function is untouched: it only ever emits
+301/302 for KVS hits and falls through for everything else, so it never produces an error body.
+This does not reopen the tracking-pixel decision above: a *successful* redirect is still a bare 3xx
+(the smoke suite asserts it, now for a browser Accept too); only dead ends render a page.
+
+**Revisit if** the page needs per-workspace branding or localisation (that is a template, and
+belongs behind a decision), or the plain-text bodies are ever replaced by a JSON error contract.
+
 ---
 
 ## Part 5 — Open questions for you

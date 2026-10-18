@@ -1099,11 +1099,20 @@ export class SnapUrlStack extends Stack {
        generated headers: CloudFront adds them to the origin request precisely
        because they are allow-listed here, which is what powers country routing
        and click_events.country/city. */
+    /* `accept` (#766): the redirect answers a dead end (404/410) with a branded
+       HTML page for browsers and the legacy plain text for everything else,
+       chosen from Accept. Without it in this allow-list the origin never sees
+       Accept and every visitor behind the CDN gets plain text. It is forwarded
+       but deliberately NOT in the cache key below: those error responses send
+       `Cache-Control: no-store`, so the edge never caches either variant, and
+       keying successful redirects on the browser's Accept would only fragment
+       the cache. */
     const redirectOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "RedirectOrigReqPolicy", {
       comment: "Forwards viewer headers plus CloudFront geo headers to the redirect origin; excludes Host.",
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
         "user-agent",
         "referer",
+        "accept",
         "accept-language",
         "x-forwarded-host",
         "CloudFront-Viewer-Country",
