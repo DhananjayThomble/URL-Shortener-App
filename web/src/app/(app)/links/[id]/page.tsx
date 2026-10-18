@@ -11,6 +11,7 @@ import { toastCopy } from "@/lib/toasts";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { copy, formatDate, formatDelta, full, NO_VALUE, pct, shortUrlHref } from "@/lib/utils";
+import { headlineStats, RANGE_SCOPE } from "@/lib/link-detail-stats";
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
   "24h": "prev 24h",
@@ -60,11 +61,18 @@ export default function LinkDetailPage() {
   /* The four tiles read from the analytics response that was already being
      fetched. Three of them used to be invented: two fixed percentage strings
      and a conversions count derived as clicks × 0.037, which is a number
-     nobody measured presented next to three that were real. */
-  const clickSeries = a ? a.series.map((p) => p.clicks) : l.sparkline;
+     nobody measured presented next to three that were real.
+
+     #768: the two headline tiles also used to show the link's ALL-TIME counters
+     (l.clicks / l.uniqueClicks) under a delta and beside breakdowns that were
+     for the selected range. Now the value, delta, sparkline and breakdowns all
+     come from the same response; the all-time counters are a labelled note. */
+  const clickSeries = a?.series.map((p) => p.clicks);
   const uniqueSeries = a?.series.map((p) => p.unique);
   const conversions = a?.totals.conversions;
   const cvr = a && a.totals.clicks > 0 ? (a.totals.conversions / a.totals.clicks) * 100 : null;
+  const headline = headlineStats(l, a);
+  const scope = RANGE_SCOPE[range];
 
   /* The link's public short URL, the same https://<domain>/<slug> the QR studio
      encodes. */
@@ -149,18 +157,40 @@ export default function LinkDetailPage() {
 
       <EditLinkDrawer open={editing} onClose={() => setEditing(false)} link={l} />
 
+      {stats.isError ? (
+        <div className="flex items-center gap-3 flex-wrap mb-3" role="alert">
+          <p className="text-[12.5px] text-bad m-0">
+            Couldn&apos;t load the numbers for this range.
+          </p>
+          <Button onClick={() => stats.refetch()}>Retry</Button>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
-        <Tile label="Total clicks" value={full(l.clicks)} {...deltaFor(a?.deltas.clicks, range)}>
-          <Sparkline values={clickSeries} width={160} height={26} />
+        <Tile
+          label="Total clicks"
+          scope={`last ${scope}`}
+          value={headline.clicks.value}
+          note={headline.clicks.allTime}
+          {...deltaFor(a?.deltas.clicks, range)}
+        >
+          {clickSeries ? <Sparkline values={clickSeries} width={160} height={26} /> : null}
         </Tile>
         {/* Approximate: uniques come from a HyperLogLog sketch (about 0.8%
             error), so the label signals that rather than implying an exact count. */}
-        <Tile label="Unique visitors (approx.)" value={full(l.uniqueClicks ?? 0)} {...deltaFor(a?.deltas.unique, range)}>
+        <Tile
+          label="Unique visitors (approx.)"
+          scope={`last ${scope}`}
+          value={headline.unique.value}
+          note={headline.unique.allTime}
+          {...deltaFor(a?.deltas.unique, range)}
+        >
           {/* The real per-day uniques, not the click sparkline scaled by 0.72. */}
           {uniqueSeries ? <Sparkline values={uniqueSeries} width={160} height={26} /> : null}
         </Tile>
         <Tile
           label="Conversions"
+          scope={`last ${scope}`}
           value={conversions === undefined ? "—" : full(conversions)}
           {...(() => {
             const d = deltaFor(a?.deltas.conversions, range);
