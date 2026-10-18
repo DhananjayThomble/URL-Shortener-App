@@ -39,6 +39,42 @@ export const ClickLimitInput = z
   .min(1, "Click limit must be at least 1")
   .max(CLICK_LIMIT_MAX, "Click limit can't be more than 2,147,483,647");
 
+/**
+ * A link's `expiresAt` / `activatesAt` on the way IN (#754). Any string a
+ * JavaScript `Date` can read — which is exactly what the API does with it —
+ * and `""`, which has always meant "no date". Anything else ("not-a-date")
+ * used to reach `new Date(value)` and fail in Postgres as a 500.
+ *
+ * It also rejects a calendar-impossible date rather than silently moving it:
+ * `Date.parse("2026-02-31")` is not NaN — JS rolls it forward to 2026-03-03 —
+ * so a bare `YYYY-MM-DD` is round-tripped against its own parse and refused
+ * when the day rolled over, which would otherwise store a date the caller
+ * never chose. Full timestamps are left to `Date.parse` (a datetime carries a
+ * zone, so a naive field re-compare would fight the offset); the UI only ever
+ * sends a real instant or a day-granular value, and the day case is the one a
+ * person types.
+ *
+ * Shape only: whether an expiry has already passed needs "now" and, on edit,
+ * the stored value, so it is the domain's `validateExpiry`, not this.
+ * Deliberately not applied to `Link` (the response): stored rows must load.
+ */
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+function isReadableDate(value: string): boolean {
+  if (value === "") return true;
+  if (Number.isNaN(Date.parse(value))) return false;
+  const m = DATE_ONLY.exec(value);
+  if (!m) return true; // a full timestamp — Date.parse already accepted it
+  const [, y, mo, d] = m;
+  // Reject a day that rolled into the next month (Feb 30, Apr 31, …).
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return (
+    parsed.getUTCFullYear() === Number(y) &&
+    parsed.getUTCMonth() + 1 === Number(mo) &&
+    parsed.getUTCDate() === Number(d)
+  );
+}
+export const LinkDateInput = z.string().refine(isReadableDate, "Enter a valid date.");
+
 /** One rule in a link's routing chain. First match wins. */
 export const RoutingRule = z.object({
   id: z.string(),
@@ -143,12 +179,12 @@ export const CreateLinkInput = z.object({
      302" from "the caller said nothing", so the setting was ignored. */
   redirectType: RedirectType.optional(),
   rules: z.array(RoutingRule).default([]),
-  expiresAt: z.string().nullable().optional(),
+  expiresAt: LinkDateInput.nullable().optional(),
   /* Guarded like every other URL-bearing field: the redirect service emits this
      verbatim as its Location header for an expired link, so an unguarded value
      here is a redirect target chosen by whoever created the link. */
   expiresTo: HttpUrl.nullable().optional(),
-  activatesAt: z.string().nullable().optional(),
+  activatesAt: LinkDateInput.nullable().optional(),
   /* Same as expiresTo, for a link that is not live yet. */
   scheduledTo: HttpUrl.nullable().optional(),
   clickLimit: ClickLimitInput.nullable().optional(),
