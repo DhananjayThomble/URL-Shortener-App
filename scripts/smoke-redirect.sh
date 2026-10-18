@@ -251,7 +251,12 @@ mklink "{\"destination\":\"https://example.com/utm\",\"domain\":\"$LINK_DOMAIN\"
 mklink "{\"destination\":\"https://example.com/noforward\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-noforward\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":false,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/perm\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-perm\",\"tags\":[],\"redirectType\":\"301\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/locked\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-locked\",\"password\":\"hunter2\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
-mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"2020-01-01T00:00:00.000Z\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+# #754: the API refuses an expiry that has already passed, so the expired-gate
+# fixture is created expiring a few seconds from now and the gate assertions
+# below wait until that moment has passed — the link expires for real.
+EXPIRES_SOON_MS=$(node -pe 'Date.now() + 5000')
+EXPIRES_SOON=$(EXPIRES_SOON_MS="$EXPIRES_SOON_MS" node -pe 'new Date(Number(process.env.EXPIRES_SOON_MS)).toISOString()')
+mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"$EXPIRES_SOON\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled-bare\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
@@ -318,6 +323,9 @@ fi
 
 echo
 echo "== gates =="
+# Let the expired-gate fixture's expiry (a few seconds after it was created) pass.
+WAIT_MS=$(EXPIRES_SOON_MS="$EXPIRES_SOON_MS" node -pe 'Math.max(0, Number(process.env.EXPIRES_SOON_MS) + 1000 - Date.now())')
+[ "$WAIT_MS" -gt 0 ] && sleep "$(node -pe "($WAIT_MS / 1000).toFixed(3)")"
 contains "expired link uses expiresTo (G5)" "example.com/moved" "$(loc "$RUN-expired")"
 contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "$RUN-scheduled")"
 # 404 rather than 410: nothing is gone, it has not started. And no fallback

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry";
 import type {
   AbuseReport,
   Analytics,
@@ -794,7 +795,10 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
   /* ---- links ---- */
   else if (m(/^\/links$/) && method === "POST") {
-    const body = opts.body as { destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] };
+    const body = opts.body as { destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"]; expiresAt?: string | null };
+    // Mirrors LinksService.create (#754): an expiry that has already passed is refused.
+    const [past] = validateExpiry(body.expiresAt);
+    if (past) throw new Error(past);
     // Mirrors the server's 409 on a back-half already in use under the same
     // domain — needed so issue #640 (stale server error surviving a form
     // edit) is reproducible against fixtures, same as the bulk-create path
@@ -896,7 +900,7 @@ export async function fixtureRequest<T>(
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
     const body = opts.body as {
-      links: Array<{ destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] }>;
+      links: Array<{ destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"]; expiresAt?: string | null }>;
     };
     /* Mirrors the server: every row's outcome is independent. A genuine
        validation problem (bad URL, or two rows in this batch wanting the
@@ -914,6 +918,12 @@ export async function fixtureRequest<T>(
         new URL(row.destination);
       } catch {
         problems.set(i, "That doesn't look like a URL — include https://");
+        return;
+      }
+      // Mirrors LinksService.bulkCreate (#754).
+      const [past] = validateExpiry(row.expiresAt);
+      if (past) {
+        problems.set(i, past);
         return;
       }
       if (!row.slug) return;
@@ -987,6 +997,11 @@ export async function fixtureRequest<T>(
     const link = findLink(m(/^\/links\/([^/]+)$/)![1]);
     if (!link) throw new Error(`No fixture link ${path}`);
     const body = opts.body as UpdateLinkInput;
+    // Mirrors LinksService.update (#754): a CHANGED expiry must not already have passed.
+    if (body.expiresAt !== undefined) {
+      const [past] = validateExpiry(body.expiresAt, { previous: link.expiresAt, toleranceMs: EXPIRY_SKEW_TOLERANCE_MS });
+      if (past) throw new Error(past);
+    }
     // `archived` is a status transition rather than a stored column.
     const { archived, password, ...rest } = body;
     Object.assign(link, rest);
