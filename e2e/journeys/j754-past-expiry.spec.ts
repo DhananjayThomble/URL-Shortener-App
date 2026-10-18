@@ -115,9 +115,7 @@ test.describe("Journey 754 — past expiry dates", () => {
     expect(created.slug).toBe(slug);
     expect(created.status).not.toBe("expired");
     expect(created.expiresAt).toBe(sent.expiresAt);
-    const hop = await follow(slug);
-    expect(hop.status).toBe(302);
-    expect(hop.location).toBe(DEST);
+    await expect.poll(async () => follow(slug), { message: "new link -> 302 to its destination", timeout: 30_000 }).toEqual({ status: 302, location: DEST });
   });
 
   test("edit: an expired link stays editable; a different past day is refused; a future day revives it @mobile", async ({ page }) => {
@@ -129,7 +127,7 @@ test.describe("Journey 754 — past expiry dates", () => {
     const id = made.body.id as string;
     // Let it expire for real.
     await expect.poll(async () => (await api(session, "GET", `/links/${id}`)).body.status, { timeout: 20_000 }).toBe("expired");
-    expect((await follow(slug)).status).toBe(410);
+    await expect.poll(async () => (await follow(slug)).status, { message: "expired -> 410", timeout: 30_000 }).toBe(410);
 
     await signIn(page, session);
     await page.goto(`/links/${id}`);
@@ -172,9 +170,8 @@ test.describe("Journey 754 — past expiry dates", () => {
     await expect(drawer).toBeHidden();
     const revived = await api(session, "GET", `/links/${id}`);
     expect(revived.body.status).toBe("active");
-    const hop = await follow(slug);
-    expect(hop.status).toBe(302);
-    expect(hop.location).toBe(moved);
+    // The redirect service caches resolved links briefly; poll like j13 does.
+    await expect.poll(async () => follow(slug), { message: "revived -> 302 to the new destination", timeout: 30_000 }).toEqual({ status: 302, location: moved });
   });
 
   test("the API refuses a past expiry itself, with the same words, on create, bulk and edit", async () => {
