@@ -194,7 +194,9 @@ for (const [name, use] of [
         ...common,
         "GET /analytics": () => {
           calls += 1;
-          return calls === 1
+          // The app's query client retries a 5xx twice before giving up (providers.tsx),
+          // so the first three calls fail and the user's Retry is the fourth.
+          return calls <= 3
             ? { status: 500, body: { statusCode: 500, message: "boom" } }
             : { status: 200, body: BY_RANGE["30d"] };
         },
