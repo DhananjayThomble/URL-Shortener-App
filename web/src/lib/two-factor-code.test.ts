@@ -141,6 +141,8 @@ describe("codeInputProps", () => {
     expect(p.autoComplete).toBe("one-time-code");
     expect(p.pattern).toBe("[0-9]*");
     expect(p.label).toBe("Authentication code");
+    // A maxlength of 6 would truncate a pasted "123 456" before the space is dropped.
+    expect(p.maxLength).toBeUndefined();
   });
   it("recovery: a text keyboard, no OTP autofill, no autocorrect", () => {
     const p = codeInputProps("recovery");

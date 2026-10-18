@@ -58,7 +58,7 @@ export type CodeInputProps = {
   autoCorrect?: string;
   spellCheck?: boolean;
   pattern?: string;
-  maxLength: number;
+  maxLength?: number;
 };
 
 /** Keyboard and autofill hints for the code field. */
@@ -70,7 +70,8 @@ export function codeInputProps(mode: CodeMode): CodeInputProps {
       inputMode: "numeric",
       autoComplete: "one-time-code",
       pattern: "[0-9]*",
-      maxLength: 6,
+      // No maxLength: the browser would truncate a pasted "123 456" to "123 4"
+      // before sanitiseTyping could drop the space. sanitiseTyping caps at six.
     };
   }
   return {
