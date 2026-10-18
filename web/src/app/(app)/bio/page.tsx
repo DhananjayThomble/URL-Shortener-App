@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
+import { BioPageCard } from "@/components/bio/bio-page-card";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useBioPages, useDeleteBioPage, useDomains, useUpsertBioPage, useWorkspace } from "@/lib/api/hooks";
+import { bioInputErrors } from "@/lib/bio-page";
 import { defaultDomainFor, domainOptionLabel } from "@/lib/domain-choice";
+import { initialsOf } from "@snapurl/domain/initials";
 import { UpsertBioPageInput, type BioBlock, type BioPage } from "@snapurl/contract";
 import { full } from "@/lib/utils";
 
@@ -156,6 +159,11 @@ export default function BioPagesPage() {
   const [problem, setProblem] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /* Set by the first Save/Publish that the contract refuses. From then on every
+     field's complaint is shown ON that field (and updates as it is fixed) — not
+     before, so a half-typed URL is never scolded mid-keystroke (#788). */
+  const [attempted, setAttempted] = useState(false);
+  const [focusTick, setFocusTick] = useState(0);
   // #651: start on a live domain, not whichever the list happens to open with.
   const pickedDomain = newPage.domain || defaultDomainFor(domains, workspace?.defaultDomain);
 
@@ -181,6 +189,17 @@ export default function BioPagesPage() {
   const dirty = Boolean(
     page && editing && JSON.stringify(toInput(page, editing, page.status)) !== JSON.stringify(toInput(page, fromPage(page), page.status)),
   );
+  const errors = useMemo(
+    () => (attempted && page && editing ? bioInputErrors(toInput(page, editing, page.status)) : null),
+    [attempted, page, editing],
+  );
+
+  // After a refused save: put the keyboard on the first wrong field, once the
+  // block holding it has expanded.
+  useEffect(() => {
+    if (focusTick === 0) return;
+    document.querySelector<HTMLElement>('[data-bio-editor] [aria-invalid="true"]')?.focus();
+  }, [focusTick]);
 
   function select(id: string) {
     if (id === page?.id) return;
@@ -188,6 +207,7 @@ export default function BioPagesPage() {
     setSelectedId(id);
     setProblem(null);
     setSaved(false);
+    setAttempted(false);
   }
 
   function update(fn: (d: Draft) => Draft) {
@@ -238,6 +258,13 @@ export default function BioPagesPage() {
     const bad = problemWith(input, editing);
     if (bad) {
       setProblem(bad);
+      // Open the first block with a problem so its message and field are on
+      // screen, then focus that field.
+      const found = bioInputErrors(input);
+      const first = editing.blocks.findIndex((_, i) => found.blocks[i]);
+      if (first !== -1) setOpen(editing.blocks[first]!.key);
+      setAttempted(true);
+      setFocusTick((n) => n + 1);
       return;
     }
     setProblem(null);
@@ -246,6 +273,7 @@ export default function BioPagesPage() {
       setDraft(fromPage(result));
       setDraftOf(result.id);
       setSaved(true);
+      setAttempted(false);
     } catch (err) {
       setProblem((err as Error).message);
     }
@@ -291,7 +319,6 @@ export default function BioPagesPage() {
 
   const movableFrom = editing ? firstMovable(editing.blocks) : 0;
   const previewBlocks = editing?.blocks.filter((b) => b.kind !== "header") ?? [];
-  const firstLink = previewBlocks.find((b) => b.kind === "link")?.key;
 
   return (
     <>
@@ -436,7 +463,7 @@ export default function BioPagesPage() {
           </Card>
 
           {page && editing ? (
-            <Card>
+            <Card data-bio-editor="">
               <CardHeader
                 title={
                   <>
@@ -460,7 +487,7 @@ export default function BioPagesPage() {
                     ) : null}
                     {dirty ? (
                       <>
-                        <Button size="sm" variant="ghost" disabled={upsert.isPending} onClick={() => { setDraft(fromPage(page)); setProblem(null); setOpen(null); }}>
+                        <Button size="sm" variant="ghost" disabled={upsert.isPending} onClick={() => { setDraft(fromPage(page)); setProblem(null); setOpen(null); setAttempted(false); }}>
                           Discard
                         </Button>
                         <Button size="sm" disabled={upsert.isPending} onClick={() => save(page.status)}>
@@ -483,10 +510,10 @@ export default function BioPagesPage() {
               />
               <CardBody className="flex flex-col gap-2">
                 <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3 mb-2">
-                  <Field label="Profile name">
+                  <Field label="Profile name" error={errors?.profile.name}>
                     <Input value={editing.name} maxLength={80} onChange={(e) => update((d) => ({ ...d, name: e.target.value }))} />
                   </Field>
-                  <Field label="Profile bio" help={`${editing.bio.length}/280`}>
+                  <Field label="Profile bio" help={`${editing.bio.length}/280`} error={errors?.profile.bio}>
                     <Input
                       value={editing.bio}
                       maxLength={280}
@@ -509,6 +536,7 @@ export default function BioPagesPage() {
                     {editing.blocks.map((b, i) => {
                       const spec = ADDABLE.find((a) => a.kind === b.kind);
                       const expanded = open === b.key;
+                      const be = errors?.blocks[i];
                       return (
                         <li
                           key={b.key}
@@ -536,7 +564,7 @@ export default function BioPagesPage() {
                           onDragEnd={() => { setDragging(null); setOver(null); }}
                           className={
                             "bg-surface-2 border rounded-[var(--radius-sm)] " +
-                            (over === b.key && dragging !== b.key ? "border-accent" : "border-line hover:border-line-2") +
+                            (over === b.key && dragging !== b.key ? "border-accent" : be ? "border-bad" : "border-line hover:border-line-2") +
                             (dragging === b.key ? " opacity-60" : "")
                           }
                         >
@@ -552,7 +580,13 @@ export default function BioPagesPage() {
                             </span>
                             <div className="flex-1 min-w-0">
                               <b className="block text-[13px] font-semibold truncate">{b.title || "Untitled block"}</b>
-                              {b.kind !== "header" && b.href ? (
+                              {be && !expanded ? (
+                                // Collapsed: say what is wrong here, on the block itself. (Expanded,
+                                // the same message sits under the field it is about.)
+                                <span className="block text-[11.5px] text-bad truncate">
+                                  {be.href ?? be.title}
+                                </span>
+                              ) : b.kind !== "header" && b.href ? (
                                 <span className="block text-[11.5px] text-ink-3 truncate font-mono">{b.href}</span>
                               ) : b.subtitle ? (
                                 <span className="block text-[11.5px] text-ink-3 truncate">{b.subtitle}</span>
@@ -595,14 +629,14 @@ export default function BioPagesPage() {
                           </div>
                           {expanded ? (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-[13px] pb-[13px]">
-                              <Field label="Title">
+                              <Field label="Title" error={be?.title}>
                                 <Input
                                   value={b.title}
                                   maxLength={160}
                                   onChange={(e) => updateBlock(b.key, { title: e.target.value })}
                                 />
                               </Field>
-                              <Field label="URL">
+                              <Field label="URL" error={be?.href}>
                                 <Input
                                   value={b.href}
                                   type="url"
@@ -660,54 +694,37 @@ export default function BioPagesPage() {
 
         <Card className="lg:sticky lg:top-[120px]">
           <CardHeader title="Live preview" />
-          <CardBody className="grid place-items-center bg-surface-2">
+          <CardBody className="grid place-items-center bg-surface-2" data-testid="bio-preview">
             {page && editing ? (
-              <div className="flex flex-col items-center gap-[9px]">
+              <div className="flex flex-col items-center gap-[9px] w-full max-w-[560px]">
                 <div className="font-mono text-[10.5px] text-ink-3">
                   {page.domain}/{page.slug}
                 </div>
-                <div className="w-[212px] border-8 border-ink rounded-[26px] bg-surface px-[13px] pt-[18px] pb-[13px] flex flex-col items-center gap-2 shadow-[var(--shadow-2)]">
-                  <div className="w-11 h-11 rounded-full bg-accent text-accent-ink grid place-items-center font-display font-extrabold text-[15px]">
-                    {initials(editing.name)}
-                  </div>
-                  <div className="font-display font-bold text-[14px] text-center break-words max-w-full">{editing.name}</div>
-                  {editing.bio ? (
-                    <div className="text-[10.5px] text-ink-3 text-center leading-[1.45] mb-[3px] break-words max-w-full">{editing.bio}</div>
-                  ) : null}
-                  {previewBlocks.map((b) => (
-                    <div
-                      key={b.key}
-                      className={
-                        b.key === firstLink
-                          ? "w-full p-2 rounded-lg text-[11px] text-center font-semibold bg-accent text-accent-ink border border-accent truncate"
-                          : "w-full p-2 rounded-lg text-[11px] text-center font-medium bg-surface-2 border border-line-2 truncate"
-                      }
-                    >
-                      {b.kind === "link" ? "" : `${BLOCK_ICON[b.kind]} `}
-                      {b.title}
-                    </div>
-                  ))}
-                  {/* No opacity utility here: opacity-70 composited --ink-3 (5.16:1 on its
-                      own against --ground) down to an effective #87909a — 2.85:1, failing
-                      WCAG AA SC 1.4.3. --ink-3 at full opacity keeps it the dimmest ink
-                      token while staying compliant. See #497. */}
-                  <div className="text-[9px] text-ink-3 mt-1">Powered by SnapURL</div>
+                {/* The very component the public page renders (#788): what the
+                    person sees here is what a visitor gets, byte for byte —
+                    only the links are inert. Initials come from the same rule
+                    the API stores. */}
+                <div className="w-full">
+                  <BioPageCard
+                    preview
+                    headingLevel="h2"
+                    profile={{ name: editing.name, bio: editing.bio, initials: initialsOf(editing.name) }}
+                    blocks={previewBlocks.map((b) => ({
+                      id: b.key,
+                      kind: b.kind,
+                      title: b.title,
+                      subtitle: b.subtitle || null,
+                      href: b.href,
+                    }))}
+                  />
                 </div>
               </div>
             ) : (
-              <Skeleton className="w-[212px] h-[300px]" />
+              <Skeleton className="w-full max-w-[560px] h-[300px]" />
             )}
           </CardBody>
         </Card>
       </div>
     </>
   );
-}
-
-/** Same rule as the API's initialsOf, so the preview matches what is saved. */
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
 }

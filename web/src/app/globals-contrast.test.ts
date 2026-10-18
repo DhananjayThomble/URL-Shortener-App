@@ -291,15 +291,19 @@ describe("saturated-tone badges use --accent-ink, not a literal white, for their
    check that closes that gap lives in e2e/tests/bio.spec.ts (axe-core
    color-contrast against the real fixtures build); this test stays as a fast,
    source-level tripwire for the literal defect, not the sole guard. */
-describe("bio page 'Powered by SnapURL' caption (#497)", () => {
-  const bioPagePath = fileURLToPath(
-    new URL("./(app)/bio/page.tsx", import.meta.url),
+describe("bio page footer caption (#497, shared preview/public component since #788)", () => {
+  /* The editor's preview used to carry its own "Powered by SnapURL" caption;
+     #788 made it the public page's component, so the caption under test is now
+     that component's footer. Same oracle: the footer keeps text-ink-3 and gets
+     no opacity composite. */
+  const cardPath = fileURLToPath(
+    new URL("../components/bio/bio-page-card.tsx", import.meta.url),
   );
-  const source = readFileSync(bioPagePath, "utf8");
+  const source = readFileSync(cardPath, "utf8");
 
   it("does not pair an opacity utility or an alpha-modified ink token with the caption", () => {
-    const match = source.match(/<div className="([^"]*)">Powered by SnapURL<\/div>/);
-    expect(match, "expected to find the 'Powered by SnapURL' caption element").not.toBeNull();
+    const match = source.match(/<p className="([^"]*)">\s*Built with SnapURL/);
+    expect(match, "expected to find the 'Built with SnapURL' caption element").not.toBeNull();
     const classes = match![1];
     expect(classes).toContain("text-ink-3");
     // Named-scale (opacity-70) and arbitrary-value (opacity-[0.7]) utilities.

@@ -2,12 +2,14 @@
 
 import { useRef, useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAddDomain, useDeleteDomain, useDomains, useMe, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
 import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { full } from "@/lib/utils";
 import { canEditDomainRedirects, parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
 import { canDisconnectDomain, domainSslView, domainStatusView } from "@/lib/domain-state";
+import { dnsSteps } from "@/lib/domain-dns";
+import { DnsSetupCard } from "@/components/domains/dns-setup-card";
 
 /**
  * Edit a domain's root and 404 redirects (#648).
@@ -109,7 +111,7 @@ export default function DomainsPage() {
   const editButtons = useRef(new Map<string, HTMLButtonElement>());
 
   const domains = data ?? [];
-  const pending = domains.find((d) => d.status === "verifying");
+  const pendingDomains = domains.filter((d) => d.status === "verifying" && dnsSteps(d).length > 0);
   const editingDomain = domains.find((d) => d.id === editing && !d.shared && canEditRedirects);
 
   function closeEditor() {
@@ -226,7 +228,7 @@ export default function DomainsPage() {
                   <Th>Links</Th>
                   <Th>Root redirect</Th>
                   <Th>404 redirect</Th>
-                  <Th />
+                  <ActionsTh />
                 </tr>
               </thead>
               <tbody>
@@ -253,7 +255,7 @@ export default function DomainsPage() {
                     <Td className="font-mono text-[12px]">
                       {d.notFoundRedirect ?? <span className="text-ink-3">— not set</span>}
                     </Td>
-                    <Td className="text-right whitespace-nowrap">
+                    <ActionsTd>
                       {!d.shared && canEditRedirects ? (
                         <Button
                           size="sm"
@@ -274,7 +276,7 @@ export default function DomainsPage() {
                       {!canDisconnectDomain(d) ? (
                         // The API refuses this with a 409; say why instead of offering it.
                         <span
-                          className="text-[12px] text-ink-3"
+                          className="max-w-[8.5rem] text-right text-[12px] text-ink-3 sm:max-w-none"
                           title="This domain is shared by every workspace and managed by SnapURL."
                         >
                           Can't be disconnected
@@ -293,7 +295,7 @@ export default function DomainsPage() {
                           Disconnect
                         </Button>
                       )}
-                    </Td>
+                    </ActionsTd>
                   </tr>
                 ))}
               </tbody>
@@ -316,46 +318,11 @@ export default function DomainsPage() {
         </Card>
       ) : null}
 
-      {pending?.dns ? (
-        <Card>
-          <CardHeader
-            title={`Finish setting up ${pending.domain}`}
-            right={
-              <div className="flex items-center gap-2">
-                <Chip tone="warn">1 step left</Chip>
-                <Button size="sm" onClick={() => verify(pending.id)} disabled={verifyDomain.isPending}>
-                  {verifyDomain.isPending ? "Checking…" : "Check now"}
-                </Button>
-              </div>
-            }
-          />
-          <CardBody>
-            <p className="m-0 mb-3.5 text-[13.5px] text-ink-2">
-              Add this record at your DNS provider, then check again. DNS changes can take a few minutes to propagate.
-            </p>
-            <TableWrap label={`DNS record for ${pending.domain}`}>
-              <Table className="min-w-[420px]">
-                <thead>
-                  <tr>
-                    <Th>Type</Th>
-                    <Th>Name</Th>
-                    <Th>Value</Th>
-                    <Th>TTL</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <Td className="text-ink font-medium font-mono">{pending.dns.type}</Td>
-                    <Td className="font-mono">{pending.dns.name}</Td>
-                    <Td className="font-mono text-accent">{pending.dns.value}</Td>
-                    <Td className="font-mono">{pending.dns.ttl}</Td>
-                  </tr>
-                </tbody>
-              </Table>
-            </TableWrap>
-          </CardBody>
-        </Card>
-      ) : null}
+      {/* Every domain still waiting on DNS gets its own setup card (#784) —
+          not just the first — with both records and a Copy on each value. */}
+      {pendingDomains.map((d) => (
+        <DnsSetupCard key={d.id} domain={d} checking={verifyDomain.isPending} onCheck={() => verify(d.id)} />
+      ))}
     </>
   );
 }

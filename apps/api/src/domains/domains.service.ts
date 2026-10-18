@@ -7,6 +7,8 @@ import { DB } from "../database/database.module.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
+import { ENV, type Env } from "../config/env.js";
+import { routingRecordFor } from "./domains.routing.js";
 
 /**
  * Refuse a root / 404 redirect that points back at the domain it is set on
@@ -97,6 +99,7 @@ export class DomainsService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly projectionNudge: ProjectionNudgeService,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   private readonly logger = new Logger(DomainsService.name);
@@ -385,9 +388,14 @@ export class DomainsService {
     const [system] = await this.db
       .select({ isSystem: domains.isSystem })
       .from(domains)
-      .where(eq(domains.id, id))
+      /* Ownership first (#840): only the caller's own domain, or the shared one
+         (to refuse it by name). Anything else is a 404 before the link count
+         below is read, so another workspace's id answers exactly like an id
+         that does not exist. */
+      .where(and(eq(domains.id, id), sql`(${domains.workspaceId} = ${workspaceId}::uuid or ${domains.isSystem} = true)`))
       .limit(1);
-    if (system?.isSystem) {
+    if (!system) throw new NotFoundException("That domain isn't connected to this workspace.");
+    if (system.isSystem) {
       throw new ConflictException("That's a shared SnapURL domain — it isn't yours to disconnect.");
     }
 
@@ -435,6 +443,10 @@ export class DomainsService {
       dns: row.verificationToken
         ? { type: "TXT", name: `_snapurl.${row.domain}`, value: row.verificationToken, ttl: 300 }
         : null,
+      /* Where to point traffic (#784). The shared domain IS the target, so it
+         has none; a custom domain gets a record built from this deployment's
+         own short domain, never a value baked into the web bundle. */
+      routing: row.isSystem ? null : routingRecordFor(row.domain, this.env.DEFAULT_DOMAIN),
     };
   }
 }

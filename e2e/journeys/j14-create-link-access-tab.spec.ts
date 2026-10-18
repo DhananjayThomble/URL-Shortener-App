@@ -128,6 +128,8 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
     await drawer.getByRole("button", { name: /Expire on a date/ }).click(); // #759: the URL input is disabled until the expiry is on
     await drawer.getByPlaceholder("acme.com/offers").fill("not a url");
     await drawer.getByRole("button", { name: "Cancel" }).click();
+    // The attempt holds typed input, so closing asks first (#761); this test is about the NEXT open.
+    await page.getByRole("alertdialog", { name: "Discard this link?" }).getByRole("button", { name: "Discard", exact: true }).click();
     await expect(drawer).toBeHidden();
 
     // Reopen: nothing from the abandoned attempt may leak into the new one.
