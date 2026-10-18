@@ -23,7 +23,19 @@ const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; la
   archived: { tone: "default", label: () => "Archived" },
 };
 
-export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen?: boolean }) {
+const ACTION_BTN =
+  "row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity";
+
+/** `list`: one wide row per link. `grid`: a stacked card (header / destination / footer) for the Grid view (#787). */
+export function LinkRow({
+  link,
+  defaultOpen = false,
+  variant = "list",
+}: {
+  link: Link;
+  defaultOpen?: boolean;
+  variant?: "list" | "grid";
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
   const cloneLink = useCloneLink();
@@ -34,6 +46,7 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
   const inFlight = useRef(false);
   const status = STATUS[link.status];
   const archived = link.status === "archived";
+  const grid = variant === "grid";
 
   async function onCopy() {
     const ok = await copy(shortUrlHref(link.domain, link.slug));
@@ -91,90 +104,163 @@ export function LinkRow({ link, defaultOpen = false }: { link: Link; defaultOpen
     `Scanned ${relativeDate(link.safeBrowsing.checkedAt)}`,
   ].filter(Boolean) as string[];
 
+  const favicon = (
+    <span className="w-8 h-8 rounded-lg bg-surface-3 grid place-items-center text-[14px] shrink-0 border border-line">
+      {faviconFor(link.destination)}
+    </span>
+  );
+
+  /* One line, never wrapped: a hyphenated slug used to break after the hyphen
+     ("qa-" / "full") and a long one stacked into a column (#787). `inline-flex`
+     + `min-w-0 max-w-full` lets the link shrink and `truncate` cuts the slug
+     with an ellipsis; the domain gives way first (weighted shrink) so the
+     back-half, the part people recognise, stays readable. The full short link
+     is in `title`. `aria-label` keeps the accessible name one unbroken
+     "domain/slug": as flex items the two spans would otherwise be read with a
+     space between them ("snap.to/ qa-full"). */
+  const slugLink = (
+    <NextLink
+      href={`/links/${link.id}`}
+      title={`${link.domain}/${link.slug}`}
+      aria-label={`${link.domain}/${link.slug}`}
+      className="inline-flex items-baseline min-w-0 max-w-full whitespace-nowrap font-mono text-[14px] font-semibold tracking-[-0.01em] hover:underline"
+    >
+      <span className="text-ink-3 font-normal min-w-0 shrink-[8] truncate">{link.domain}/</span>
+      <span data-slot="slug" className="text-accent min-w-0 truncate">
+        {link.slug}
+      </span>
+    </NextLink>
+  );
+
+  const chip = (
+    <Chip tone={status.tone} dot className="shrink-0">
+      {status.label(link)}
+    </Chip>
+  );
+
+  /* The text sits in its own `truncate` span: `truncate` on the flex container
+     never produced an ellipsis (its text is an anonymous flex item), so the end
+     was clipped bare. The start (host) stays visible and the full URL is in
+     `title`. */
+  const destination = (
+    <div data-slot="destination" className="flex items-center gap-[6px] min-w-0 text-[12.5px] text-ink-3">
+      <span className="opacity-60 shrink-0">↳</span>
+      <span data-slot="destination-text" title={link.destination} className="min-w-0 truncate">
+        {link.destination.replace(/^https?:\/\//, "")}
+      </span>
+    </div>
+  );
+
+  const actions = (
+    <>
+      <button onClick={onCopy} aria-label={`Copy short link ${link.domain}/${link.slug}`} className={ACTION_BTN}>
+        {copied ? "✓ copied" : "⧉ copy"}
+      </button>
+      {/* No slug is sent, so the server generates one — a duplicate that
+          reused the back-half would collide with the link it came from. */}
+      <button
+        onClick={() => cloneLink.mutate({ id: link.id })}
+        disabled={cloneLink.isPending}
+        aria-label={`Duplicate link ${link.domain}/${link.slug}`}
+        title="Create a copy of this link with a new back-half"
+        className={cn(ACTION_BTN, "disabled:opacity-50")}
+      >
+        {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
+      </button>
+      <button
+        onClick={toggleArchived}
+        disabled={updateLink.isPending}
+        aria-label={archived ? `Unarchive link ${link.domain}/${link.slug}` : `Archive link ${link.domain}/${link.slug}`}
+        title={archived ? "Move this link back to your active lists" : "Archive this link — it keeps working, just moves out of your active lists"}
+        className={cn(ACTION_BTN, "disabled:opacity-50")}
+      >
+        {updateLink.isPending ? "…" : archived ? "⤴ unarchive" : "⤵ archive"}
+      </button>
+    </>
+  );
+
+  const tags = link.tags.slice(0, 2).map((t) => <Chip key={t}>{t}</Chip>);
+
+  const clicks = (
+    <div className="text-right shrink-0 min-w-[74px] tnum">
+      <b className="font-display text-[16px] font-bold block tracking-[-0.02em]">{compact(link.clicks)}</b>
+      <span className="text-[10.5px] text-ink-3 font-mono tracking-[0.06em] uppercase">clicks</span>
+    </div>
+  );
+
+  const spark = <Sparkline values={link.sparkline} tone={link.status === "expired" ? "muted" : "accent"} />;
+
+  const chevron = (
+    <button
+      onClick={() => setOpen((v) => !v)}
+      aria-expanded={open}
+      aria-label={open ? "Hide routing" : "Show routing"}
+      className={cn(
+        "text-ink-3 p-[5px] rounded-[5px] shrink-0 hover:bg-surface-3 hover:text-ink transition-transform",
+        open && "rotate-180 text-accent",
+      )}
+    >
+      ⌄
+    </button>
+  );
+
   return (
-    <article className="bg-surface border border-line rounded-[var(--radius)] shadow-[var(--shadow-1)] overflow-hidden transition-[border-color,box-shadow] hover:border-line-2 hover:shadow-[var(--shadow-2)] group">
-      <div className="flex items-center gap-[14px] px-[15px] py-[calc(13px*var(--density))]">
-        <span className="w-8 h-8 rounded-lg bg-surface-3 grid place-items-center text-[14px] shrink-0 border border-line">
-          {faviconFor(link.destination)}
-        </span>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <NextLink href={`/links/${link.id}`} className="font-mono text-[14px] font-semibold tracking-[-0.01em] hover:underline">
-              <span className="text-ink-3 font-normal">{link.domain}/</span>
-              <span className="text-accent">{link.slug}</span>
-            </NextLink>
-            {/* On a phone the three always-on touch actions wrap together as a
-                compact group onto their own line under the slug (basis-full)
-                instead of crowding the slug + status chip. On md+ the group
-                collapses back to inline (md:basis-auto, md:contents) so the
-                buttons flow between the slug and chip exactly as before. */}
-            <div className="flex items-center gap-2 flex-wrap basis-full order-last md:basis-auto md:order-none md:contents">
-              <button
-                onClick={onCopy}
-                aria-label={`Copy short link ${link.domain}/${link.slug}`}
-                className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity"
-              >
-                {copied ? "✓ copied" : "⧉ copy"}
-              </button>
-              {/* No slug is sent, so the server generates one — a duplicate that
-                  reused the back-half would collide with the link it came from. */}
-              <button
-                onClick={() => cloneLink.mutate({ id: link.id })}
-                disabled={cloneLink.isPending}
-                aria-label={`Duplicate link ${link.domain}/${link.slug}`}
-                title="Create a copy of this link with a new back-half"
-                className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
-              >
-                {cloneLink.isPending ? "duplicating…" : "⧉⧉ duplicate"}
-              </button>
-              <button
-                onClick={toggleArchived}
-                disabled={updateLink.isPending}
-                aria-label={archived ? `Unarchive link ${link.domain}/${link.slug}` : `Archive link ${link.domain}/${link.slug}`}
-                title={archived ? "Move this link back to your active lists" : "Archive this link — it keeps working, just moves out of your active lists"}
-                className="row-action opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-3 text-[12px] px-[6px] py-[2px] rounded-[4px] hover:bg-surface-3 hover:text-ink transition-opacity disabled:opacity-50"
-              >
-                {updateLink.isPending ? "…" : archived ? "⤴ unarchive" : "⤵ archive"}
-              </button>
+    <article
+      data-variant={variant}
+      className="bg-surface border border-line rounded-[var(--radius)] shadow-[var(--shadow-1)] overflow-hidden transition-[border-color,box-shadow] hover:border-line-2 hover:shadow-[var(--shadow-2)] group"
+    >
+      {grid ? (
+        /* Grid card: the slug gets the whole header line, the actions share the
+           footer with the numbers, so nothing competes with the slug for width
+           and no hidden-until-hover control opens a gap beside it (#787). */
+        <div className="flex flex-col gap-[7px] px-[15px] py-[calc(13px*var(--density))] min-w-0">
+          <div className="flex items-center gap-[10px] min-w-0">
+            {favicon}
+            <div className="min-w-0 flex-1">{slugLink}</div>
+            {chip}
+            {chevron}
+          </div>
+          <div className="flex items-center gap-[10px] min-w-0">
+            <div className="min-w-0 flex-1">{destination}</div>
+            <div className="hidden md:flex gap-[5px] items-center shrink-0 max-w-[45%] overflow-hidden">{tags}</div>
+          </div>
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">{actions}</div>
+            <div className="flex items-center gap-3 ml-auto shrink-0">
+              <div className="hidden sm:block w-[96px] shrink-0">{spark}</div>
+              {clicks}
             </div>
-            <Chip tone={status.tone} dot>
-              {status.label(link)}
-            </Chip>
-          </div>
-          <div className="flex items-center gap-[6px] text-[12.5px] text-ink-3 mt-[3px] truncate">
-            <span className="opacity-60">↳</span>
-            {link.destination.replace(/^https?:\/\//, "")}
           </div>
         </div>
+      ) : (
+        <div className="flex items-center gap-[14px] px-[15px] py-[calc(13px*var(--density))]">
+          {favicon}
 
-        <div className="hidden md:flex gap-[5px] items-center shrink-0">
-          {link.tags.slice(0, 2).map((t) => (
-            <Chip key={t}>{t}</Chip>
-          ))}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {slugLink}
+              {/* On a phone the three always-on touch actions wrap together as a
+                  compact group onto their own line under the slug (basis-full)
+                  instead of crowding the slug + status chip. On md+ the group
+                  collapses back to inline (md:basis-auto, md:contents) so the
+                  buttons flow between the slug and chip exactly as before. */}
+              <div className="flex items-center gap-2 flex-wrap basis-full order-last md:basis-auto md:order-none md:contents">
+                {actions}
+              </div>
+              {chip}
+            </div>
+            <div className="mt-[3px]">{destination}</div>
+          </div>
+
+          <div className="hidden md:flex gap-[5px] items-center shrink-0">{tags}</div>
+
+          <div className="hidden md:block w-[96px] shrink-0">{spark}</div>
+
+          {clicks}
+
+          {chevron}
         </div>
-
-        <div className="hidden md:block w-[96px] shrink-0">
-          <Sparkline values={link.sparkline} tone={link.status === "expired" ? "muted" : "accent"} />
-        </div>
-
-        <div className="text-right shrink-0 min-w-[74px] tnum">
-          <b className="font-display text-[16px] font-bold block tracking-[-0.02em]">{compact(link.clicks)}</b>
-          <span className="text-[10.5px] text-ink-3 font-mono tracking-[0.06em] uppercase">clicks</span>
-        </div>
-
-        <button
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-label={open ? "Hide routing" : "Show routing"}
-          className={cn(
-            "text-ink-3 p-[5px] rounded-[5px] shrink-0 hover:bg-surface-3 hover:text-ink transition-transform",
-            open && "rotate-180 text-accent",
-          )}
-        >
-          ⌄
-        </button>
-      </div>
+      )}
 
       {open ? (
         <div className="border-t border-line bg-surface-2 px-[15px] pt-[14px] pb-[15px]">
