@@ -264,12 +264,26 @@ test.describe("Journey 13 — Full link edit and archive", () => {
       .poll(async () => (await visit(link.slug)).location, { message: "password removed -> destination", timeout: 30_000 })
       .toContain("example.com/j13-destination");
 
-    // 3. Expire it (yesterday) in the UI -> 410 Gone.
+    // 3. Expire it -> 410 Gone. Picking yesterday in the UI used to do this, but that is the
+    //    "born expired" defect #754 removed: the drawer now refuses a past day inline and sends
+    //    nothing. So the UI refusal is asserted, and the link is expired the remaining legitimate
+    //    way — "expire it now" over the API (the current time, a few seconds late) — so the 410
+    //    and the UI move back to the future below are still exercised end to end.
     drawer = await openEditor(page, link.id, link.slug);
     await tab(drawer, "Access");
     await drawer.getByRole("button", { name: /Expire on a date/ }).click();
     await drawer.getByLabel("Expiry date").fill(dateInput(-1));
-    await save(drawer);
+    await drawer.getByRole("button", { name: "Save changes" }).click();
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(/expiry date has already passed/)).toBeVisible();
+    expect((await getLink(session, link.id)).expiresAt ?? null).toBeNull();
+    await drawer.getByRole("button", { name: "Close" }).click();
+    const expireNow = await fetch(`${API_URL}/links/${link.id}`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${session.accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ expiresAt: new Date(Date.now() - 5_000).toISOString() }),
+    });
+    expect(expireNow.status).toBe(200);
     await expect
       .poll(async () => (await visit(link.slug)).status, { message: "expired -> 410", timeout: 30_000 })
       .toBe(410);
@@ -277,7 +291,7 @@ test.describe("Journey 13 — Full link edit and archive", () => {
     // 4. Move the expiry into the future -> live again, and the date is shown.
     drawer = await openEditor(page, link.id, link.slug);
     await tab(drawer, "Access");
-    await expect(drawer.getByLabel("Expiry date")).toHaveValue(dateInput(-1));
+    await expect(drawer.getByLabel("Expiry date")).toHaveValue(dateInput(0));
     await drawer.getByLabel("Expiry date").fill(dateInput(30));
     await save(drawer);
     await expect

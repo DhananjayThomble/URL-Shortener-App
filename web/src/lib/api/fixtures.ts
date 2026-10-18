@@ -1,4 +1,8 @@
 import { z } from "zod";
+import { AnalyticsRange } from "./types";
+import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry";
+// The subpath, not the barrel: the barrel pulls node:crypto into the browser bundle.
+import { lifecycleGate } from "@snapurl/domain/destination";
 import type {
   AbuseReport,
   Analytics,
@@ -409,7 +413,8 @@ export const DOMAINS: Domain[] = [
     domain: "snap.to",
     status: "live",
     ssl: "active",
-    sslRenewsAt: daysAgo(-77),
+    // Mirrors the API: the built-in shared domain has no per-workspace renewal date (#782).
+    sslRenewsAt: null,
     links: 1022,
     rootRedirect: "https://acme.com",
     notFoundRedirect: "https://acme.com/404",
@@ -527,6 +532,15 @@ const SESSION: AuthSession = {
 
 function previewFor(slug: string): PublicLinkPreview {
   const link = LINKS.find((l) => l.slug === slug) ?? LINKS[0];
+  // Mirrors PublicService.preview (#764): the redirect's own lifecycle verdict.
+  const gate = lifecycleGate({
+    archived: link.status === "archived",
+    expiresAt: link.expiresAt,
+    activatesAt: link.activatesAt,
+    clickLimit: link.clickLimit,
+    clicks: link.clicks,
+  });
+  const fallback = gate === "expired" ? link.expiresTo : gate === "scheduled" ? link.scheduledTo : null;
   return {
     shortUrl: `${link.domain}/${link.slug}`,
     // Mirrors PublicService.preview: a password guards the destination.
@@ -539,6 +553,12 @@ function previewFor(slug: string): PublicLinkPreview {
     scannedAt: link.safeBrowsing.checkedAt,
     setsCookies: false,
     redirectType: link.redirectType,
+    state: gate ?? "active",
+    expiresAt: link.expiresAt ?? null,
+    activatesAt: link.activatesAt ?? null,
+    hasRules: link.rules.length > 0,
+    // Never the fallback URL; not even the fact for a protected link (#802).
+    hasFallback: link.passwordProtected ? null : fallback != null,
   };
 }
 
@@ -599,6 +619,80 @@ function recordAudit(action: string) {
 
 function findLink(idOrSlug: string) {
   return linkStore.find((l) => l.id === idOrSlug || l.slug === idOrSlug);
+}
+
+/**
+ * GET /analytics. With `linkId` the real API scopes every number — totals,
+ * series and breakdowns — to that link AND to the selected range; the
+ * workspace-wide ANALYTICS fixture would otherwise show, for any link and any
+ * range, the whole workspace's all-time traffic (#768).
+ *
+ * The fixture has no real event history to aggregate, so it DERIVES a window:
+ * the link's all-time `clicks` is the 12m (widest) figure, and shorter ranges
+ * are a deterministic fraction of it (a 24h slice is a sliver of a year). This
+ * keeps the two things the issue is about honest in fixtures mode too — the
+ * headline total changes with the range and is never the all-time counter
+ * (except at 12m, by construction), and every breakdown sums to that total.
+ * Unknown link: the workspace figures, as before.
+ */
+const RANGE_FRACTION: Record<AnalyticsRange, number> = {
+  "24h": 0.02,
+  "7d": 0.1,
+  "30d": 0.28,
+  "90d": 0.6,
+  "12m": 1,
+};
+
+function analyticsFixture(path: string): Analytics {
+  const params = new URLSearchParams(path.split("?")[1] ?? "");
+  const linkId = params.get("linkId");
+  const link = linkId ? findLink(linkId) : undefined;
+  if (!link) return ANALYTICS;
+
+  const range = AnalyticsRange.catch("30d").parse(params.get("range"));
+  const fraction = RANGE_FRACTION[range];
+  // The window's clicks: all-time scaled down to the range. `base` maps every
+  // other number (uniques, breakdowns, series) off the same window so they
+  // stay internally consistent — the breakdowns always sum to totals.clicks.
+  const windowClicks = range === "12m" ? link.clicks : Math.round(link.clicks * fraction);
+  const base = ANALYTICS.totals.clicks || 1;
+  const k = windowClicks / base;
+  const scale = (n: number) => Math.round(n * k);
+
+  /* Scale a breakdown and then correct the largest row so the rows sum to
+     exactly windowClicks — rounding each row independently would otherwise
+     drift a few clicks off the headline, which is the very mismatch #768 is
+     about. */
+  const scaleRows = <T extends { value: number }>(rows: T[]): T[] => {
+    if (!rows.length) return [];
+    const scaled = rows.map((r) => ({ ...r, value: scale(r.value) }));
+    const drift = windowClicks - scaled.reduce((n, r) => n + r.value, 0);
+    let topIdx = 0;
+    for (let i = 1; i < scaled.length; i++) if (scaled[i].value > scaled[topIdx].value) topIdx = i;
+    scaled[topIdx] = { ...scaled[topIdx], value: Math.max(0, scaled[topIdx].value + drift) };
+    return scaled;
+  };
+
+  const allTimeUnique = link.uniqueClicks ?? Math.round(ANALYTICS.totals.unique * (link.clicks / base));
+  return {
+    ...ANALYTICS,
+    totals: {
+      ...ANALYTICS.totals,
+      clicks: windowClicks,
+      unique: range === "12m" ? allTimeUnique : Math.round(allTimeUnique * fraction),
+      scans: scale(ANALYTICS.totals.scans),
+      conversions: scale(ANALYTICS.totals.conversions),
+      blocked: 0,
+    },
+    series: ANALYTICS.series.map((p) => ({ ...p, clicks: scale(p.clicks), unique: scale(p.unique), scans: scale(p.scans ?? 0) })),
+    countries: scaleRows(ANALYTICS.countries),
+    cities: scaleRows(ANALYTICS.cities),
+    devices: scaleRows(ANALYTICS.devices),
+    browsers: scaleRows(ANALYTICS.browsers),
+    referrers: scaleRows(ANALYTICS.referrers),
+    tags: [],
+    topLinks: [],
+  };
 }
 
 function removeById<T extends { id: string }>(store: T[], id: string) {
@@ -794,7 +888,10 @@ export async function fixtureRequest<T>(
   } else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
   /* ---- links ---- */
   else if (m(/^\/links$/) && method === "POST") {
-    const body = opts.body as { destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] };
+    const body = opts.body as { destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"]; expiresAt?: string | null };
+    // Mirrors LinksService.create (#754): an expiry that has already passed is refused.
+    const [past] = validateExpiry(body.expiresAt);
+    if (past) throw new Error(past);
     // Mirrors the server's 409 on a back-half already in use under the same
     // domain — needed so issue #640 (stale server error surviving a form
     // edit) is reproducible against fixtures, same as the bulk-create path
@@ -896,7 +993,7 @@ export async function fixtureRequest<T>(
     data = FORMS;
   } else if (m(/^\/links\/bulk$/) && method === "POST") {
     const body = opts.body as {
-      links: Array<{ destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"] }>;
+      links: Array<{ destination: string; domain: string; slug?: string; redirectType?: Link["redirectType"]; expiresAt?: string | null }>;
     };
     /* Mirrors the server: every row's outcome is independent. A genuine
        validation problem (bad URL, or two rows in this batch wanting the
@@ -914,6 +1011,12 @@ export async function fixtureRequest<T>(
         new URL(row.destination);
       } catch {
         problems.set(i, "That doesn't look like a URL — include https://");
+        return;
+      }
+      // Mirrors LinksService.bulkCreate (#754).
+      const [past] = validateExpiry(row.expiresAt);
+      if (past) {
+        problems.set(i, past);
         return;
       }
       if (!row.slug) return;
@@ -987,6 +1090,11 @@ export async function fixtureRequest<T>(
     const link = findLink(m(/^\/links\/([^/]+)$/)![1]);
     if (!link) throw new Error(`No fixture link ${path}`);
     const body = opts.body as UpdateLinkInput;
+    // Mirrors LinksService.update (#754): a CHANGED expiry must not already have passed.
+    if (body.expiresAt !== undefined) {
+      const [past] = validateExpiry(body.expiresAt, { previous: link.expiresAt, toleranceMs: EXPIRY_SKEW_TOLERANCE_MS });
+      if (past) throw new Error(past);
+    }
     // `archived` is a status transition rather than a stored column.
     const { archived, password, ...rest } = body;
     Object.assign(link, rest);
@@ -1022,7 +1130,7 @@ export async function fixtureRequest<T>(
     data = { items, total: items.length, nextCursor: null };
   }
   /* ---- analytics and conversions ---- */
-  else if (m(/^\/analytics/)) data = ANALYTICS;
+  else if (m(/^\/analytics/)) data = analyticsFixture(path);
   else if (m(/^\/conversions$/) && method === "POST") {
     const body = opts.body as RecordConversionInput;
     data = { id: uid("cnv"), recorded: Boolean(body.name) };
