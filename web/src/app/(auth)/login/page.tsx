@@ -6,12 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AuthShell } from "@/components/auth/auth-shell";
+import { AuthShell, SessionCheck } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
 import type { ApiError } from "@/lib/api/client";
-import { useLogin, useVerifyTotp } from "@/lib/api/hooks";
-import { safeNext, withNext } from "@/lib/safe-next";
+import { useLogin, useRedirectIfSignedIn, useVerifyTotp } from "@/lib/api/hooks";
+import { signedInTarget, withNext } from "@/lib/safe-next";
 import {
   canSubmitCode,
   codeErrorMessage,
@@ -42,9 +42,11 @@ function LoginForm() {
   // Where to go once signed in — e.g. back to an /invite link (#668). Only a
   // same-origin path is honoured; see safeNext.
   const nextParam = useSearchParams().get("next");
-  const next = safeNext(nextParam);
+  const next = signedInTarget(nextParam);
   const login = useLogin();
   const verify = useVerifyTotp();
+  // #777 — already signed in? Verify the session and move on to `next`.
+  const { checking } = useRedirectIfSignedIn(nextParam);
   const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
 
   /* Login can come back as a session OR a TOTP challenge (LoginResult union). We
@@ -99,6 +101,14 @@ function LoginForm() {
     setMode((m) => (m === "totp" ? "recovery" : "totp"));
     setCode("");
     setCodeError(null);
+  }
+
+  if (checking) {
+    return (
+      <AuthShell title="Welcome back" sub="Checking your session…">
+        <SessionCheck />
+      </AuthShell>
+    );
   }
 
   if (challengeToken) {

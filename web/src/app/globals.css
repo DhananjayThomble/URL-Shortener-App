@@ -225,6 +225,18 @@ h4 {
 }
 
 /* ------------------------------------------------------------------
+   Signed-in vs signed-out marketing chrome (#777). The marketing pages are
+   static, so the header ships BOTH sets of controls and CSS picks one from the
+   data-auth attribute that the root layout's pre-paint script puts on <html>
+   (web/src/lib/session-hint.ts) — no flash, no hydration mismatch, no API call.
+   display:none also removes the hidden set from the accessibility tree.
+   ------------------------------------------------------------------ */
+html[data-auth="in"] .auth-out,
+html:not([data-auth="in"]) .auth-in {
+  display: none;
+}
+
+/* ------------------------------------------------------------------
    Touch-target sizing (WCAG 2.5.8). Below the lg breakpoint (the same
    1024px line where the app shell switches to its mobile layout) every
    primary interactive control must present at least a 44x44px hit area.
