@@ -1,5 +1,6 @@
 import {
   CreateFormInput,
+  FormField,
   UpdateFormInput,
   type Form,
   type FormFieldInput,
@@ -55,6 +56,40 @@ export interface FormDraft {
 }
 
 export type DraftErrors = Record<string, string>;
+
+/* Input length limits, READ FROM THE CONTRACT rather than copied (#792): the
+   inputs' `maxLength` must move with the schema the API enforces, so nobody
+   has to remember a second place to change. Each is the `.max()` of the field
+   the draft is sent as; form-values.test.ts proves "limit passes, limit + 1
+   fails" against the real schemas. */
+const maxOf = (s: { maxLength: number | null }): number => {
+  if (s.maxLength === null) throw new Error("expected the contract schema to declare a max length");
+  return s.maxLength;
+};
+const slugSchema = CreateFormInput.shape.slug.options[0].unwrap();
+export const FORM_LIMITS = {
+  title: maxOf(CreateFormInput.shape.title),
+  description: maxOf(CreateFormInput.shape.description.unwrap()),
+  slug: maxOf(slugSchema),
+  fieldLabel: maxOf(FormField.shape.label),
+  fieldPlaceholder: maxOf(FormField.shape.placeholder.unwrap().unwrap()),
+  option: maxOf(FormField.shape.options.unwrap().element),
+} as const;
+
+/**
+ * A `<textarea>` cannot cap each line, so the one-option-per-line box is
+ * checked as the person types: the first line over the contract's per-option
+ * limit, as a sentence, or null. Submitting is blocked by the same limit.
+ */
+export function overlongOptionMessage(options: string): string | null {
+  // Numbered like the submit-time error: blank lines are not options.
+  const list = options
+    .split("\n")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const at = list.findIndex((o) => o.length > FORM_LIMITS.option);
+  return at === -1 ? null : `Option ${at + 1} must be ${FORM_LIMITS.option} characters or fewer`;
+}
 
 let seq = 0;
 const uid = () => `f${Date.now().toString(36)}${(seq++).toString(36)}`;
