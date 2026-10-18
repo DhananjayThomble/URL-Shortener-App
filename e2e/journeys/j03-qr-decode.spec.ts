@@ -10,7 +10,7 @@
  *   implementation's flaw.
  *
  * Oracle:
- *   - qr/page.tsx:     value = `https://${link.domain}/${link.slug}`
+ *   - qr/page.tsx:     value = shortUrlHref(link.domain, link.slug) — scheme of the app's own origin
  *   - qr-preview.tsx:  QRCode.toString(value, {type:"svg", ...}) → dangerouslySetInnerHTML
  *   - jsQR 1.4.0 (local devDep, not CDN) decodes the rasterised canvas
  *
@@ -23,7 +23,7 @@
 
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { makeEmail, registerUser, seedAccount, createLink } from "./helpers";
+import { makeEmail, registerUser, seedAccount, createLink, expectedShortUrl } from "./helpers";
 
 const JSQR_PATH = path.resolve(__dirname, "../node_modules/jsqr/dist/jsQR.js");
 
@@ -136,12 +136,12 @@ test.describe("Journey 3 — QR decode", () => {
       destination: "https://example.com/j3-qr-target",
     });
 
-    // Oracle (qr/page.tsx): value = `https://${link.domain}/${link.slug}`
-    const expectedValue = `https://${link.domain}/${link.slug}`;
-
     await seedAccount(page, session);
     await page.goto("/qr");
     await expect(page).toHaveURL(/\/qr/);
+
+    // Oracle (qr/page.tsx via shortUrlHref, #641/#721): scheme follows the app's own origin.
+    const expectedValue = expectedShortUrl(page, link);
 
     /* ------------------------------------------------------------------ */
     /* 1. Wait for the link to appear and the QR SVG to render             */
