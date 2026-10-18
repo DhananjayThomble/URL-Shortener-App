@@ -164,6 +164,21 @@ for (const [label, use] of [
       expect(rows).toHaveLength(2);
       for (const row of rows) expect(row).not.toHaveProperty("redirectType");
     });
+
+    test("Import links sends no redirect type, so imported links get the workspace default too", async ({ page }) => {
+      const api = await signedIn(page, { defaultRedirect: "301" });
+      // The panel opens from the ?import= deep link (links/page.tsx
+      // ImportDeepLink). generic-csv matches the documented long_url,back_half,title shape.
+      await page.goto("/links?import=generic-csv");
+      await expect(page.getByLabel("Export contents")).toBeVisible();
+      await page.getByLabel("Export contents").fill("long_url,back_half,title\nhttps://acme.com/spring,,Spring\nhttps://acme.com/summer,,Summer");
+      await page.getByRole("button", { name: /^Import 2 links/ }).click();
+      await expect(page.getByText("2 imported.")).toBeVisible();
+      const [call] = api.callsTo("POST", "/links/bulk");
+      const rows = (call!.body as { links: Record<string, unknown>[] }).links;
+      expect(rows).toHaveLength(2);
+      for (const row of rows) expect(row).not.toHaveProperty("redirectType");
+    });
   });
 }
 

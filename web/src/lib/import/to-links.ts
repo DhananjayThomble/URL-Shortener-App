@@ -46,7 +46,10 @@ export function prepareRows(rows: MappedRow[], domain: string): PreparedRow[] {
       ...(comment ? { comment } : {}),
       ...(r.expiresAt ? { expiresAt: r.expiresAt } : {}),
       ...(r.description ? { social: { description: r.description } } : {}),
-      redirectType: "302",
+      // No redirectType (#753): an imported link gets the workspace's Default
+      // redirect type, resolved server-side in LinksService.bulkCreate — same
+      // as the drawer and the Bulk-create panel. A hardcoded 302 here ignored
+      // the setting for every imported link.
       rules: [],
       forwardQuery: true,
       deepLink: false,
