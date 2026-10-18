@@ -198,7 +198,8 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
           </button>
         </div>
 
-        <div role="tablist" aria-label="Link settings" className="flex gap-px px-5 border-b border-line overflow-x-auto">
+        {/* #785 — see the create drawer: tabs are shrink-0 and the strip scrolls. */}
+        <div role="tablist" aria-label="Link settings" className="flex gap-1 px-5 border-b border-line overflow-x-auto overscroll-x-contain">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -223,7 +224,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
                 document.getElementById(`edit-link-tab-${nextId}`)?.focus();
               }}
               className={cn(
-                "px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 -mb-px whitespace-nowrap transition-colors",
+                "shrink-0 px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 -mb-px whitespace-nowrap transition-colors",
                 tab === t.id ? "text-accent border-accent font-semibold" : "text-ink-3 border-transparent hover:text-ink",
               )}
             >
@@ -269,11 +270,11 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
 
           <div className="flex items-center gap-[10px] px-5 py-[14px] border-t border-line bg-surface-2">
             {update.isError ? (
-              <span className="text-[12px] text-bad">{(update.error as Error).message}</span>
+              <span className="min-w-0 text-[12px] text-bad">{(update.error as Error).message}</span>
             ) : (
-              <span className="text-[11.5px] text-ink-3">The short link itself ({link.domain}/{link.slug}) never changes.</span>
+              <span className="min-w-0 text-[11.5px] text-ink-3">The short link itself ({link.domain}/{link.slug}) never changes.</span>
             )}
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex shrink-0 gap-2">
               <Button type="button" onClick={requestClose}>
                 Cancel
               </Button>

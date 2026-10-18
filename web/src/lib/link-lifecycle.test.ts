@@ -35,6 +35,8 @@ const CASES: Array<{ name: string; over: Partial<LifecycleFields>; expected: (fm
   { name: "expired by date", over: { expiresAt: iso(-3 * DAY) }, expected: (f) => `Expired ${f(iso(-3 * DAY))}` },
   { name: "click limit not reached", over: { clickLimit: 1500, clicks: 3 }, expected: () => "Expires after 1.5k clicks" },
   { name: "click limit reached", over: { clickLimit: 50, clicks: 50 }, expected: () => "Expired after 50 clicks" },
+  { name: "click limit of one (#793)", over: { clickLimit: 1, clicks: 0 }, expected: () => "Expires after 1 click" },
+  { name: "click limit of one reached (#793)", over: { clickLimit: 1, clicks: 1 }, expected: () => "Expired after 1 click" },
   { name: "never expires", over: {}, expected: () => "Never expires" },
   {
     name: "scheduled with an expiry",

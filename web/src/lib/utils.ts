@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { plural } from "./plural";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -81,12 +82,12 @@ export function relativeDate(iso: string): string {
   if (Math.abs(mins) < 1) return "just now";
   if (Math.abs(mins) < 60) return `${mins} min ago`;
   const hours = Math.round(mins / 60);
-  if (Math.abs(hours) < 24) return `${hours} hour${Math.abs(hours) === 1 ? "" : "s"} ago`;
+  if (Math.abs(hours) < 24) return `${plural(hours, "hour")} ago`;
   const days = Math.round(hours / 24);
-  if (Math.abs(days) < 31) return `${days} day${Math.abs(days) === 1 ? "" : "s"} ago`;
+  if (Math.abs(days) < 31) return `${plural(days, "day")} ago`;
   const months = Math.round(days / 30);
-  if (Math.abs(months) < 12) return `${months} month${Math.abs(months) === 1 ? "" : "s"} ago`;
-  return `${Math.round(months / 12)} year${Math.abs(months) >= 24 ? "s" : ""} ago`;
+  if (Math.abs(months) < 12) return `${plural(months, "month")} ago`;
+  return `${plural(Math.round(months / 12), "year")} ago`;
 }
 
 /* Human-relative time for an API timestamp. Unlike relativeDate it (a) clamps a

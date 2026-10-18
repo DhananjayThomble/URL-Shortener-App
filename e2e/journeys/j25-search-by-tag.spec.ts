@@ -103,7 +103,8 @@ test.describe("Journey 25 — search by tag (#756)", () => {
 
     await box.fill(tag);
     await expect(page.getByText(link.slug).first()).toBeVisible();
-    await expect(page.getByText("1 links across", { exact: false })).toBeVisible();
+    // #793: one match reads "1 link across", never "1 links across".
+    await expect(page.getByText("1 link across", { exact: false })).toBeVisible();
     await shoot(page, `${page.viewportSize()?.width ?? "x"}-links-page-tag`);
   });
 });
