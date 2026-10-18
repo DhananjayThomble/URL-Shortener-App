@@ -34,6 +34,7 @@ import type {
   UserWorkspace,
 } from "@snapurl/contract";
 import { TOTP_DISABLE_NO_PASSWORD_MESSAGE, TOTP_DISABLE_WRONG_PASSWORD_MESSAGE } from "@snapurl/contract";
+import { initialsOf } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { TokenService } from "./token.service.js";
@@ -41,13 +42,10 @@ import { TotpService } from "./totp.service.js";
 import { OAuthService, type OAuthProvider } from "./oauth.service.js";
 import { MailService } from "../mail/mail.service.js";
 
-/** "Dhananjay Thomble" → "DT". The UI renders these in avatars. */
-export function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
-}
+/** "Dhananjay Thomble" → "DT". The UI renders these in avatars. The rule lives in
+ *  @snapurl/domain so the web editor's live preview computes the identical value
+ *  (#788); re-exported here because every service imports it from this module. */
+export { initialsOf };
 
 const ARGON_OPTIONS = { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 };
 
