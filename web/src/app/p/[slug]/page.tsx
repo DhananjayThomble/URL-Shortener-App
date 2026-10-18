@@ -156,6 +156,7 @@ export default function LinkPreviewPage() {
         <Input
           type="email"
           value={contact}
+          maxLength={320}
           placeholder="you@example.com"
           onChange={(e) => { setContact(e.target.value); setReportProblem(null); }}
         />

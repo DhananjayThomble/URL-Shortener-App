@@ -199,6 +199,7 @@ export function FormDrawer({ open, onClose, form }: { open: boolean; onClose: ()
               <Input
                 id={`${idp}-title`}
                 value={draft.title}
+                maxLength={160}
                 onChange={(e) => set("title", e.target.value)}
                 aria-invalid={errors.title ? true : undefined}
                 aria-describedby={errors.title ? `${idp}-title-hint` : undefined}
@@ -385,6 +386,7 @@ function FieldEditor({
           <Input
             id={`${idp}-label`}
             value={field.label}
+            maxLength={160}
             placeholder="Label, e.g. Your name"
             onChange={(e) => onChange({ label: e.target.value })}
             aria-invalid={err("label") ? true : undefined}
