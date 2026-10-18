@@ -128,6 +128,7 @@ echo "== public preview =="
 BODY=$(curl -s "$API/public/links/${RUN}-one/preview")
 check "preview works without auth" 'example.com/edited' "$BODY"
 check "preview states no cookies" '"setsCookies":false' "$BODY"
+check "preview reports what a visitor gets (#764)" '"state":"active"' "$BODY"
 if echo "$BODY" | grep -q 'workspaceId\|"tags"\|"clicks"'; then bad "preview leaks private fields" "$BODY"; else ok "preview exposes nothing private"; fi
 
 echo

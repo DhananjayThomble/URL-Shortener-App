@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip, Field } from "@/components/ui";
 import { useBulkCreateLinks, useDomains } from "@/lib/api/hooks";
-import { parseRows } from "@/lib/bulk-create-rows";
+import { parseBulkRows, parseRows, summarizeBulkResult, type BulkReport } from "@/lib/bulk-create-rows";
 import type { CreateLinkInput } from "@snapurl/contract";
 
 const MAX_ROWS = 100;
@@ -18,17 +18,26 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
 
   const [text, setText] = useState("");
   const [domain, setDomain] = useState("");
+  const [report, setReport] = useState<BulkReport | null>(null);
+  /* A ref, not just `bulk.isPending`: two clicks (or a click and Enter on the
+     focused button) in the same tick both run before React has re-rendered the
+     button as disabled, and each would send the batch. */
+  const inFlight = useRef(false);
 
   const rows = useMemo(() => parseRows(text), [text]);
   const chosenDomain = domain || domains?.[0]?.domain || "";
   const tooMany = rows.length > MAX_ROWS;
 
   async function submit() {
-    if (!rows.length || !chosenDomain || tooMany) return;
+    if (inFlight.current || !rows.length || !chosenDomain || tooMany) return;
+    inFlight.current = true;
+    // The batch is read once, here: what is sent and what the response is
+    // matched against (by position) are the same rows, even if the box changes.
+    const batch = parseBulkRows(text);
     // The rest of CreateLinkInput's defaults are applied by the server; only
     // what a row can actually express is sent. No redirectType: the server
     // gives an omitted one the workspace's Default redirect type (#753).
-    const links = rows.map(
+    const links = batch.map(
       (r) =>
         ({
           destination: r.destination,
@@ -43,13 +52,21 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
         }) as CreateLinkInput,
     );
     try {
-      await bulk.mutateAsync(links);
+      const result = await bulk.mutateAsync(links);
+      /* #755: put back into the box only the rows that did not come back
+         created. Resending a created row is not safe — the server can only
+         recognise it by its back-half, and a row without one gets a new random
+         back-half every time, i.e. a second link. */
+      const next = summarizeBulkResult(batch, result.results);
+      setText(next.text);
+      setReport(next.report);
     } catch {
-      /* surfaced below via bulk.error */
+      /* surfaced below via bulk.error. The box is left as it was: nothing is
+         known to have been created, so sending it again is the right retry. */
+    } finally {
+      inFlight.current = false;
     }
   }
-
-  const result = bulk.data;
 
   return (
     <Card className="mb-3.5">
@@ -70,6 +87,7 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
+            readOnly={bulk.isPending}
             rows={8}
             spellCheck={false}
             placeholder={"https://acme.com/spring\nhttps://acme.com/summer, summer-sale\nhttps://acme.com/pricing?ref=a, pricing"}
@@ -103,43 +121,56 @@ export function BulkCreatePanel({ onClose }: { onClose: () => void }) {
           </p>
         ) : null}
 
-        {result ? (
+        {report ? (
           <>
             {/* The point of the whole feature: every submitted row gets a line,
                 so nothing is ever silently dropped. Each row's outcome is
                 independent — a bad row elsewhere in the batch never prevents
                 a good row from being created, so this no longer claims
-                all-or-nothing. */}
-            <p className="text-[12.5px] text-ink-2 m-0">
-              {result.created > 0 ? (
+                all-or-nothing. Created rows are taken out of the box above
+                (#755), so what is left there is exactly what a second submit
+                will send. */}
+            <p className="text-[12.5px] text-ink-2 m-0" role="status">
+              {report.created > 0 ? (
                 <>
-                  <b className="text-good">{result.created} created.</b> They are in the list below.
-                  {result.failed > 0 ? " Fix the flagged rows below and submit again — the rows already created won't be duplicated." : ""}
+                  <b className="text-good">{report.created} created.</b> They are in the list below.
+                  {report.failed > 0
+                    ? ` ${report.failed} ${report.failed === 1 ? "row didn't" : "rows didn't"} go through. ${
+                        report.failed === 1 ? "It stays" : "They stay"
+                      } in the box above — fix ${report.failed === 1 ? "it" : "them"} and submit again. The created links won't be sent again.`
+                    : ""}
                 </>
               ) : (
                 <>
-                  <b className="text-bad">Nothing was created.</b> Fix the rows
-                  below and submit the same list again — rows that already exist won't be duplicated.
+                  <b className="text-bad">Nothing was created.</b> Fix the rows in the box above and submit again — rows
+                  that already exist won't be duplicated.
                 </>
               )}
             </p>
             <ol className="flex flex-col gap-[6px] m-0 p-0 list-none max-h-[260px] overflow-y-auto">
-              {result.results.map((r) => (
+              {report.items.map((item, i) => (
                 <li
-                  key={r.index}
+                  key={i}
                   className="flex items-start gap-2 text-[12px] border border-line rounded-[var(--radius-sm)] px-[10px] py-[7px] bg-surface-2"
                 >
-                  <span className={r.ok ? "text-good" : "text-bad"}>{r.ok ? "✓" : "✗"}</span>
-                  <span className="text-ink-3 tnum shrink-0">{r.index + 1}</span>
-                  {r.ok ? (
+                  <span className={item.kind === "created" ? "text-good" : "text-bad"} aria-hidden="true">
+                    {item.kind === "created" ? "✓" : "✗"}
+                  </span>
+                  {item.kind === "created" ? (
                     <span className="font-mono text-ink truncate">
-                      {r.link.domain}/{r.link.slug}
+                      <span className="sr-only">Created: </span>
+                      {item.domain}/{item.slug}
                     </span>
                   ) : (
-                    <span className="min-w-0">
-                      <span className="font-mono text-ink-2 block truncate">{r.destination}</span>
-                      <span className="text-bad">{r.error}</span>
-                    </span>
+                    <>
+                      <span className="text-ink-3 tnum shrink-0">
+                        <span className="sr-only">Not created, </span>Line {item.line}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="font-mono text-ink-2 block truncate">{item.destination}</span>
+                        <span className="text-bad">{item.error}</span>
+                      </span>
+                    </>
                   )}
                 </li>
               ))}
