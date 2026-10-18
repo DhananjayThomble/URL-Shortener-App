@@ -84,6 +84,10 @@ test.describe("marketing copy (#795)", () => {
     await expect(quickstart.getByText("APP_DOMAIN", { exact: false }).first()).toBeVisible();
     const guide = quickstart.getByRole("link", { name: /full self-hosting guide/i });
     await expect(guide).toHaveAttribute("href", /\/blob\/main\/SELF-HOSTING\.md$/);
+
+    // The commands scroll inside their own box; they must not widen the page (390px phones).
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 
   test("/self-host: the page title/description do not promise one command", async ({ page }) => {
