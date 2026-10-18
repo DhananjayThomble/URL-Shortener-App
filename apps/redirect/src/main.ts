@@ -26,6 +26,7 @@ import { CachingLinkResolver } from "./caching-resolver.js";
 import { listenForCacheBust } from "./cache-bust-listener.js";
 import { PostgresClickSink, SqsClickSink, type ClickSink } from "./click-sink.js";
 import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
+import { sendError } from "./error-page.js";
 
 /* ============================================================
    The redirect service.
@@ -291,7 +292,7 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
   if (!link) {
     const domain = await resolver.resolveDomain(host);
     if (domain?.notFoundRedirect) return reply.redirect(domain.notFoundRedirect, 302);
-    return reply.code(404).type("text/plain").send("No such link.");
+    return sendError(request, reply, "not_found", { host, slug: rawSlug, webOrigin: WEB_ORIGIN });
   }
 
   const userAgent = (request.headers["user-agent"] as string) ?? "";
@@ -325,13 +326,20 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
        anything that cares to look. */
     if (blocked === "scheduled") {
       if (link.activatesAt) void reply.header("Retry-After", link.activatesAt.toUTCString());
-      return reply.code(404).type("text/plain").send("This link is not live yet.");
+      return sendError(request, reply, "scheduled", {
+        host,
+        slug: rawSlug,
+        activatesAt: link.activatesAt,
+        webOrigin: WEB_ORIGIN,
+      });
     }
 
-    return reply
-      .code(410)
-      .type("text/plain")
-      .send(blocked === "click_limit" ? "This link has reached its click limit." : "This link has expired.");
+    /* Archived links have always answered as expired (410), and still do. */
+    return sendError(request, reply, blocked === "click_limit" ? "click_limit" : "expired", {
+      host,
+      slug: rawSlug,
+      webOrigin: WEB_ORIGIN,
+    });
   }
 
   /* G3 — password-protected links.
@@ -387,7 +395,7 @@ app.get("/", async (request, reply) => {
   const host = (request.headers["x-forwarded-host"] as string) ?? request.headers.host ?? "";
   const domain = await resolver.resolveDomain(host);
   if (domain?.rootRedirect) return reply.redirect(domain.rootRedirect, 302);
-  return reply.code(404).type("text/plain").send("Nothing here.");
+  return sendError(request, reply, "root", { host, webOrigin: WEB_ORIGIN });
 });
 
 /** Everything that stops a click short of the destination, in the order the
