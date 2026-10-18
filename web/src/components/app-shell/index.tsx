@@ -88,7 +88,8 @@ function NavLinks({ counts, onNavigate }: { counts: Counts; onNavigate?: () => v
  * already show the bare number.
  */
 function ClicksThisMonth() {
-  const { data: ws } = useWorkspace();
+  // #771 — the count moves server-side while this stays mounted; keep it current.
+  const { data: ws } = useWorkspace({ live: true });
   return (
     <div className="px-[10px] py-[9px]">
       <div className="flex justify-between items-baseline text-[11.5px] text-ink-3">
