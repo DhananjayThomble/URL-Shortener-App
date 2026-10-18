@@ -8,7 +8,8 @@ import { seedSession } from "../support/session";
 
    Note: some tile labels ("Clicks", "QR scans", "Conversions") also appear in the
    traffic chart's tabs/legend, so we assert on the tile labels that are unique on
-   the page — "Unique visitors (approx.)" and "Blocked / unsafe". */
+   the page — "Unique visitors (approx.)" and "Blocked visits" (#767: was
+   "Blocked / unsafe", which mislabelled a count of every gate rejection). */
 
 test.describe("analytics dashboard", () => {
   test.beforeEach(async ({ page }) => {
@@ -33,7 +34,7 @@ test.describe("analytics dashboard", () => {
     // Metric tiles render (fixtures supply ANALYTICS). Use the two labels that are
     // unique on the page to avoid strict-mode collisions with the chart tabs.
     await expect(page.getByText("Unique visitors (approx.)")).toBeVisible();
-    await expect(page.getByText("Blocked / unsafe")).toBeVisible();
+    await expect(page.getByText("Blocked visits")).toBeVisible();
     // A tile value is rendered (the QR scans tile shows a formatted number).
     await expect(page.getByText("QR scans").first()).toBeVisible();
 
@@ -46,7 +47,7 @@ test.describe("analytics dashboard", () => {
 
     // Tiles remain rendered after the re-query; still no error state.
     await expect(page.getByText("Unique visitors (approx.)")).toBeVisible();
-    await expect(page.getByText("Blocked / unsafe")).toBeVisible();
+    await expect(page.getByText("Blocked visits")).toBeVisible();
     await expect(page.getByText("That didn't load")).toHaveCount(0);
 
     // Switch again to confirm the control is live, not a one-shot.
