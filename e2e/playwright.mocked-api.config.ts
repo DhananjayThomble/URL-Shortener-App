@@ -32,13 +32,13 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   use: { baseURL: BASE_URL, trace: "on-first-retry" },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: /drawer-narrow-layout\.spec\.ts/ },
     /* #775 — the login ?next= round trip is a mobile journey too (a deep link
        opened from a phone's mail app). Only that spec runs on it. WebKit is
        deliberately absent: the verify.yml e2e lane installs chromium only, so
        an iPhone 15 (WebKit) project would fail to launch there. Mobile Safari
        is exercised as LOCAL evidence instead. */
-    { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /(login-next|signed-in-marketing|two-factor-recovery)\.spec\.ts/ },
+    { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /(login-next|signed-in-marketing|two-factor-recovery|drawer-narrow-layout)\.spec\.ts/ },
     /* The public trust page is opened from a shared link, so mostly on a phone.
        Only its specs run on the mobile project, to keep the lane short. Chromium
        only: CI installs no WebKit for this lane, so iPhone runs stay local. */
