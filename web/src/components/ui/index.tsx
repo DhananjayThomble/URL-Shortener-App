@@ -469,9 +469,11 @@ export function Tile({
 }) {
   return (
     <div className="bg-surface border border-line rounded-[var(--radius)] p-4 shadow-[var(--shadow-1)]">
-      <div className="font-mono text-[10px] tracking-[0.11em] uppercase text-ink-3">
-        <span>{label}</span>
-      </div>
+      {/* The label text is a DIRECT child of this root div (no wrapping element),
+          so a test locating a tile as the label's parent — getByText(label)
+          .locator("..") — still lands on this root, which contains the value.
+          Several specs rely on that (analytics-blocked-tile, clicks-this-month). */}
+      <div className="font-mono text-[10px] tracking-[0.11em] uppercase text-ink-3">{label}</div>
       {/* The scope sits beside the value, not in the label: a long label
           ("Unique visitors (approx.)") would otherwise wrap and push its value
           out of line with the tiles next to it. */}
