@@ -141,6 +141,10 @@ BODY=$(curl -s "$API/analytics?range=30d" -H "Authorization: Bearer $ACCESS")
 check "analytics returns totals" '"totals"' "$BODY"
 SERIES=$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).series.length')
 if [ "$SERIES" = "30" ]; then ok "series is zero-filled to 30 days"; else bad "series length" "got $SERIES"; fi
+# #792 review: a strict query still names the rejected key (message + issues[].path).
+BODY=$(curl -s "$API/analytics?rnge=7d" -H "Authorization: Bearer $ACCESS")
+check "analytics typo names the key in issues[].path" '"path":"rnge"' "$BODY"
+check "analytics typo names the key in the sentence" 'rnge' "$(echo "$BODY" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).message.join(" ")')"
 
 BODY=$(curl -s "$API/conversions?range=30d" -H "Authorization: Bearer $ACCESS")
 check "conversions reports its currency (G7)" '"currency"' "$BODY"

@@ -88,6 +88,13 @@ test.describe("Journey 792 — plain validation copy", () => {
     expect(row.ok).toBe(false);
     expect(row.error).toBe("Enter an absolute http(s) URL.");
 
+    // A strict query (analytics): the misspelled key is still named, in the sentence and in issues[].path.
+    const typo = await fetch(`${API_URL}/analytics?rnge=7d`, { headers: { authorization: `Bearer ${session.accessToken}` } });
+    expect(typo.status).toBe(400);
+    const typoBody = (await typo.json()) as { message: string[]; issues: Array<{ path: string; message: string; code?: string }> };
+    expect(typoBody.message).toEqual(["“rnge” isn't a field we recognise"]);
+    expect(typoBody.issues).toEqual([{ path: "rnge", message: "“rnge” isn't a field we recognise", code: "unrecognized_key" }]);
+
     for (const m of [...(over.json.message as string[]), ...(priv.json.message as string[]), row.error!]) expectPlain(m);
   });
 
