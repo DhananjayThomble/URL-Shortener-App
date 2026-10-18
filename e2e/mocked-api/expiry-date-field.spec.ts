@@ -116,10 +116,15 @@ async function openEdit(page: Page): Promise<Locator> {
 
 /* The text of the inline error under the date field: the element the input's
    aria-describedby points at (null when the field has no error). */
+/* Read once, never wait: the field re-renders as validation settles, so the
+   describedby target can disappear between the two reads. Callers poll it
+   (expect.poll) so a stale read never decides an assertion. */
 async function errorText(drawer: Locator): Promise<string | null> {
   const id = await expiryInput(drawer).getAttribute("aria-describedby");
   if (!id) return null;
-  return drawer.locator(`[id="${id}"]`).textContent();
+  const el = drawer.locator(`[id="${id}"]`);
+  if ((await el.count()) === 0) return null;
+  return el.textContent({ timeout: 1000 }).catch(() => null);
 }
 
 /** The ISO instant the drawer stores for a picked day: the end of that day in the page's local time. */
@@ -147,20 +152,20 @@ for (const vp of viewports) {
       await expiryInput(drawer).fill(yesterday);
       await expect(expiryInput(drawer)).toHaveValue(yesterday); // kept as picked, not "fixed"
       await expect(expiryInput(drawer)).toHaveAttribute("aria-invalid", "true");
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
 
       // Submit from another tab: the drawer lands on the tab holding the error.
       await drawer.getByRole("tab", { name: "Destination", exact: true }).click();
       await saveCreate(drawer).click();
       await expect(drawer).toBeVisible();
       await expect(drawer.getByRole("tab", { name: "Access (has an error)" })).toHaveAttribute("aria-selected", "true");
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
       expect(api.callsTo("POST", "/links")).toHaveLength(0);
 
       const today = dayIn(TZ, Date.now());
       await expiryInput(drawer).fill(today);
       await expect(expiryInput(drawer)).not.toHaveAttribute("aria-invalid", "true");
-      expect(await errorText(drawer)).toBeNull();
+      await expect.poll(() => errorText(drawer)).toBeNull();
       await saveCreate(drawer).click();
       await expect(drawer).toBeHidden();
       const posts = api.callsTo("POST", "/links");
@@ -174,7 +179,7 @@ for (const vp of viewports) {
       await drawer.getByRole("tab", { name: "Access", exact: true }).click();
       await expiryToggle(drawer).click();
       await expiryInput(drawer).fill("2026-01-01");
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
       await expiryInput(drawer).press("Enter");
       await saveCreate(drawer).dblclick();
       await expect(drawer).toBeVisible();
@@ -187,9 +192,9 @@ for (const vp of viewports) {
       await drawer.getByRole("tab", { name: "Access", exact: true }).click();
       await expiryToggle(drawer).click();
       await expiryInput(drawer).fill("2026-01-01");
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
       await expiryToggle(drawer).click();
-      expect(await errorText(drawer)).toBeNull();
+      await expect.poll(() => errorText(drawer)).toBeNull();
       await saveCreate(drawer).click();
       await expect(drawer).toBeHidden();
       expect((api.callsTo("POST", "/links")[0].body as { expiresAt?: string | null }).expiresAt ?? null).toBeNull();
@@ -200,7 +205,7 @@ for (const vp of viewports) {
       const drawer = await openCreate(page);
       await drawer.getByRole("tab", { name: "Access", exact: true }).click();
       await expiryToggle(drawer).click();
-      expect(await errorText(drawer)).toBeNull();
+      await expect.poll(() => errorText(drawer)).toBeNull();
       await saveCreate(drawer).click();
       await expect(drawer).toBeHidden();
       const sent = (api.callsTo("POST", "/links")[0].body as { expiresAt: string }).expiresAt;
@@ -233,7 +238,7 @@ for (const vp of viewports) {
       const api = await installApi(page, [start]);
       const drawer = await openEdit(page);
       await expect(expiryInput(drawer)).toHaveValue(dayIn(TZ, Date.parse(start.expiresAt!)));
-      expect(await errorText(drawer)).toBeNull();
+      await expect.poll(() => errorText(drawer)).toBeNull();
 
       await drawer.getByRole("tab", { name: "Destination", exact: true }).click();
       await drawer.getByLabel("Destination URL").fill("https://example.com/moved");
@@ -248,15 +253,15 @@ for (const vp of viewports) {
       const api = await installApi(page, [expired()]);
       const drawer = await openEdit(page);
       await expiryInput(drawer).fill(dayIn(TZ, Date.now() - 3 * DAY));
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
       await saveEdit(drawer).click();
       await expect(drawer).toBeVisible();
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
       expect(api.callsTo("PATCH", "/links/lnk_1")).toHaveLength(0);
 
       const future = dayIn(TZ, Date.now() + 14 * DAY);
       await expiryInput(drawer).fill(future);
-      expect(await errorText(drawer)).toBeNull();
+      await expect.poll(() => errorText(drawer)).toBeNull();
       await saveEdit(drawer).click();
       await expect(drawer).toBeHidden();
       expect((api.callsTo("PATCH", "/links/lnk_1")[0].body as { expiresAt: string }).expiresAt).toBe(await endOfLocalDay(page, future));
@@ -269,7 +274,7 @@ for (const vp of viewports) {
       await saveEdit(drawer).click();
       await expect(drawer).toBeVisible();
       await expect(expiryInput(drawer)).toHaveAttribute("aria-invalid", "true");
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
       expect(api.callsTo("PATCH", "/links/lnk_1")).toHaveLength(0);
     });
 
@@ -280,14 +285,14 @@ for (const vp of viewports) {
       await drawer.getByRole("tab", { name: "Routing", exact: true }).click();
       await drawer.getByRole("tab", { name: "Access", exact: true }).click();
       await expect(expiryInput(drawer)).toHaveValue("2026-01-01");
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
 
       await drawer.getByRole("button", { name: "Close" }).click();
       // The drawer holds an unsaved past date: closing asks (#761); this test is about what a re-open shows.
       await page.getByRole("alertdialog", { name: "Discard your changes?" }).getByRole("button", { name: "Discard", exact: true }).click();
       await expect(drawer).toBeHidden();
       const again = await openEdit(page);
-      expect(await errorText(again)).toBeNull();
+      await expect.poll(() => errorText(again)).toBeNull();
     });
 
     test("switching an expired link's expiry off saves null", async ({ page }) => {
@@ -316,11 +321,11 @@ for (const [timezoneId, label] of [
       await expiryToggle(drawer).click();
 
       await expiryInput(drawer).fill(dayIn(timezoneId, Date.now() - DAY));
-      expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
+      await expect.poll(() => errorText(drawer)).toMatch(PAST_MESSAGE);
 
       const today = dayIn(timezoneId, Date.now());
       await expiryInput(drawer).fill(today);
-      expect(await errorText(drawer)).toBeNull();
+      await expect.poll(() => errorText(drawer)).toBeNull();
       await saveCreate(drawer).click();
       await expect(drawer).toBeHidden();
       const sent = (api.callsTo("POST", "/links")[0].body as { expiresAt: string }).expiresAt;
