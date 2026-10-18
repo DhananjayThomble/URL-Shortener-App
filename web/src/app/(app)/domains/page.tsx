@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAddDomain, useDeleteDomain, useDomains, useMe, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
 import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { full } from "@/lib/utils";
@@ -226,7 +226,7 @@ export default function DomainsPage() {
                   <Th>Links</Th>
                   <Th>Root redirect</Th>
                   <Th>404 redirect</Th>
-                  <Th />
+                  <ActionsTh />
                 </tr>
               </thead>
               <tbody>
@@ -253,7 +253,7 @@ export default function DomainsPage() {
                     <Td className="font-mono text-[12px]">
                       {d.notFoundRedirect ?? <span className="text-ink-3">— not set</span>}
                     </Td>
-                    <Td className="text-right whitespace-nowrap">
+                    <ActionsTd>
                       {!d.shared && canEditRedirects ? (
                         <Button
                           size="sm"
@@ -274,7 +274,7 @@ export default function DomainsPage() {
                       {!canDisconnectDomain(d) ? (
                         // The API refuses this with a 409; say why instead of offering it.
                         <span
-                          className="text-[12px] text-ink-3"
+                          className="max-w-[8.5rem] text-right text-[12px] text-ink-3 sm:max-w-none"
                           title="This domain is shared by every workspace and managed by SnapURL."
                         >
                           Can't be disconnected
@@ -293,7 +293,7 @@ export default function DomainsPage() {
                           Disconnect
                         </Button>
                       )}
-                    </Td>
+                    </ActionsTd>
                   </tr>
                 ))}
               </tbody>
