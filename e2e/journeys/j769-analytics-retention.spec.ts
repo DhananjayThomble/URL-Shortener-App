@@ -54,6 +54,8 @@ test.describe("Journey — analytics header retention (#769)", () => {
     await goTo(page, "Settings", /\/settings$/);
     await page.getByRole("button", { name: "1 year" }).click();
     await page.getByRole("button", { name: "Save changes" }).click();
+    // #780: a shorter window asks before it deletes anything.
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete older data and save" }).click();
     await expect(page.getByText("Saved.")).toBeVisible();
     expect(await savedRetention(session.accessToken)).toBe(1);
 
