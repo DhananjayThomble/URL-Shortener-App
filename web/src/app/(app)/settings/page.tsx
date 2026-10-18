@@ -7,7 +7,9 @@ import { ACCENTS, useAppearance, type Mode } from "@/components/theme/theme-prov
 import { Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Toggle } from "@/components/ui";
 import { useUpdateWorkspace, useDomains, useMe, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainOptions, problemField, type ProblemField } from "@/lib/default-domain";
+import { useToast } from "@/components/ui/toast";
 import { importHref } from "@/lib/import";
+import { toastCopy } from "@/lib/toasts";
 import { canChangeWorkspaceCurrency, currencyOptions } from "@/lib/money";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FOREVER_YEARS } from "@/lib/retention";
@@ -49,6 +51,7 @@ export default function SettingsPage() {
   const { data: domains, refetch: refetchDomains } = useDomains();
   const appearance = useAppearance();
   const save = useUpdateWorkspace();
+  const toast = useToast();
 
   /* Every control below used to be uncontrolled -- defaultValue with no
      onChange and no submit -- so each edit survived exactly until the next
@@ -123,6 +126,7 @@ export default function SettingsPage() {
       // looking unsaved after a successful save.
       setDraft(draftOf(saved));
       setProblem(null);
+      toast.show({ message: toastCopy.settingsSaved });
     } catch (err) {
       const message = (err as Error).message;
       setProblemAt(problemField(message, changed));

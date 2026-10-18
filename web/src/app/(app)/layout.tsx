@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Sidebar, Topbar } from "@/components/app-shell";
 import { CreateLinkDrawer } from "@/components/links/create-link-drawer";
+import { ToastProvider } from "@/components/ui/toast";
 import { NEW_LINK_QUERY_PARAM } from "@/lib/hero-shorten";
 import { useBioPages, useDomains, useLinks, useMe, useMembers, useWorkspaceChangeGuard } from "@/lib/api/hooks";
 import { loginRedirectFor } from "@/lib/safe-next";
@@ -38,7 +39,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (isPending) return <Booting />;
   if (isError || !me) return null; // redirecting
 
-  return <AuthedShell>{children}</AuthedShell>;
+  return (
+    <ToastProvider>
+      <AuthedShell>{children}</AuthedShell>
+    </ToastProvider>
+  );
 }
 
 /** Shown only while the session check is in flight, so it should not flash. */
@@ -86,7 +91,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
       <Sidebar onCreate={openCreate} counts={counts} />
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar counts={counts} onCreate={openCreate} />
-        <main className="flex-1 px-[14px] sm:px-[22px] pt-[26px] pb-[60px]">{children}</main>
+        {/* --toast-inset is the height of whatever toasts are showing (components/ui/toast.tsx), so the
+            bottom of the page can always be scrolled clear of them. */}
+        <main className="flex-1 px-[14px] sm:px-[22px] pt-[26px] pb-[calc(60px+var(--toast-inset,0px))]">{children}</main>
       </div>
       <CreateLinkDrawer
         open={creating}

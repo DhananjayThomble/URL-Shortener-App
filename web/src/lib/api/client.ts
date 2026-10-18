@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isTotpDisableCredentialRejection } from "@snapurl/contract";
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, syncSessionHint } from "../session-hint";
 
 /* ============================================================
    The only place this app talks to the network.
@@ -29,8 +30,8 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001
  * complete a production build with fixtures switched on. */
 export const USE_FIXTURES = process.env.NEXT_PUBLIC_USE_FIXTURES === "true";
 
-const TOKEN_KEY = "snapurl.accessToken";
-const REFRESH_KEY = "snapurl.refreshToken";
+const TOKEN_KEY = ACCESS_TOKEN_KEY;
+const REFRESH_KEY = REFRESH_TOKEN_KEY;
 
 /** localStorage throws in private mode and some embedded webviews. */
 function safeStorage() {
@@ -54,11 +55,14 @@ export const tokens = {
     const s = safeStorage();
     s?.setItem(TOKEN_KEY, access);
     s?.setItem(REFRESH_KEY, refresh);
+    // #777 — the marketing header reads this; keep it true on client-side navigation.
+    syncSessionHint();
   },
   clear() {
     const s = safeStorage();
     s?.removeItem(TOKEN_KEY);
     s?.removeItem(REFRESH_KEY);
+    syncSessionHint();
     // Signed out in this tab: nothing on screen belongs to a workspace any more.
     renderedWorkspace = undefined;
   },

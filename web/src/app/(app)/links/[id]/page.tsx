@@ -6,6 +6,8 @@ import { PageHead } from "@/components/app-shell";
 import { BarList, Sparkline, TrafficChart } from "@/components/charts";
 import { Button, Card, CardBody, CardHeader, Chip, ErrorState, Skeleton, Tabs, Tile } from "@/components/ui";
 import { EditLinkDrawer } from "@/components/links/edit-link-drawer";
+import { useToast } from "@/components/ui/toast";
+import { toastCopy } from "@/lib/toasts";
 import { useAnalytics, useDeleteLink, useLink } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { copy, formatDate, formatDelta, full, NO_VALUE, pct, shortUrlHref } from "@/lib/utils";
@@ -43,6 +45,7 @@ export default function LinkDetailPage() {
   const stats = useAnalytics(range, id);
 
   const deleteLink = useDeleteLink();
+  const toast = useToast();
 
   const [editing, setEditing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -85,7 +88,9 @@ export default function LinkDetailPage() {
 
   async function remove() {
     try {
+      const label = { domain: l.domain, slug: l.slug };
       await deleteLink.mutateAsync(id);
+      toast.show({ message: toastCopy.deleted(label) });
       router.push("/links");
     } catch (err) {
       setProblem((err as Error).message);
