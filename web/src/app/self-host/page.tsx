@@ -3,14 +3,15 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { Card, CardBody, Chip, SectionLabel } from "@/components/ui";
+import { SELF_HOST_GUIDE_URL, SELF_HOST_QUICKSTART, SELF_HOST_REPO_URL } from "@/lib/self-host-quickstart";
 
 export const metadata: Metadata = {
   title: "Self-host",
   description:
-    "SnapURL is MIT licensed and self-hostable in one command. Own your data, export everything, no vendor lock-in, no tracking cookies.",
+    "SnapURL is MIT licensed and self-hostable with Docker Compose on one machine. Own your data, export everything, no vendor lock-in, no tracking cookies.",
 };
 
-const REPO_URL = "https://github.com/DhananjayThomble/URL-Shortener-App";
+const REPO_URL = SELF_HOST_REPO_URL;
 
 const PRINCIPLES = [
   {
@@ -21,7 +22,7 @@ const PRINCIPLES = [
   {
     icon: "⤓",
     title: "Export everything, always",
-    body: "Your links, analytics and settings are yours to take out at any time. Export is a feature on every plan, not a retention lever.",
+    body: "Your links, analytics and settings are yours to take out at any time. Export is built in, not a retention lever.",
   },
   {
     icon: "⚿",
@@ -46,7 +47,7 @@ const SELFHOST = [
   "Runs on your own infrastructure",
   "No SnapURL bill and no SnapURL in the loop",
   "Your database, your backups, your control",
-  "One command to bring the stack up",
+  "A Docker Compose stack: Postgres, the app and automatic TLS",
 ];
 
 export default function SelfHostPage() {
@@ -58,7 +59,7 @@ export default function SelfHostPage() {
         <header className="pt-[56px] pb-8 text-center">
           <div className="inline-flex items-center gap-2 px-[13px] py-[5px] rounded-full bg-accent-wash text-accent text-[12px] font-semibold mb-[22px]">
             <span className="w-[6px] h-[6px] rounded-full bg-current" />
-            MIT licensed · self-host in one command
+            MIT licensed · self-host with Docker Compose
           </div>
           <h1 className="text-[clamp(32px,5vw,54px)] leading-[1.05] font-extrabold tracking-[-0.03em]">
             Run it yourself.
@@ -100,6 +101,40 @@ export default function SelfHostPage() {
             </Card>
           ))}
         </div>
+
+        <section aria-label="Quick start" className="mt-16">
+          <SectionLabel>Quick start</SectionLabel>
+          <Card className="mt-6">
+            <CardBody className="p-0">
+              <div className="px-5 pt-4 pb-3 border-b border-line">
+                <p className="m-0 text-[13.5px] text-ink-2 leading-[1.6] max-w-[68ch]">
+                  There is no single command: you need a Linux host with Docker, two DNS records pointing at it, and a
+                  few minutes. These are the real steps from the self-hosting guide — one host, one Postgres, Caddy
+                  for TLS.
+                </p>
+              </div>
+              <pre
+                tabIndex={0}
+                role="region"
+                aria-label="Self-hosting commands"
+                className="m-0 p-4 overflow-x-auto text-[12px] leading-[1.7] font-mono text-ink-2"
+              >
+                <code>{SELF_HOST_QUICKSTART}</code>
+              </pre>
+              <div className="px-5 py-3 border-t border-line text-[12.5px] text-ink-2 leading-[1.6]">
+                <a
+                  href={SELF_HOST_GUIDE_URL}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-accent font-semibold hover:underline"
+                >
+                  Read the full self-hosting guide
+                </a>{" "}
+                for prerequisites (ports 80 and 443, the two DNS records), TLS verification, backups and upgrades.
+              </div>
+            </CardBody>
+          </Card>
+        </section>
 
         <section className="mt-24">
           <SectionLabel>Cloud or self-host</SectionLabel>

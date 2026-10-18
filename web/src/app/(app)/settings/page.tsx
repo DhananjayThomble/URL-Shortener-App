@@ -351,7 +351,7 @@ export default function SettingsPage() {
                 checked={draft?.scanOnCreate ?? true}
                 onChange={(v) => set("scanOnCreate", v)}
                 title="Scan destinations on create"
-                description="Checks every new link against Google Safe Browsing. Needs GOOGLE_SAFE_BROWSING_API_KEY to be set."
+                description="Checks every new link against Google Safe Browsing. Needs a Safe Browsing key configured on this install; without one, links are not scanned."
               />
               <Toggle
                 checked={draft?.publicPreviews ?? true}
