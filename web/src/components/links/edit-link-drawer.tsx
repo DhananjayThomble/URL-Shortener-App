@@ -125,7 +125,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
     /* #754: a CHANGED expiry that has already passed is refused (the API would
        too). The link's own expiry left as it is never blocks the save, so an
        expired link's other fields stay editable. */
-    const expiry = expiryProblem(values.expiresAt, { original: link.expiresAt ?? null });
+    const expiry = expiryProblem(values.expiresAt, { mode: "edit", original: link.expiresAt ?? null });
     if (expiry) {
       setError("expiresAt", { message: expiry });
       setTab("access");
@@ -230,6 +230,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               watch={watch}
               formState={formState}
               qrValue={shortUrlHref(link.domain, link.slug)}
+              formMode="edit"
               originalExpiresAt={link.expiresAt ?? null}
               passwordPlaceholder={link.passwordProtected ? "Type a new password to replace the current one" : "Leave blank for no password"}
               passwordSlot={

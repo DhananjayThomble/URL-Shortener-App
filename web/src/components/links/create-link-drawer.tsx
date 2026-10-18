@@ -77,7 +77,7 @@ export function CreateLinkDrawer({
     // shared domain rule (expiryProblem), not a contract shape check.
     resolver: async (values, context, options) => {
       const result = await zodResolver(CreateLinkInput)(blankOptionalUrlsToUndefined(values), context, options);
-      const expiry = expiryProblem(values.expiresAt, { original: null });
+      const expiry = expiryProblem(values.expiresAt, { mode: "create", original: null });
       if (!expiry) return result;
       return { values: {}, errors: { ...result.errors, expiresAt: { type: "validate", message: expiry } } };
     },

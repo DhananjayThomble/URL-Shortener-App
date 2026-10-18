@@ -139,6 +139,7 @@ export function LinkFormFields({
   showBackHalf,
   passwordPlaceholder = "Leave blank for no password",
   passwordSlot,
+  formMode = "create",
   originalExpiresAt = null,
 }: {
   tab: LinkFormTabId;
@@ -156,6 +157,8 @@ export function LinkFormFields({
   passwordPlaceholder?: string;
   /** Rendered under the password input (edit mode: "remove password"). */
   passwordSlot?: React.ReactNode;
+  /** Whether these fields back the create or the edit drawer (#754): create refuses a past expiry with no skew tolerance, edit allows "expire now". */
+  formMode?: "create" | "edit";
   /** The expiry the link was opened with (edit), or null (create). Only a changed expiry is checked for being in the past (#754). */
   originalExpiresAt?: string | null;
 }) {
@@ -342,7 +345,7 @@ export function LinkFormFields({
                    (a date is one discrete choice, not keystrokes), with the API's own rule
                    and words. On edit, the link's own unchanged expiry is never flagged, so
                    an expired link stays editable. See web/src/lib/expiry-input.ts. */
-                const error = expiryProblem(field.value, { original: originalExpiresAt }) ?? fieldState.error?.message;
+                const error = expiryProblem(field.value, { mode: formMode, original: originalExpiresAt }) ?? fieldState.error?.message;
                 return (
                   <Field label="Expiry date" controlId={controlId} error={error}>
                     <Input

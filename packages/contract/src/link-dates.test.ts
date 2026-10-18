@@ -47,6 +47,24 @@ describe("expiresAt / activatesAt on CreateLinkInput / UpdateLinkInput (#754)", 
     }
   });
 
+  it.each([["2026-02-30"], ["2026-02-31"], ["2026-04-31"], ["2026-00-10"], ["2026-01-32"]])(
+    "rejects the calendar-impossible day %j instead of silently rolling it forward (#817 non-blocking)",
+    (value) => {
+      // Date.parse would move 2026-02-31 to 2026-03-03, storing a date the caller never chose.
+      for (const field of ["expiresAt", "activatesAt"] as const) {
+        const parsed = CreateLinkInput.safeParse({ ...base, [field]: value });
+        expect(parsed.success).toBe(false);
+        if (!parsed.success) expect(parsed.error.issues[0]?.message).toMatch(/valid date/i);
+      }
+    },
+  );
+
+  it("still accepts a real leap day and ordinary day-granular dates", () => {
+    for (const value of ["2028-02-29", "2026-02-28", "2026-01-01", "2026-12-31"]) {
+      expect(CreateLinkInput.safeParse({ ...base, expiresAt: value }).success).toBe(true);
+    }
+  });
+
   it("an empty string still means 'no date' (what an untouched field used to send), not an error", () => {
     expect(CreateLinkInput.safeParse({ ...base, expiresAt: "" }).success).toBe(true);
     expect(UpdateLinkInput.safeParse({ activatesAt: "" }).success).toBe(true);
