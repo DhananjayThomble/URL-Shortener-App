@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { and, asc, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, type Database, type Executor } from "@snapurl/database";
-import { CreateLinkInput as CreateLinkInputSchema } from "@snapurl/contract";
+import { and, asc, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, workspaces, type Database, type Executor } from "@snapurl/database";
+import { CreateLinkInput as CreateLinkInputSchema, RedirectType as RedirectTypeSchema } from "@snapurl/contract";
 import type {
   BulkCreateLinksInput,
   BulkCreateLinksResult,
@@ -10,6 +10,7 @@ import type {
   CreateLinkInput,
   Link,
   ListLinksQuery,
+  RedirectType,
   UpdateLinkInput,
 } from "@snapurl/contract";
 import { SLUG_RETRY_LIMIT, generateSlug, isSlugAvailableShape, validateRoutingChain, validateSchedule } from "@snapurl/domain";
@@ -433,6 +434,11 @@ export class LinksService {
 
     const toInsert = prepared.filter((p) => !skipped.has(p.index) && !errors.has(p.index));
 
+    /* One read for the whole batch, and only when some row needs it. */
+    const fallbackRedirect = toInsert.some((p) => p.input.redirectType === undefined)
+      ? await this.defaultRedirectFor(workspaceId)
+      : "302";
+
     const ids = await this.db.transaction(async (tx) => {
       const inserted = toInsert.length
         ? await tx
@@ -446,7 +452,7 @@ export class LinksService {
                 comment: p.input.comment ?? null,
                 tags: p.input.tags ?? [],
                 folder: p.input.folder ?? null,
-                redirectType: p.input.redirectType,
+                redirectType: p.input.redirectType ?? fallbackRedirect,
                 expiresAt: p.input.expiresAt ? new Date(p.input.expiresAt) : null,
                 expiresTo: p.input.expiresTo ?? null,
                 activatesAt: p.input.activatesAt ? new Date(p.input.activatesAt) : null,
@@ -643,6 +649,10 @@ export class LinksService {
 
     const scan = await this.safeBrowsing.check(input.destination);
 
+    /* An omitted redirect type means the workspace's setting (#753); an
+       explicit one always wins. Resolved once, outside the retry loop. */
+    const redirectType = input.redirectType ?? (await this.defaultRedirectFor(workspaceId));
+
     /* Random slugs, retried on collision.
 
        A sequential id would let anyone walk the entire table by incrementing a
@@ -663,7 +673,7 @@ export class LinksService {
               comment: input.comment ?? null,
               tags: input.tags ?? [],
               folder: input.folder ?? null,
-              redirectType: input.redirectType,
+              redirectType,
               expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
               expiresTo: input.expiresTo ?? null,
               activatesAt: input.activatesAt ? new Date(input.activatesAt) : null,
@@ -971,6 +981,23 @@ export class LinksService {
       throw new BadRequestException(`${domain} isn't verified yet, so links on it wouldn't resolve.`);
     }
     return row;
+  }
+
+  /**
+   * The redirect type a new link gets when its create omitted one (#753):
+   * the workspace's "Default redirect type" setting. Read by primary key on
+   * the caller's own workspace, so one workspace's setting can never decide
+   * another's links. Falls back to the column's own default when the row is
+   * somehow missing, rather than failing a create over a display preference.
+   */
+  private async defaultRedirectFor(workspaceId: string): Promise<RedirectType> {
+    const [row] = await this.db
+      .select({ defaultRedirect: workspaces.defaultRedirect })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    const parsed = RedirectTypeSchema.safeParse(row?.defaultRedirect);
+    return parsed.success ? parsed.data : "302";
   }
 
   /** Batch the rules and sparklines for a page of links — otherwise a 50-row
