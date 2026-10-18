@@ -34,9 +34,11 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     /* #775 — the login ?next= round trip is a mobile journey too (a deep link
-       opened from a phone's mail app). Only that spec runs on these. */
+       opened from a phone's mail app). Only that spec runs on it. WebKit is
+       deliberately absent: the verify.yml e2e lane installs chromium only, so
+       an iPhone 15 (WebKit) project would fail to launch there. Mobile Safari
+       is exercised as LOCAL evidence instead. */
     { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /login-next\.spec\.ts/ },
-    { name: "mobile-safari", use: { ...devices["iPhone 15"] }, testMatch: /login-next\.spec\.ts/ },
   ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,

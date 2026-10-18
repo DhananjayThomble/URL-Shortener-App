@@ -146,9 +146,48 @@ describe("safeNext (#668 — post-auth redirect must not be an open redirect)", 
 
   it("keeps a query string that legitimately carries encoded slashes", () => {
     // The `?new=` deep link (#660) puts a whole URL in the query: that is data,
-    // not a path, and must survive.
+    // not a path, and must survive — at any depth of encoding.
     expect(safeNext("/links?new=https%3A%2F%2Fexample.com%2Fa")).toBe("/links?new=https%3A%2F%2Fexample.com%2Fa");
+    expect(safeNext("/links?new=https%253A%252F%252Fexample.com")).toBe("/links?new=https%253A%252F%252Fexample.com");
     expect(safeNext("/analytics?range=30d#top")).toBe("/analytics?range=30d#top");
+  });
+
+  /* #775 (opus review) — a DOUBLY (or deeper) encoded slash/backslash/control
+     char in the PATH must fall back, not just a singly-encoded one: "%252F"
+     decodes to "%2F" decodes to "/", and some downstream decoder could do both.
+     A stray "%25" that could seed a further decode is refused too. */
+  it.each([
+    ["/%252F%252Fevil.example"],
+    ["/%252f%252fevil.example"],
+    ["/%255C%255Cevil.example"],
+    ["/%25252F%25252Fevil.example"],
+    ["/%2525252f%2525252fevil.example"],
+    ["/%25%32%46%25%32%46evil.example"],
+    ["/%252e%252e//evil.example"],
+    ["/links/%252F%252Fevil.example"],
+    ["/%2500"],
+    ["/%250d%250aSet-Cookie:x=1"],
+    ["/%25"],
+    ["/links%25"],
+    // a malformed escape in the path is not a route we own
+    ["/%"],
+    ["/%zz"],
+    ["/%2"],
+  ])("falls back for multiply-encoded path trap %j", (raw) => {
+    expect(safeNext(raw)).toBe("/links");
+    expect(withNext("/login", raw)).toBe("/login");
+  });
+
+  it("a doubly-encoded slash in the QUERY is still allowed (it is data, not a path)", () => {
+    expect(safeNext("/links?q=a%252Fb")).toBe("/links?q=a%252Fb");
+  });
+
+  it("rejects an over-long next but keeps one at the limit", () => {
+    const atLimit = "/links?q=" + "a".repeat(2048 - "/links?q=".length);
+    expect(atLimit.length).toBe(2048);
+    expect(safeNext(atLimit)).toBe(atLimit);
+    expect(safeNext("/links?q=" + "a".repeat(2048))).toBe("/links");
+    expect(safeNext("/" + "a".repeat(5000))).toBe("/links");
   });
 
   it("withNext encodes the target and drops an unsafe one", () => {

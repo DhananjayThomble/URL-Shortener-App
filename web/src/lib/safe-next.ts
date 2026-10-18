@@ -1,4 +1,13 @@
 /**
+ * A `next` longer than this is refused outright. No SnapURL route plus its
+ * query comes anywhere near it; the cap only stops an absurd value becoming an
+ * unwieldy URL (there is no redirect risk — an over-long value still resolves
+ * on-origin). 2048 matches the de-facto URL length browsers and proxies treat
+ * as safe.
+ */
+const MAX_NEXT_LENGTH = 2048;
+
+/**
  * Where to go after signing in or registering, from a `?next=` parameter.
  *
  * Used by the /invite flow (#668): a signed-out invitee is sent to /login or
@@ -12,6 +21,7 @@
  */
 export function safeNext(raw: string | null | undefined, fallback = "/links"): string {
   if (!raw) return fallback;
+  if (raw.length > MAX_NEXT_LENGTH) return fallback;
   if (!isSafePath(raw)) return fallback;
   try {
     // Resolve against a throwaway origin: if it escapes it, it isn't a path.
@@ -31,18 +41,47 @@ export function safeNext(raw: string | null | undefined, fallback = "/links"): s
 
 /** A same-origin absolute path: one leading "/", no "//" or "/\" prefix, no
  *  backslash or control character anywhere, and (#775) no percent-ENCODED
- *  slash, backslash or control character in the path part. No SnapURL route
- *  has an encoded "/" or "\" in its path, and leaving them in hands a later
- *  decode (a proxy, a framework, a copy-paste) the chance to manufacture the
- *  "//host" the raw check refused. The query and fragment are data and may
- *  legitimately carry them (e.g. `/links?new=https%3A%2F%2F…`, #660). */
+ *  slash, backslash or control character in the path part — at ANY depth of
+ *  encoding. No SnapURL route has an encoded "/" or "\" in its path, and
+ *  leaving one in hands a later decode (a proxy, a framework, a copy-paste)
+ *  the chance to manufacture the "//host" the raw check refused. A single
+ *  check on the literal string misses a DOUBLY-encoded value ("%252F" ->
+ *  "%2F" -> "/"), so the path part is decoded to a fixed point first and the
+ *  check runs on every intermediate form. The query and fragment are data and
+ *  may legitimately carry encoded slashes (e.g. `/links?new=https%3A%2F%2F…`,
+ *  #660), so only the path part is inspected. */
 function isSafePath(path: string): boolean {
   if (!path.startsWith("/")) return false;
   if (path.startsWith("//") || path.startsWith("/\\")) return false;
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f\\]/.test(path)) return false;
-  if (/%(2f|5c|[01][0-9a-f]|7f)/i.test(pathPart(path))) return false;
-  return true;
+  return !hasEncodedPathTrap(pathPart(path));
+}
+
+/** True if the path part contains an encoded "/", "\", C0 control or DEL at any
+ *  depth of percent-encoding (so "%252F" and deeper are caught, not just "%2F").
+ *  Also rejects a stray "%25" that could seed a further decode downstream. */
+function hasEncodedPathTrap(pathOnly: string): boolean {
+  let current = pathOnly;
+  // Each pass peels one layer of percent-encoding. A real path needs none; the
+  // bound stops a pathological input from spinning, and reaching it is itself
+  // reason to refuse.
+  for (let depth = 0; depth < 8; depth++) {
+    if (/%(2f|5c|[01][0-9a-f]|7f|25)/i.test(current)) return true;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      // A malformed escape cannot be a route we own.
+      return true;
+    }
+    if (decoded === current) return false; // fixed point: nothing left to decode
+    if (decoded.includes("/") || decoded.includes("\\")) return true;
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f]/.test(decoded)) return true;
+    current = decoded;
+  }
+  return true; // did not converge within the bound — refuse
 }
 
 /** Everything before the first "?" or "#" (positional split, so an empty-but-
