@@ -126,7 +126,7 @@ export default function SettingsPage() {
                     help={
                       canChangeDefaultDomain
                         ? "New links start on this domain. Only verified domains are listed."
-                        : "Only owners and admins can change the default domain."
+                        : "Ask an owner or admin to change the default domain."
                     }
                     error={problem && problemAt === "defaultDomain" ? problem : undefined}
                   >

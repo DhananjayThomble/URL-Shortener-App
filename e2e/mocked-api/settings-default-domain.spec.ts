@@ -172,7 +172,7 @@ test.describe("Settings > Default domain (#779) — roles", () => {
     test(`${role} can change it`, async ({ page }) => {
       await openSettings(page, { role });
       await expect(select(page)).toBeEnabled();
-      await expect(page.getByText("Only owners and admins can change the default domain.")).toHaveCount(0);
+      await expect(page.getByText("Ask an owner or admin to change the default domain.")).toHaveCount(0);
     });
   }
 
@@ -182,7 +182,7 @@ test.describe("Settings > Default domain (#779) — roles", () => {
       await expect(select(page)).toBeVisible();
       await expect(select(page)).toBeDisabled();
       await expect(select(page)).toHaveValue("snap.to");
-      await expect(page.getByText("Only owners and admins can change the default domain.")).toBeVisible();
+      await expect(page.getByText("Ask an owner or admin to change the default domain.")).toBeVisible();
       expect(api.callsTo("PATCH", "/workspaces/current")).toHaveLength(0);
     });
   }

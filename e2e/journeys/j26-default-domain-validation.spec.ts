@@ -248,7 +248,7 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
       const select = vp.getByLabel("Default domain");
       await expect(select).toBeVisible({ timeout: 20_000 });
       await expect(select).toBeDisabled();
-      await expect(vp.getByText("Only owners and admins can change the default domain.")).toBeVisible();
+      await expect(vp.getByText("Ask an owner or admin to change the default domain.")).toBeVisible();
       await vp.screenshot({ path: path.join(SHOTS, "settings-viewer-desktop.png"), fullPage: true });
     } finally {
       await vp.close();
