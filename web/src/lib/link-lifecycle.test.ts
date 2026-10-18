@@ -15,7 +15,9 @@ const DAY = 86_400_000;
 
 /* The summary only needs the schedule fields; `status` is what the API sends
    alongside them, which is "archived" whenever the link is archived. */
-function link(over: Partial<LifecycleFields> = {}, archived = false): LifecycleFields {
+type Row = LifecycleFields & { status: string };
+
+function link(over: Partial<LifecycleFields> = {}, archived = false): Row {
   const base = {
     activatesAt: null,
     expiresAt: null,
@@ -73,7 +75,8 @@ describe("lifecycleSummary", () => {
           const expectStart =
             underlying === "scheduled" ? /^Goes live / : underlying === "expired" ? /^Expired / : /^(Expires|Never expires)/;
           for (const archived of [false, true]) {
-            const text = lifecycleSummary({ ...fields, status: archived ? "archived" : underlying }, NOW);
+            const row: Row = { ...fields, status: archived ? "archived" : underlying };
+            const text = lifecycleSummary(row, NOW);
             expect(text, JSON.stringify({ fields, archived, underlying })).toMatch(expectStart);
           }
         }
