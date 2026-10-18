@@ -39,6 +39,10 @@ export default defineConfig({
        an iPhone 15 (WebKit) project would fail to launch there. Mobile Safari
        is exercised as LOCAL evidence instead. */
     { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /login-next\.spec\.ts/ },
+    /* The public trust page is opened from a shared link, so mostly on a phone.
+       Only its specs run on the mobile project, to keep the lane short. Chromium
+       only: CI installs no WebKit for this lane, so iPhone runs stay local. */
+    { name: "pixel-7", use: { ...devices["Pixel 7"] }, testMatch: /trust-page-.*\.spec\.ts/ },
   ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
