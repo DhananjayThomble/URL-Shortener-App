@@ -34,3 +34,12 @@ export function AuthShell({
     </div>
   );
 }
+
+/** Shown inside AuthShell while /login or /register verifies an existing session (#777). */
+export function SessionCheck() {
+  return (
+    <div role="status" aria-live="polite" className="font-mono text-[12px] text-ink-3 py-6 text-center">
+      Taking you to your dashboard…
+    </div>
+  );
+}
