@@ -33,7 +33,7 @@ const FEATURES = [
     icon: "🛡",
     title: "Trust, made visible",
     body: "Anyone can add + to a short link to see exactly where it goes, who made it and what it sets, before they click.",
-    points: ["Public link preview at /p/<slug>", "No cookies, no redirect interstitial", "Shows destination, owner and expiry", "Same honesty for the people who click as for you"],
+    points: ["Public link preview at /p/<slug>", "No cookies, no redirect interstitial", "Shows the destination, owner and any expiry or start date", "Destination hidden until the password is entered, on protected links", "Same honesty for the people who click as for you"],
   },
 ];
 
@@ -46,7 +46,7 @@ export default function ProductPage() {
         <header className="pt-[56px] pb-8 text-center">
           <div className="inline-flex items-center gap-2 px-[13px] py-[5px] rounded-full bg-accent-wash text-accent text-[12px] font-semibold mb-[22px]">
             <span className="w-[6px] h-[6px] rounded-full bg-current" />
-            Everything below is on every plan
+            Everything below is included, free
           </div>
           <h1 className="text-[clamp(32px,5vw,54px)] leading-[1.05] font-extrabold tracking-[-0.03em]">
             A link platform that
