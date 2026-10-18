@@ -383,9 +383,18 @@ export function TableWrap({
   // tabIndex + role="region" + aria-label make the scroller itself reachable
   // and operable by keyboard, independent of whether the table happens to
   // overflow on a given viewport (axe scrollable-region-focusable).
+  //
+  // Row actions (#786): a table whose last column is an <ActionsTh/>/<ActionsTd/>
+  // pins that column to the scroller's right edge, so the row's buttons are
+  // always on screen however narrow the table gets. Two consequences here: the
+  // right-edge fade would sit ON TOP of those buttons (and dim their text), so
+  // it is dropped, and the "Scroll →" pill moves to the left edge instead; and
+  // the pinned column gets a soft edge shadow, but only while content actually
+  // scrolls underneath it (data-overflow), never on a table that fits.
   const ref = React.useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = React.useState(false);
   const [atEnd, setAtEnd] = React.useState(false);
+  const [pinned, setPinned] = React.useState(false);
 
   React.useEffect(() => {
     const el = ref.current;
@@ -394,6 +403,7 @@ export function TableWrap({
       const canScroll = el.scrollWidth - el.clientWidth > 1;
       setOverflow(canScroll);
       setAtEnd(el.scrollLeft >= el.scrollWidth - el.clientWidth - 1);
+      setPinned(el.querySelector("[data-actions-col]") !== null);
     };
     measure();
     el.addEventListener("scroll", measure, { passive: true });
@@ -411,20 +421,32 @@ export function TableWrap({
 
   return (
     <div className="relative">
-      <div ref={ref} tabIndex={0} role="region" aria-label={label} className={cn("overflow-x-auto", className)}>
+      <div
+        ref={ref}
+        tabIndex={0}
+        role="region"
+        aria-label={label}
+        data-overflow={overflow}
+        className={cn("group/wrap overflow-x-auto", className)}
+      >
         {children}
       </div>
       {showHint ? (
         <>
           {/* Right-edge fade cueing more columns. Mobile only; purely decorative. */}
-          <div
-            aria-hidden
-            className="sm:hidden pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent"
-          />
+          {pinned ? null : (
+            <div
+              aria-hidden
+              className="sm:hidden pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent"
+            />
+          )}
           {/* Text affordance so the cue is not colour-only (a11y). */}
           <span
             aria-hidden
-            className="sm:hidden pointer-events-none absolute bottom-1 right-1.5 rounded-[var(--radius-sm)] bg-surface-3 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.11em] text-ink-3"
+            className={cn(
+              "sm:hidden pointer-events-none absolute bottom-1 rounded-[var(--radius-sm)] bg-surface-3 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.11em] text-ink-3",
+              pinned ? "left-1.5" : "right-1.5",
+            )}
           >
             Scroll →
           </span>
@@ -435,7 +457,10 @@ export function TableWrap({
 }
 
 export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {
-  return <table className={cn("w-full border-collapse text-[13px] min-w-[560px]", className)} {...props} />;
+  // border-separate (not -collapse): a position:sticky cell (<ActionsTd/>) paints
+  // over half of a collapsed border and the border does not travel with it. Every
+  // border in these tables is a per-cell border-b, so the two render identically.
+  return <table className={cn("w-full border-separate border-spacing-0 text-[13px] min-w-[560px]", className)} {...props} />;
 }
 
 export function Th({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
@@ -452,6 +477,35 @@ export function Th({ className, ...props }: React.ThHTMLAttributes<HTMLTableCell
 
 export function Td({ className, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
   return <td className={cn("px-[14px] py-3 border-b border-line text-ink-2", className)} {...props} />;
+}
+
+/* The row-actions column (#786). Both cells are pinned to the right edge of the
+   TableWrap scroller (position: sticky), so Revoke / Disconnect / Edit … are on
+   screen and clickable at every width instead of living in the table's
+   horizontal overflow. They need an opaque background (cells scroll underneath)
+   and sit above the scrolling cells (z-[1]). Below `sm` the buttons stack, so the
+   pinned column stays narrow enough to leave room for the data beside it. */
+const PINNED =
+  "sticky right-0 z-[1] bg-surface group-data-[overflow=true]/wrap:shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.22)]";
+
+/** Header cell for the pinned actions column. The visible header stays empty (as before); screen readers get "Actions". */
+export function ActionsTh({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <Th data-actions-col className={cn(PINNED, className)} {...props}>
+      <span className="sr-only">Actions</span>
+    </Th>
+  );
+}
+
+/** Body cell for the pinned actions column; children are the row's buttons. */
+export function ActionsTd({ className, children, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <Td data-actions-col className={cn(PINNED, "text-right", className)} {...props}>
+      <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:justify-end sm:whitespace-nowrap">
+        {children}
+      </div>
+    </Td>
+  );
 }
 
 /* ---------------- Stat tile ---------------- */

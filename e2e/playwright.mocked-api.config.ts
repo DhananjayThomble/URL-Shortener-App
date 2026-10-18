@@ -39,6 +39,13 @@ export default defineConfig({
        an iPhone 15 (WebKit) project would fail to launch there. Mobile Safari
        is exercised as LOCAL evidence instead. */
     { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /(login-next|signed-in-marketing|two-factor-recovery|drawer-narrow-layout)\.spec\.ts/ },
+    /* #794 — sign-up and the legal pages are opened from a phone as often as a
+       desktop. Chromium only, like the projects around it; iPhone 15 stays local. */
+    {
+      name: "pixel-7-signup",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /(register-validation|legal-pages)\.spec\.ts/,
+    },
     /* The public trust page is opened from a shared link, so mostly on a phone.
        Only its specs run on the mobile project, to keep the lane short. Chromium
        only: CI installs no WebKit for this lane, so iPhone runs stay local. */

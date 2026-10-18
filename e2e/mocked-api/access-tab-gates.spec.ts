@@ -367,6 +367,8 @@ for (const vp of viewports) {
         await expiryDate(drawer).fill(dateInput(12));
         await expireSwitch(drawer).click(); // off: remembered inside THIS drawer
         await drawer.getByRole("button", { name: "Cancel" }).click();
+        // The drawer holds an abandoned expiry date: closing asks (#761); this test is about what the NEXT open shows.
+        await page.getByRole("alertdialog", { name: "Discard this link?" }).getByRole("button", { name: "Discard", exact: true }).click();
         await expect(drawer).toBeHidden();
 
         drawer = await openCreate(page);

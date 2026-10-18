@@ -142,6 +142,8 @@ for (const [label, use] of [
       let drawer = await openDrawerRouting(page);
       await pressed(drawer, "302").click();
       await drawer.getByRole("button", { name: "Cancel" }).click();
+      // A different redirect type was picked: closing asks (#761); this test is about what the NEXT open starts on.
+      await page.getByRole("alertdialog", { name: "Discard this link?" }).getByRole("button", { name: "Discard", exact: true }).click();
       await expect(drawer).toBeHidden();
       // Reopen: the mobile top bar exposes a "Create a link" (＋) button; the
       // desktop sidebar a "New link" one (behind the nav sheet at phone width).

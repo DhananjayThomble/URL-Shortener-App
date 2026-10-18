@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
 import { useToast } from "@/components/ui/toast";
@@ -10,6 +10,8 @@ import { normalizeLinkFormValues, tabsWithErrors } from "@/components/links/link
 import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { seededRedirectType } from "@/lib/new-link-redirect-type";
+import { DiscardDialog, useDiscardGuard } from "@/components/links/discard-guard";
+import { formValuesChanged } from "@/lib/discard-guard";
 import { expiryProblem } from "@/lib/expiry-input";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
 import { toastCopy } from "@/lib/toasts";
@@ -55,20 +57,6 @@ export function CreateLinkDrawer({
   const toast = useToast();
   const drawerRef = useRef<HTMLElement>(null);
 
-  // `onClose` is passed as a fresh inline closure by the parent on every one
-  // of its own re-renders (e.g. a background refetch of links/domains/members
-  // while the drawer is open). Reading it through a ref, rather than putting
-  // it in the trap effect's dependency array below, means that effect's setup
-  // — which seizes initial focus and captures `trigger` for restore-on-close —
-  // runs exactly once per open/close, not on every unrelated parent re-render.
-  // Previously it depended on `[open, onClose]`: any re-render with a new
-  // `onClose` identity tore the trap down and re-ran it while the drawer was
-  // still open, silently yanking focus back to the drawer's first field out
-  // from under whatever the user was doing (mid Tab/Shift+Tab traversal, or
-  // mid-typing) and re-capturing "trigger" from whatever had focus at that
-  // moment instead of the element that actually opened the drawer.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
   /** Whether this open of the drawer has applied the workspace's default redirect type yet (#753). */
   const redirectSeeded = useRef(false);
 
@@ -91,6 +79,40 @@ export function CreateLinkDrawer({
   const { register, handleSubmit, control, watch, reset, setValue, getValues, getFieldState, formState } = form;
   const domain = watch("domain");
   const slug = watch("slug");
+
+  /* #761 — what the form held when this open of the drawer settled: the blank form (or the
+     hero's destination) plus the values the drawer picks FOR the user once the workspace has
+     loaded (back-half domain, default redirect type). "Changed" means different from this, so
+     those picks are not the user's edits. */
+  const baseline = useRef<CreateLinkFormValues>(BLANK_LINK_FORM);
+  const seedDomain = useCallback(
+    (value: string) => {
+      baseline.current = { ...baseline.current, domain: value };
+      setValue("domain", value);
+    },
+    [setValue],
+  );
+  const seedRedirectType = useCallback(
+    (value: NonNullable<CreateLinkFormValues["redirectType"]>) => {
+      baseline.current = { ...baseline.current, redirectType: value };
+      setValue("redirectType", value);
+    },
+    [setValue],
+  );
+
+  // #761 — Esc, the backdrop, ✕ and Cancel all go through `requestClose`, which asks
+  // before throwing away what the user typed. `onClose` is passed as a fresh inline
+  // closure by the parent on every one of its own re-renders (e.g. a background
+  // refetch while the drawer is open); the guard reads it through a ref, so the trap
+  // effect below — which seizes initial focus and captures `trigger` for
+  // restore-on-close — runs exactly once per open/close, not on every parent re-render
+  // (a dependency on `onClose` once yanked focus back to the first field mid-typing).
+  const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({
+    open,
+    isDirty: () => formValuesChanged(baseline.current, getValues()),
+    onClose,
+    drawerRef,
+  });
 
   // Only one tab's fields are mounted at a time, so a validation error on a
   // tab the user is not looking at would otherwise be invisible (#645: the
@@ -136,7 +158,7 @@ export function CreateLinkDrawer({
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onCloseRef.current();
+        requestClose();
         return;
       }
       if (e.key !== "Tab") return;
@@ -183,7 +205,9 @@ export function CreateLinkDrawer({
   // the URL the visitor pasted on the landing page. Everything else resets to
   // its blank default; the back-half domain is still chosen by the effect below.
   useEffect(() => {
-    reset({ ...BLANK_LINK_FORM, ...(initialDestination ? { destination: initialDestination } : {}) });
+    const opened = { ...BLANK_LINK_FORM, ...(initialDestination ? { destination: initialDestination } : {}) };
+    baseline.current = opened;
+    reset(opened);
     redirectSeeded.current = false;
     setTab("dest");
     create.reset();
@@ -209,8 +233,8 @@ export function CreateLinkDrawer({
   useEffect(() => {
     if (workspacePending || getValues("domain")) return;
     const chosen = defaultDomainFor(domains, workspace?.defaultDomain);
-    if (chosen) setValue("domain", chosen);
-  }, [open, domains, domain, workspace, workspacePending, getValues, setValue]);
+    if (chosen) seedDomain(chosen);
+  }, [open, domains, domain, workspace, workspacePending, getValues, seedDomain]);
 
   // #753 — preselect the workspace's "Default redirect type" ("Applies to new
   // links"). Seeded once per open, after the reset above (declared after it, so
@@ -220,10 +244,10 @@ export function CreateLinkDrawer({
     if (!open || workspacePending || redirectSeeded.current) return;
     redirectSeeded.current = true;
     const seeded = seededRedirectType(workspace?.defaultRedirect, getFieldState("redirectType", formState).isDirty);
-    if (seeded) setValue("redirectType", seeded);
+    if (seeded) seedRedirectType(seeded);
     // `formState` is passed to getFieldState so dirtiness is subscribed; it may
     // be a new proxy each render, which only re-runs this cheap guarded check.
-  }, [open, workspace, workspacePending, getFieldState, formState, setValue]);
+  }, [open, workspace, workspacePending, getFieldState, formState, seedRedirectType]);
 
   // `useMutation` returns a brand-new result object on every render (its
   // `mutate`/`mutateAsync` are wrapped per call, see @tanstack/react-query's
@@ -276,7 +300,12 @@ export function CreateLinkDrawer({
 
   return (
     <>
-      <div className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[100] backdrop-blur-[2px]" onClick={onClose} />
+      {/* mousedown is cancelled so a click on the backdrop does not blur the field the user was in. */}
+      <div
+        className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[100] backdrop-blur-[2px]"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={requestClose}
+      />
       <aside
         ref={drawerRef}
         role="dialog"
@@ -287,7 +316,7 @@ export function CreateLinkDrawer({
         <div className="flex items-center gap-3 px-5 py-[17px] border-b border-line">
           <h2 className="text-[17px] font-bold">New link</h2>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="Close"
             className="ml-auto text-ink-3 text-[18px] px-[9px] py-1 rounded-[5px] hover:bg-surface-3 hover:text-ink"
           >
@@ -410,7 +439,7 @@ export function CreateLinkDrawer({
               <span className="min-w-0 text-[11.5px] text-ink-3">Links are never metered — only clicks are.</span>
             )}
             <div className="ml-auto flex shrink-0 gap-2">
-              <Button type="button" onClick={onClose}>
+              <Button type="button" onClick={requestClose}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary" disabled={create.isPending}>
@@ -420,6 +449,7 @@ export function CreateLinkDrawer({
           </div>
         </form>
       </aside>
+      <DiscardDialog open={confirming} kind="create" onKeepEditing={keepEditing} onDiscard={discard} />
     </>
   );
 }

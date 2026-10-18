@@ -93,8 +93,8 @@ export function ConfirmDialog({
 
   return (
     <>
-      <div className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[100] backdrop-blur-[2px]" onClick={onCancel} aria-hidden="true" />
-      <div className="fixed inset-0 z-[101] flex items-center justify-center p-4 pointer-events-none">
+      <div className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[110] backdrop-blur-[2px]" onClick={onCancel} aria-hidden="true" />
+      <div className="fixed inset-0 z-[111] flex items-center justify-center p-4 pointer-events-none">
         <div
           ref={ref}
           role="alertdialog"

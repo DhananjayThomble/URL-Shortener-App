@@ -6,6 +6,8 @@ import { Button, Toggle } from "@/components/ui";
 import { useToast } from "@/components/ui/toast";
 import { EDIT_TABS as TABS, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
 import { normalizeLinkFormValues } from "@/components/links/link-form-values";
+import { DiscardDialog, useDiscardGuard } from "@/components/links/discard-guard";
+import { formValuesChanged } from "@/lib/discard-guard";
 import { useUpdateLink } from "@/lib/api/hooks";
 import { expiryProblem } from "@/lib/expiry-input";
 import { UpdateLinkInput, type CreateLinkFormValues, type Link } from "@/lib/api/types";
@@ -35,14 +37,6 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
   const toast = useToast();
   const drawerRef = useRef<HTMLElement>(null);
 
-  // Same ref-indirection as CreateLinkDrawer's onCloseRef: the parent
-  // (the link detail page) re-renders on every analytics/link refetch while
-  // this is open, and a focus trap effect that depended on `onClose`
-  // directly would tear down and re-run on each of those, yanking focus back
-  // to the first field mid-edit.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
   const form = useForm<CreateLinkFormValues>({
     defaultValues: toFormValues(link),
   });
@@ -51,6 +45,22 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
   // The server only reports `passwordProtected`, never the password. Clearing
   // it is therefore an explicit choice, not "left the field blank".
   const [removePassword, setRemovePassword] = useState(false);
+
+  // #761 — Esc, the backdrop, ✕ and Cancel all go through `requestClose`, which asks
+  // before throwing away unsaved edits. It reads `onClose` through a ref: the parent
+  // (the link detail page) re-renders on every analytics/link refetch while this is
+  // open, and a focus trap effect that depended on `onClose` directly would tear down
+  // and re-run on each of those, yanking focus back to the first field mid-edit.
+  // The two switches live outside the form, so they are part of "unsaved" here too.
+  // The form is re-seeded from `link` whenever that changes (effect below), so the saved
+  // link is always what "unchanged" means.
+  const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({
+    open,
+    isDirty: () =>
+      formValuesChanged(toFormValues(link), form.getValues()) || archived !== (link.status === "archived") || removePassword,
+    onClose,
+    drawerRef,
+  });
 
   // Re-seed the form whenever a different link opens, or the same link's
   // server data changes underneath an open drawer (e.g. a background
@@ -84,7 +94,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onCloseRef.current();
+        requestClose();
         return;
       }
       if (e.key !== "Tab") return;
@@ -162,7 +172,12 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
 
   return (
     <>
-      <div className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[100] backdrop-blur-[2px]" onClick={onClose} />
+      {/* mousedown is cancelled so a click on the backdrop does not blur the field the user was in. */}
+      <div
+        className="fixed inset-0 bg-[rgb(6_10_15/0.5)] z-[100] backdrop-blur-[2px]"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={requestClose}
+      />
       <aside
         ref={drawerRef}
         role="dialog"
@@ -175,7 +190,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
             Edit {link.domain}/{link.slug}
           </h2>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="Close"
             className="ml-auto text-ink-3 text-[18px] px-[9px] py-1 rounded-[5px] hover:bg-surface-3 hover:text-ink"
           >
@@ -260,7 +275,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
               <span className="min-w-0 text-[11.5px] text-ink-3">The short link itself ({link.domain}/{link.slug}) never changes.</span>
             )}
             <div className="ml-auto flex shrink-0 gap-2">
-              <Button type="button" onClick={onClose}>
+              <Button type="button" onClick={requestClose}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary" disabled={update.isPending}>
@@ -270,6 +285,7 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
           </div>
         </form>
       </aside>
+      <DiscardDialog open={confirming} kind="edit" onKeepEditing={keepEditing} onDiscard={discard} />
     </>
   );
 }
