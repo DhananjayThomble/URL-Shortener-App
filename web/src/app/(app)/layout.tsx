@@ -6,6 +6,7 @@ import { Sidebar, Topbar } from "@/components/app-shell";
 import { CreateLinkDrawer } from "@/components/links/create-link-drawer";
 import { NEW_LINK_QUERY_PARAM } from "@/lib/hero-shorten";
 import { useBioPages, useDomains, useLinks, useMe, useMembers, useWorkspaceChangeGuard } from "@/lib/api/hooks";
+import { loginRedirectFor } from "@/lib/safe-next";
 
 /**
  * The gate for every authenticated route.
@@ -28,7 +29,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // `replace`, not `push` — a signed-out visitor should not be able to press
     // Back into a dashboard that cannot load.
-    if (isError) router.replace("/login");
+    // #775 — carry the page they asked for as `?next=` so signing in (and the
+    // 2FA step) lands back on it rather than on /links. loginRedirectFor runs
+    // it through safeNext, so a crafted location cannot become an open redirect.
+    if (isError) router.replace(loginRedirectFor(window.location));
   }, [isError, router]);
 
   if (isPending) return <Booting />;
