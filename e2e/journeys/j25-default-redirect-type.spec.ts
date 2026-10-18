@@ -60,9 +60,16 @@ async function visit(link: LinkDto) {
 }
 
 async function openNewLink(page: Page) {
-  const menu = page.getByRole("button", { name: "Open navigation menu" });
-  if (await menu.isVisible()) await menu.click();
-  await page.getByRole("button", { name: /New link/ }).filter({ visible: true }).first().click();
+  // Desktop sidebar has a "＋ New link" button; the mobile top bar has a
+  // "Create a link" (＋) button in the banner. Try whichever is present.
+  const create = page.getByRole("button", { name: "Create a link" });
+  if (await create.isVisible().catch(() => false)) {
+    await create.click();
+  } else {
+    const menu = page.getByRole("button", { name: "Open navigation menu" });
+    if (await menu.isVisible().catch(() => false)) await menu.click();
+    await page.getByRole("button", { name: /New link/ }).filter({ visible: true }).first().click();
+  }
   const drawer = page.getByRole("dialog", { name: "Create a link" });
   await expect(drawer).toBeVisible();
   return drawer;

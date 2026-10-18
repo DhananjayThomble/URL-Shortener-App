@@ -143,10 +143,16 @@ for (const [label, use] of [
       await pressed(drawer, "302").click();
       await drawer.getByRole("button", { name: "Cancel" }).click();
       await expect(drawer).toBeHidden();
-      // Desktop has the sidebar button; at phone width it lives in the nav sheet.
-      const menu = page.getByRole("button", { name: "Open navigation menu" });
-      if (await menu.isVisible()) await menu.click();
-      await page.getByRole("button", { name: /New link/ }).filter({ visible: true }).first().click();
+      // Reopen: the mobile top bar exposes a "Create a link" (＋) button; the
+      // desktop sidebar a "New link" one (behind the nav sheet at phone width).
+      const create = page.getByRole("button", { name: "Create a link" });
+      if (await create.isVisible().catch(() => false)) {
+        await create.click();
+      } else {
+        const menu = page.getByRole("button", { name: "Open navigation menu" });
+        if (await menu.isVisible().catch(() => false)) await menu.click();
+        await page.getByRole("button", { name: /New link/ }).filter({ visible: true }).first().click();
+      }
       drawer = page.getByRole("dialog", { name: "Create a link" });
       await drawer.getByRole("tab", { name: "Routing" }).click();
       await expect(pressed(drawer, "301")).toHaveAttribute("aria-pressed", "true");
