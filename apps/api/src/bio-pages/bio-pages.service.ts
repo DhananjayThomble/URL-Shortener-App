@@ -3,7 +3,7 @@ import { and, asc, bioBlocks, bioPages, domains, eq, inArray, isUniqueViolation,
 import type { BioPage, PublicBioPage, UpsertBioPageInput } from "@snapurl/contract";
 import { bioManagedDestination, isSlugAvailableShape, type AuditAction } from "@snapurl/domain";
 import { DB } from "../database/database.module.js";
-import { recordActivity, type Actor } from "../common/activity.js";
+import { auditInTransaction, type Actor } from "../common/activity.js";
 import { ENV, type Env } from "../config/env.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
@@ -227,7 +227,29 @@ export class BioPagesService {
         live: input.status === "live",
       });
 
-      return { id, busts, priorStatus };
+      /* #783 — creating or publishing a bio page never reached the team
+         page's activity list. One entry per save, naming what the save did to
+         the page's status, in the save's own transaction: a failed audit
+         insert rolls the save back rather than leaving it unrecorded. */
+      const nowLive = input.status === "live";
+      const auditAction: AuditAction =
+        priorStatus === null
+          ? "bio_page.created"
+          : nowLive && priorStatus !== "live"
+            ? "bio_page.published"
+            : !nowLive && priorStatus === "live"
+              ? "bio_page.unpublished"
+              : "bio_page.updated";
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction,
+        targetType: "bio_page",
+        targetId: id,
+        metadata: { domain: domain.domain, slug: input.slug, status: input.status },
+      });
+
+      return { id, busts };
     });
 
     // The managed-link projection and cache invalidation ride the EXISTING
@@ -239,27 +261,6 @@ export class BioPagesService {
       this.projectionNudge.nudge();
       for (const b of outcome.busts) await this.cacheBust.bust(b.domain, b.slug);
     }
-
-    /* #783 — creating or publishing a bio page never reached the team page's
-       activity list. One entry per save, after the commit, naming what the
-       save did to the page's status. */
-    const nowLive = input.status === "live";
-    const auditAction: AuditAction =
-      outcome.priorStatus === null
-        ? "bio_page.created"
-        : nowLive && outcome.priorStatus !== "live"
-          ? "bio_page.published"
-          : !nowLive && outcome.priorStatus === "live"
-            ? "bio_page.unpublished"
-            : "bio_page.updated";
-    await recordActivity(this.db, this.logger, {
-      workspaceId,
-      actor,
-      auditAction,
-      targetType: "bio_page",
-      targetId: outcome.id,
-      metadata: { domain: domain.domain, slug: input.slug, status: input.status },
-    });
 
     const all = await this.list(workspaceId);
     const page = all.find((p) => p.id === outcome.id);
@@ -555,21 +556,20 @@ export class BioPagesService {
         await tx.delete(links).where(eq(links.id, managed.linkId));
       }
       await tx.delete(bioPages).where(and(eq(bioPages.id, id), eq(bioPages.workspaceId, workspaceId)));
+      // #783 — only reached for a page this workspace owned; same transaction.
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "bio_page.deleted",
+        targetType: "bio_page",
+        targetId: id,
+        metadata: { domain: managed.domain, slug: managed.pageSlug },
+      });
     });
 
     if (managed.linkId && managed.slug) {
       this.projectionNudge.nudge();
       await this.cacheBust.bust(managed.domain, managed.slug);
     }
-
-    // #783 — only reached for a page this workspace owned and deleted.
-    await recordActivity(this.db, this.logger, {
-      workspaceId,
-      actor,
-      auditAction: "bio_page.deleted",
-      targetType: "bio_page",
-      targetId: id,
-      metadata: { domain: managed.domain, slug: managed.pageSlug },
-    });
   }
 }

@@ -11,6 +11,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+import type { AuditAction } from "@snapurl/domain";
 import { users, workspaces } from "./identity.js";
 import { domains, links } from "./links.js";
 
@@ -151,7 +152,13 @@ export const auditLog = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
     actorLabel: varchar("actor_label", { length: 160 }).notNull(),
-    action: varchar("action", { length: 80 }).notNull(),
+    /* #783 — typed to the closed AuditAction union, so EVERY insert into this
+       table (writeAuditEntry, a raw insert(auditLog).values(...), a ternary, a
+       shorthand `{ action }`, a single-quoted or line-broken literal) is
+       checked by tsc against the keys that have human copy. Read side: rows
+       written before a key was renamed may still hold an unlisted string, so
+       renderers take `string` and humanise anything unknown. */
+    action: varchar("action", { length: 80 }).$type<AuditAction>().notNull(),
     targetType: varchar("target_type", { length: 40 }),
     targetId: uuid("target_id"),
     metadata: jsonb("metadata"),

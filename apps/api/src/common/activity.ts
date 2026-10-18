@@ -43,6 +43,40 @@ export interface ActivityInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface AuditInput {
+  workspaceId: string;
+  actor: Actor;
+  auditAction: AuditAction;
+  targetType?: string;
+  targetId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Write the audit entry for one change INSIDE the change's own transaction.
+ *
+ * **This throws, on purpose.** Pass the transaction handle that applies the
+ * change: if the audit insert fails, the transaction rolls back with it, so
+ * the action and its record either both exist or neither does (#783 review).
+ * The caller sees an error for a change that did NOT happen, and a retry is
+ * safe — unlike recordActivity, where the change has already committed and a
+ * failed audit leaves an applied action with no record but a log line.
+ *
+ * Use it for every audit write that sits next to its mutation; recordActivity
+ * remains for the webhook queue and the older post-commit callers.
+ */
+export async function auditInTransaction(tx: Executor, input: AuditInput): Promise<void> {
+  await writeAuditEntry(tx, {
+    workspaceId: input.workspaceId,
+    actorId: input.actor.userId,
+    actorLabel: input.actor.label,
+    action: input.auditAction,
+    targetType: input.targetType ?? null,
+    targetId: input.targetId ?? null,
+    metadata: input.metadata ?? null,
+  });
+}
+
 /**
  * Write the audit entry and queue the webhooks for one change.
  *
