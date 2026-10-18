@@ -8,6 +8,7 @@ import { RoutingRulesEditor } from "@/components/links/routing-rules-editor";
 import type { CreateLinkFormValues, RedirectType } from "@/lib/api/types";
 import { dateInputToIso, isoToDateInput } from "@/components/links/link-form-values";
 import { formatTags, parseTags, reconcileTagsText } from "@/lib/tags-input";
+import { clickLimitFromText, clickLimitProblem, reconcileClickLimitText } from "@/lib/click-limit-input";
 
 export { blankOptionalUrlsToUndefined } from "@/components/links/link-form-values";
 
@@ -59,6 +60,60 @@ function TagsInput({
       }}
       placeholder="campaign/spring, social"
     />
+  );
+}
+
+/* The Click limit field (#758). It shows the text the user TYPED and never rewrites it
+   per keystroke: a cleared box stays empty (it used to snap to 1, so "-5" became "15"),
+   and 0 / a negative / a decimal is kept and explained instead of being silently clamped.
+   The form value is the number while the text is a valid limit and the raw text while it
+   is not, which makes the contract's ClickLimitInput refuse the save. The message shows
+   once the user leaves the field, or as soon as a save is attempted. See
+   web/src/lib/click-limit-input.ts. */
+function ClickLimitField({
+  controlId,
+  value,
+  onChange,
+  onBlur,
+  saveRefused,
+}: {
+  controlId: string;
+  value: number | string | null | undefined;
+  onChange: (value: number | string) => void;
+  onBlur: () => void;
+  /** The form tried to save and refused this field. */
+  saveRefused: boolean;
+}) {
+  const [text, setText] = useState(() => reconcileClickLimitText("", value));
+  const [left, setLeft] = useState(false);
+  const shown = reconcileClickLimitText(text, value);
+  const problem = clickLimitProblem(value);
+  const error = problem && (left || saveRefused) ? problem : undefined;
+  return (
+    <Field label="Click limit" controlId={controlId} error={error}>
+      <Input
+        id={controlId}
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        spellCheck={false}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${controlId}-hint` : undefined}
+        disabled={value == null}
+        value={shown}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(clickLimitFromText(e.target.value));
+        }}
+        onBlur={() => {
+          setLeft(true);
+          setText(reconcileClickLimitText("", value)); // tidy " 007 " into "7" once the user leaves the field
+          onBlur();
+        }}
+        placeholder="Turn on the click limit above"
+        className="font-mono text-[12.5px]"
+      />
+    </Field>
   );
 }
 
@@ -304,26 +359,19 @@ export function LinkFormFields({
               />
             )}
           />
-          <Field label="Click limit" controlId={`${idPrefix}-click-limit`} error={formState.errors.clickLimit?.message}>
-            <Controller
-              control={control}
-              name="clickLimit"
-              render={({ field }) => (
-                <Input
-                  id={`${idPrefix}-click-limit`}
-                  type="number"
-                  min={1}
-                  step={1}
-                  aria-invalid={formState.errors.clickLimit ? true : undefined}
-                  disabled={field.value == null}
-                  value={field.value ?? ""}
-                  onChange={(e) => field.onChange(e.target.value === "" ? 1 : Math.max(1, Math.floor(Number(e.target.value))))}
-                  placeholder="Turn on the click limit above"
-                  className="font-mono text-[12.5px]"
-                />
-              )}
-            />
-          </Field>
+          <Controller
+            control={control}
+            name="clickLimit"
+            render={({ field, fieldState }) => (
+              <ClickLimitField
+                controlId={`${idPrefix}-click-limit`}
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                saveRefused={Boolean(fieldState.error)}
+              />
+            )}
+          />
           <Field label="Password" help="Visitors enter it before the redirect happens." error={formState.errors.password?.message}>
             <Input type="password" {...register("password")} placeholder={passwordPlaceholder} className="font-mono text-[12.5px]" />
           </Field>
