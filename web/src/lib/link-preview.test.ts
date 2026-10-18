@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { PublicLinkPreview } from "@snapurl/contract";
+import { PREVIEWS_OFF_CODE, PREVIEWS_OFF_MESSAGE, PublicLinkPreview } from "@snapurl/contract";
 import { effectiveGate } from "@snapurl/domain/destination";
-import { needsLockLookup, previewOutcome, previewView, trustPage } from "./link-preview";
+import { isPreviewsOffError, needsLockLookup, previewOutcome, previewView, trustPage } from "./link-preview";
 
 /* Oracle: PublicLinkPreview in packages/contract/src/public.ts — a protected
    link's preview carries no destination, and the trust page must never offer
@@ -121,6 +121,121 @@ describe("trustPage (#762)", () => {
 
   it("preview loading: loading", () => {
     expect(trustPage({ preview: { pending: true }, lock: idle })).toEqual({ kind: "loading" });
+  });
+});
+
+/* #765 — with public previews off and no password, the page said "That didn't
+   load" + Try again. Retrying cannot help; it is a deliberate state. Oracle:
+   the API's own refusal (PublicService.preview) — a 403 whose BODY carries the
+   contract's previews-off code/message. The web client rewrites every 403's
+   `.message` to a generic string, so the body on `.detail` is what tells this
+   refusal from any other 403 (a proxy, a WAF, a guard). */
+describe("trustPage — previews off, no password (#765)", () => {
+  const refusal = (detail: unknown) =>
+    Object.assign(new Error("You don't have permission to do that."), { status: 403, detail });
+  const previewsOff = refusal({
+    statusCode: 403,
+    message: PREVIEWS_OFF_MESSAGE,
+    error: "Forbidden",
+    code: PREVIEWS_OFF_CODE,
+  });
+  // An API from before the code existed sends the same message, no code (deploy skew).
+  const previewsOffOldApi = refusal({ statusCode: 403, message: PREVIEWS_OFF_MESSAGE, error: "Forbidden" });
+  const otherForbidden = refusal({ statusCode: 403, message: "Forbidden resource", error: "Forbidden" });
+  const open = { pending: false, data: { shortUrl: "snap.to/open", passwordProtected: false } } as const;
+  const idleLock = { pending: false } as const;
+
+  it("recognises the previews-off refusal by its body, and nothing else", () => {
+    expect(isPreviewsOffError(previewsOff)).toBe(true);
+    expect(isPreviewsOffError(previewsOffOldApi)).toBe(true);
+    expect(isPreviewsOffError(otherForbidden)).toBe(false);
+    expect(isPreviewsOffError(refusal(undefined))).toBe(false);
+    expect(isPreviewsOffError(refusal("previews"))).toBe(false);
+    // Right body, wrong status: a 500 echoing the text is not the owner's switch.
+    expect(isPreviewsOffError(Object.assign(new Error("x"), { status: 500, detail: { message: PREVIEWS_OFF_MESSAGE } }))).toBe(
+      false,
+    );
+    expect(isPreviewsOffError(new Error("network"))).toBe(false);
+    expect(isPreviewsOffError(undefined)).toBe(false);
+    expect(isPreviewsOffError(null)).toBe(false);
+  });
+
+  it("previews off + no password: the previews-off state, with the way on through the short link", () => {
+    expect(trustPage({ preview: { pending: false, error: previewsOff }, lock: open })).toEqual({
+      kind: "off",
+      shortUrl: "snap.to/open",
+      continueHref: "https://snap.to/open",
+    });
+  });
+
+  it("an API without the code (deploy skew) is the same state", () => {
+    expect(trustPage({ preview: { pending: false, error: previewsOffOldApi }, lock: open }).kind).toBe("off");
+  });
+
+  it("a local short link continues over http", () => {
+    expect(
+      trustPage({
+        preview: { pending: false, error: previewsOff },
+        lock: { pending: false, data: { shortUrl: "localhost:3002/open", passwordProtected: false } },
+      }),
+    ).toMatchObject({ kind: "off", continueHref: "http://localhost:3002/open" });
+  });
+
+  it("lock route unavailable (older API): still the previews-off state, with no way on rather than a guess", () => {
+    expect(
+      trustPage({
+        preview: { pending: false, error: previewsOff },
+        lock: { pending: false, error: Object.assign(new Error("nf"), { status: 404 }) },
+      }),
+    ).toEqual({ kind: "off", shortUrl: null, continueHref: null });
+  });
+
+  it("an unusable short URL offers no way on", () => {
+    expect(
+      trustPage({
+        preview: { pending: false, error: previewsOff },
+        lock: { pending: false, data: { shortUrl: "javascript:alert(1)", passwordProtected: false } },
+      }),
+    ).toMatchObject({ kind: "off", continueHref: null });
+  });
+
+  it("lock still loading: loading, not a flash of the wrong state", () => {
+    expect(trustPage({ preview: { pending: false, error: previewsOff }, lock: { pending: true } })).toEqual({
+      kind: "loading",
+    });
+  });
+
+  it("a protected link keeps the password form (#762), previews-off body or not", () => {
+    const protectedLock = { pending: false, data: { shortUrl: "snap.to/vault", passwordProtected: true } } as const;
+    expect(trustPage({ preview: { pending: false, error: previewsOff }, lock: protectedLock })).toEqual({
+      kind: "lock",
+      shortUrl: "snap.to/vault",
+    });
+  });
+
+  it("any other 403 stays the generic error, with Try again", () => {
+    expect(trustPage({ preview: { pending: false, error: otherForbidden }, lock: open })).toEqual({
+      kind: "error",
+      message: otherForbidden.message,
+    });
+    expect(trustPage({ preview: { pending: false, error: refusal(undefined) }, lock: open }).kind).toBe("error");
+  });
+
+  it("5xx and network failures stay the generic error", () => {
+    const down = Object.assign(new Error("The API is having trouble."), { status: 500 });
+    expect(trustPage({ preview: { pending: false, error: down }, lock: idleLock }).kind).toBe("error");
+    expect(trustPage({ preview: { pending: false, error: new Error("network") }, lock: idleLock }).kind).toBe("error");
+  });
+
+  it("never carries a destination, even if the lock reply smuggled one", () => {
+    const page = trustPage({
+      preview: { pending: false, error: previewsOff },
+      lock: {
+        pending: false,
+        data: { shortUrl: "snap.to/open", passwordProtected: false, destination: "https://acme.com/secret" } as never,
+      },
+    });
+    expect(JSON.stringify(page)).not.toContain("acme.com");
   });
 });
 
