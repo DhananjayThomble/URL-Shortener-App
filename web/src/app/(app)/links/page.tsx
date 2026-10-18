@@ -257,9 +257,13 @@ export default function LinksPage() {
           {/* The server applies every filter above, so the list is rendered as
               returned. Filtering again here would have hidden rows from a page
               that was already the correct page. */}
-          <div className={cn(view === "grid" ? "grid grid-cols-1 xl:grid-cols-2 gap-2" : "flex flex-col gap-2")}>
+          {/* Grid: `items-start` so an expanded card does not stretch its row
+              neighbour into an empty band (#787). The view is part of the row
+              key so the first list row's default-open state does not carry
+              into the grid, where it would open a card on its own. */}
+          <div className={cn(view === "grid" ? "grid grid-cols-1 xl:grid-cols-2 items-start gap-2" : "flex flex-col gap-2")}>
             {links.map((link, i) => (
-              <LinkRow key={link.id} link={link} defaultOpen={i === 0 && view === "list"} />
+              <LinkRow key={`${view}:${link.id}`} link={link} defaultOpen={i === 0 && view === "list"} variant={view} />
             ))}
           </div>
 

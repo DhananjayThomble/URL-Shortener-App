@@ -27,6 +27,10 @@ const Schema = z.object({
 });
 type Values = z.infer<typeof Schema>;
 
+// Nothing focused (the submit button was clicked, then disabled while pending, or
+// the browser never focuses buttons on click): the next Enter would go nowhere.
+const focusIsLost = () => !document.activeElement || document.activeElement === document.body;
+
 // useSearchParams (for ?next=, #668) needs a Suspense boundary during static
 // prerender, same as reset-password/page.tsx.
 export default function LoginPage() {
@@ -47,7 +51,7 @@ function LoginForm() {
   const verify = useVerifyTotp();
   // #777 — already signed in? Verify the session and move on to `next`.
   const { checking } = useRedirectIfSignedIn(nextParam);
-  const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
+  const { register, handleSubmit, formState, setFocus } = useForm<Values>({ resolver: zodResolver(Schema) });
 
   /* Login can come back as a session OR a TOTP challenge (LoginResult union). We
      hold the challenge token here and swap the form for a code-entry step; only a
@@ -81,7 +85,10 @@ function LoginForm() {
       }
       router.push(next);
     } catch {
-      /* surfaced from login.error */
+      /* surfaced from login.error. #778 — a clicked submit button is disabled
+         while the request runs, which drops focus to <body>; put it back on the
+         password (text selected) so Enter and typing work without another click. */
+      if (focusIsLost()) setFocus("password", { shouldSelect: true });
     }
   });
 
@@ -94,6 +101,11 @@ function LoginForm() {
       router.push(next);
     } catch (err) {
       setCodeError(codeErrorMessage(mode, (err as ApiError).status, (err as Error).message ?? ""));
+      // #778 — same as the password step: hand focus back to the code field.
+      if (focusIsLost()) {
+        codeRef.current?.focus();
+        codeRef.current?.select();
+      }
     }
   }
 
