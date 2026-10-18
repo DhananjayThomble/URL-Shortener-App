@@ -1,5 +1,5 @@
 /**
- * Journey 25 — Protected deep link -> sign in -> back on that page (#775)  @mobile
+ * Journey 26 — Protected deep link -> sign in -> back on that page (#775)  @mobile
  *
  * Before #775 the (app) layout guard sent a signed-out visitor to a bare
  * /login, so after signing in they always landed on /links instead of the page
@@ -30,7 +30,7 @@ async function signIn(page: Page, email: string) {
   await page.getByRole("button", { name: /sign in/i }).click();
 }
 
-test.describe("Journey 25 — login ?next= (#775)", () => {
+test.describe("Journey 26 — login ?next= (#775)", () => {
   test("deep link to a link's detail page survives sign-in @mobile", async ({ page, baseURL }, info) => {
     const email = makeEmail(`j25-deep-${info.project.name}`);
     const session = await registerUser(email);
