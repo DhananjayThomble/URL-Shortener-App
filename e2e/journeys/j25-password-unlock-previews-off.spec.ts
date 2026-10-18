@@ -89,15 +89,19 @@ test.describe("Journey 25 — previews off, password-protected link @mobile", ()
     await page.screenshot({ path: testInfo.outputPath(`j25-${testInfo.project.name}-wrong.png`), fullPage: true });
 
     /* ---- 5. The right password goes through the redirect to the destination ---- */
-    // Stand in for example.com so the final hop is observable and offline.
-    await page.route(`${destination}**`, (route) =>
-      route.fulfill({ status: 200, contentType: "text/html", body: "<h1>destination reached</h1>" }),
-    );
-    const viaRedirect = page.waitForRequest((r) => r.url().startsWith(`${REDIRECT_URL}/${slug}?k=`));
+    // The redirect hop is the proof; route handlers do not see a redirect's
+    // follow-up request, and WebKit links neither a response nor redirectedFrom
+    // for a cross-origin navigation redirect, so assert on the ORDER of the
+    // page's requests: the short link with its unlock token, then the
+    // destination — and the destination only after the token went out.
+    const requested: string[] = [];
+    page.on("request", (r) => requested.push(r.url()));
+    const reached = page.waitForRequest((r) => r.url() === destination);
     await page.getByPlaceholder("Password").fill(password);
     await page.getByRole("button", { name: "Unlock and continue" }).click();
-    await viaRedirect;
-    await page.waitForURL((u) => u.href.startsWith(destination));
-    await expect(page.getByRole("heading", { name: "destination reached" })).toBeVisible();
+    await reached;
+    const viaShortLink = requested.findIndex((u) => u.startsWith(`${REDIRECT_URL}/${slug}?k=`));
+    expect(viaShortLink, `the unlock goes back through the short link: ${requested.join(" , ")}`).toBeGreaterThanOrEqual(0);
+    expect(requested.indexOf(destination)).toBeGreaterThan(viaShortLink);
   });
 });
