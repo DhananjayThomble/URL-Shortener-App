@@ -92,6 +92,7 @@ for (const vp of VIEWPORTS) {
     test("every link row has one look — no accent-filled first button", async ({ page }) => {
       await seedSession(page);
       await page.goto("/bio");
+      await expect(page.getByTestId("bio-preview").getByRole("heading", { name: "Acme" })).toBeVisible();
       const card = await describeCard(page.getByTestId("bio-preview"));
       expect(card.rows.length).toBeGreaterThan(1);
       expect(new Set(card.rows.map((r: Look) => r.style)).size).toBe(1);
