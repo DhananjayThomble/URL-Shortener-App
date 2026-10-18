@@ -8,4 +8,5 @@ export * from "./deep-link.js";
 export * from "./form.js";
 export * from "./hll.js";
 export * from "./bio.js";
+export * from "./audit.js";
 export * from "./initials.js";

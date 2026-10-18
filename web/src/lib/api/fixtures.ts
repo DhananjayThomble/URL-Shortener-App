@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AnalyticsRange } from "./types";
 import { ApiError } from "./client";
 import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry";
+import { describeAuditAction, type AuditAction } from "@snapurl/domain/audit";
 // The subpath, not the barrel: the barrel pulls node:crypto into the browser bundle.
 import { lifecycleGate } from "@snapurl/domain/destination";
 import { initialsOf } from "@snapurl/domain/initials";
@@ -616,11 +617,18 @@ const reportStore: AbuseReport[] = [
 
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-/* Only the member actions write audit entries, because only the member actions
-   write them in the real API today. Logging link or domain changes here would
-   make the fixtures claim a capability the backend does not have yet. */
-function recordAudit(action: string) {
-  auditStore.unshift({ id: uid("aud"), at: new Date().toISOString(), actor: SESSION.user.name, action });
+/* Audit entries are rendered with the same copy table the API uses (#783), so
+   a fixture-mode /team reads exactly like the real one. The member, domain,
+   bio-page, API-key and webhook mutations record here because the API audits
+   them; link and form mutations are audited by the API too but are not yet
+   mirrored here (fixture link/form handlers predate the trail). */
+function recordAudit(action: AuditAction, metadata?: Record<string, unknown>) {
+  auditStore.unshift({
+    id: uid("aud"),
+    at: new Date().toISOString(),
+    actor: SESSION.user.name,
+    action: describeAuditAction(action, metadata),
+  });
 }
 
 function findLink(idOrSlug: string) {
@@ -1164,6 +1172,7 @@ export async function fixtureRequest<T>(
       routing: { type: "CNAME", name: body.domain, value: FIXTURE_ROUTING_TARGET, ttl: 300 },
     };
     domainStore.unshift(domain);
+    recordAudit("domain.added", { domain: domain.domain });
     data = domain;
   } else if (m(/^\/domains\/([^/]+)\/verify$/)) {
     const domain = domainStore.find((d) => d.id === m(/^\/domains\/([^/]+)\/verify$/)![1]);
@@ -1182,7 +1191,10 @@ export async function fixtureRequest<T>(
     if (body.notFoundRedirect !== undefined) domain.notFoundRedirect = body.notFoundRedirect;
     data = domain;
   } else if (m(/^\/domains\/([^/]+)$/) && method === "DELETE") {
-    removeById(domainStore, m(/^\/domains\/([^/]+)$/)![1]);
+    const id = m(/^\/domains\/([^/]+)$/)![1];
+    const gone = domainStore.find((d) => d.id === id);
+    removeById(domainStore, id);
+    if (gone) recordAudit("domain.removed", { domain: gone.domain });
     data = undefined;
   } else if (m(/^\/domains$/)) data = domainStore;
   /* ---- members and audit ---- */
@@ -1202,20 +1214,21 @@ export async function fixtureRequest<T>(
       initials: name.slice(0, 2).toUpperCase(),
     };
     memberStore.push(member);
-    recordAudit(`invited ${body.email} as ${body.role}`);
+    recordAudit("member.invited", { email: body.email, role: body.role });
     data = member;
   } else if (m(/^\/members\/([^/]+)$/) && method === "PATCH") {
     const member = memberStore.find((x) => x.id === m(/^\/members\/([^/]+)$/)![1]);
     const role = (opts.body as { role: MemberRole }).role;
     if (member) {
+      const from = member.role;
       member.role = role;
-      recordAudit(`changed ${member.email} to ${role}`);
+      recordAudit("member.role_changed", { email: member.email, from, to: role });
     }
     data = undefined;
   } else if (m(/^\/members\/([^/]+)$/) && method === "DELETE") {
     const id = m(/^\/members\/([^/]+)$/)![1];
     const member = memberStore.find((x) => x.id === id);
-    if (member) recordAudit(`removed ${member.email}`);
+    if (member) recordAudit("member.removed", { email: member.email });
     removeById(memberStore, id);
     data = undefined;
   } else if (m(/^\/members$/)) data = memberStore;
@@ -1234,9 +1247,11 @@ export async function fixtureRequest<T>(
       key: secret,
     };
     apiKeyStore.unshift({ id: key.id, name: key.name, maskedKey: key.maskedKey, scopes: key.scopes, lastUsed: null });
+    recordAudit("apikey.created");
     data = key;
   } else if (m(/^\/api-keys\/([^/]+)$/) && method === "DELETE") {
     removeById(apiKeyStore, m(/^\/api-keys\/([^/]+)$/)![1]);
+    recordAudit("apikey.revoked");
     data = undefined;
   } else if (m(/^\/api-keys$/)) data = apiKeyStore;
   else if (m(/^\/webhooks$/) && method === "POST") {
@@ -1256,9 +1271,11 @@ export async function fixtureRequest<T>(
       health: hook.health,
       detail: hook.detail,
     });
+    recordAudit("webhook.created");
     data = hook;
   } else if (m(/^\/webhooks\/([^/]+)$/) && method === "DELETE") {
     removeById(webhookStore, m(/^\/webhooks\/([^/]+)$/)![1]);
+    recordAudit("webhook.removed");
     data = undefined;
   } else if (m(/^\/webhooks$/)) data = webhookStore;
   /* ---- bio pages ---- */
@@ -1281,9 +1298,16 @@ export async function fixtureRequest<T>(
         href: b.href ?? null,
       };
     });
+    const where = { domain: body.domain, slug: body.slug, status: body.status };
     if (existing) {
+      const wasLive = existing.status === "live";
       Object.assign(existing, { status: body.status, blocks });
       existing.profile = { name: body.profile.name, bio: body.profile.bio, initials: initialsOf(body.profile.name) };
+      const nowLive = body.status === "live";
+      recordAudit(
+        nowLive && !wasLive ? "bio_page.published" : !nowLive && wasLive ? "bio_page.unpublished" : "bio_page.updated",
+        where,
+      );
       data = existing;
     } else {
       const page: BioPage = {
@@ -1301,10 +1325,14 @@ export async function fixtureRequest<T>(
         },
       };
       bioStore.unshift(page);
+      recordAudit("bio_page.created", where);
       data = page;
     }
   } else if (m(/^\/bio-pages\/([^/]+)$/) && method === "DELETE") {
-    removeById(bioStore, m(/^\/bio-pages\/([^/]+)$/)![1]);
+    const id = m(/^\/bio-pages\/([^/]+)$/)![1];
+    const gone = bioStore.find((b) => b.id === id);
+    removeById(bioStore, id);
+    if (gone) recordAudit("bio_page.deleted", { domain: gone.domain, slug: gone.slug });
     data = undefined;
   } else if (m(/^\/bio-pages$/)) data = bioStore;
   /* ---- public bio page, per-domain (#650) ---- */

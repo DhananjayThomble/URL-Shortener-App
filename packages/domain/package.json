@@ -22,6 +22,10 @@
       "types": "./dist/destination.d.ts",
       "default": "./dist/destination.js"
     },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "default": "./dist/audit.js"
+    },
     "./initials": {
       "types": "./dist/initials.d.ts",
       "default": "./dist/initials.js"

@@ -31,6 +31,9 @@ function serviceWithTarget(targetRole: string) {
     }),
     update,
     insert,
+    // #783: the mutation and its audit row share a transaction; the stub runs
+    // the callback against itself so update/insert are still observed.
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   } as unknown as ConstructorParameters<typeof MembersService>[0];
   // READ_DB + MailService are unused on this path.
   const svc = new MembersService(db, db as never, { send: vi.fn() } as never);
@@ -174,6 +177,7 @@ function serviceForResend(target: Record<string, unknown> | undefined) {
     }),
     update,
     insert,
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   } as unknown as ConstructorParameters<typeof MembersService>[0];
   const sendInvite = vi.fn(async () => undefined);
   const svc = new MembersService(db, db as never, { sendInvite } as never);

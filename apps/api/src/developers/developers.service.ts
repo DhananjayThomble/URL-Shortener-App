@@ -4,6 +4,13 @@ import { and, apiKeys, desc, eq, isNull, webhooks, type Database } from "@snapur
 import type { ApiKey, CreateApiKeyInput, CreateWebhookInput, CreatedApiKey, Webhook } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
+import { auditInTransaction, type Actor } from "../common/activity.js";
+
+/* #783 — issuing/revoking a key and adding/removing a webhook are now in the
+   audit trail. GET /audit is readable by every member, viewers included, while
+   these resources are admin-only, so the entries carry no metadata: never the
+   key, its name or prefix, nor the webhook endpoint (whose query string can
+   hold a receiver's token). The target id is enough to correlate. */
 
 @Injectable()
 export class DevelopersService {
@@ -35,30 +42,43 @@ export class DevelopersService {
    * they issue a new one — which is the only design where a database dump does
    * not hand over working credentials.
    */
-  async createKey(workspaceId: string, userId: string | null, input: CreateApiKeyInput): Promise<CreatedApiKey> {
+  async createKey(workspaceId: string, actor: Actor, input: CreateApiKeyInput): Promise<CreatedApiKey> {
     const secret = randomBytes(24).toString("base64url");
     const key = `snap_live_${secret}`;
     const keyPrefix = key.slice(0, 15);
     const keyLast4 = key.slice(-4);
 
-    const [row] = await this.db
-      .insert(apiKeys)
-      .values({
+    /* #783 — the key and its audit row commit together, so a failed audit
+       insert issues no key (and shows the caller no secret) rather than
+       leaving a working credential nobody's trail mentions. */
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(apiKeys)
+        .values({
+          workspaceId,
+          name: input.name,
+          keyHash: createHash("sha256").update(key).digest("hex"),
+          keyPrefix,
+          keyLast4,
+          scopes: [...input.scopes],
+          createdBy: actor.userId,
+        })
+        .returning();
+      await auditInTransaction(tx, {
         workspaceId,
-        name: input.name,
-        keyHash: createHash("sha256").update(key).digest("hex"),
-        keyPrefix,
-        keyLast4,
-        scopes: [...input.scopes],
-        createdBy: userId,
-      })
-      .returning();
+        actor,
+        auditAction: "apikey.created",
+        targetType: "api_key",
+        targetId: inserted!.id,
+      });
+      return inserted!;
+    });
 
     return {
-      id: row!.id,
-      name: row!.name,
+      id: row.id,
+      name: row.name,
       maskedKey: `${keyPrefix}...${keyLast4}`,
-      scopes: row!.scopes,
+      scopes: row.scopes,
       lastUsed: null,
       key,
     };
@@ -66,13 +86,22 @@ export class DevelopersService {
 
   /** Revoked, not deleted — the audit trail should keep showing that the key
    *  existed and what it did. */
-  async revokeKey(workspaceId: string, id: string): Promise<void> {
-    const result = await this.db
-      .update(apiKeys)
-      .set({ revokedAt: new Date() })
-      .where(and(eq(apiKeys.id, id), eq(apiKeys.workspaceId, workspaceId), isNull(apiKeys.revokedAt)))
-      .returning({ id: apiKeys.id });
-    if (result.length === 0) throw new NotFoundException("That API key doesn't exist, or is already revoked.");
+  async revokeKey(workspaceId: string, id: string, actor: Actor): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const result = await tx
+        .update(apiKeys)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(apiKeys.id, id), eq(apiKeys.workspaceId, workspaceId), isNull(apiKeys.revokedAt)))
+        .returning({ id: apiKeys.id });
+      if (result.length === 0) throw new NotFoundException("That API key doesn't exist, or is already revoked.");
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "apikey.revoked",
+        targetType: "api_key",
+        targetId: id,
+      });
+    });
   }
 
   /* ---------- Webhooks ---------- */
@@ -93,7 +122,11 @@ export class DevelopersService {
     }));
   }
 
-  async createWebhook(workspaceId: string, input: CreateWebhookInput): Promise<Webhook & { secret: string }> {
+  async createWebhook(
+    workspaceId: string,
+    input: CreateWebhookInput,
+    actor: Actor,
+  ): Promise<Webhook & { secret: string }> {
     // The worker sends requests to this URL from inside our network, so a name
     // that resolves to an internal address is refused here (#622). The worker
     // checks again when it connects, because DNS can change after today.
@@ -102,27 +135,47 @@ export class DevelopersService {
     // Shown once, like an API key. The receiver uses it to verify our signature.
     const secret = `whsec_${randomBytes(24).toString("base64url")}`;
 
-    const [row] = await this.db
-      .insert(webhooks)
-      .values({ workspaceId, endpoint: input.endpoint, events: [...input.events], secret })
-      .returning();
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(webhooks)
+        .values({ workspaceId, endpoint: input.endpoint, events: [...input.events], secret })
+        .returning();
+      // #783 — same transaction: no webhook is registered without its record.
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "webhook.created",
+        targetType: "webhook",
+        targetId: inserted!.id,
+      });
+      return inserted!;
+    });
 
     return {
-      id: row!.id,
-      endpoint: row!.endpoint,
-      events: row!.events,
+      id: row.id,
+      endpoint: row.endpoint,
+      events: row.events,
       health: "healthy",
       detail: "No deliveries yet",
       secret,
     };
   }
 
-  async removeWebhook(workspaceId: string, id: string): Promise<void> {
-    const result = await this.db
-      .delete(webhooks)
-      .where(and(eq(webhooks.id, id), eq(webhooks.workspaceId, workspaceId)))
-      .returning({ id: webhooks.id });
-    if (result.length === 0) throw new NotFoundException("That webhook doesn't exist in this workspace.");
+  async removeWebhook(workspaceId: string, id: string, actor: Actor): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const result = await tx
+        .delete(webhooks)
+        .where(and(eq(webhooks.id, id), eq(webhooks.workspaceId, workspaceId)))
+        .returning({ id: webhooks.id });
+      if (result.length === 0) throw new NotFoundException("That webhook doesn't exist in this workspace.");
+      await auditInTransaction(tx, {
+        workspaceId,
+        actor,
+        auditAction: "webhook.removed",
+        targetType: "webhook",
+        targetId: id,
+      });
+    });
   }
 }
 
