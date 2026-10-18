@@ -351,11 +351,14 @@ export class AuthService {
 
       for (const candidate of unused) {
         if (await this.totp.verifyRecoveryCode(candidate.codeHash, code)) {
-          await this.db
+          // Claim the code atomically: only the request whose update still sees
+          // usedAt IS NULL wins, so one code can never be spent twice.
+          const claimed = await this.db
             .update(recoveryCodes)
             .set({ usedAt: new Date() })
-            .where(eq(recoveryCodes.id, candidate.id));
-          accepted = true;
+            .where(and(eq(recoveryCodes.id, candidate.id), isNull(recoveryCodes.usedAt)))
+            .returning({ id: recoveryCodes.id });
+          accepted = claimed.length === 1;
           break;
         }
       }

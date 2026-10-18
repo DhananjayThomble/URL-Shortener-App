@@ -76,7 +76,7 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge } as never);
+    service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
     controller = new DomainsController(service);
 
     await db.insert(workspaces).values({ id: own, name: "own", slug: `dom-own-${stamp}` });

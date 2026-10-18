@@ -3,7 +3,7 @@ import { HttpException, NotFoundException, UnauthorizedException } from "@nestjs
 import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
 import { createDatabase, domains, eq, links, workspaces, type Database } from "@snapurl/database";
-import { PublicLinkLock, PublicLinkPreview, UnlockLinkInput } from "@snapurl/contract";
+import { PREVIEWS_OFF_CODE, PublicLinkLock, PublicLinkPreview, UnlockLinkInput, isPreviewsOffRefusal } from "@snapurl/contract";
 import { PublicService } from "./public.service.js";
 import { TokenService } from "../auth/token.service.js";
 import type { Env } from "../config/env.js";
@@ -196,6 +196,9 @@ describeDb("PublicService — unlocking a password-protected link (#762)", () =>
       const err = await rejection(() => service.preview(slug(name)));
       expect(err.getStatus()).toBe(403);
       expect(wire(err)).not.toContain(MARK);
+      // #765 — the trust page tells this refusal from any other 403 by the body.
+      expect(isPreviewsOffRefusal(err.getResponse())).toBe(true);
+      expect(err.getResponse()).toMatchObject({ statusCode: 403, error: "Forbidden", code: PREVIEWS_OFF_CODE });
     },
   );
 

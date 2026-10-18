@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import * as argon2 from "argon2";
 import { createHash, randomBytes } from "node:crypto";
+import { dailyBreakdowns } from "./seed-breakdowns";
 
 /* Seeds a demo workspace with enough history that the dashboards look like a
    real account rather than an empty state.
@@ -28,21 +29,6 @@ const LINKS = [
   { slug: "beta-invite", dest: "https://acme.com/beta/signup", tags: ["private"], folder: null, weight: 3, clickLimit: 500 },
   { slug: "webinar-q3", dest: "https://acme.com/events/q3-webinar", tags: ["campaign/q3"], folder: "campaign/q3", weight: 7, expired: true },
 ];
-
-const COUNTRIES: Array<[string, number]> = [["IN", 42], ["US", 26], ["GB", 12], ["AE", 9], ["SG", 6], ["AU", 5]];
-const BROWSERS: Array<[string, number]> = [["Chrome", 50], ["Safari", 29], ["Instagram in-app", 13], ["Edge", 5], ["Firefox", 3]];
-const DEVICES: Array<[string, number]> = [["desktop", 44], ["ios", 31], ["android", 25]];
-
-/** Deterministic so re-seeding produces the same charts. */
-function pick<T extends string>(weighted: Array<[T, number]>, roll: number): T {
-  const total = weighted.reduce((s, [, w]) => s + w, 0);
-  let point = roll % total;
-  for (const [value, weight] of weighted) {
-    if (point < weight) return value;
-    point -= weight;
-  }
-  return weighted[0]![0];
-}
 
 async function main() {
   const sql = postgres(URL, { max: 1 });
@@ -131,18 +117,13 @@ async function main() {
           values (${id}, ${workspace!.id}, (current_date - ${daysAgo}::int), ${clicks}, ${uniques}, ${scans}, ${seed % 40 === 0 ? 1 : 0})
           on conflict (link_id, day) do update set clicks = excluded.clicks, uniques = excluded.uniques, scans = excluded.scans`;
 
-        for (const [dimension, table] of [["country", COUNTRIES], ["browser", BROWSERS], ["device", DEVICES]] as const) {
-          for (const [value, share] of table) {
-            const count = Math.round((clicks * share) / 100);
-            if (count === 0) continue;
-            await sql`
-              insert into breakdown_daily ("workspace_id", "link_id", "day", "dimension", "value", "count")
-              values (${workspace!.id}, ${id}, (current_date - ${daysAgo}::int), ${dimension}, ${value}, ${count})
-              on conflict (workspace_id, coalesce(link_id, '00000000-0000-0000-0000-000000000000'::uuid), day, dimension, value)
-              do update set "count" = excluded."count"`;
-          }
+        for (const { dimension, value, count } of dailyBreakdowns(clicks)) {
+          await sql`
+            insert into breakdown_daily ("workspace_id", "link_id", "day", "dimension", "value", "count")
+            values (${workspace!.id}, ${id}, (current_date - ${daysAgo}::int), ${dimension}, ${value}, ${count})
+            on conflict (workspace_id, coalesce(link_id, '00000000-0000-0000-0000-000000000000'::uuid), day, dimension, value)
+            do update set "count" = excluded."count"`;
         }
-        void pick;
       }
     }
 

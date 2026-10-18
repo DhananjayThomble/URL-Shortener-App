@@ -3,14 +3,23 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { AuthShell, SessionCheck } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
+import type { ApiError } from "@/lib/api/client";
 import { useLogin, useRedirectIfSignedIn, useVerifyTotp } from "@/lib/api/hooks";
 import { signedInTarget, withNext } from "@/lib/safe-next";
+import {
+  canSubmitCode,
+  codeErrorMessage,
+  codeInputProps,
+  normaliseCode,
+  sanitiseTyping,
+  type CodeMode,
+} from "@/lib/two-factor-code";
 
 const Schema = z.object({
   email: z.string().min(1, "Enter your email address").email("That doesn't look like an email address"),
@@ -47,11 +56,26 @@ function LoginForm() {
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [codeError, setCodeError] = useState<string | null>(null);
+  /* #776 — the same step takes a TOTP or a single-use recovery code (the API
+     tries both). Recovery codes are letters, so that mode swaps the numeric
+     keypad for a text keyboard; see lib/two-factor-code. */
+  const [mode, setMode] = useState<CodeMode>("totp");
+  const codeRef = useRef<HTMLInputElement>(null);
+  const firstRender = useRef(true);
+  useEffect(() => {
+    // Focus follows a mode switch (autoFocus only covers the first mount).
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    codeRef.current?.focus();
+  }, [mode]);
 
   const onSubmit = handleSubmit(async (values) => {
     try {
       const result = await login.mutateAsync(values);
       if ("challenge" in result) {
+        setMode("totp");
         setChallengeToken(result.challengeToken);
         return;
       }
@@ -63,14 +87,20 @@ function LoginForm() {
 
   async function submitCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!challengeToken) return;
+    if (!challengeToken || verify.isPending || !canSubmitCode(mode, code)) return;
     setCodeError(null);
     try {
-      await verify.mutateAsync({ challengeToken, code });
+      await verify.mutateAsync({ challengeToken, code: normaliseCode(mode, code) });
       router.push(next);
     } catch (err) {
-      setCodeError((err as Error).message || "That code isn't right.");
+      setCodeError(codeErrorMessage(mode, (err as ApiError).status, (err as Error).message ?? ""));
     }
+  }
+
+  function switchMode() {
+    setMode((m) => (m === "totp" ? "recovery" : "totp"));
+    setCode("");
+    setCodeError(null);
   }
 
   if (checking) {
@@ -82,26 +112,56 @@ function LoginForm() {
   }
 
   if (challengeToken) {
+    const input = codeInputProps(mode);
+    const recovery = mode === "recovery";
     return (
-      <AuthShell title="Two-factor authentication" sub="Enter the 6-digit code from your authenticator app.">
+      <AuthShell
+        title={recovery ? "Use a recovery code" : "Two-factor authentication"}
+        sub={
+          recovery
+            ? "Enter one of the recovery codes you saved when you turned on two-factor authentication. Each code works once."
+            : "Enter the 6-digit code from your authenticator app. Lost access to it? Use one of your recovery codes instead."
+        }
+      >
         <form onSubmit={submitCode} className="flex flex-col gap-3.5">
-          <Field label="Authentication code" error={codeError ?? undefined}>
+          <Field
+            label={input.label}
+            error={codeError ?? undefined}
+            help={recovery ? "Dashes, spaces and capitals don't matter." : undefined}
+          >
             <Input
+              // A new element per mode so the browser re-reads inputmode and
+              // drops any autofill suggestion meant for the other kind of code.
+              key={mode}
+              ref={codeRef}
               value={code}
-              onChange={(e) => { setCode(e.target.value); setCodeError(null); }}
-              autoComplete="one-time-code"
-              inputMode="numeric"
-              placeholder="123456"
-              aria-label="Authentication code"
+              onChange={(e) => { setCode(sanitiseTyping(mode, e.target.value)); setCodeError(null); }}
+              name={recovery ? "recovery-code" : "one-time-code"}
+              autoComplete={input.autoComplete}
+              inputMode={input.inputMode}
+              autoCapitalize={input.autoCapitalize}
+              autoCorrect={input.autoCorrect}
+              spellCheck={input.spellCheck}
+              pattern={input.pattern}
+              maxLength={input.maxLength}
+              placeholder={input.placeholder}
+              aria-label={input.label}
               autoFocus
             />
           </Field>
-          <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={verify.isPending || code.length < 6}>
+          <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={verify.isPending || !canSubmitCode(mode, code)}>
             {verify.isPending ? "Verifying…" : "Verify"}
           </Button>
           <button
             type="button"
-            onClick={() => { setChallengeToken(null); setCode(""); setCodeError(null); }}
+            onClick={switchMode}
+            className="text-[12.5px] text-accent font-semibold text-center bg-transparent border-0 cursor-pointer"
+          >
+            {recovery ? "Use your authenticator app instead" : "Use a recovery code"}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setChallengeToken(null); setCode(""); setCodeError(null); setMode("totp"); }}
             className="text-[12.5px] text-ink-3 text-center bg-transparent border-0 cursor-pointer"
           >
             Back to sign in
