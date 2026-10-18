@@ -164,7 +164,7 @@ export default function LinkDetailPage() {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(178px,1fr))] gap-3 mb-5">
         <Tile
           label="Total clicks"
-          scope={scope}
+          scope={`last ${scope}`}
           value={headline.clicks.value}
           note={headline.clicks.allTime}
           {...deltaFor(a?.deltas.clicks, range)}
@@ -175,7 +175,7 @@ export default function LinkDetailPage() {
             error), so the label signals that rather than implying an exact count. */}
         <Tile
           label="Unique visitors (approx.)"
-          scope={scope}
+          scope={`last ${scope}`}
           value={headline.unique.value}
           note={headline.unique.allTime}
           {...deltaFor(a?.deltas.unique, range)}
