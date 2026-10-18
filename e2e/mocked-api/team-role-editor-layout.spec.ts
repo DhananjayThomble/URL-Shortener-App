@@ -183,6 +183,24 @@ for (const vp of VIEWPORTS) {
       expect(api.callsTo("DELETE", "/members/mem_arjun")).toHaveLength(0);
     });
 
+    test("the bug itself: after a role is chosen, the point where Done was is not the destructive Remove", async ({ page }) => {
+      const { api, row } = await openTeam(page);
+      await row.getByRole("button", { name: "Change role" }).click();
+      const done = row.getByRole("button", { name: "Done" });
+      await done.scrollIntoViewIfNeeded();
+      const doneBefore = need(await done.boundingBox());
+      await roleGroup(row).getByRole("button", { name: "Admin" }).click();
+      await expect.poll(() => api.callsTo("PATCH", "/members/mem_arjun").length).toBe(1);
+      // Let the refetch and any re-render land before measuring.
+      await expect(row.getByText("Admin", { exact: true }).first()).toBeVisible();
+      await page.waitForTimeout(300);
+
+      expect(await buttonAt(page, centre(doneBefore))).not.toBe("Remove");
+      await page.mouse.click(centre(doneBefore).x, centre(doneBefore).y);
+      await expect(row.getByRole("button", { name: "Keep" })).toHaveCount(0);
+      expect(api.callsTo("DELETE", "/members/mem_arjun")).toHaveLength(0);
+    });
+
     test("a refused change keeps the editor open, says why under the table, and moves nothing", async ({ page }) => {
       const message = "This is the only owner. Make someone else an owner first.";
       const { api, row } = await openTeam(page, { patchReply: (id) => (id === "mem_arjun" ? nestError(400, message, "Bad Request") : null) });
@@ -211,7 +229,7 @@ for (const vp of VIEWPORTS) {
       const { row } = await openTeam(page, { patchReply: () => nestError(403, "Your role can't do that.", "Forbidden") });
       await row.getByRole("button", { name: "Change role" }).click();
       await roleGroup(row).getByRole("button", { name: "Admin" }).click();
-      await expect(page.getByRole("alert").filter({ hasText: "Your role can't do that." })).toBeVisible();
+      await expect(page.getByRole("alert").filter({ hasText: "You don't have permission to do that." })).toBeVisible();
       await expect(row.getByRole("button", { name: "Done" })).toBeVisible();
     });
 
