@@ -72,7 +72,13 @@ async function install(page: Page, opts: Opts = {}): Promise<{ api: MockApi; sto
     SLUGS.flatMap((slug) => {
       const find = () => store.find((s) => s.slug === slug)!;
       return [
-        [`GET /links/lnk_${slug}`, () => ({ status: 200, body: dto(find()) })],
+        [
+          `GET /links/lnk_${slug}`,
+          () => {
+            const l = store.find((s) => s.slug === slug);
+            return l ? { status: 200, body: dto(l) } : nestError(404, "Link not found.", "Not Found");
+          },
+        ],
         [
           `PATCH /links/lnk_${slug}`,
           (req: MockRequest) => {
@@ -321,7 +327,7 @@ for (const vp of viewports) {
       await page.goto("/links/lnk_alpha");
       await page.getByRole("button", { name: "Delete this link" }).click();
       await page.getByRole("button", { name: "Delete for good" }).click();
-      await expect(page.getByRole("alert").filter({ hasText: "Something went wrong" })).toBeVisible(); // the page's own inline error
+      await expect(page.getByRole("alert").filter({ hasText: "The API is having trouble" })).toBeVisible(); // the page's own inline error
       await expect(page).toHaveURL(/\/links\/lnk_alpha$/);
       await expect(toast(page, /Deleted/)).toHaveCount(0);
     });

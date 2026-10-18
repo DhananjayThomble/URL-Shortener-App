@@ -144,8 +144,10 @@ function ToastViewport({ toasts, dismiss }: { toasts: ToastItem[]; dismiss: (id:
   );
 }
 
+/* Width comes from padding or an explicit w-: `.flex > * { min-width: 0 }` in
+   globals.css outranks a min-w- utility on a flex child. */
 const BTN =
-  "pointer-events-auto inline-flex items-center justify-center min-h-[32px] min-w-[32px] px-[10px] rounded-[6px] text-[13px] font-semibold " +
+  "pointer-events-auto inline-flex shrink-0 items-center justify-center min-h-[36px] rounded-[6px] text-[13px] font-semibold " +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current";
 
 function ToastView({ toast, dismiss }: { toast: ToastItem; dismiss: (id: number) => void }) {
@@ -186,7 +188,7 @@ function ToastView({ toast, dismiss }: { toast: ToastItem; dismiss: (id: number)
       {toast.action ? (
         <button
           type="button"
-          className={cn(BTN, "underline underline-offset-2 hover:bg-surface/15")}
+          className={cn(BTN, "px-[10px] underline underline-offset-2 hover:bg-surface/15")}
           onClick={() => {
             dismiss(toast.id);
             toast.action!.run();
@@ -198,7 +200,7 @@ function ToastView({ toast, dismiss }: { toast: ToastItem; dismiss: (id: number)
       <button
         type="button"
         aria-label="Dismiss notification"
-        className={cn(BTN, isError ? "hover:bg-surface-3" : "hover:bg-surface/15")}
+        className={cn(BTN, "w-[36px]", isError ? "hover:bg-surface-3" : "hover:bg-surface/15")}
         onClick={() => dismiss(toast.id)}
       >
         <span aria-hidden="true">✕</span>
