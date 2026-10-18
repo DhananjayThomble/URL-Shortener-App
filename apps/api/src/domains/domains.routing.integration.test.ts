@@ -59,7 +59,7 @@ describeDb("DomainsService routing record (#784)", () => {
   });
 
   it("a newly added domain carries the TXT proof AND the CNAME to the deployment's short domain", async () => {
-    const added = await service.add(own, { domain: `go-${stamp}.acme.test` });
+    const added = await service.add(own, { domain: `go-${stamp}.acme.test` }, { userId: null, label: "rt@example.com" });
     expect(added.dns).toMatchObject({ type: "TXT", name: `_snapurl.go-${stamp}.acme.test` });
     expect(added.routing).toEqual({ type: "CNAME", name: `go-${stamp}.acme.test`, value: "snap.example.com", ttl: 300 });
     expect(Domain.safeParse(added).success).toBe(true);
