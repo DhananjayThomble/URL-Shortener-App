@@ -42,8 +42,9 @@ export default defineConfig({
     /* The public trust page is opened from a shared link, so mostly on a phone.
        Only its specs run on the mobile project, to keep the lane short. Chromium
        only: CI installs no WebKit for this lane, so iPhone runs stay local. */
-    /* #795 — the marketing pages are read on phones too; their copy spec runs here as well. */
-    { name: "pixel-7", use: { ...devices["Pixel 7"] }, testMatch: /(trust-page-.*|marketing-copy)\.spec\.ts/ },
+    /* #795 — the marketing pages are read on phones too; their copy spec runs here as well.
+       #791 — the search shortcut spec checks the phone shows no search or hint. */
+    { name: "pixel-7", use: { ...devices["Pixel 7"] }, testMatch: /(trust-page-.*|marketing-copy|search-shortcut)\.spec\.ts/ },
   ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
