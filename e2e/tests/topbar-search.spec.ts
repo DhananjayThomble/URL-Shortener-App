@@ -6,7 +6,7 @@ import { seedSession } from "../support/session";
    The top bar's search input (web/src/components/app-shell/index.tsx) used to be
    a non-functional stub. It is now an accessible combobox: typing queries the
    workspace's links SERVER-SIDE via useLinks({ search }) (GET /links?search=,
-   which the fixtures backend filters by slug/destination/title/comment), and the
+   which the fixtures backend filters by slug/destination/title/comment/tags), and the
    matches render in a listbox under the input. Enter / click / ArrowDown+Enter
    open the highlighted link's detail page (/links/:id). Empty query hides the
    dropdown; a no-match query shows "No matches".
@@ -85,6 +85,26 @@ test.describe("top-bar link search (desktop/tablet)", () => {
     // (#445 fixture-fidelity fix: do not hard-code lnk_webinar)
     await expect(page).toHaveURL(/\/links\/[^/]+$/);
     // Confirm the right link.
+    await expect(page.getByText(/webinar-q3/, { exact: false })).toBeVisible();
+  });
+
+  test("a query that matches only a link's tag finds that link (#756)", async ({ page }) => {
+    const search = page.getByRole("combobox", { name: COMBOBOX });
+    const listbox = page.getByRole("listbox", { name: "Link results" });
+
+    // Case-insensitive fragment of the tag "campaign/q3". The tag appears in
+    // none of webinar-q3's slug, destination or title — before #756 this was
+    // "No matches".
+    await search.fill("CAMPAIGN/Q");
+    await expect(listbox.getByRole("option", { name: /webinar-q3/ })).toBeVisible();
+    await expect(page.getByText("No matches")).toHaveCount(0);
+
+    // The exact tag, and the tag-matched result opens its link.
+    await search.fill("campaign/q3");
+    const option = listbox.getByRole("option", { name: /webinar-q3/ });
+    await expect(option).toBeVisible();
+    await option.click();
+    await expect(page).toHaveURL(/\/links\/[^/]+$/);
     await expect(page.getByText(/webinar-q3/, { exact: false })).toBeVisible();
   });
 
