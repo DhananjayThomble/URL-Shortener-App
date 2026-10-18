@@ -453,18 +453,34 @@ export function Tile({
   value,
   delta,
   deltaTone = "flat",
+  scope,
+  note,
   children,
 }: {
   label: string;
   value: React.ReactNode;
   delta?: React.ReactNode;
   deltaTone?: "up" | "down" | "flat";
+  /** The window the value covers (e.g. "last 30d"), shown beside the value so a tile never leaves its scope implicit. */
+  scope?: string;
+  /** A secondary figure under the delta, for a number in a different scope (e.g. "21,504 all-time"). */
+  note?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
     <div className="bg-surface border border-line rounded-[var(--radius)] p-4 shadow-[var(--shadow-1)]">
+      {/* The label text is a DIRECT child of this root div (no wrapping element),
+          so a test locating a tile as the label's parent — getByText(label)
+          .locator("..") — still lands on this root, which contains the value.
+          Several specs rely on that (analytics-blocked-tile, clicks-this-month). */}
       <div className="font-mono text-[10px] tracking-[0.11em] uppercase text-ink-3">{label}</div>
-      <div className="font-display text-[28px] font-bold tracking-[-0.025em] my-[7px] tnum leading-none">{value}</div>
+      {/* The scope sits beside the value, not in the label: a long label
+          ("Unique visitors (approx.)") would otherwise wrap and push its value
+          out of line with the tiles next to it. */}
+      <div className="flex items-baseline gap-[7px] my-[7px]">
+        <div className="font-display text-[28px] font-bold tracking-[-0.025em] tnum leading-none">{value}</div>
+        {scope ? <span className="text-[11.5px] text-ink-3 whitespace-nowrap">{scope}</span> : null}
+      </div>
       {delta ? (
         <div
           className={cn(
@@ -477,6 +493,7 @@ export function Tile({
           {delta}
         </div>
       ) : null}
+      {note ? <div className="text-[11.5px] text-ink-3 mt-[3px] tnum">{note}</div> : null}
       {children ? <div className="mt-[9px]">{children}</div> : null}
     </div>
   );

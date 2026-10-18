@@ -4,16 +4,20 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button, Chip, ErrorState, Field, Input, Skeleton } from "@/components/ui";
 import { useLinkLock, useLinkPreview, useReportLink, useUnlockLink } from "@/lib/api/hooks";
-import { needsLockLookup, previewView, trustPage } from "@/lib/link-preview";
+import { needsLockLookup, previewOutcome, shortLinkUrl, trustPage } from "@/lib/link-preview";
 import { trustState } from "@/lib/trust-state";
 import { formatDate, relativeDate } from "@/lib/utils";
 
-/** shortUrl is "domain/slug" with no scheme; localhost is the dev redirect. */
 function withUnlockKey(shortUrl: string, token: string): string {
-  const scheme = /^(localhost|127\.0\.0\.1)/.test(shortUrl) ? "http" : "https";
-  const url = new URL(/^https?:\/\//.test(shortUrl) ? shortUrl : `${scheme}://${shortUrl}`);
+  const url = shortLinkUrl(shortUrl);
   url.searchParams.set("k", token);
   return url.toString();
+}
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 /* The public trust page. Anyone can reach it by adding "+" to a short link;
@@ -50,10 +54,13 @@ export default function LinkPreviewPage() {
   /* The only URL the unlock may send the visitor to: back through the short
      link, from whichever payload the page drew the form from. */
   const shortUrl = data?.shortUrl ?? (page.kind === "lock" ? page.shortUrl : null);
-  const view = data ? previewView(data) : null;
   /* A flagged link redirects here with ?warning=unsafe. The preview's own
      status is the source of truth; the param only escalates it (#647). */
   const trust = trustState(data?.safeBrowsing ?? "pending", searchParams.get("warning"));
+  /* #764 — what a visitor following the link actually gets: the page used to
+     say "safe to open" about expired links. Decides heading, Continue and the
+     password form; see previewOutcome. */
+  const outcome = data ? previewOutcome(data, trust) : null;
   const unlock = useUnlockLink(slug, host);
   const report = useReportLink(slug);
 
@@ -241,15 +248,26 @@ export default function LinkPreviewPage() {
             {trust.kind === "flagged" ? null : passwordForm}
             <div className="px-6 pt-[18px] pb-[22px] flex flex-col gap-[9px]">{reportControls}</div>
           </>
-        ) : data ? (
+        ) : data && outcome ? (
           <>
             <div className="p-6 border-b border-line text-center">
-              <div
-                className={`w-[46px] h-[46px] rounded-[13px] grid place-items-center text-[21px] mx-auto mb-3.5 ${trust.iconClass}`}
-              >
-                {trust.icon}
-              </div>
-              <h2 className="text-[19px] font-bold">{trust.heading}</h2>
+              {outcome.blocked ? (
+                <>
+                  <div className="w-[46px] h-[46px] rounded-[13px] grid place-items-center text-[21px] mx-auto mb-3.5 bg-wash-warn text-amber">
+                    {outcome.blocked.icon}
+                  </div>
+                  <h2 className="text-[19px] font-bold">{outcome.blocked.heading}</h2>
+                </>
+              ) : (
+                <>
+                  <div
+                    className={`w-[46px] h-[46px] rounded-[13px] grid place-items-center text-[21px] mx-auto mb-3.5 ${trust.iconClass}`}
+                  >
+                    {trust.icon}
+                  </div>
+                  <h2 className="text-[19px] font-bold">{trust.heading}</h2>
+                </>
+              )}
               {trust.notice ? (
                 <p role="alert" className="mt-2 text-[13px] leading-[1.6] text-bad">
                   {trust.notice}
@@ -259,13 +277,18 @@ export default function LinkPreviewPage() {
 
             <div className="px-6 py-[18px] bg-surface-2 border-b border-line">
               <div className="font-mono text-[9.5px] tracking-[0.13em] uppercase text-ink-3 mb-[7px]">Where it goes</div>
-              {view?.kind === "open" ? (
-                <div className="font-mono text-[13.5px] break-all text-ink leading-[1.6]">{view.destination}</div>
-              ) : (
+              {outcome.blocked ? (
+                <div className="text-[13.5px] text-ink-2 leading-[1.6]">{outcome.blocked.where}</div>
+              ) : data.passwordProtected || data.destination == null ? (
                 <div className="text-[13.5px] text-ink-2 leading-[1.6]">
                   🔒 Hidden until you enter the password. The owner protected this link.
                 </div>
+              ) : (
+                <div className="font-mono text-[13.5px] break-all text-ink leading-[1.6]">{data.destination}</div>
               )}
+              {outcome.rulesNote ? (
+                <p className="mt-2 text-[12.5px] text-ink-2 leading-[1.6]">{outcome.rulesNote}</p>
+              ) : null}
             </div>
 
             <div className="px-6">
@@ -273,6 +296,12 @@ export default function LinkPreviewPage() {
                 [
                   ["Short link", <span key="s" className="font-mono">{data.shortUrl}</span>],
                   ["Created", `${formatDate(data.createdAt)} · ${relativeDate(data.createdAt)}`],
+                  /* #764 — the expiry or start date, the one the visitor's
+                     outcome turns on. Date and time: a scheduled link goes
+                     live to the minute. */
+                  ...(outcome.dateRow
+                    ? ([[outcome.dateRow.label, formatDateTime(outcome.dateRow.at)]] as const)
+                    : []),
                   [
                     "Created by",
                     <span key="c" className="flex items-center gap-2">
@@ -307,22 +336,24 @@ export default function LinkPreviewPage() {
               ))}
             </div>
 
-            {view?.kind === "locked" ? passwordForm : null}
+            {outcome.passwordForm ? passwordForm : null}
 
             <div className="px-6 pt-[18px] pb-[22px] flex flex-col gap-[9px]">
               {/* No direct link for a locked one: the href would be the very URL
-                  the password guards. Unlock above goes through the redirect. */}
-              {view?.kind === "open" ? (
+                  the password guards. Unlock above goes through the redirect.
+                  None either for a link that does not work, unless the owner
+                  set a page for that, reached back through the short link. */}
+              {outcome.continueTo ? (
                 <a
-                  href={view.destination}
+                  href={outcome.continueTo.href}
                   rel="noopener noreferrer nofollow"
                   className={`px-[13px] py-[11px] rounded-[var(--radius-sm)] font-semibold text-[13px] text-center ${
-                    trust.kind === "flagged"
+                    outcome.continueTo.muted
                       ? "bg-surface border border-line-2 text-ink-2 hover:bg-surface-3"
                       : "bg-accent text-accent-ink"
                   }`}
                 >
-                  {trust.continueLabel} {view.host} →
+                  {outcome.continueTo.label}
                 </a>
               ) : null}
               {reportControls}

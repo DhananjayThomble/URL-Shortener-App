@@ -5,8 +5,9 @@ import { PageHead } from "@/components/app-shell";
 import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAddDomain, useDeleteDomain, useDomains, useMe, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
 import { AddDomainInput, type Domain } from "@snapurl/contract";
-import { formatDate, full } from "@/lib/utils";
+import { full } from "@/lib/utils";
 import { canEditDomainRedirects, parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
+import { canDisconnectDomain, domainSslView, domainStatusView } from "@/lib/domain-state";
 
 /**
  * Edit a domain's root and 404 redirects (#648).
@@ -147,6 +148,13 @@ export default function DomainsPage() {
 
   async function disconnect(id: string) {
     setProblem(null);
+    // Belt and braces: the shared domain has no Disconnect control, but never
+    // send the request for it even if a stale confirm state points at it.
+    const target = domains.find((d) => d.id === id);
+    if (target && !canDisconnectDomain(target)) {
+      setConfirming(null);
+      return;
+    }
     try {
       await deleteDomain.mutateAsync(id);
       setConfirming(null);
@@ -231,14 +239,12 @@ export default function DomainsPage() {
                       ) : null}
                     </Td>
                     <Td>
-                      <Chip tone={d.status === "live" ? "good" : "warn"} dot>
-                        {d.status === "live" ? "Live" : "Verifying DNS"}
+                      <Chip tone={domainStatusView(d).tone} dot>
+                        {domainStatusView(d).label}
                       </Chip>
                     </Td>
                     <Td>
-                      <Chip tone={d.ssl === "active" ? "good" : "warn"}>
-                        {d.ssl === "active" && d.sslRenewsAt ? `Auto · renews ${formatDate(d.sslRenewsAt)}` : "Pending"}
-                      </Chip>
+                      <Chip tone={domainSslView(d).tone}>{domainSslView(d).label}</Chip>
                     </Td>
                     <Td className="tnum">{full(d.links)}</Td>
                     <Td className="font-mono text-[12px]">
@@ -265,7 +271,15 @@ export default function DomainsPage() {
                           {verifyDomain.isPending ? "Checking…" : "Check DNS"}
                         </Button>
                       ) : null}
-                      {confirming === d.id ? (
+                      {!canDisconnectDomain(d) ? (
+                        // The API refuses this with a 409; say why instead of offering it.
+                        <span
+                          className="text-[12px] text-ink-3"
+                          title="This domain is shared by every workspace and managed by SnapURL."
+                        >
+                          Can't be disconnected
+                        </span>
+                      ) : confirming === d.id ? (
                         <>
                           <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                             Keep
@@ -297,7 +311,7 @@ export default function DomainsPage() {
           <CardBody className="text-[13px] text-ink-2 leading-[1.6]">
             <b className="text-ink">Disconnecting a domain stops every link on it.</b> Printed codes and shared URLs
             using it will 404 immediately. The links themselves are not deleted, but nothing resolves to them until the
-            domain is connected again. The shared short domain belongs to everyone and cannot be disconnected.
+            domain is connected again.
           </CardBody>
         </Card>
       ) : null}
