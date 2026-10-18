@@ -771,7 +771,25 @@ export async function fixtureRequest<T>(
   }
   /* ---- workspace ---- */
   else if (m(/^\/workspaces\/current$/) && method === "PATCH") {
-    Object.assign(WORKSPACE, opts.body as UpdateWorkspaceInput);
+    const body = { ...(opts.body as UpdateWorkspaceInput) };
+    /* Mirrors the API (#779): a default domain must be a live domain of the
+       workspace. A refusal rejects the whole PATCH, nothing is applied. The
+       value is compared trimmed, case-insensitively, ignoring a trailing dot;
+       re-sending the current default is always accepted. */
+    if (body.defaultDomain !== undefined) {
+      const norm = (v: string) => v.trim().toLowerCase().replace(/\.+$/, "");
+      const wanted = norm(body.defaultDomain);
+      if (wanted === norm(WORKSPACE.defaultDomain)) {
+        delete body.defaultDomain;
+      } else {
+        if (!wanted) throw new Error("Choose a default domain.");
+        const hit = domainStore.find((d) => norm(d.domain) === wanted);
+        if (!hit) throw new Error(`${body.defaultDomain.trim()} isn't a domain in this workspace.`);
+        if (hit.status !== "live") throw new Error(`${hit.domain} isn't verified yet, so links on it wouldn't resolve.`);
+        body.defaultDomain = hit.domain;
+      }
+    }
+    Object.assign(WORKSPACE, body);
     data = WORKSPACE;
   } else if (m(/^\/workspaces\/current$/)) data = WORKSPACE;
   /* ---- links ---- */
