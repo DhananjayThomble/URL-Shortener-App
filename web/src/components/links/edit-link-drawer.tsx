@@ -7,7 +7,7 @@ import { useToast } from "@/components/ui/toast";
 import { EDIT_TABS as TABS, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
 import { normalizeLinkFormValues } from "@/components/links/link-form-values";
 import { DiscardDialog, useDiscardGuard } from "@/components/links/discard-guard";
-import { hasDirtyFields } from "@/lib/discard-guard";
+import { formValuesChanged } from "@/lib/discard-guard";
 import { useUpdateLink } from "@/lib/api/hooks";
 import { expiryProblem } from "@/lib/expiry-input";
 import { UpdateLinkInput, type CreateLinkFormValues, type Link } from "@/lib/api/types";
@@ -52,8 +52,15 @@ export function EditLinkDrawer({ open, onClose, link }: { open: boolean; onClose
   // open, and a focus trap effect that depended on `onClose` directly would tear down
   // and re-run on each of those, yanking focus back to the first field mid-edit.
   // The two switches live outside the form, so they are part of "unsaved" here too.
-  const dirty = hasDirtyFields(formState.dirtyFields) || archived !== (link.status === "archived") || removePassword;
-  const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({ open, dirty, onClose, drawerRef });
+  // The form is re-seeded from `link` whenever that changes (effect below), so the saved
+  // link is always what "unchanged" means.
+  const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({
+    open,
+    isDirty: () =>
+      formValuesChanged(toFormValues(link), form.getValues()) || archived !== (link.status === "archived") || removePassword,
+    onClose,
+    drawerRef,
+  });
 
   // Re-seed the form whenever a different link opens, or the same link's
   // server data changes underneath an open drawer (e.g. a background

@@ -169,6 +169,23 @@ for (const vp of VIEWPORTS) {
       await expect(drawer.getByPlaceholder("instagram")).toHaveValue("newsletter");
     });
 
+    test("create: tags, folder, comment and UTM typed and then cleared again are not a change", async ({ page }) => {
+      const { drawer } = await openCreate(page);
+      const tags = drawer.getByLabel("Tags");
+      await tags.fill("alpha, beta");
+      await tags.fill("");
+      await drawer.getByPlaceholder("Campaigns / Spring 2026").fill("Q4");
+      await drawer.getByPlaceholder("Campaigns / Spring 2026").fill("");
+      await drawer.getByPlaceholder("What is this link for? Your team will thank you.").fill("note");
+      await drawer.getByPlaceholder("What is this link for? Your team will thank you.").fill("");
+      await drawer.getByRole("tab", { name: "UTM", exact: true }).click();
+      await drawer.getByPlaceholder("instagram").fill("newsletter");
+      await drawer.getByPlaceholder("instagram").fill("");
+      await page.keyboard.press("Escape");
+      await expect(drawer).toBeHidden();
+      await expect(anyConfirm(page)).toHaveCount(0);
+    });
+
     test("create: changing the redirect type is a change", async ({ page }) => {
       const { drawer } = await openCreate(page);
       await drawer.getByRole("tab", { name: "Routing", exact: true }).click();

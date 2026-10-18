@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
 import { useToast } from "@/components/ui/toast";
@@ -11,7 +11,7 @@ import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { seededRedirectType } from "@/lib/new-link-redirect-type";
 import { DiscardDialog, useDiscardGuard } from "@/components/links/discard-guard";
-import { hasDirtyFields } from "@/lib/discard-guard";
+import { formValuesChanged } from "@/lib/discard-guard";
 import { expiryProblem } from "@/lib/expiry-input";
 import { CreateLinkInput, type CreateLinkFormValues } from "@/lib/api/types";
 import { toastCopy } from "@/lib/toasts";
@@ -80,6 +80,26 @@ export function CreateLinkDrawer({
   const domain = watch("domain");
   const slug = watch("slug");
 
+  /* #761 — what the form held when this open of the drawer settled: the blank form (or the
+     hero's destination) plus the values the drawer picks FOR the user once the workspace has
+     loaded (back-half domain, default redirect type). "Changed" means different from this, so
+     those picks are not the user's edits. */
+  const baseline = useRef<CreateLinkFormValues>(BLANK_LINK_FORM);
+  const seedDomain = useCallback(
+    (value: string) => {
+      baseline.current = { ...baseline.current, domain: value };
+      setValue("domain", value);
+    },
+    [setValue],
+  );
+  const seedRedirectType = useCallback(
+    (value: NonNullable<CreateLinkFormValues["redirectType"]>) => {
+      baseline.current = { ...baseline.current, redirectType: value };
+      setValue("redirectType", value);
+    },
+    [setValue],
+  );
+
   // #761 — Esc, the backdrop, ✕ and Cancel all go through `requestClose`, which asks
   // before throwing away what the user typed. `onClose` is passed as a fresh inline
   // closure by the parent on every one of its own re-renders (e.g. a background
@@ -87,27 +107,12 @@ export function CreateLinkDrawer({
   // effect below — which seizes initial focus and captures `trigger` for
   // restore-on-close — runs exactly once per open/close, not on every parent re-render
   // (a dependency on `onClose` once yanked focus back to the first field mid-typing).
-  // Reading `dirtyFields` here subscribes the render to it; a form nobody touched has
-  // none, and the back-half domain / redirect type seeded after open are not changes.
-  const dirty = hasDirtyFields(formState.dirtyFields);
-  const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({ open, dirty, onClose, drawerRef });
-
-  /* A value the drawer chooses for the user (the workspace's back-half domain, its default
-     redirect type) once the workspace has loaded. While the form is still untouched it is
-     folded into the form's DEFAULTS, so it is the baseline and not a change: react-hook-form
-     re-derives every field's dirtiness from the whole form the moment any one field is edited,
-     so a value merely setValue()'d over a different default would count as "edited" — and then
-     typing something and deleting it again would still ask before closing (#761). If the user
-     has already typed (a slow workspace load) it is set in place, as before. */
-  const seedDefault = (patch: { domain: string } | { redirectType: NonNullable<CreateLinkFormValues["redirectType"]> }) => {
-    if (!dirty) {
-      reset({ ...getValues(), ...patch });
-    } else if ("domain" in patch) {
-      setValue("domain", patch.domain);
-    } else {
-      setValue("redirectType", patch.redirectType);
-    }
-  };
+  const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({
+    open,
+    isDirty: () => formValuesChanged(baseline.current, getValues()),
+    onClose,
+    drawerRef,
+  });
 
   // Only one tab's fields are mounted at a time, so a validation error on a
   // tab the user is not looking at would otherwise be invisible (#645: the
@@ -200,7 +205,9 @@ export function CreateLinkDrawer({
   // the URL the visitor pasted on the landing page. Everything else resets to
   // its blank default; the back-half domain is still chosen by the effect below.
   useEffect(() => {
-    reset({ ...BLANK_LINK_FORM, ...(initialDestination ? { destination: initialDestination } : {}) });
+    const opened = { ...BLANK_LINK_FORM, ...(initialDestination ? { destination: initialDestination } : {}) };
+    baseline.current = opened;
+    reset(opened);
     redirectSeeded.current = false;
     setTab("dest");
     create.reset();
@@ -226,10 +233,8 @@ export function CreateLinkDrawer({
   useEffect(() => {
     if (workspacePending || getValues("domain")) return;
     const chosen = defaultDomainFor(domains, workspace?.defaultDomain);
-    if (chosen) seedDefault({ domain: chosen });
-    // `seedDefault` only closes over stable form methods and the latest `dirty`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, domains, domain, workspace, workspacePending, getValues, setValue]);
+    if (chosen) seedDomain(chosen);
+  }, [open, domains, domain, workspace, workspacePending, getValues, seedDomain]);
 
   // #753 — preselect the workspace's "Default redirect type" ("Applies to new
   // links"). Seeded once per open, after the reset above (declared after it, so
@@ -239,11 +244,10 @@ export function CreateLinkDrawer({
     if (!open || workspacePending || redirectSeeded.current) return;
     redirectSeeded.current = true;
     const seeded = seededRedirectType(workspace?.defaultRedirect, getFieldState("redirectType", formState).isDirty);
-    if (seeded) seedDefault({ redirectType: seeded });
+    if (seeded) seedRedirectType(seeded);
     // `formState` is passed to getFieldState so dirtiness is subscribed; it may
     // be a new proxy each render, which only re-runs this cheap guarded check.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, workspace, workspacePending, getFieldState, formState, setValue]);
+  }, [open, workspace, workspacePending, getFieldState, formState, seedRedirectType]);
 
   // `useMutation` returns a brand-new result object on every render (its
   // `mutate`/`mutateAsync` are wrapped per call, see @tanstack/react-query's

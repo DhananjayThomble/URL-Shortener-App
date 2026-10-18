@@ -5,23 +5,48 @@
    back. These are the pure decisions behind the shared confirmation; the
    components just wire them to events (kept UI-free so Node-only tests cover them). */
 
+/** Nothing the user would miss: unset, empty text, or an empty list/object of the same. */
+function prune(value: unknown): unknown {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (Array.isArray(value)) {
+    const kept = value.map(prune).filter((v) => v !== undefined);
+    return kept.length > 0 ? kept : undefined;
+  }
+  if (typeof value === "object") {
+    const kept = Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => [k, prune(v)] as const)
+      .filter(([, v]) => v !== undefined);
+    return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+  }
+  return value;
+}
+
+function same(a: unknown, b: unknown): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => same(v, b[i]));
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => k in b && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+  }
+  return Object.is(a, b);
+}
+
 /**
- * Whether react-hook-form's `formState.dirtyFields` names at least one field that
- * differs from its default value.
+ * Whether the form's current values differ from the ones it was opened with.
  *
- * RHF keeps a field's flag only while its value differs from the default (typing
- * something and then putting the original back removes it again), so "anything
- * flagged" is exactly "the user has changed something and not undone it" — which
- * is what `isDirty` would say, minus its comparison of the WHOLE value against the
- * defaults (the drawer seeds the back-half domain and redirect type after it
- * opens, and `isDirty` counts those programmatic values against the user).
- * Nested objects (utm, social, rules) and arrays (tags) are walked.
+ * Deliberately NOT react-hook-form's `isDirty` / `dirtyFields`: the moment any one field is
+ * edited RHF re-derives every field's dirtiness from the whole form, and a text input the
+ * user never touched reads back `""` where its default is `undefined` (see
+ * blankOptionalUrlsToUndefined), so a form the user typed into and emptied again still
+ * counted as changed. Here "unset", `null`, `""`, `[]` and `{}` are all the same thing —
+ * nothing to lose — and anything else must match. Whitespace is not trimmed: typing a
+ * space is typing.
  */
-export function hasDirtyFields(dirtyFields: unknown): boolean {
-  if (dirtyFields === true) return true;
-  if (Array.isArray(dirtyFields)) return dirtyFields.some(hasDirtyFields);
-  if (dirtyFields && typeof dirtyFields === "object") return Object.values(dirtyFields).some(hasDirtyFields);
-  return false;
+export function formValuesChanged(baseline: unknown, current: unknown): boolean {
+  return !same(prune(baseline), prune(current));
 }
 
 export type CloseAction = "close" | "ask" | "ignore";

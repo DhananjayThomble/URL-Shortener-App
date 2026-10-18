@@ -12,25 +12,25 @@ const FOCUSABLE =
  * ask first when the form holds something the user typed (#761).
  *
  * `requestClose` is the ONE function all four call. It is stable (reads the latest
- * `dirty` / `onClose` through refs), so the drawer's document-level Esc listener,
+ * `isDirty` / `onClose` through refs), so the drawer's document-level Esc listener,
  * which is set up once per open, always sees current values.
  *
  * Successful saves keep calling the plain `onClose`: a save is not a discard.
  */
 export function useDiscardGuard({
   open,
-  dirty,
+  isDirty,
   onClose,
   drawerRef,
 }: {
   open: boolean;
-  dirty: boolean;
+  isDirty: () => boolean;
   onClose: () => void;
   drawerRef: RefObject<HTMLElement | null>;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
   const confirmingRef = useRef(confirming);
   confirmingRef.current = confirming;
   const onCloseRef = useRef(onClose);
@@ -44,7 +44,7 @@ export function useDiscardGuard({
   }, [open]);
 
   const requestClose = useCallback(() => {
-    const action = closeAction(dirtyRef.current, confirmingRef.current);
+    const action = closeAction(isDirtyRef.current(), confirmingRef.current);
     if (action === "ignore") return;
     if (action === "close") {
       onCloseRef.current();
