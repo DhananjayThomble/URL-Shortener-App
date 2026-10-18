@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { bioPublicPath, decodeSegments } from "@/lib/route-segments";
 import { BioPageClient } from "./bio-page-client";
 
 /* The public bio page (#650). One optional catch-all route serves both shapes,
@@ -21,21 +22,16 @@ const USE_FIXTURES = process.env.NEXT_PUBLIC_USE_FIXTURES === "true";
 // the route is never prerendered or cached into a stale 200/404.
 export const dynamic = "force-dynamic";
 
-function publicPath(segments: string[]): string | null {
-  if (segments.length === 2) {
-    return `/public/bio-pages/by-domain/${encodeURIComponent(segments[0]!)}/${encodeURIComponent(segments[1]!)}`;
-  }
-  if (segments.length === 1) {
-    return `/public/bio-pages/${encodeURIComponent(segments[0]!)}`;
-  }
-  return null;
-}
-
 export default async function PublicBioPage({ params }: { params: Promise<{ parts?: string[] }> }) {
   const { parts } = await params;
-  const segments = parts ?? [];
+  /* #849 — Next hands the segments back still percent-encoded
+     ("localhost%3A3002"); the probe below and the client hooks each encode
+     once more, so decode here, once. A malformed escape is no address at all:
+     a 404, not the URIError (500) a bare decodeURIComponent would throw. */
+  const segments = decodeSegments(parts);
+  if (!segments) notFound();
 
-  const path = publicPath(segments);
+  const path = bioPublicPath(segments);
   if (!path) notFound(); // /b with no slug, or a deeper path, is not an address.
 
   if (!USE_FIXTURES) {
