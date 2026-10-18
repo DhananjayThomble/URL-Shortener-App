@@ -525,6 +525,37 @@ export function EmptyState({
   );
 }
 
+/**
+ * A detail page whose record is not there for this person (404, another
+ * workspace's id, a malformed id) or that they may not open. Retrying cannot
+ * change the answer, so the only action is the way back — and the copy is fixed,
+ * never the server's message, so "doesn't exist" and "not yours" read alike.
+ */
+export function NotFoundState({
+  title,
+  body,
+  backHref,
+  backLabel,
+}: {
+  title: string;
+  body: string;
+  backHref: string;
+  backLabel: string;
+}) {
+  return (
+    <div className="text-center py-12 px-5">
+      <div className="text-[28px] mb-3" aria-hidden="true">
+        ⌀
+      </div>
+      <h3 className="text-[15px] text-ink mb-[6px]">{title}</h3>
+      <p className="m-0 mx-auto max-w-[46ch] text-[13px] text-ink-3">{body}</p>
+      <div className="mt-4 flex justify-center">
+        <ButtonLink href={backHref}>{backLabel}</ButtonLink>
+      </div>
+    </div>
+  );
+}
+
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="text-center py-12 px-5">
