@@ -6,6 +6,7 @@ import { BarList, Sparkline, TrafficChart } from "@/components/charts";
 import { Button, ButtonLink, Card, CardBody, CardHeader, ErrorState, Segmented, Skeleton, Tabs, Tile } from "@/components/ui";
 import { useAnalytics, useExportLinks, useWorkspace } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
+import { BLOCKED_VISITS_CAPTION, BLOCKED_VISITS_LABEL } from "@/lib/blocked-visits";
 import { analyticsSubtitle } from "@/lib/retention";
 import { compact, formatDelta, full } from "@/lib/utils";
 
@@ -93,7 +94,10 @@ export default function AnalyticsPage() {
               delta={formatDelta(data.deltas.conversions).text}
               deltaTone={formatDelta(data.deltas.conversions).tone}
             />
-            <Tile label="Blocked / unsafe" value={full(data.totals.blocked)} delta="Safe Browsing" deltaTone="flat" />
+            {/* #767 — totals.blocked counts every gate rejection the redirect
+                records (expired, scheduled, click limit, archived, flagged),
+                not just Safe Browsing flags; the copy says so. */}
+            <Tile label={BLOCKED_VISITS_LABEL} value={full(data.totals.blocked)} delta={BLOCKED_VISITS_CAPTION} deltaTone="flat" />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-3.5 mb-3.5 items-start">
