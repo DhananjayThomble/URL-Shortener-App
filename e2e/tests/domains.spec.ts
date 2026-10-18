@@ -43,9 +43,13 @@ test.describe("custom domains", () => {
     const row = page.getByRole("row", { name: new RegExp(`${domain}.*Verifying DNS.*Check DNS`) });
     await expect(row).toBeVisible();
 
-    // The "Finish setting up <domain>" DNS card renders with the CNAME record.
+    // The "Finish setting up <domain>" DNS card renders with the routing CNAME
+    // record (#784): fixtures route custom domains to the shared "snap.to" host,
+    // mirroring the API's DEFAULT_DOMAIN-derived target.
     await expect(page.getByText(`Finish setting up ${domain}`)).toBeVisible();
-    await expect(page.getByRole("cell", { name: "edge.snapurl.in" })).toBeVisible();
+    const card = page.getByRole("region", { name: `Finish setting up ${domain}` });
+    await expect(card.getByText("CNAME", { exact: true })).toBeVisible();
+    await expect(card.getByText("snap.to", { exact: true })).toBeVisible();
 
     // Run the DNS check from the row. Fixtures flips the domain to live + SSL
     // active, so its status chip becomes "Live" and the setup card disappears.
