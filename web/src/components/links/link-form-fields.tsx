@@ -110,7 +110,7 @@ function ClickLimitField({
           setText(reconcileClickLimitText("", value)); // tidy " 007 " into "7" once the user leaves the field
           onBlur();
         }}
-        placeholder="Turn on the click limit above"
+        placeholder={value == null ? "Turn on the click limit above" : "e.g. 100"}
         className="font-mono text-[12.5px]"
       />
     </Field>
