@@ -79,6 +79,9 @@ const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readTe
 const VIEWPORTS = [
   { name: "desktop", use: { viewport: { width: 1440, height: 900 } } },
   { name: "Pixel 7", use: { viewport: devices["Pixel 7"].viewport, isMobile: true, hasTouch: true, userAgent: devices["Pixel 7"].userAgent } },
+  // The narrowest phones in use; the header row overflowed here first.
+  { name: "narrow phone (360px)", use: { viewport: { width: 360, height: 740 }, isMobile: true, hasTouch: true, userAgent: devices["Pixel 7"].userAgent } },
+  { name: "phone (390px)", use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: devices["Pixel 7"].userAgent } },
 ] as const;
 
 for (const vp of VIEWPORTS) {
@@ -193,6 +196,35 @@ for (const vp of VIEWPORTS) {
       const box = await card(page, "go.acme.test").getByRole("button", { name: "Copy TXT value for go.acme.test" }).boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(24);
       expect(box!.width).toBeGreaterThanOrEqual(24);
+    });
+
+    test("a long domain name wraps inside the card: Check now, the chip and every Copy stay on screen", async ({ page }) => {
+      const long = "j784-mvdyeklx-ca57c7b5.example.com";
+      await open(page, [
+        {
+          ...SUB,
+          id: "dom_long",
+          domain: long,
+          dns: { ...SUB.dns, name: `_snapurl.${long}` },
+          routing: { ...SUB.routing, name: long },
+        },
+      ]);
+      const c = card(page, long);
+      await expect(c).toBeVisible();
+      const cardBox = (await c.boundingBox())!;
+      const vw = Math.min(page.viewportSize()!.width, cardBox.x + cardBox.width);
+      for (const el of [
+        c.getByRole("button", { name: "Check now" }),
+        c.getByText("2 records to add"),
+        c.getByRole("button", { name: `Copy TXT name for ${long}` }),
+        c.getByRole("button", { name: `Copy CNAME value for ${long}` }),
+      ]) {
+        await expect(el).toBeVisible();
+        const b = await el.boundingBox();
+        expect(b!.x).toBeGreaterThanOrEqual(0);
+        expect(b!.x + b!.width).toBeLessThanOrEqual(vw);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
     });
   });
 }

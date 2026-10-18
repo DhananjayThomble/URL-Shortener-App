@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Domain } from "@snapurl/contract";
-import { Button, Card, CardBody, CardHeader, Chip } from "@/components/ui";
+import { Button, Card, CardBody, Chip } from "@/components/ui";
 import { dnsSteps } from "@/lib/domain-dns";
 import { copy } from "@/lib/utils";
 
@@ -51,17 +51,17 @@ export function DnsSetupCard({
 
   return (
     <Card className="mb-3.5" role="region" aria-label={`Finish setting up ${domain.domain}`}>
-      <CardHeader
-        title={`Finish setting up ${domain.domain}`}
-        right={
-          <div className="flex items-center gap-2">
-            <Chip tone="warn">{count === 1 ? "1 record to add" : `${count} records to add`}</Chip>
-            <Button size="sm" onClick={onCheck} disabled={checking}>
-              {checking ? "Checking…" : "Check now"}
-            </Button>
-          </div>
-        }
-      />
+      {/* Not the shared CardHeader: its single non-wrapping row pushed "Check
+          now" past the card edge on a phone once the domain name wrapped. */}
+      <div className="flex flex-wrap items-center gap-x-[10px] gap-y-2 border-b border-line px-4 py-[13px]">
+        <h3 className="min-w-0 break-all text-[14px] font-bold">{`Finish setting up ${domain.domain}`}</h3>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Chip tone="warn">{count === 1 ? "1 record to add" : `${count} records to add`}</Chip>
+          <Button size="sm" onClick={onCheck} disabled={checking}>
+            {checking ? "Checking…" : "Check now"}
+          </Button>
+        </div>
+      </div>
       <CardBody>
         <p className="m-0 mb-3.5 text-[13.5px] text-ink-2">
           {count === 1 ? "Add this record" : "Add these records"} at your DNS provider, then check again. DNS changes
