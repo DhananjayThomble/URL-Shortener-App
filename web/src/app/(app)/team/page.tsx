@@ -105,7 +105,7 @@ export default function TeamPage() {
     <>
       <PageHead
         title="Team"
-        sub={`${members ? memberSummary(members) : "— members"} in ${workspace?.name ?? "this workspace"} · every action is written to the audit log`}
+        sub={`${workspace?.name ?? "This workspace"} · ${members ? memberSummary(members) : "— members"} · every action is written to the audit log`}
         actions={
           <>
             <Button variant="primary" onClick={() => { setInviting((v) => !v); setProblem(null); }}>
