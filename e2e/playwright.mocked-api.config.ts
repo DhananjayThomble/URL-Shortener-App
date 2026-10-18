@@ -31,7 +31,13 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   use: { baseURL: BASE_URL, trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    /* #775 — the login ?next= round trip is a mobile journey too (a deep link
+       opened from a phone's mail app). Only that spec runs on these. */
+    { name: "mobile-chrome", use: { ...devices["Pixel 7"] }, testMatch: /login-next\.spec\.ts/ },
+    { name: "mobile-safari", use: { ...devices["iPhone 15"] }, testMatch: /login-next\.spec\.ts/ },
+  ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
     url: BASE_URL,
