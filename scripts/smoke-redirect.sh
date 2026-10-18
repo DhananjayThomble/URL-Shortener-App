@@ -576,6 +576,102 @@ if [ "$BODY_BYTES" -lt 256 ]; then ok "the redirect carries no page to hang a pi
 else bad "redirect body is large enough to be a page" "$BODY_BYTES bytes"; fi
 
 echo
+echo "== branded error pages (#766) =="
+# A dead end answers browsers (Accept: text/html) with a small branded HTML page
+# and every other client with the exact plain-text sentence it always got. The
+# status codes do not move: 404 unknown / not-yet-live / root, 410 expired /
+# click-limited. Both variants are no-store (the CDN cache key ignores Accept).
+HTML_ACCEPT='text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+mklink "{\"destination\":\"https://example.com/gone-bare\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired-bare\",\"expiresAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+EXP_BARE_ID="$LAST_ID"
+mklink "{\"destination\":\"https://example.com/limited\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-limit\",\"clickLimit\":1,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+LIMIT_ID="$LAST_ID"
+wait_for_projection "'$EXP_BARE_ID','$LIMIT_ID'" "error-page fixtures projected"
+
+# errpage <path> <accept|-> -> sets EP_STATUS, EP_TYPE, EP_CACHE, EP_VARY,
+# EP_CSP, EP_RETRY and EP_BODY. "-" sends curl's default Accept (*/*).
+errpage() {
+  local path="$1" accept="$2" hdr body
+  hdr=$(mktemp); body=$(mktemp)
+  if [ "$accept" = "-" ]; then
+    curl -s -D "$hdr" -o "$body" "$RD/$path" 2>/dev/null
+  else
+    curl -s -D "$hdr" -o "$body" -H "Accept: $accept" -H "User-Agent: $BROWSER_UA" "$RD/$path" 2>/dev/null
+  fi
+  EP_STATUS=$(awk '/^HTTP/{s=$2} END{print s}' "$hdr")
+  h() { tr -d '\r' < "$hdr" | awk -v n="$1" 'tolower($0) ~ "^"n":" {sub(/^[^:]*: */,""); v=$0} END{print v}'; }
+  EP_TYPE=$(h content-type); EP_CACHE=$(h cache-control); EP_VARY=$(h vary)
+  EP_CSP=$(h content-security-policy); EP_RETRY=$(h retry-after)
+  EP_BODY=$(cat "$body")
+  rm -f "$hdr" "$body"
+}
+
+# check_error <label> <path> <status> <legacy plain-text body> <html title>
+check_error() {
+  local label="$1" path="$2" status="$3" text="$4" title="$5" accept
+  for accept in - "application/json"; do
+    errpage "$path" "$accept"
+    expect "$label: non-browser ($accept) keeps status $status" "$status" "$EP_STATUS"
+    expect "$label: non-browser ($accept) keeps the legacy body" "$text" "$EP_BODY"
+    contains "$label: non-browser ($accept) is text/plain" "^text/plain" "$EP_TYPE"
+    expect "$label: non-browser ($accept) is no-store" "no-store" "$EP_CACHE"
+  done
+  errpage "$path" "$HTML_ACCEPT"
+  expect "$label: browser keeps status $status" "$status" "$EP_STATUS"
+  expect "$label: browser gets text/html; charset=utf-8" "text/html; charset=utf-8" "$EP_TYPE"
+  contains "$label: browser page carries the branded title" "<h1>$title</h1>" "$EP_BODY"
+  contains "$label: browser page is a full document" "^<!doctype html>" "$EP_BODY"
+  contains "$label: browser page has a locked-down CSP" "default-src 'none'" "$EP_CSP"
+  expect "$label: browser page is no-store" "no-store" "$EP_CACHE"
+  expect "$label: browser page varies on Accept" "Accept" "$EP_VARY"
+  if echo "$EP_BODY" | grep -qiE '<script|<link|<img|src='; then
+    bad "$label: browser page loads no external asset or script" "$(echo "$EP_BODY" | head -c 300)"
+  else ok "$label: browser page loads no external asset or script"; fi
+  local bytes; bytes=$(printf '%s' "$EP_BODY" | wc -c | tr -d '[:space:]')
+  if [ "$bytes" -lt 4096 ]; then ok "$label: browser page is tiny ($bytes bytes)";
+  else bad "$label: browser page is tiny" "$bytes bytes"; fi
+}
+
+check_error "unknown slug" "$RUN-nope" 404 "No such link." "We couldn&#39;t find that link"
+check_error "expired, no fallback" "$RUN-expired-bare" 410 "This link has expired." "This link has expired"
+check_error "not yet live, no fallback" "$RUN-scheduled-bare" 404 "This link is not live yet." "This link isn&#39;t live yet"
+check_error "domain root" "" 404 "Nothing here." "Nothing here"
+
+# Retry-After survives in both variants for a scheduled link.
+errpage "$RUN-scheduled-bare" -;            expect "scheduled: plain keeps Retry-After" "Thu, 01 Jan 2099 00:00:00 GMT" "$EP_RETRY"
+errpage "$RUN-scheduled-bare" "$HTML_ACCEPT"; expect "scheduled: page keeps Retry-After" "Thu, 01 Jan 2099 00:00:00 GMT" "$EP_RETRY"
+contains "scheduled: page says when it goes live" "Thu, 01 Jan 2099 00:00:00 GMT</time>" "$EP_BODY"
+# The page shows the short link that was followed.
+errpage "$RUN-expired-bare" "$HTML_ACCEPT"
+contains "expired: page shows the followed short link" "<code>$LINK_DOMAIN/$RUN-expired-bare</code>" "$EP_BODY"
+
+# Click limit: the gate reads link_counters, which only the worker's rollup
+# writes. Seed the count directly where the DB is reachable and the redirect
+# reads Postgres (a projected backend would need a re-projection); elsewhere skip.
+if [ "$DB_AVAILABLE" -eq 1 ] && [ "${LINK_PROJECTION:-none}" != "dynamo" ] && [ -n "$LIMIT_ID" ]; then
+  dbq "insert into link_counters (link_id, clicks, unique_clicks) values ('$LIMIT_ID', 1, 1) on conflict (link_id) do update set clicks = 1, unique_clicks = 1" >/dev/null
+  check_error "click limit reached" "$RUN-limit" 410 "This link has reached its click limit." "This link has reached its click limit"
+else
+  skip "click-limit error page: needs direct DB access on a Postgres-read profile"
+fi
+
+# The only reflected values are HTML-escaped: a script-shaped slug is inert.
+errpage "$RUN-%3Cscript%3Ealert(1)%3C%2Fscript%3E" "$HTML_ACCEPT"
+expect "a script-shaped slug is still a 404" "404" "$EP_STATUS"
+if echo "$EP_BODY" | grep -q "<script>alert"; then
+  bad "a script-shaped slug is HTML-escaped on the page" "$(echo "$EP_BODY" | grep -o '<code>.*</code>')"
+else
+  contains "a script-shaped slug is HTML-escaped on the page" "&lt;script&gt;alert(1)&lt;/script&gt;" "$EP_BODY"
+fi
+
+# A browser following a LIVE link still gets a bare redirect, never a page.
+RH=$(curl -s -o /dev/null -D - -H "Accept: $HTML_ACCEPT" -H "User-Agent: $BROWSER_UA" "$RD/$RUN-plain" | tr -d '\r')
+contains "a browser following a live link still gets the 302" "^HTTP/[0-9.]* 302" "$RH"
+if echo "$RH" | grep -qi "content-type: *text/html"; then
+  bad "a browser's redirect is not an HTML page" "$(echo "$RH" | head -3)"
+else ok "a browser's redirect is not an HTML page"; fi
+
+echo
 echo "----------------------------------------"
 echo "  $PASSES passed, $FAILS failed"
 echo "----------------------------------------"
