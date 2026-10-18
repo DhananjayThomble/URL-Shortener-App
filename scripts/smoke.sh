@@ -57,6 +57,14 @@ BODY=$(curl -s "$API/workspaces/current" -H "Authorization: Bearer $ACCESS")
 check "workspace has the default domain" 'localhost:3002' "$BODY"
 check "workspace reports a currency (G7)" '"currency"' "$BODY"
 
+# #779 — an unknown default domain is a 400, and the WHOLE patch is refused.
+BODY=$(curl -s -X PATCH "$API/workspaces/current" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"defaultDomain":"not-mine.example","currency":"USD"}')
+check "unknown default domain is rejected (#779)" "isn't a domain in this workspace" "$BODY"
+BODY=$(curl -s "$API/workspaces/current" -H "Authorization: Bearer $ACCESS")
+check "a rejected patch keeps the default domain (#779)" 'localhost:3002' "$BODY"
+check "a rejected patch saves none of its other fields (#779)" '"currency":"INR"' "$BODY"
+
 echo
 echo "== links =="
 BODY=$(curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
