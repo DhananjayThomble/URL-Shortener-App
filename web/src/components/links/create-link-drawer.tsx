@@ -92,6 +92,23 @@ export function CreateLinkDrawer({
   const dirty = hasDirtyFields(formState.dirtyFields);
   const { confirming, requestClose, keepEditing, discard } = useDiscardGuard({ open, dirty, onClose, drawerRef });
 
+  /* A value the drawer chooses for the user (the workspace's back-half domain, its default
+     redirect type) once the workspace has loaded. While the form is still untouched it is
+     folded into the form's DEFAULTS, so it is the baseline and not a change: react-hook-form
+     re-derives every field's dirtiness from the whole form the moment any one field is edited,
+     so a value merely setValue()'d over a different default would count as "edited" — and then
+     typing something and deleting it again would still ask before closing (#761). If the user
+     has already typed (a slow workspace load) it is set in place, as before. */
+  const seedDefault = (patch: { domain: string } | { redirectType: NonNullable<CreateLinkFormValues["redirectType"]> }) => {
+    if (!dirty) {
+      reset({ ...getValues(), ...patch });
+    } else if ("domain" in patch) {
+      setValue("domain", patch.domain);
+    } else {
+      setValue("redirectType", patch.redirectType);
+    }
+  };
+
   // Only one tab's fields are mounted at a time, so a validation error on a
   // tab the user is not looking at would otherwise be invisible (#645: the
   // submit just did nothing). Surface which tabs hold errors.
@@ -209,7 +226,9 @@ export function CreateLinkDrawer({
   useEffect(() => {
     if (workspacePending || getValues("domain")) return;
     const chosen = defaultDomainFor(domains, workspace?.defaultDomain);
-    if (chosen) setValue("domain", chosen);
+    if (chosen) seedDefault({ domain: chosen });
+    // `seedDefault` only closes over stable form methods and the latest `dirty`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, domains, domain, workspace, workspacePending, getValues, setValue]);
 
   // #753 — preselect the workspace's "Default redirect type" ("Applies to new
@@ -220,9 +239,10 @@ export function CreateLinkDrawer({
     if (!open || workspacePending || redirectSeeded.current) return;
     redirectSeeded.current = true;
     const seeded = seededRedirectType(workspace?.defaultRedirect, getFieldState("redirectType", formState).isDirty);
-    if (seeded) setValue("redirectType", seeded);
+    if (seeded) seedDefault({ redirectType: seeded });
     // `formState` is passed to getFieldState so dirtiness is subscribed; it may
     // be a new proxy each render, which only re-runs this cheap guarded check.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, workspace, workspacePending, getFieldState, formState, setValue]);
 
   // `useMutation` returns a brand-new result object on every render (its
