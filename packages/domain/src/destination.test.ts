@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REDIRECT_STATUS, buildDestination, cacheHeadersFor, deriveStatus } from "./destination.js";
+import { REDIRECT_STATUS, buildDestination, cacheHeadersFor, deriveStatus, lifecycleGate } from "./destination.js";
 import { isBot, parseBrowser, parseDevice, parseLanguage, parseReferrerHost, visitorHash } from "./visitor.js";
 import { RESERVED_SLUGS, generateSlug, isSlugAvailableShape } from "./slug.js";
 
@@ -255,5 +255,57 @@ describe("slugs", () => {
 
   it("explains itself when it says no", () => {
     expect(isSlugAvailableShape("login").reason).toContain("reserved");
+  });
+});
+
+/* #764 — the redirect's lifecycle verdict, shared with the public preview. */
+describe("lifecycleGate", () => {
+  const now = new Date("2026-06-15T12:00:00Z");
+  const past = "2026-06-14T12:00:00Z";
+  const future = "2026-06-16T12:00:00Z";
+
+  it("lets a plain link through", () => {
+    expect(lifecycleGate({ archived: false }, now)).toBeNull();
+  });
+
+  it("lets through a link that expires later and has started", () => {
+    expect(lifecycleGate({ archived: false, expiresAt: future, activatesAt: past }, now)).toBeNull();
+  });
+
+  it("reports archived above everything else", () => {
+    expect(lifecycleGate({ archived: true, expiresAt: past, clickLimit: 1, clicks: 5, activatesAt: future }, now)).toBe(
+      "archived",
+    );
+  });
+
+  it("reports expired at exactly the expiry instant, as the redirect does", () => {
+    expect(lifecycleGate({ archived: false, expiresAt: now }, now)).toBe("expired");
+  });
+
+  it("keeps a reached click limit apart from a date expiry, since only the date has a fallback", () => {
+    expect(lifecycleGate({ archived: false, clickLimit: 10, clicks: 10 }, now)).toBe("click_limit");
+    expect(lifecycleGate({ archived: false, clickLimit: 10, clicks: 9 }, now)).toBeNull();
+    expect(lifecycleGate({ archived: false, clickLimit: 0 }, now)).toBe("click_limit");
+  });
+
+  it("puts a passed expiry before a reached limit, the redirect's order", () => {
+    expect(lifecycleGate({ archived: false, expiresAt: past, clickLimit: 1, clicks: 1 }, now)).toBe("expired");
+  });
+
+  it("reports scheduled until the start instant, then lets it through", () => {
+    expect(lifecycleGate({ archived: false, activatesAt: future }, now)).toBe("scheduled");
+    expect(lifecycleGate({ archived: false, activatesAt: now }, now)).toBeNull();
+  });
+
+  it("puts a reached limit before a future start", () => {
+    expect(lifecycleGate({ archived: false, activatesAt: future, clickLimit: 0 }, now)).toBe("click_limit");
+  });
+
+  it("accepts Date objects as the redirect resolver hands them over", () => {
+    expect(lifecycleGate({ archived: false, expiresAt: new Date(past) }, now)).toBe("expired");
+  });
+
+  it("ignores an unparseable date rather than blocking the link", () => {
+    expect(lifecycleGate({ archived: false, expiresAt: "not a date" }, now)).toBeNull();
   });
 });

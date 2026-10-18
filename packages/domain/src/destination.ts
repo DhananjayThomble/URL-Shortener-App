@@ -106,6 +106,41 @@ export function deriveStatus(link: {
   return "active";
 }
 
+/** Why the redirect refuses to send a visitor to a link's destination. */
+export type LifecycleGate = "archived" | "expired" | "click_limit" | "scheduled";
+
+/**
+ * The redirect's lifecycle gates, in the order the redirect applies them.
+ *
+ * Not `deriveStatus`: that is the dashboard's label, which folds a reached
+ * click limit into "expired" and adds "expiring". This is what a visitor
+ * actually gets, and the two places that must agree on it — the redirect, and
+ * the public "+" preview that tells a visitor what they will get (#764) — both
+ * call it, so the preview cannot say "safe to open" about a link the redirect
+ * answers with 410.
+ *
+ * Safe Browsing is not here. The redirect checks a flag between archived and
+ * expired; it is a property of the destination, not of the link's life, and
+ * the preview already reports it on its own.
+ */
+export function lifecycleGate(link: {
+  archived: boolean;
+  expiresAt?: Date | string | null;
+  activatesAt?: Date | string | null;
+  clickLimit?: number | null;
+  clicks?: number;
+}, now: Date = new Date()): LifecycleGate | null {
+  if (link.archived) return "archived";
+  const expires = asDate(link.expiresAt);
+  if (expires && expires.getTime() <= now.getTime()) return "expired";
+  /* The count is the last rollup's, so a hard cap can be overshot by a
+     handful under concurrency (see the redirect's own note). */
+  if (link.clickLimit != null && (link.clicks ?? 0) >= link.clickLimit) return "click_limit";
+  const activates = asDate(link.activatesAt);
+  if (activates && activates.getTime() > now.getTime()) return "scheduled";
+  return null;
+}
+
 /**
  * Check that a link's live window makes sense.
  *
