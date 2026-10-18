@@ -283,6 +283,8 @@ for (const vp of viewports) {
       expect(await errorText(drawer)).toMatch(PAST_MESSAGE);
 
       await drawer.getByRole("button", { name: "Close" }).click();
+      // The drawer holds an unsaved past date: closing asks (#761); this test is about what a re-open shows.
+      await page.getByRole("alertdialog", { name: "Discard your changes?" }).getByRole("button", { name: "Discard", exact: true }).click();
       await expect(drawer).toBeHidden();
       const again = await openEdit(page);
       expect(await errorText(again)).toBeNull();

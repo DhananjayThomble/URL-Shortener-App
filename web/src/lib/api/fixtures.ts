@@ -5,6 +5,7 @@ import { EXPIRY_SKEW_TOLERANCE_MS, validateExpiry } from "@snapurl/domain/expiry
 import { describeAuditAction, type AuditAction } from "@snapurl/domain/audit";
 // The subpath, not the barrel: the barrel pulls node:crypto into the browser bundle.
 import { lifecycleGate } from "@snapurl/domain/destination";
+import { initialsOf } from "@snapurl/domain/initials";
 import type {
   AbuseReport,
   Analytics,
@@ -1301,7 +1302,7 @@ export async function fixtureRequest<T>(
     if (existing) {
       const wasLive = existing.status === "live";
       Object.assign(existing, { status: body.status, blocks });
-      existing.profile = { ...existing.profile, name: body.profile.name, bio: body.profile.bio };
+      existing.profile = { name: body.profile.name, bio: body.profile.bio, initials: initialsOf(body.profile.name) };
       const nowLive = body.status === "live";
       recordAudit(
         nowLive && !wasLive ? "bio_page.published" : !nowLive && wasLive ? "bio_page.unpublished" : "bio_page.updated",
@@ -1320,7 +1321,7 @@ export async function fixtureRequest<T>(
         profile: {
           name: body.profile.name,
           bio: body.profile.bio,
-          initials: body.profile.name.slice(0, 2).toUpperCase(),
+          initials: initialsOf(body.profile.name),
         },
       };
       bioStore.unshift(page);

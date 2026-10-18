@@ -225,6 +225,8 @@ for (const vp of viewports) {
 
       // Close without saving, re-open: the unsaved edit is gone, the saved tags are back.
       await drawer.getByRole("button", { name: "Close" }).click();
+      // The drawer holds an unsaved tag: closing asks (#761); this test is about what a re-open shows.
+      await page.getByRole("alertdialog", { name: "Discard your changes?" }).getByRole("button", { name: "Discard", exact: true }).click();
       await expect(drawer).toBeHidden();
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await expect(tagsInput(page.getByRole("dialog", { name: new RegExp(`Edit .+/${SLUG}`) }))).toHaveValue("alpha");

@@ -2,10 +2,10 @@
 
 import { useEffect, useRef } from "react";
 import { Card, CardBody, Skeleton } from "@/components/ui";
+import { BioPageCard } from "@/components/bio/bio-page-card";
 import type { PublicBioPage } from "@snapurl/contract";
 import type { UseQueryResult } from "@tanstack/react-query";
 
-const BLOCK_ICON: Record<string, string> = { embed: "▶", email: "✉", social: "◈" };
 
 /* The shareable end of a bio page (#650).
 
@@ -73,62 +73,10 @@ export function BioPageView({
   }
 
   const p = page.data;
-  const links = p.blocks.filter((b) => b.kind !== "header");
 
   return (
     <main className="max-w-[560px] mx-auto px-6 py-[60px]">
-      <Card>
-        <CardBody className="flex flex-col gap-5 items-center text-center">
-          <div
-            aria-hidden="true"
-            className="w-[64px] h-[64px] rounded-full bg-accent-wash text-accent font-display font-bold text-[22px] flex items-center justify-center"
-          >
-            {p.profile.initials}
-          </div>
-          <header>
-            <h1 className="font-display text-[22px] font-bold tracking-[-0.02em] m-0">{p.profile.name}</h1>
-            {p.profile.bio ? (
-              <p className="text-[13.5px] text-ink-2 mt-1.5 mb-0 leading-[1.6]">{p.profile.bio}</p>
-            ) : null}
-          </header>
-
-          {links.length ? (
-            <nav className="w-full flex flex-col gap-2.5">
-              {links.map((block, i) =>
-                block.href ? (
-                  <a
-                    key={block.id ?? i}
-                    href={block.href}
-                    rel="noopener"
-                    onClick={() => recordClick(block.id)}
-                    className="w-full px-4 py-3 rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[14px] font-medium text-ink hover:border-accent hover:bg-surface transition-colors no-underline"
-                  >
-                    {BLOCK_ICON[block.kind] ? <span aria-hidden="true">{BLOCK_ICON[block.kind]} </span> : null}
-                    {block.title}
-                    {block.subtitle ? (
-                      <span className="block text-[12px] font-normal text-ink-3 mt-0.5">{block.subtitle}</span>
-                    ) : null}
-                  </a>
-                ) : (
-                  <div
-                    key={block.id ?? i}
-                    className="w-full px-4 py-3 rounded-[var(--radius-sm)] bg-surface-2 border border-line-2 text-[14px] font-medium text-ink-2"
-                  >
-                    {block.title}
-                    {block.subtitle ? (
-                      <span className="block text-[12px] font-normal text-ink-3 mt-0.5">{block.subtitle}</span>
-                    ) : null}
-                  </div>
-                ),
-              )}
-            </nav>
-          ) : null}
-
-          <p className="text-[11.5px] text-ink-3 leading-[1.55] m-0 pt-1 border-t border-line w-full">
-            Built with SnapURL. No cookies are set by this page.
-          </p>
-        </CardBody>
-      </Card>
+      <BioPageCard profile={p.profile} blocks={p.blocks} onBlockClick={recordClick} />
     </main>
   );
 }
