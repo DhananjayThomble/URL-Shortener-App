@@ -9,6 +9,7 @@ import { useCloneLink, useUpdateLink } from "@/lib/api/hooks";
 import type { Link, LinkStatus } from "@/lib/api/types";
 import { lifecycleSummary } from "@/lib/link-lifecycle";
 import { isRepeatClick, toastCopy } from "@/lib/toasts";
+import { plural } from "@/lib/plural";
 import { cn, compact, copy, faviconFor, formatDate, relativeDate, shortUrlHref } from "@/lib/utils";
 
 const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; label: (l: Link) => string }> = {
@@ -17,7 +18,7 @@ const STATUS: Record<LinkStatus, { tone: "good" | "warn" | "bad" | "default"; la
     tone: "warn",
     label: (l) => (l.activatesAt ? `Live ${formatDate(l.activatesAt)}` : "Scheduled"),
   },
-  expiring: { tone: "warn", label: (l) => (l.clickLimit ? `${compact(l.clicks)} of ${compact(l.clickLimit)} clicks used` : "Expiring") },
+  expiring: { tone: "warn", label: (l) => (l.clickLimit ? `${compact(l.clicks)} of ${plural(l.clickLimit, "click", { format: compact })} used` : "Expiring") },
   expired: { tone: "bad", label: (l) => (l.expiresAt ? `Expired ${formatDate(l.expiresAt)}` : "Expired") },
   archived: { tone: "default", label: () => "Archived" },
 };
