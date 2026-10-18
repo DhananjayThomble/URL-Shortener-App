@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { Controller, type Control, type FieldErrors, type UseFormRegister, type UseFormWatch } from "react-hook-form";
 import { Button, Field, Input, SectionLabel, Segmented, Toggle } from "@/components/ui";
 import { QrPreview } from "@/components/qr/qr-preview";
 import { RoutingRulesEditor } from "@/components/links/routing-rules-editor";
 import type { CreateLinkFormValues, RedirectType } from "@/lib/api/types";
 import { dateInputToIso, isoToDateInput } from "@/components/links/link-form-values";
+import { formatTags, parseTags, reconcileTagsText } from "@/lib/tags-input";
 
 export { blankOptionalUrlsToUndefined } from "@/components/links/link-form-values";
 
@@ -23,6 +25,42 @@ export { blankOptionalUrlsToUndefined } from "@/components/links/link-form-value
  * would 404 every already-printed/shared copy of the old one (see the
  * comment on UpdateLinkInput in packages/contract).
  * ============================================================ */
+
+/* The Tags field (#752). It shows the text the user TYPED and publishes the parsed
+   list as the form value — it must not be controlled from the parsed array, or
+   a typed "," (parsed to an empty entry and filtered out) snaps straight back
+   out of the input. See web/src/lib/tags-input.ts. */
+function TagsInput({
+  id,
+  value,
+  onChange,
+  onBlur,
+}: {
+  id: string;
+  value: string[] | undefined;
+  onChange: (tags: string[]) => void;
+  onBlur: () => void;
+}) {
+  const [text, setText] = useState(() => formatTags(value));
+  /* Still describes the form value? Keep it exactly as typed. Otherwise the form
+     was reset or opened on another link while this was mounted: show its value. */
+  const shown = reconcileTagsText(text, value);
+  return (
+    <Input
+      id={id}
+      value={shown}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(parseTags(e.target.value));
+      }}
+      onBlur={() => {
+        setText(formatTags(value)); // tidy "a,, b ," into "a, b" once the user leaves the field
+        onBlur();
+      }}
+      placeholder="campaign/spring, social"
+    />
+  );
+}
 
 export const EDIT_TABS = [
   { id: "dest", label: "Destination" },
@@ -99,19 +137,7 @@ export function LinkFormFields({
                 control={control}
                 name="tags"
                 render={({ field }) => (
-                  <Input
-                    id={`${idPrefix}-tags`}
-                    value={field.value?.join(", ") ?? ""}
-                    onChange={(e) =>
-                      field.onChange(
-                        e.target.value
-                          .split(",")
-                          .map((t) => t.trim())
-                          .filter(Boolean),
-                      )
-                    }
-                    placeholder="campaign/spring, social"
-                  />
+                  <TagsInput id={`${idPrefix}-tags`} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
                 )}
               />
             </Field>
