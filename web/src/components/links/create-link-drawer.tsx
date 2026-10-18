@@ -5,8 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button, Field, Input } from "@/components/ui";
 import { useToast } from "@/components/ui/toast";
-import { EDIT_TABS as TABS, blankOptionalUrlsToUndefined, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
-import { tabsWithErrors } from "@/components/links/link-form-values";
+import { EDIT_TABS as TABS, LinkFormFields, type LinkFormTabId } from "@/components/links/link-form-fields";
+import { normalizeLinkFormValues, tabsWithErrors } from "@/components/links/link-form-values";
 import { useCreateLink, useDomains, useWorkspace } from "@/lib/api/hooks";
 import { defaultDomainFor, domainOptionLabel, isUsableForLinks } from "@/lib/domain-choice";
 import { seededRedirectType } from "@/lib/new-link-redirect-type";
@@ -74,12 +74,13 @@ export function CreateLinkDrawer({
 
   const form = useForm<CreateLinkFormValues, unknown, CreateLinkInput>({
     // Wraps zodResolver so an untouched expiresTo/scheduledTo ("" — see
-    // blankOptionalUrlsToUndefined's docblock) is treated as "not set"
+    // blankOptionalUrlsToUndefined's docblock) is treated as "not set", and a URL
+    // whose date switch is off is dropped (#759, normalizeLinkFormValues), all
     // before CreateLinkInput, unmodified, validates the rest. It also refuses
     // an expiry that has already passed (#754): that needs "now", so it is the
     // shared domain rule (expiryProblem), not a contract shape check.
     resolver: async (values, context, options) => {
-      const result = await zodResolver(CreateLinkInput)(blankOptionalUrlsToUndefined(values), context, options);
+      const result = await zodResolver(CreateLinkInput)(normalizeLinkFormValues(values), context, options);
       const expiry = expiryProblem(values.expiresAt, { mode: "create", original: null });
       if (!expiry) return result;
       return { values: {}, errors: { ...result.errors, expiresAt: { type: "validate", message: expiry } } };
@@ -362,6 +363,7 @@ export function CreateLinkDrawer({
               control={control}
               watch={watch}
               formState={formState}
+              clearErrors={form.clearErrors}
               qrValue={shortUrlHref(domain, slug || "your-slug")}
               showBackHalf={
                 <Field
