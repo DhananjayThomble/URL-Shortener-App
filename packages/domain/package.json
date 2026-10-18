@@ -21,6 +21,10 @@
     "./destination": {
       "types": "./dist/destination.d.ts",
       "default": "./dist/destination.js"
+    },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "default": "./dist/audit.js"
     }
   },
   "files": [
