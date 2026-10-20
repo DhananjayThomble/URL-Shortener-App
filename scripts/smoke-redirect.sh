@@ -654,11 +654,14 @@ contains "scheduled: page says when it goes live" "Thu, 01 Jan 2099 00:00:00 GMT
 errpage "$RUN-expired-bare" "$HTML_ACCEPT"
 contains "expired: page shows the followed short link" "<code>$LINK_DOMAIN/$RUN-expired-bare</code>" "$EP_BODY"
 
-# Click limit: the gate reads link_counters, which only the worker's rollup
-# writes. Seed the count directly where the DB is reachable and the redirect
-# reads Postgres (a projected backend would need a re-projection); elsewhere skip.
+# Click limit: since #763 the gate for a limited link reads the ATOMIC
+# link_counters.reserved counter, not the rollup's clicks. Seed reserved at the
+# link's limit (clickLimit:1 above) so the next click is refused by the atomic
+# reserve, where the DB is reachable and the redirect reads Postgres (a projected
+# backend would need a re-projection); elsewhere skip. clicks/unique_clicks are
+# left seeded too so the dashboard count still reads sensibly.
 if [ "$DB_AVAILABLE" -eq 1 ] && [ "${LINK_PROJECTION:-none}" != "dynamo" ] && [ -n "$LIMIT_ID" ]; then
-  dbq "insert into link_counters (link_id, clicks, unique_clicks) values ('$LIMIT_ID', 1, 1) on conflict (link_id) do update set clicks = 1, unique_clicks = 1" >/dev/null
+  dbq "insert into link_counters (link_id, clicks, unique_clicks, reserved) values ('$LIMIT_ID', 1, 1, 1) on conflict (link_id) do update set clicks = 1, unique_clicks = 1, reserved = 1" >/dev/null
   check_error "click limit reached" "$RUN-limit" 410 "This link has reached its click limit." "This link has reached its click limit"
 else
   skip "click-limit error page: needs direct DB access on a Postgres-read profile"
