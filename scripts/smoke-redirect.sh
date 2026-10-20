@@ -641,7 +641,16 @@ check_error() {
   contains "$label: browser page is a full document" "^<!doctype html>" "$EP_BODY"
   contains "$label: browser page has a locked-down CSP" "default-src 'none'" "$EP_CSP"
   expect "$label: browser page is no-store" "no-store" "$EP_CACHE"
-  expect "$label: browser page varies on Accept" "Accept" "$EP_VARY"
+  # NB: we do NOT assert `Vary: Accept` at the edge. The origin sets it
+  # (apps/redirect/src/error-page.ts) and that is covered by the unit test
+  # apps/redirect/src/error-page.test.ts ("both variants ... vary on Accept").
+  # But these are 4xx/5xx responses, which CloudFront serves through its
+  # error path (x-cache: "Error from cloudfront") and strips arbitrary origin
+  # response headers like Vary from. Asserting it here tests a CDN behavior
+  # that does not exist for error responses -- and it is moot regardless,
+  # since every one of these responses is Cache-Control: no-store, so no cache
+  # exists for Vary to protect. Content negotiation itself is still asserted
+  # above (text/html for browsers vs text/plain for non-browsers).
   if echo "$EP_BODY" | grep -qiE '<script|<link|<img|src='; then
     bad "$label: browser page loads no external asset or script" "$(echo "$EP_BODY" | head -c 300)"
   else ok "$label: browser page loads no external asset or script"; fi
