@@ -23,7 +23,7 @@ import {
 } from "./helpers";
 
 test.describe("Journey 6 — Bio page", () => {
-  test("create a bio page as draft, publish it, verify live in API", async ({ page }) => {
+  test("create a bio page as draft, publish it, verify live in API @mobile", async ({ page }) => {
     /* ---- Setup ---- */
     const session = await registerUser(makeEmail("j6"));
     await seedAccount(page, session);
@@ -132,12 +132,30 @@ test.describe("Journey 6 — Bio page", () => {
     expect(((await perDomainRes.json()) as { profile: { name: string } }).profile.name).toBe("J6 Journey Bio");
 
     // The managed link is NOT in the user's links list (read-only infrastructure).
-    const linksRes = await fetch(`${API_URL}/links?limit=200`, {
-      headers: { authorization: `Bearer ${session.accessToken}` },
-    });
-    const linksBody = (await linksRes.json()) as { items: Array<{ slug: string; destination: string }> };
+    // GET /links caps `limit` at 100 (ListLinksQuery) and answers 400 above it,
+    // so walk every page with the cursor and assert each response is OK before
+    // reading `items` (#845). Absence is only proven once the whole list is read.
+    const listedSlugs: string[] = [];
+    let cursor: string | null | undefined;
+    let pages = 0;
+    do {
+      const qs = new URLSearchParams({ limit: "100" });
+      if (cursor) qs.set("cursor", cursor);
+      const linksRes = await fetch(`${API_URL}/links?${qs.toString()}`, {
+        headers: { authorization: `Bearer ${session.accessToken}` },
+      });
+      expect(linksRes.ok, `GET /links?${qs.toString()} should succeed (got ${linksRes.status})`).toBe(true);
+      const linksBody = (await linksRes.json()) as {
+        items: Array<{ slug: string; destination: string }>;
+        nextCursor?: string | null;
+      };
+      listedSlugs.push(...linksBody.items.map((l) => l.slug));
+      cursor = linksBody.nextCursor;
+      pages += 1;
+    } while (cursor && pages < 50);
+    expect(cursor ?? null, "the links list should be fully paged").toBeNull();
     expect(
-      linksBody.items.some((l) => l.slug === slug),
+      listedSlugs.includes(slug),
       "the managed bio link must not appear in the links list",
     ).toBe(false);
 
@@ -161,6 +179,9 @@ test.describe("Journey 6 — Bio page", () => {
     // The block is a real link to its destination. Clicking it is counted
     // (keepalive POST) before the browser leaves; stub the destination so the
     // test does not depend on the internet.
+    // 9d left anonPage on the 404 page; go back to the live page (the block
+    // link is only there). The same tab already counted its view in 9b.
+    await anonPage.goto(`/b/${slug}`, { waitUntil: "networkidle", timeout: 15_000 });
     await anonPage.route("https://example.com/**", (route) => route.fulfill({ body: "ok" }));
     const link = anonPage.getByRole("link", { name: "J6 destination" });
     await expect(link).toHaveAttribute("href", "https://example.com/j6");
@@ -176,12 +197,15 @@ test.describe("Journey 6 — Bio page", () => {
     /* ---- 10. The workspace sees the view and the click ---- */
     // Invariant: one visit is one view; one click on a block is one click on
     // that block. Only counters — the public shape still carries neither.
+    // This journey loads the live page three times (9b slug alias, 9c per-domain
+    // route, and the re-load just before the click), so three views are expected.
+    const PUBLIC_PAGE_VISITS = 3;
     await expect
       .poll(async () => {
         const res = await fetch(`${API_URL}/bio-pages`, { headers: { authorization: `Bearer ${session.accessToken}` } });
         const p = ((await res.json()) as ApiBioPage[]).find((x) => x.slug === slug);
         return [p?.views, p?.blocks[0]?.metric];
       })
-      .toEqual([1, "1 click"]);
+      .toEqual([PUBLIC_PAGE_VISITS, "1 click"]);
   });
 });
