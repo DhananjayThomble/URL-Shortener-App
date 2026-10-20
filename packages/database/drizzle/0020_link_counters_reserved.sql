@@ -1,0 +1,13 @@
+-- #763: the atomic click-limit reservation counter.
+--
+-- `clicks` in this table is the rollup's view (recomputed every minute, further
+-- frozen by the redirect's hot-link cache), so a burst against a small
+-- clickLimit overshoots the hard cap before the rollup catches up. `reserved`
+-- is maintained on the redirect hot path, atomically and ONLY for links that
+-- have a clickLimit set, so the (limit+1)th click is refused with no
+-- stale-cache window. Links without a clickLimit never touch this column.
+--
+-- A constant DEFAULT on ADD COLUMN is a catalogue-only change on PostgreSQL 11+
+-- (no full-table rewrite), so this takes only a brief lock even on a hot table.
+-- The rollup upsert sets only clicks/unique_clicks, so it never clobbers this.
+ALTER TABLE "link_counters" ADD COLUMN "reserved" integer DEFAULT 0 NOT NULL;
