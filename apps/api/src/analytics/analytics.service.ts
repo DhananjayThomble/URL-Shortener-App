@@ -44,10 +44,21 @@ export class AnalyticsService {
     const days = RANGE_DAYS[query.range] ?? 30;
     const { start, previousStart } = windowFor(days);
 
+    // #770 — 24h is the one range the daily rollup cannot serve: it has no
+    // sub-day resolution, so one bucket over the day drew a single flat point.
+    // For 24h ONLY we read an HOURLY series straight off click_events over a
+    // rolling 24-hour window; every other range keeps the daily rollup path
+    // unchanged. The totals/deltas/breakdowns below still come from the rollup
+    // and are unaffected — only the time SERIES gains hourly resolution.
+    const hourly = query.range === "24h";
+    const hourlyStart = hourWindowStart();
+
     const [current, previous, series] = await Promise.all([
       this.reader.totals(workspaceId, query.linkId, start),
       this.reader.previousTotals(workspaceId, query.linkId, previousStart, start),
-      this.reader.series(workspaceId, query.linkId, start),
+      hourly
+        ? this.reader.hourlySeries(workspaceId, query.linkId, hourlyStart)
+        : this.reader.series(workspaceId, query.linkId, start),
     ]);
 
     const [countries, cityRows, devices, browsers, referrers] = await Promise.all([
@@ -92,7 +103,10 @@ export class AnalyticsService {
         scans: percentChange(previous.scans, current.scans),
         conversions: percentChange(previousConversions, conversionCount),
       },
-      series: fillSeries(series as TimeseriesPoint[], start, days),
+      series: hourly
+        ? fillHourly(series as TimeseriesPoint[], hourlyStart)
+        : fillSeries(series as TimeseriesPoint[], start, days),
+      granularity: hourly ? "hour" : "day",
       countries: topN(countries).map((c) => ({
         label: COUNTRY_NAMES[c.label] ?? c.label,
         value: c.value,
@@ -164,6 +178,24 @@ export function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** #770 — the HOURLY bucket key, `YYYY-MM-DDTHH:00` in UTC, matching the
+ *  reader's to_char() output so a seeded hour and a filled hour collide on the
+ *  same key. */
+export function isoHour(d: Date): string {
+  return d.toISOString().slice(0, 13) + ":00";
+}
+
+/** #770 — the start of the rolling 24h window: the top of the current UTC hour,
+ *  minus 23 hours, giving exactly 24 hourly buckets ending at the current hour.
+ *  Truncating to the hour is what makes the zero-fill keys line up with the
+ *  reader's hour-truncated rows. */
+export function hourWindowStart(now: Date = new Date()): Date {
+  const start = new Date(now);
+  start.setUTCMinutes(0, 0, 0);
+  start.setUTCHours(start.getUTCHours() - 23);
+  return start;
+}
+
 /** The previous window is the same length immediately before, so a 30-day
  *  delta compares against the 30 days before that, not against a calendar month. */
 export function windowFor(days: number) {
@@ -187,6 +219,21 @@ export function fillSeries(rows: TimeseriesPoint[], start: Date, days: number): 
     d.setUTCDate(d.getUTCDate() + i);
     const key = iso(d);
     out.push(byDate.get(key) ?? { date: key, clicks: 0, unique: 0, scans: 0 });
+  }
+  return out;
+}
+
+/** #770 — zero-fill the 24 hourly buckets of the rolling 24h window, so the
+ *  chart's x-axis is a continuous 24-hour line rather than a gap-jumping one.
+ *  Same shape as fillSeries, keyed on the hour instead of the day. */
+export function fillHourly(rows: TimeseriesPoint[], start: Date): TimeseriesPoint[] {
+  const byHour = new Map(rows.map((r) => [r.date, r]));
+  const out: TimeseriesPoint[] = [];
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(start);
+    d.setUTCHours(d.getUTCHours() + i);
+    const key = isoHour(d);
+    out.push(byHour.get(key) ?? { date: key, clicks: 0, unique: 0, scans: 0 });
   }
   return out;
 }
