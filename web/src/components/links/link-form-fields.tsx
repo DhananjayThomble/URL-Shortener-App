@@ -221,7 +221,7 @@ export function LinkFormFields({
           </div>
 
           <Field label={<>Comment <span className="font-normal text-ink-3">optional</span></>}>
-            <Input {...register("comment")} placeholder="What is this link for? Your team will thank you." />
+            <Input {...register("comment")} maxLength={280} placeholder="What is this link for? Your team will thank you." />
           </Field>
         </div>
       )}

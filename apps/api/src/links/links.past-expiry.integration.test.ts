@@ -137,11 +137,15 @@ describeDb("past expiry dates are refused on create, bulk create and edit (#754)
 
     it("an unparseable date is a 400 naming the field, not a 500", async () => {
       expect(() => createPipe.transform(body({ expiresAt: "not-a-date" }))).toThrow(BadRequestException);
+      let body400: { message: string[]; issues: Array<{ path: string; message: string }> } | undefined;
       try {
         createPipe.transform(body({ activatesAt: "not-a-date" }));
       } catch (e) {
-        expect(((e as BadRequestException).getResponse() as { message: string[] }).message[0]).toMatch(/^activatesAt: .*valid date/i);
+        body400 = (e as BadRequestException).getResponse() as typeof body400;
       }
+      // #792: the field is still named, but in issues[].path — the message itself is a plain sentence.
+      expect(body400?.issues).toEqual([{ path: "activatesAt", message: "Enter a valid date." }]);
+      expect(body400?.message).toEqual(["Enter a valid date."]);
     });
 
     it("a past expiry with a later go-live date reports both problems in one 400", async () => {
@@ -173,7 +177,8 @@ describeDb("past expiry dates are refused on create, bulk create and edit (#754)
       const result = await controller.bulkCreate(ws.actor, bulkPipe.transform({ links: rows }) as BulkCreateLinksInput);
       expect(result.created).toBe(1);
       expect(result.results[0]!.ok).toBe(false);
-      if (!result.results[0]!.ok) expect(result.results[0]!.error).toMatch(/expiresAt: .*valid date/i);
+      // #792: no `expiresAt: ` path in front of the sentence.
+      if (!result.results[0]!.ok) expect(result.results[0]!.error).toBe("Enter a valid date.");
       expect(result.results[1]!.ok).toBe(true);
     });
   });

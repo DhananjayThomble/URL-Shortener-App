@@ -9,17 +9,30 @@ import { z } from "zod";
 import { AuthShell, SessionCheck } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
 import { Button, Field, Input } from "@/components/ui";
+import { plural } from "@/lib/plural";
 import { useRedirectIfSignedIn, useRegister } from "@/lib/api/hooks";
 import { signedInTarget, withNext } from "@/lib/safe-next";
 
+/* Length limits mirror RegisterInput in @snapurl/contract and are also set as
+   `maxLength` on the inputs below (#792): without them a 90-character name
+   passed this form and came back as a raw server validation message. */
+const NAME_MAX = 80;
+const PASSWORD_MAX = 200;
+
 const Schema = z.object({
-  name: z.string().min(2, "What should we call you?"),
+  name: z
+    .string()
+    .min(2, "What should we call you?")
+    .max(NAME_MAX, `Name must be ${plural(NAME_MAX, "character")} or fewer`),
   email: z.string().min(1, "Enter your email address").email("That doesn't look like an email address"),
   // Must match RegisterInput in @snapurl/contract. When this said 8, an
   // 8-character password passed client validation and then failed with a 400
   // from the API — the user saw a server error for something the form had
   // already told them was fine.
-  password: z.string().min(12, "Use at least 12 characters — length beats complexity"),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters — length beats complexity")
+    .max(PASSWORD_MAX, `Password must be ${plural(PASSWORD_MAX, "character")} or fewer`),
 });
 type Values = z.infer<typeof Schema>;
 
@@ -76,13 +89,13 @@ function RegisterForm() {
           (#794), so a form showed two styles at once. */}
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-3.5">
         <Field label="Name" error={formState.errors.name?.message}>
-          <Input {...register("name")} autoComplete="name" placeholder="Priya Raman" />
+          <Input {...register("name")} autoComplete="name" placeholder="Priya Raman" maxLength={NAME_MAX} />
         </Field>
         <Field label="Email" error={formState.errors.email?.message}>
           <Input {...register("email")} type="email" autoComplete="email" placeholder="you@company.com" />
         </Field>
         <Field label="Password" help="At least 12 characters." error={formState.errors.password?.message}>
-          <Input {...register("password")} type="password" autoComplete="new-password" placeholder="••••••••" />
+          <Input {...register("password")} type="password" autoComplete="new-password" placeholder="••••••••" maxLength={PASSWORD_MAX} />
         </Field>
         {signup.isError ? <p className="text-[12.5px] text-bad m-0">{(signup.error as Error).message}</p> : null}
         <Button type="submit" variant="primary" size="lg" className="justify-center" disabled={signup.isPending}>
