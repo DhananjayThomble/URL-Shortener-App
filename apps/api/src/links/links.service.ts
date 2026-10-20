@@ -596,6 +596,13 @@ export class LinksService {
         }
       : undefined;
 
+    /* Expiry (#812). Omitting the override inherits the source's window as a
+       clone always did; supplying a value (or explicit null) replaces it. The
+       RESOLVED value — not the raw source — is what insert() validates on the
+       clone path, so an already-passed source expiry can no longer produce a
+       born-expired clone: the caller must supply a future expiry or null. */
+    const resolvedExpiresAt = input.expiresAt !== undefined ? input.expiresAt : (source.expiresAt ?? null);
+
     return this.insert(
       workspaceId,
       actor,
@@ -609,7 +616,7 @@ export class LinksService {
         comment: source.comment ?? undefined,
         redirectType: source.redirectType,
         rules: source.rules ?? [],
-        expiresAt: source.expiresAt ?? null,
+        expiresAt: resolvedExpiresAt,
         expiresTo: source.expiresTo ?? null,
         activatesAt: source.activatesAt ?? null,
         scheduledTo: source.scheduledTo ?? null,
@@ -646,9 +653,12 @@ export class LinksService {
       ...validateRoutingChain(input.rules),
       ...validateSchedule(input.activatesAt, input.expiresAt),
       /* #754: a new link whose expiry has already passed is born expired.
-         Not applied to a clone, which copies its source's window as it
-         stands and has no field to change it — see #812. */
-      ...(clonedFrom ? [] : validateExpiry(input.expiresAt)),
+         #812: a clone is judged too, against the RESOLVED expiry clone()
+         handed us (its override, or the inherited source window). The override
+         is why this is now safe to apply — a legitimately future expiry still
+         clones, but an already-passed one is refused instead of producing a
+         born-expired copy. */
+      ...validateExpiry(input.expiresAt),
     ];
     if (problems.length) throw new BadRequestException({ statusCode: 400, error: "Bad Request", message: problems });
 
