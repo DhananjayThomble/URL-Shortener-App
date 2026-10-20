@@ -54,6 +54,26 @@ export function LinkRow({
     setTimeout(() => setCopied(false), 1600);
   }
 
+  /* Duplicate (#812). A clone whose resolved expiry is in the past is refused
+     by the API with a 400 — the case that bites is cloning an already-expired
+     link, which otherwise inherits its source's passed expiry. So when the
+     source has already expired, pre-fill a fresh 30-day expiry on the clone;
+     otherwise send no override and inherit the source's window as before. Any
+     error (including a 400 the pre-fill didn't cover) is surfaced to the
+     person rather than failing silently. No slug is sent — the server
+     generates one, since a reused back-half would collide with the source. */
+  async function onClone() {
+    const input: { id: string; expiresAt?: string } = { id: link.id };
+    if (link.status === "expired") {
+      input.expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    }
+    try {
+      await cloneLink.mutateAsync(input);
+    } catch (err) {
+      toast.show({ tone: "error", message: err instanceof Error ? err.message : "Couldn't duplicate this link." });
+    }
+  }
+
   /* Archive is reversible, so the confirmation carries an Undo (#757). The toast
      outlives this row -- the refetch removes it from the list -- so Undo is built
      from `updateLink.mutateAsync` alone and touches no component state. */
@@ -157,9 +177,10 @@ export function LinkRow({
         {copied ? "✓ copied" : "⧉ copy"}
       </button>
       {/* No slug is sent, so the server generates one — a duplicate that
-          reused the back-half would collide with the link it came from. */}
+          reused the back-half would collide with the link it came from.
+          onClone pre-fills a fresh expiry when the source is expired (#812). */}
       <button
-        onClick={() => cloneLink.mutate({ id: link.id })}
+        onClick={onClone}
         disabled={cloneLink.isPending}
         aria-label={`Duplicate link ${link.domain}/${link.slug}`}
         title="Create a copy of this link with a new back-half"
