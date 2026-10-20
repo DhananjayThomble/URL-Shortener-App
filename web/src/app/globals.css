@@ -99,10 +99,20 @@
   --radius: 9px;
   --radius-sm: 6px;
   --density: 1;
+  /* #810 — tell the UA to render native form controls (the <select> popup and
+     its <option> rows, scrollbars, etc.) with LIGHT system chrome in this state.
+     Without a color-scheme, WebKit paints the native <option> list with its own
+     default (light) colours regardless of our --surface/--ink tokens, which on
+     iOS Safari produced light-grey-on-near-white, unreadable text. */
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    /* #810 — DARK native form-control chrome in this state (see the light
+       :root note). WebKit needs this to paint the <select> popup / <option>
+       rows with dark system colours instead of its light default. */
+    color-scheme: dark;
     --ground: #070a0e;
     --surface: #10161e;
     --surface-2: #151c25;
@@ -138,6 +148,10 @@
 }
 
 :root[data-theme="dark"] {
+  /* #810 — DARK native form-control chrome when the viewer explicitly picks
+     dark (see the light :root note). This is the case the bug report hit:
+     dark theme stamped via data-theme on iOS WebKit. */
+  color-scheme: dark;
   --ground: #070a0e;
   --surface: #10161e;
   --surface-2: #151c25;
@@ -179,6 +193,25 @@ body {
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+}
+
+/* #810 — native <select> popups follow the theme tokens in BOTH themes.
+   `color-scheme` (declared per theme state above) already steers the UA chrome,
+   but WebKit on iOS still paints the collapsed control and the <option> rows
+   with system colours unless the colours are stated explicitly. Setting them on
+   the element AND the options makes the dark-theme dropdown readable on iOS
+   Safari (the bug: light-grey background with near-white text) and keeps the
+   behaviour identical to the Tailwind `bg-surface text-ink` utilities the
+   selects already carry, so no component needs its own override. */
+select {
+  color-scheme: inherit;
+  background-color: var(--surface);
+  color: var(--ink);
+}
+
+select option {
+  background-color: var(--surface);
+  color: var(--ink);
 }
 
 h1,
