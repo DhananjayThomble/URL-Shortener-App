@@ -467,6 +467,14 @@ export function LinkFormFields({
           </Field>
           {passwordSlot}
 
+          <div className="px-[13px] py-3 bg-wash-warn rounded-[var(--radius-sm)] text-[12.5px] text-amber leading-[1.5]">
+            <b>Fallback URLs are shown without the password.</b>{" "}
+            <span className="text-ink-2">
+              An expired or not-yet-live link sends visitors straight to its fallback
+              (the &ldquo;send visitors to&rdquo; URLs above) &mdash; the password only guards the live destination.
+            </span>
+          </div>
+
           <SectionLabel>Privacy</SectionLabel>
           <Controller
             control={control}
