@@ -329,6 +329,14 @@ export const CloneLinkInput = z.object({
   /** Defaults to the source link's domain. */
   domain: z.string().min(1).optional(),
   password: z.string().nullable().optional(),
+  /**
+   * Override the clone's expiry (#812). Passing a value sets the clone's
+   * expiry; passing `null` removes expiry entirely; **omitting it inherits the
+   * source's expiry**. The override exists because a source whose expiry has
+   * already passed cannot be cloned as-is — the resolved expiry is validated
+   * like a new link's, so a born-expired clone is refused with a 400.
+   */
+  expiresAt: LinkDateInput.nullable().optional(),
 });
 export type CloneLinkInput = z.infer<typeof CloneLinkInput>;
 
