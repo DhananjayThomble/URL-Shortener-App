@@ -1,7 +1,7 @@
 "use client";
 
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, Chip, EmptyState, ErrorState, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, Card, Chip, EmptyState, ErrorState, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useReports, useReviewReport } from "@/lib/api/hooks";
 import { reportActions } from "@/lib/report-actions";
 import type { AbuseReportStatus } from "@snapurl/contract";
@@ -62,7 +62,7 @@ export default function ReportsPage() {
                   <Th>Reporter</Th>
                   <Th>Status</Th>
                   <Th>Filed</Th>
-                  <Th />
+                  <ActionsTh />
                 </tr>
               </thead>
               <tbody>
@@ -79,9 +79,8 @@ export default function ReportsPage() {
                       </Chip>
                     </Td>
                     <Td className="text-[12px] text-ink-3 whitespace-nowrap">{formatDate(r.createdAt)}</Td>
-                    <Td className="text-right whitespace-nowrap">
-                      <div className="inline-flex gap-1.5">
-                        {reportActions(r.status).map((action) =>
+                    <ActionsTd>
+                      {reportActions(r.status).map((action) =>
                           action === "reviewed" ? (
                             <Button
                               key={action}
@@ -117,8 +116,7 @@ export default function ReportsPage() {
                             </Button>
                           ),
                         )}
-                      </div>
-                    </Td>
+                    </ActionsTd>
                   </tr>
                 ))}
               </tbody>

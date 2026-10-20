@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import { BioPageCard } from "@/components/bio/bio-page-card";
-import { Button, Card, CardBody, CardHeader, Chip, EmptyState, ErrorState, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, Card, CardBody, CardHeader, Chip, EmptyState, ErrorState, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useBioPages, useDeleteBioPage, useDomains, useUpsertBioPage, useWorkspace } from "@/lib/api/hooks";
 import { bioInputErrors } from "@/lib/bio-page";
 import { defaultDomainFor, domainOptionLabel } from "@/lib/domain-choice";
@@ -433,7 +433,7 @@ export default function BioPagesPage() {
                       <Th>Views</Th>
                       <Th>Click-through</Th>
                       <Th>Status</Th>
-                      <Th />
+                      <ActionsTh />
                     </tr>
                   </thead>
                   <tbody>
@@ -450,7 +450,7 @@ export default function BioPagesPage() {
                             {p.status === "live" ? "Live" : "Draft"}
                           </Chip>
                         </Td>
-                        <Td className="text-right whitespace-nowrap">
+                        <ActionsTd>
                           {confirming === p.id ? (
                             <>
                               <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
@@ -470,7 +470,7 @@ export default function BioPagesPage() {
                               </Button>
                             </>
                           )}
-                        </Td>
+                        </ActionsTd>
                       </tr>
                     ))}
                   </tbody>

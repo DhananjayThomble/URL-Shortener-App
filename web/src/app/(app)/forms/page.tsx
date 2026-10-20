@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { PageHead } from "@/components/app-shell";
 import {
+  ActionsTd,
+  ActionsTh,
   Button,
   Card,
   CardBody,
@@ -139,7 +141,7 @@ export default function FormsPage() {
                     <Th>Status</Th>
                     <Th>Responses</Th>
                     <Th>Updated</Th>
-                    <Th />
+                    <ActionsTh />
                   </tr>
                 </thead>
                 <tbody>
@@ -169,7 +171,7 @@ export default function FormsPage() {
                       </Td>
                       <Td className="tnum">{full(f.responseCount)}</Td>
                       <Td className="text-[12px] text-ink-3">{formatDate(f.updatedAt)}</Td>
-                      <Td className="text-right whitespace-nowrap">
+                      <ActionsTd>
                         <Button size="sm" variant="ghost" onClick={() => setOpenId(openId === f.id ? null : f.id)}>
                           {openId === f.id ? "Hide" : "Responses"}
                         </Button>
@@ -184,7 +186,7 @@ export default function FormsPage() {
                         >
                           Delete
                         </Button>
-                      </Td>
+                      </ActionsTd>
                     </tr>
                   ))}
                 </tbody>
