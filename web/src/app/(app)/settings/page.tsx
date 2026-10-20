@@ -153,7 +153,7 @@ export default function SettingsPage() {
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Field label="Name">
-                      <Input value={draft.name} onChange={(e) => set("name", e.target.value)} />
+                      <Input value={draft.name} maxLength={80} onChange={(e) => set("name", e.target.value)} />
                     </Field>
                     <Field label="Slug" help="Lowercase letters, numbers and dashes.">
                       <Input
