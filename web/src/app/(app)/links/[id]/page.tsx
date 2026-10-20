@@ -247,7 +247,7 @@ export default function LinkDetailPage() {
             }
           />
           <CardBody>
-            {stats.isLoading || !a ? <Skeleton className="h-[220px]" /> : <TrafficChart data={a.series} />}
+            {stats.isLoading || !a ? <Skeleton className="h-[220px]" /> : <TrafficChart data={a.series} granularity={a.granularity} />}
           </CardBody>
         </Card>
 

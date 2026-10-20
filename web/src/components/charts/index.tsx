@@ -47,14 +47,24 @@ export function Sparkline({
 /* ---------------- Area chart ---------------- */
 type SeriesKey = "clicks" | "unique" | "scans";
 
+/* #770 — the x-axis label for one bucket. A daily key is "YYYY-MM-DD" and shows
+   as "MM-DD"; an hourly key (the 24h range) is "YYYY-MM-DDTHH:00" and shows as
+   "HH:00". Keyed off granularity rather than sniffing the string, so a daily
+   key is never mistaken for an hour. */
+function tickLabel(v: string, granularity: "day" | "hour"): string {
+  return granularity === "hour" ? (v.split("T")[1] ?? v) : v.slice(5);
+}
+
 export function TrafficChart({
   data,
   series = ["clicks", "unique"],
   height = 220,
+  granularity = "day",
 }: {
   data: TimeseriesPoint[];
   series?: SeriesKey[];
   height?: number;
+  granularity?: "day" | "hour";
 }) {
   // "Unique" carries the same "(approx.)" caveat as the KPI tiles: the figure
   // is a HyperLogLog estimate, not an exact distinct count, and the legend must
@@ -93,7 +103,7 @@ export function TrafficChart({
             tickLine={false}
             axisLine={false}
             minTickGap={28}
-            tickFormatter={(v: string) => v.slice(5)}
+            tickFormatter={(v: string) => tickLabel(v, granularity)}
           />
           <Tooltip
             contentStyle={{
@@ -105,6 +115,7 @@ export function TrafficChart({
               color: "var(--ink)",
             }}
             labelStyle={{ color: "var(--ink-3)", fontSize: 11 }}
+            labelFormatter={(label) => tickLabel(String(label ?? ""), granularity)}
             formatter={(value, name) => [full(Number(value ?? 0)), labels[String(name) as SeriesKey] ?? String(name)]}
           />
           {series.map((s, i) => (
