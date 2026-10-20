@@ -122,6 +122,21 @@ export async function createLink(
   return link;
 }
 
+/**
+ * The public short URL the web app puts on the clipboard / in a QR payload.
+ *
+ * Oracle (#641 / #721, web/src/lib/utils.ts shortUrlHref): the scheme is the
+ * one the app itself is served over, NOT a hard-coded https:// — the local
+ * staging stack serves web and redirect over http, a deployed stack over
+ * https. Never hard-code the scheme in an assertion: derive it from the page
+ * under test, so the expectation tracks the runtime and still compares the
+ * whole string (scheme, host, slug).
+ */
+export function expectedShortUrl(page: Page, link: { domain: string; slug: string }): string {
+  const { protocol } = new URL(page.url());
+  return `${protocol}//${link.domain}/${link.slug}`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  TOTP helpers (RFC 6238) — pure Node.js, no external library        */
 /* ------------------------------------------------------------------ */

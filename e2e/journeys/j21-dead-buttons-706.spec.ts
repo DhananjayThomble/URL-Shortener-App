@@ -7,7 +7,8 @@
  * Oracles (what the PERSON gets, not the implementation; #217 "removed rather
  * than faked", docs/DECISIONS.md):
  *   - "Copy link" on a link's page puts that link's public short URL
- *     (https://<domain>/<slug>) on the clipboard and says so.
+ *     (<scheme>://<domain>/<slug>, scheme = the app's own: http on the local
+ *     stack, https when deployed — #641/#721) on the clipboard and says so.
  *   - "Read the docs" opens the API reference the API itself serves
  *     (<API_URL>/docs, Swagger UI) in a new tab, and that page loads.
  *   - Controls with no backend behind them are GONE: "Share report" (no share
@@ -23,7 +24,14 @@
  */
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, createLink, makeEmail, registerUser } from "./helpers";
+import {
+  API_URL,
+  RUN_PASSWORD,
+  createLink,
+  expectedShortUrl,
+  makeEmail,
+  registerUser,
+} from "./helpers";
 
 const trimmed = (xs: string[]) => xs.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean);
 
@@ -64,7 +72,9 @@ test.describe("Journey 21 — dead buttons (#706)", () => {
     await copyBtn.click();
     await expect(main.getByRole("button", { name: /Copied/ })).toBeVisible();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip).toBe(`https://${link.domain}/${link.slug}`);
+    // Scheme follows the app's own origin (#641/#721): http on the local stack.
+    expect(clip).toBe(expectedShortUrl(page, link));
+    expect(clip).toMatch(/^https?:\/\/[^/]+\/[^/]+$/);
     // The confirmation is momentary; the button returns to its label.
     await expect(copyBtn).toBeVisible({ timeout: 6_000 });
   });
