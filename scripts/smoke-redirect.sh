@@ -257,6 +257,14 @@ mklink "{\"destination\":\"https://example.com/locked\",\"domain\":\"$LINK_DOMAI
 EXPIRES_SOON_MS=$(node -pe 'Date.now() + 5000')
 EXPIRES_SOON=$(EXPIRES_SOON_MS="$EXPIRES_SOON_MS" node -pe 'new Date(Number(process.env.EXPIRES_SOON_MS)).toISOString()')
 mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired\",\"expiresAt\":\"$EXPIRES_SOON\",\"expiresTo\":\"https://example.com/moved\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+# A password-protected link that is ALSO expired (same few-seconds-out window as
+# $RUN-expired, so the "== gates ==" wait below covers it), with a fallback.
+# Pins the #802 decision (option 1): the expiry gate runs before the password
+# gate in gateFor() (apps/redirect/src/main.ts), so an expired password link is
+# sent to its public fallback WITHOUT the unlock page. Intended — the password
+# guards the live destination, not the owner-chosen fallback. See the "#802"
+# entry in docs/DECISIONS.md. Asserted in the "== gates ==" section below.
+mklink "{\"destination\":\"https://example.com/locked-gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-locked-expired\",\"password\":\"hunter2\",\"expiresAt\":\"$EXPIRES_SOON\",\"expiresTo\":\"https://example.com/locked-fallback\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled-bare\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
@@ -274,7 +282,7 @@ GEO_ID="$LAST_ID"
 # unconditional pass. If fewer links exist than the number of mklink calls
 # (e.g. a bad LINK_DOMAIN causing 400 domain-mismatch rejections), fail here at
 # the real problem instead of only via downstream redirect failures.
-EXPECTED_LINKS=12
+EXPECTED_LINKS=13
 if [ "${#CREATED_IDS[@]}" -eq "$EXPECTED_LINKS" ]; then
   ok "created $EXPECTED_LINKS links"
 else
@@ -333,6 +341,11 @@ contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "
 expect "not-yet-live link with no fallback is 404" "404|" "$(loc "$RUN-scheduled-bare")"
 expect "a past activation date is simply live" "302|https://example.com/already" "$(loc "$RUN-activated")"
 contains "locked link is sent to unlock (G3)" "unlock=1" "$(loc "$RUN-locked")"
+# #802 (option 1): a password-protected link that is ALSO expired goes to its
+# public fallback WITHOUT the unlock page. The expiry gate runs before the
+# password gate in gateFor(), by design — the password guards the live
+# destination, not the owner-chosen fallback. See docs/DECISIONS.md "#802".
+contains "expired password link uses its fallback, no password (#802)" "example.com/locked-fallback" "$(loc "$RUN-locked-expired")"
 # The public, unauthenticated preview must not hand out what the password guards.
 LOCKED_PREVIEW=$(curl -s "$API/public/links/$RUN-locked/preview")
 contains "locked link's preview says it is protected" '"passwordProtected":true' "$LOCKED_PREVIEW"

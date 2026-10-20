@@ -1546,6 +1546,41 @@ This does not reopen the tracking-pixel decision above: a *successful* redirect 
 **Revisit if** the page needs per-workspace branding or localisation (that is a template, and
 belongs behind a decision), or the plain-text bodies are ever replaced by a JSON error contract.
 
+### A password-protected link's expiry/schedule fallback is public, by design (#802)
+
+**Decision.** Keep the current redirect gate ordering. When a password-protected link is
+expired (so it falls back to `expiresTo`) or not yet live (so it falls back to `scheduledTo`),
+the visitor is sent to the fallback URL **without** being asked for the password. The lifecycle
+gates in `gateFor()` (apps/redirect/src/main.ts) run before the password gate, so a blocked link
+reaches its fallback before the `hasPassword` check ever fires. This is intended, not an
+oversight, and the redirect ordering is left unchanged.
+
+The reasoning: a fallback is a *separate, owner-chosen* URL — "when this link stops working, send
+people here instead" — not the protected destination. The password guards the live destination;
+it was never meant to guard wherever the owner decided to send traffic once the link is dead or
+dormant. Those fallbacks are typically public pages (a "the sale has ended" page, a "coming soon"
+page), so prompting for a password in front of one is friction with nothing behind it.
+
+It also keeps the hot path honest. The lifecycle gates are a single clock comparison each and
+decide the response before any token work; reordering so the password gate ran first would mean
+issuing/validating an unlock token for a link that is going to a public fallback anyway — more
+work on the redirect path for a guarantee no one asked for. The gate order also matches
+`deriveStatus`, so what the dashboard says about a link and what a visitor experiences cannot
+disagree.
+
+The UI states this where it matters: the link drawer's **Access** tab shows a hint next to the
+fallback/password controls — "Fallback URLs are shown without the password." — so an owner
+setting a fallback is not surprised by it (web/src/components/links/link-form-fields.tsx, shared
+by the create and edit drawers). `scripts/smoke-redirect.sh`'s "== gates ==" section pins the
+behaviour: an expired, password-protected link with a fallback returns the fallback and never the
+unlock page.
+
+**Revisit if** a future requirement needs the password to guard the fallback too. That would be a
+deliberate behaviour change (gate the password before the lifecycle fallbacks, accepting the
+extra token work on the hot path), not a bug fix — and it would need a way to express "this
+fallback is also protected" per link, since making *every* fallback password-gated would break
+the common "sale ended" use.
+
 ---
 
 ## Part 5 — Open questions for you
