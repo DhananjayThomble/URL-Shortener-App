@@ -353,6 +353,7 @@ export const ANALYTICS: Analytics = {
   totals: { clicks: 412908, unique: 288104, scans: 61882, conversions: 12440, blocked: 37 },
   deltas: { clicks: 22.6, unique: 15.2, scans: 41.0, conversions: -2.4 },
   series: SERIES,
+  granularity: "day",
   countries: [
     { label: "India", value: 148220, icon: "🇮🇳" },
     { label: "United States", value: 92104, icon: "🇺🇸" },
@@ -688,8 +689,35 @@ function analyticsFixture(path: string): Analytics {
   };
 
   const allTimeUnique = link.uniqueClicks ?? Math.round(ANALYTICS.totals.unique * (link.clicks / base));
+
+  /* #770 — 24h is served as 24 HOURLY buckets (granularity "hour"), not one
+     daily point. Build a plausible 24-hour series whose clicks sum to the
+     window total so the chart and the headline agree, keyed on the same
+     YYYY-MM-DDTHH:00 hour string the API returns. */
+  const hourly = range === "24h";
+  const hourlySeries = () => {
+    const now = new Date();
+    now.setUTCMinutes(0, 0, 0);
+    const perHour = Math.round(windowClicks / 24);
+    const uPerHour = Math.round((range === "12m" ? allTimeUnique : Math.round(allTimeUnique * fraction)) / 24);
+    const sPerHour = Math.round(scale(ANALYTICS.totals.scans) / 24);
+    return Array.from({ length: 24 }, (_, i) => {
+      const d = new Date(now);
+      d.setUTCHours(d.getUTCHours() - 23 + i);
+      // A gentle day/night wave so the line is not flat, re-normalised to the total.
+      const w = 0.6 + 0.4 * Math.sin((i / 24) * Math.PI * 2);
+      return {
+        date: d.toISOString().slice(0, 13) + ":00",
+        clicks: Math.round(perHour * w),
+        unique: Math.round(uPerHour * w),
+        scans: Math.round(sPerHour * w),
+      };
+    });
+  };
+
   return {
     ...ANALYTICS,
+    granularity: hourly ? "hour" : "day",
     totals: {
       ...ANALYTICS.totals,
       clicks: windowClicks,
@@ -698,7 +726,9 @@ function analyticsFixture(path: string): Analytics {
       conversions: scale(ANALYTICS.totals.conversions),
       blocked: 0,
     },
-    series: ANALYTICS.series.map((p) => ({ ...p, clicks: scale(p.clicks), unique: scale(p.unique), scans: scale(p.scans ?? 0) })),
+    series: hourly
+      ? hourlySeries()
+      : ANALYTICS.series.map((p) => ({ ...p, clicks: scale(p.clicks), unique: scale(p.unique), scans: scale(p.scans ?? 0) })),
     countries: scaleRows(ANALYTICS.countries),
     cities: scaleRows(ANALYTICS.cities),
     devices: scaleRows(ANALYTICS.devices),

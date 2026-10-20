@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AnalyticsQuery } from "@snapurl/contract";
 import type { AnalyticsReader, BreakdownRow, PreviousTotals, SeriesPoint, Totals } from "./analytics.reader.js";
-import { AnalyticsService, CITY_MIN_CLICKS, OTHER_CITIES, applyCityFloor, fillSeries, iso, percentChange, windowFor } from "./analytics.service.js";
+import { AnalyticsService, CITY_MIN_CLICKS, OTHER_CITIES, applyCityFloor, fillHourly, fillSeries, hourWindowStart, iso, isoHour, percentChange, windowFor } from "./analytics.service.js";
 
 /* The three pure helpers behind every number on the analytics screen. Each has
    a failure mode that renders as a plausible-looking chart rather than an
@@ -216,6 +216,7 @@ describe("AnalyticsService.overview through a fake reader", () => {
         totals: Totals;
         previousTotals: PreviousTotals;
         series: SeriesPoint[];
+        hourlySeries?: SeriesPoint[];
         breakdowns: Record<string, BreakdownRow[]>;
         tagBreakdown: BreakdownRow[];
         topLinks: BreakdownRow[];
@@ -232,6 +233,9 @@ describe("AnalyticsService.overview through a fake reader", () => {
     }
     async series(): Promise<SeriesPoint[]> {
       return this.data.series;
+    }
+    async hourlySeries(): Promise<SeriesPoint[]> {
+      return this.data.hourlySeries ?? [];
     }
     async breakdown(_workspaceId: string, dimension: string): Promise<BreakdownRow[]> {
       return this.data.breakdowns[dimension] ?? [];
@@ -331,5 +335,111 @@ describe("AnalyticsService.overview through a fake reader", () => {
     const out = await build().overview("ws_1", query);
     expect(out.tags).toEqual([{ label: "launch", value: 12 }]);
     expect(out.topLinks).toEqual([{ label: "promo", value: 90 }]);
+  });
+});
+
+/* #770 — the 24h range is served as an HOURLY series, not one daily point. */
+
+describe("hourWindowStart", () => {
+  it("is the top of the hour, 23 hours before the current hour (24 buckets inclusive)", () => {
+    const now = new Date("2026-10-20T06:42:17.000Z");
+    const start = hourWindowStart(now);
+    expect(start.toISOString()).toBe("2026-10-19T07:00:00.000Z");
+    // From the TOP of the current hour, the window spans exactly 23 hours back
+    // -> 24 hourly buckets counting both ends.
+    const topOfHour = new Date(now);
+    topOfHour.setUTCMinutes(0, 0, 0);
+    const spanHours = Math.round((topOfHour.getTime() - start.getTime()) / 36e5);
+    expect(spanHours).toBe(23);
+  });
+
+  it("zeroes minutes/seconds so the key lines up with the reader's truncated hour", () => {
+    const start = hourWindowStart(new Date("2026-10-20T06:42:17.123Z"));
+    expect(start.getUTCMinutes()).toBe(0);
+    expect(start.getUTCSeconds()).toBe(0);
+    expect(start.getUTCMilliseconds()).toBe(0);
+  });
+});
+
+describe("isoHour", () => {
+  it("formats a date as the YYYY-MM-DDTHH:00 key the reader groups on", () => {
+    expect(isoHour(new Date("2026-10-20T06:42:17.000Z"))).toBe("2026-10-20T06:00");
+  });
+});
+
+describe("fillHourly", () => {
+  it("returns exactly 24 buckets, one per hour from start, in order", () => {
+    const start = new Date("2026-10-19T07:00:00.000Z");
+    const out = fillHourly([], start);
+    expect(out).toHaveLength(24);
+    expect(out[0].date).toBe("2026-10-19T07:00");
+    expect(out[23].date).toBe("2026-10-20T06:00");
+  });
+
+  it("keeps the hours that have rows and zero-fills the gaps (not one flat point)", () => {
+    const start = new Date("2026-10-19T07:00:00.000Z");
+    const out = fillHourly(
+      [
+        { date: "2026-10-19T09:00", clicks: 5, unique: 4, scans: 1 },
+        { date: "2026-10-20T06:00", clicks: 2, unique: 2, scans: 0 },
+      ],
+      start,
+    );
+    expect(out).toHaveLength(24);
+    expect(out.find((p) => p.date === "2026-10-19T09:00")).toMatchObject({ clicks: 5, unique: 4, scans: 1 });
+    expect(out.find((p) => p.date === "2026-10-20T06:00")).toMatchObject({ clicks: 2, unique: 2 });
+    // A filled gap is a real zero, not absent.
+    expect(out.find((p) => p.date === "2026-10-19T08:00")).toMatchObject({ clicks: 0, unique: 0, scans: 0 });
+    // More than one distinct bucket carries data — the whole point of #770.
+    expect(out.filter((p) => p.clicks > 0)).toHaveLength(2);
+  });
+});
+
+describe("AnalyticsService.overview — 24h uses the hourly path (#770)", () => {
+  function build24h(hourlySeries: SeriesPoint[]) {
+    const reader: AnalyticsReader = {
+      totals: async () => ({ clicks: 7, unique: 6, scans: 1, blocked: 0 }),
+      previousTotals: async () => ({ clicks: 0, unique: 0, scans: 0 }),
+      series: async () => [{ date: iso(new Date()), clicks: 7, unique: 6, scans: 1 }],
+      hourlySeries: async () => hourlySeries,
+      breakdown: async () => [],
+      tagBreakdown: async () => [],
+      topLinks: async () => [],
+      conversionTotals: async () => 0,
+      previousConversionTotals: async () => 0,
+    };
+    return new AnalyticsService(reader);
+  }
+
+  it("returns granularity 'hour' and 24 buckets for the 24h range", async () => {
+    const out = await build24h([]).overview("ws_1", { range: "24h" } as AnalyticsQuery);
+    expect(out.granularity).toBe("hour");
+    expect(out.series).toHaveLength(24);
+  });
+
+  it("renders distinct hourly buckets from the reader rather than one daily point", async () => {
+    const start = hourWindowStart();
+    const h = (offset: number) => {
+      const d = new Date(start);
+      d.setUTCHours(d.getUTCHours() + offset);
+      return isoHour(d);
+    };
+    const out = await build24h([
+      { date: h(2), clicks: 3, unique: 3, scans: 0 },
+      { date: h(5), clicks: 4, unique: 2, scans: 1 },
+    ]).overview("ws_1", { range: "24h" } as AnalyticsQuery);
+
+    expect(out.series).toHaveLength(24);
+    const nonZero = out.series.filter((p) => p.clicks > 0);
+    // Two distinct hours carry clicks — the old daily path could only ever
+    // return a single bucket for the whole 24h window.
+    expect(nonZero).toHaveLength(2);
+    expect(nonZero.map((p) => p.clicks).sort()).toEqual([3, 4]);
+  });
+
+  it("every other range stays daily (granularity 'day', fillSeries length)", async () => {
+    const out = await build24h([]).overview("ws_1", { range: "30d" } as AnalyticsQuery);
+    expect(out.granularity).toBe("day");
+    expect(out.series).toHaveLength(30);
   });
 });

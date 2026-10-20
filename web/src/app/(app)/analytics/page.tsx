@@ -116,7 +116,7 @@ export default function AnalyticsPage() {
                 }
               />
               <CardBody>
-                <TrafficChart data={data.series} series={series === "both" ? ["clicks", "scans"] : ["clicks"]} />
+                <TrafficChart data={data.series} series={series === "both" ? ["clicks", "scans"] : ["clicks"]} granularity={data.granularity} />
               </CardBody>
             </Card>
             <Card>

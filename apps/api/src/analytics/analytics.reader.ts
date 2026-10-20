@@ -1,4 +1,4 @@
-import { and, breakdownDaily, clickDaily, conversions, desc, eq, gte, isNull, links, lt, sql, type Database } from "@snapurl/database";
+import { and, breakdownDaily, clickDaily, clickEvents, conversions, desc, eq, gte, isNull, links, lt, sql, type Database } from "@snapurl/database";
 import { iso } from "./analytics.service.js";
 
 /* ============================================================
@@ -78,6 +78,25 @@ export interface AnalyticsReader {
   ): Promise<PreviousTotals>;
   /** The daily series for the current window, only the days that have rows. */
   series(workspaceId: string, scopeLinkId: string | undefined, start: Date): Promise<SeriesPoint[]>;
+  /**
+   * The HOURLY series for a 24h window (#770), read straight off click_events
+   * rather than the daily rollup — the rollup has no sub-day resolution, so the
+   * old 24h path drew a single point.
+   *
+   * `start` is the lower bound (exclusive-of-nothing: `occurred_at >= start`);
+   * the service passes `now - 24h`. The query is bounded to that window, which
+   * click_events' RANGE partitioning by occurred_at prunes to the one or two
+   * day-partitions the window spans, and `click_events_{link,workspace}_time_idx`
+   * serve the scan — so this stays cheap and never fans out across partitions.
+   *
+   * `date` is a `YYYY-MM-DDTHH:00` UTC hour. Only the hours that have rows are
+   * returned; the service zero-fills the 24 buckets. The counting rules match
+   * the rollup exactly (rollup.ts): clicks and scans exclude bots and blocked
+   * clicks, scans additionally require is_qr, and `unique` is a true distinct
+   * visitor_hash over the hour (an exact count is fine and bounded here — the
+   * HLL sketch exists only to keep the persisted daily rollup small).
+   */
+  hourlySeries(workspaceId: string, scopeLinkId: string | undefined, start: Date): Promise<SeriesPoint[]>;
   /* breakdown() returns rows ordered by value descending, UNLIMITED. The
      service takes the top 8 for country/device/browser/referrer and passes the
      full tail through applyCityFloor for city — so slicing lives in the
@@ -170,6 +189,44 @@ export class PostgresAnalyticsReader implements AnalyticsReader {
       .where(and(scope, gte(clickDaily.day, iso(start))))
       .groupBy(clickDaily.day)
       .orderBy(clickDaily.day);
+    return rows as SeriesPoint[];
+  }
+
+  /** The same scope predicate as scopeFor(), but on click_events — the hourly
+   *  path reads the raw table, not the rollup. */
+  private rawScopeFor(workspaceId: string, scopeLinkId: string | undefined) {
+    return scopeLinkId
+      ? and(eq(clickEvents.workspaceId, workspaceId), eq(clickEvents.linkId, scopeLinkId))
+      : eq(clickEvents.workspaceId, workspaceId);
+  }
+
+  async hourlySeries(workspaceId: string, scopeLinkId: string | undefined, start: Date): Promise<SeriesPoint[]> {
+    const scope = this.rawScopeFor(workspaceId, scopeLinkId);
+    // date_trunc('hour', occurred_at AT TIME ZONE 'UTC') buckets by UTC hour,
+    // matching the UTC day boundaries the rollups and partitions use. Rendered
+    // as YYYY-MM-DDTHH:00 so the key is a stable, sortable hour string.
+    const hour = sql<string>`to_char(date_trunc('hour', ${clickEvents.occurredAt} at time zone 'UTC'), 'YYYY-MM-DD"T"HH24:00')`;
+
+    // Counting rules kept byte-for-byte in step with the daily rollup
+    // (apps/worker/src/jobs/rollup.ts): bots and blocked clicks are excluded
+    // from clicks and scans, scans additionally require is_qr, and uniques is a
+    // distinct visitor_hash over the same filtered set.
+    const live = sql`${clickEvents.isBot} = false and ${clickEvents.blockedReason} is null`;
+    const rows = await this.db
+      .select({
+        date: hour,
+        clicks: sql<number>`count(*) filter (where ${live})::int`,
+        unique: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (where ${live})::int`,
+        scans: sql<number>`count(*) filter (where ${live} and ${clickEvents.isQr})::int`,
+      })
+      .from(clickEvents)
+      // gte(occurred_at, start) is the whole window; the planner prunes to the
+      // day-partition(s) it covers. No upper bound is needed — occurred_at is
+      // never in the future — and omitting one keeps the predicate a single
+      // range the index can serve.
+      .where(and(scope, gte(clickEvents.occurredAt, start)))
+      .groupBy(hour)
+      .orderBy(hour);
     return rows as SeriesPoint[];
   }
 
