@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { Button, Card, CardBody, Field, Input, Skeleton } from "@/components/ui";
 import { usePublicForm, useSubmitForm } from "@/lib/api/hooks";
+import { decodeSegment } from "@/lib/route-segments";
 
 /* The shareable end of a form.
 
@@ -20,7 +21,12 @@ const CONTROL =
   "placeholder:text-ink-3 focus:outline-none focus:border-accent focus:bg-surface focus:ring-[3px] focus:ring-accent-wash";
 
 export default function PublicFormPage() {
-  const { slug } = useParams<{ slug: string }>();
+  const { slug: rawSlug } = useParams<{ slug: string }>();
+  /* #849 — useParams hands the segment back still percent-encoded and the
+     hooks encode it again, so /f/caf%C3%A9 asked the API for caf%25C3%25A9.
+     Decode once; a malformed escape falls through raw and simply finds no
+     form (the "no form here" card), never a thrown URIError. */
+  const slug = decodeSegment(rawSlug) ?? rawSlug;
   const form = usePublicForm(slug);
   const submit = useSubmitForm(slug);
 
