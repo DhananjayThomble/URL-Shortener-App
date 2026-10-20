@@ -4,12 +4,31 @@ import { z } from "zod";
    the dashboards never aggregate raw click rows. */
 
 export const TimeseriesPoint = z.object({
+  /**
+   * The bucket's key. For a DAILY series (every range except 24h) this is a
+   * `YYYY-MM-DD` calendar day; for the HOURLY series the 24h range now returns
+   * (#770) it is a `YYYY-MM-DDTHH:00` UTC hour. `Analytics.granularity` says
+   * which, so the chart can format the axis without parsing the string.
+   */
   date: z.string(),
   clicks: z.number(),
   unique: z.number(),
   scans: z.number().optional(),
 });
 export type TimeseriesPoint = z.infer<typeof TimeseriesPoint>;
+
+/**
+ * The size of each `series` bucket.
+ *
+ * #770 — selecting 24h used to map to a single day over the click_daily
+ * rollup, drawing one point for the whole window (a flat, misleading line). The
+ * 24h range now returns up to 24 HOURLY buckets straight off the (partitioned,
+ * time-indexed) click_events table; every other range stays DAILY off the
+ * rollups. The chart reads this to label the x-axis in hours vs days rather
+ * than inferring it from the date string.
+ */
+export const Granularity = z.enum(["day", "hour"]);
+export type Granularity = z.infer<typeof Granularity>;
 
 export const Breakdown = z.object({
   label: z.string(),
@@ -34,6 +53,12 @@ export const Analytics = z.object({
     conversions: z.number().nullable(),
   }),
   series: z.array(TimeseriesPoint),
+  /**
+   * The bucket size of `series`. "hour" only for the 24h range (#770), "day"
+   * for everything else. Defaults to "day" so an older client — or an adapter
+   * that does not set it — reads the series as daily, exactly as before.
+   */
+  granularity: Granularity.default("day"),
   countries: z.array(Breakdown),
   /**
    * Cities, with a k-anonymity floor applied — anything below the threshold is
