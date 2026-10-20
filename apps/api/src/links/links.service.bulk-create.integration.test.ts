@@ -211,4 +211,43 @@ describeDb("LinksService.bulkCreate — every row's outcome is independent, not 
     const freshInDb = await db.select({ slug: links.slug }).from(links).where(eq(links.slug, freshSlug));
     expect(freshInDb).toHaveLength(1);
   });
+
+  /* #811 — a bad destination's row error is ONE human sentence, not a raw
+     `destination: …` prefix with every refinement stacked behind it.
+
+     An unparseable URL like `not a url` trips all of HttpUrl's chained
+     refinements at once (absolute-URL, no-userinfo, host-not-allowed), all at
+     the same `destination` path. The old formatter joined every zod issue as
+     `path: message`, so the row read:
+       "destination: Enter an absolute http(s) URL destination: A URL can't
+        include a username or password destination: That host isn't allowed …"
+     #792's shared issuesToSentence helper (reused by bulkCreate) now keeps
+     only the first issue per field and drops the path prefix, so the row is a
+     single sentence. This asserts the row-level DISPLAY string directly — the
+     structured issues[] a machine client reads may still carry the field path,
+     per the #792 contract. */
+  it("#811: a bad URL row reports one human sentence, no `field:` prefix and only the first issue", async () => {
+    const result = await service.bulkCreate(workspaceId, actor, {
+      links: [{ ...row(`bad811-${stamp}`), destination: "not a url" }],
+    });
+
+    expect(result.failed).toBe(1);
+    expect(result.results).toHaveLength(1);
+
+    const [bad] = result.results;
+    expect(bad!.ok).toBe(false);
+    if (bad!.ok) throw new Error("expected the bad row to fail");
+    expect(bad.skipped).toBeFalsy();
+
+    const message = bad.error;
+    // Exactly the first refinement's human copy — no path, nothing stacked.
+    expect(message).toBe("Enter an absolute http(s) URL.");
+    // No raw `destination:` / `field:` prefix anywhere in the row display.
+    expect(message).not.toMatch(/^\s*\w+:/);
+    expect(message).not.toContain("destination:");
+    // Only ONE applicable issue surfaces — the other refinements that fired on
+    // the same unparseable value must not be stacked behind it.
+    expect(message).not.toContain("username or password");
+    expect(message).not.toContain("isn't allowed");
+  });
 });
