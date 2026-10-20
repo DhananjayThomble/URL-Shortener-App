@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { CreateFormInput, UpdateFormInput, type Form } from "@snapurl/contract";
-import { blankField, draftFromForm, emptyDraft, validateCreate, validateUpdate, type FormDraft } from "./form-values";
+import {
+  FORM_LIMITS,
+  blankField,
+  draftFromForm,
+  emptyDraft,
+  overlongOptionMessage,
+  validateCreate,
+  validateUpdate,
+  type FormDraft,
+} from "./form-values";
 
 /* Oracle: packages/contract/src/form.ts. Whatever validateCreate/validateUpdate
    accepts must also be accepted by the contract schema the API's zodBody pipe
@@ -134,5 +143,46 @@ describe("validateUpdate", () => {
     const r = validateUpdate(d);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.title).toBe("Give the form a title.");
+  });
+});
+
+/* Review of PR #837: the drawer's inputs must carry the CONTRACT's max lengths,
+   read from the schema rather than copied. The oracle is the API's own schema:
+   a value of exactly the limit is accepted, one more character is not. */
+describe("FORM_LIMITS follow the contract", () => {
+  const ok = (over: Record<string, unknown>) => CreateFormInput.safeParse({ title: "T", ...over }).success;
+  const f = (over: Record<string, unknown>) => ({ label: "L", type: "text", ...over });
+
+  it("title, description, address: the limit passes, limit + 1 fails", () => {
+    expect(FORM_LIMITS).toMatchObject({ title: 160, description: 500, slug: 64 });
+    expect(ok({ title: "x".repeat(FORM_LIMITS.title) })).toBe(true);
+    expect(ok({ title: "x".repeat(FORM_LIMITS.title + 1) })).toBe(false);
+    expect(ok({ description: "x".repeat(FORM_LIMITS.description) })).toBe(true);
+    expect(ok({ description: "x".repeat(FORM_LIMITS.description + 1) })).toBe(false);
+    expect(ok({ slug: "x".repeat(FORM_LIMITS.slug) })).toBe(true);
+    expect(ok({ slug: "x".repeat(FORM_LIMITS.slug + 1) })).toBe(false);
+  });
+
+  it("field label, placeholder and option: the limit passes, limit + 1 fails", () => {
+    expect(FORM_LIMITS).toMatchObject({ fieldLabel: 160, fieldPlaceholder: 160, option: 160 });
+    expect(ok({ fields: [f({ label: "x".repeat(FORM_LIMITS.fieldLabel) })] })).toBe(true);
+    expect(ok({ fields: [f({ label: "x".repeat(FORM_LIMITS.fieldLabel + 1) })] })).toBe(false);
+    expect(ok({ fields: [f({ placeholder: "x".repeat(FORM_LIMITS.fieldPlaceholder) })] })).toBe(true);
+    expect(ok({ fields: [f({ placeholder: "x".repeat(FORM_LIMITS.fieldPlaceholder + 1) })] })).toBe(false);
+    expect(ok({ fields: [f({ type: "select", options: ["x".repeat(FORM_LIMITS.option)] })] })).toBe(true);
+    expect(ok({ fields: [f({ type: "select", options: ["x".repeat(FORM_LIMITS.option + 1)] })] })).toBe(false);
+  });
+});
+
+describe("overlongOptionMessage", () => {
+  it("is null while every option fits, ignoring blank lines and surrounding spaces", () => {
+    expect(overlongOptionMessage("")).toBeNull();
+    expect(overlongOptionMessage(`Free\n\n  ${"y".repeat(FORM_LIMITS.option)}  \nPro`)).toBeNull();
+  });
+
+  it("names the first option that is over the limit, numbered like the submit-time error", () => {
+    expect(overlongOptionMessage(`Free\n\nPro\n${"y".repeat(FORM_LIMITS.option + 1)}`)).toBe(
+      "Option 3 must be 160 characters or fewer",
+    );
   });
 });

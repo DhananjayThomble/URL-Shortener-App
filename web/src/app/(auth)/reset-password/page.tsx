@@ -59,7 +59,7 @@ function ResetPasswordForm() {
     <AuthShell title="Choose a new password" sub="Enter a new password for your account.">
       <form onSubmit={onSubmit} className="flex flex-col gap-3.5">
         <Field label="New password" help="At least 12 characters." error={formState.errors.password?.message}>
-          <Input {...register("password")} type="password" autoComplete="new-password" placeholder="••••••••" autoFocus />
+          <Input {...register("password")} type="password" autoComplete="new-password" placeholder="••••••••" maxLength={200} autoFocus />
         </Field>
         {confirmReset.isError ? (
           <div className="flex flex-col gap-2">
