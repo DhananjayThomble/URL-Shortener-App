@@ -1548,6 +1548,60 @@ belongs behind a decision), or the plain-text bodies are ever replaced by a JSON
 
 ---
 
+### Atomic click-limit enforcement for links that have a limit (#763)
+
+A link's click limit was enforced in `gateFor()` (`apps/redirect/src/main.ts`) against
+`link_counters.clicks` — the ROLLUP's count, recomputed roughly once a minute and frozen for a
+further `LINK_CACHE_TTL_SECONDS` whenever `CachingLinkResolver` serves the link from its hot cache.
+Both lags stack, so a burst against a small `clickLimit` overshot the hard cap: a limit of 2 could
+let 3–4 visitors through before the rollup caught up. That is acceptable for a dashboard number but
+not for a cap the product presents as a hard stop.
+
+**Decision — Option 1: an atomic reserve on the redirect path, for limited links only.**
+`link_counters` gains a `reserved` column (migration `0020_link_counters_reserved`). For a link
+whose `clickLimit` is non-null, the redirect reserves each click in a single statement **before**
+routing:
+
+```
+INSERT INTO link_counters (link_id, reserved) SELECT $linkId, 1 WHERE $limit >= 1
+ON CONFLICT (link_id) DO UPDATE SET reserved = link_counters.reserved + 1
+  WHERE link_counters.reserved < $limit
+RETURNING reserved
+```
+
+Postgres evaluates `reserved < limit` while holding the row's write lock, so concurrent reservations
+serialise and exactly the first `limit` of them satisfy the predicate. The `(limit+1)`th caller
+matches zero rows, `RETURNING` is empty, and the redirect answers `410 click_limit` — with **no
+stale-cache window**, because the decision reads and writes the live row inside one lock rather than
+a cached count. The atomic verdict replaces the cached-count `click_limit` in both directions (it
+clears a stale `click_limit` as well as setting a real one), and it is consulted only after the
+higher-precedence gates (archived / flagged / expired / scheduled), which never consume a
+reservation. This lives behind a `ClickReservation` port (`apps/redirect/src/click-reservation.ts`).
+
+**The trade-off.** A limited link now takes **one extra write per click** (the reserve), on the
+PRIMARY handle — a replica's lag would reintroduce the overshoot. That is the cost of an accurate
+hard cap, and it is paid only by links that opted into a limit. **Unlimited links
+(`clickLimit == null`) keep the exact zero-extra-write hot path** they always had: they never call
+`reserve()`, resolve-and-redirect is unchanged, and the redirect's dominant traffic carries no new
+cost. The `reserved` counter is owned solely by this gate — the rollup upsert still writes only
+`clicks`/`unique_clicks`, so a rollup pass can neither reset nor inflate it.
+
+**One profile is deliberately out of scope.** On the AWS serverless profile the redirect can run with
+no Postgres connection at all (`LINK_PROJECTION=dynamo` + `CLICK_SINK=sqs`), so the Postgres atomic
+reserve is unavailable there; `NoopClickReservation` leaves that profile on its existing cached-count
+behaviour rather than faking a guarantee (never a false `410`). That profile already keeps every
+limited link OFF the CloudFront edge fast path (`isEdgeEligible` excludes `clickLimit != null`), so
+limited links are always resolved by the Lambda — giving THAT path a DynamoDB atomic counter is a
+separate, larger change than this issue scoped. Local, compose, single-node and Kubernetes — every
+Postgres-backed profile — get the hard cap now.
+
+**Revisit if** the AWS serverless profile needs the same hard guarantee (that is a DynamoDB
+conditional-update counter on the projection, a distinct decision), or if the one-write-per-click
+cost on a very hot limited link becomes a bottleneck (then the reserve could batch or move to a
+dedicated atomic store).
+
+---
+
 ## Part 5 — Open questions for you
 
 1. **Is the v1 Mongo database still live?** Decides whether the import script matters (G9).
