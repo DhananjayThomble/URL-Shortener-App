@@ -6,10 +6,12 @@ import { Button, Field, Input, Segmented } from "@/components/ui";
 import { useCreateForm, useUpdateForm } from "@/lib/api/hooks";
 import {
   FIELD_TYPES,
+  FORM_LIMITS,
   STATUSES,
   blankField,
   draftFromForm,
   emptyDraft,
+  overlongOptionMessage,
   validateCreate,
   validateUpdate,
   type DraftErrors,
@@ -199,6 +201,7 @@ export function FormDrawer({ open, onClose, form }: { open: boolean; onClose: ()
               <Input
                 id={`${idp}-title`}
                 value={draft.title}
+                maxLength={FORM_LIMITS.title}
                 onChange={(e) => set("title", e.target.value)}
                 aria-invalid={errors.title ? true : undefined}
                 aria-describedby={errors.title ? `${idp}-title-hint` : undefined}
@@ -217,6 +220,7 @@ export function FormDrawer({ open, onClose, form }: { open: boolean; onClose: ()
                 rows={2}
                 className={CONTROL}
                 value={draft.description}
+                maxLength={FORM_LIMITS.description}
                 onChange={(e) => set("description", e.target.value)}
                 aria-invalid={errors.description ? true : undefined}
                 aria-describedby={`${idp}-description-hint`}
@@ -245,6 +249,7 @@ export function FormDrawer({ open, onClose, form }: { open: boolean; onClose: ()
                   <Input
                     id={`${idp}-slug`}
                     value={draft.slug}
+                    maxLength={FORM_LIMITS.slug}
                     onChange={(e) => set("slug", e.target.value)}
                     aria-invalid={errors.slug ? true : undefined}
                     aria-describedby={`${idp}-slug-hint`}
@@ -353,6 +358,8 @@ function FieldEditor({
   const err = (k: string) => errors[`${path}.${k}`];
   const describe = (k: string) => (err(k) ? `${idp}-${k}-hint` : undefined);
   const name = field.label.trim() || `field ${n}`;
+  // Live, per line: a textarea cannot take a per-option maxLength.
+  const optionProblem = field.type === "select" ? overlongOptionMessage(field.options) : null;
   return (
     <div className="flex flex-col gap-2.5 p-3 border border-line rounded-[var(--radius-sm)] bg-surface-2">
       <div className="flex items-center gap-2">
@@ -385,6 +392,7 @@ function FieldEditor({
           <Input
             id={`${idp}-label`}
             value={field.label}
+            maxLength={FORM_LIMITS.fieldLabel}
             placeholder="Label, e.g. Your name"
             onChange={(e) => onChange({ label: e.target.value })}
             aria-invalid={err("label") ? true : undefined}
@@ -429,6 +437,7 @@ function FieldEditor({
         <Input
           id={`${idp}-placeholder`}
           value={field.placeholder}
+          maxLength={FORM_LIMITS.fieldPlaceholder}
           onChange={(e) => onChange({ placeholder: e.target.value })}
           aria-invalid={err("placeholder") ? true : undefined}
           aria-describedby={describe("placeholder")}
@@ -452,11 +461,11 @@ function FieldEditor({
             placeholder={"One per line"}
             value={field.options}
             onChange={(e) => onChange({ options: e.target.value })}
-            aria-invalid={err("options") ? true : undefined}
+            aria-invalid={err("options") || optionProblem ? true : undefined}
             aria-describedby={`${idp}-options-hint`}
           />
-          <span id={`${idp}-options-hint`} className={`text-[11.5px] ${err("options") ? "text-bad" : "text-ink-3"}`}>
-            {err("options") ?? "One option per line."}
+          <span id={`${idp}-options-hint`} className={`text-[11.5px] ${err("options") || optionProblem ? "text-bad" : "text-ink-3"}`}>
+            {err("options") ?? optionProblem ?? "One option per line."}
           </span>
         </div>
       ) : null}

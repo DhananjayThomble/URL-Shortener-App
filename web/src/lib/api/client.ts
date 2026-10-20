@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isTotpDisableCredentialRejection } from "@snapurl/contract";
+import { friendlyApiMessage, isTotpDisableCredentialRejection } from "@snapurl/contract";
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, syncSessionHint } from "../session-hint";
 
 /* ============================================================
@@ -133,10 +133,20 @@ export function isCredentialRejection(path: string, message: string): boolean {
   return route === CREDENTIAL_CHECK_WITH_SESSION && isTotpDisableCredentialRejection(message);
 }
 
+/**
+ * The person-facing text of an error body's `message` (a string, or the array a
+ * validation 400 carries). Each entry goes through `friendlyApiMessage` so a
+ * server that still sends `name: Too big: expected string to have <=80
+ * characters` (an older deploy, #792) shows plain English instead. Repeats are
+ * dropped: one line per problem.
+ */
 function messageOf(detail: unknown, fallback: string): string {
   const d = detail as { message?: string | string[] } | null;
-  if (Array.isArray(d?.message)) return d.message.join(", ");
-  if (typeof d?.message === "string") return d.message;
+  if (Array.isArray(d?.message)) {
+    const lines = d.message.filter((m): m is string => typeof m === "string").map(friendlyApiMessage);
+    return [...new Set(lines)].join(", ");
+  }
+  if (typeof d?.message === "string") return friendlyApiMessage(d.message);
   return fallback;
 }
 
@@ -161,9 +171,7 @@ export async function toApiError(res: Response, path: string): Promise<ApiError>
   let message = res.statusText;
   try {
     detail = await res.json();
-    const d = detail as { message?: string | string[] };
-    if (Array.isArray(d?.message)) message = d.message.join(", ");
-    else if (typeof d?.message === "string") message = d.message;
+    message = messageOf(detail, message);
   } catch {
     /* body wasn't JSON — keep the status text */
   }

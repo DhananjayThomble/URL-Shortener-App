@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, workspaces, type Database, type Executor } from "@snapurl/database";
-import { CreateLinkInput as CreateLinkInputSchema, RedirectType as RedirectTypeSchema } from "@snapurl/contract";
+import { CreateLinkInput as CreateLinkInputSchema, RedirectType as RedirectTypeSchema, issuesToSentence } from "@snapurl/contract";
 import type {
   BulkCreateLinksInput,
   BulkCreateLinksResult,
@@ -332,10 +332,9 @@ export class LinksService {
          and never reach this report. */
       const parsed = CreateLinkInputSchema.safeParse(raw);
       if (!parsed.success) {
-        errors.set(
-          index,
-          parsed.error.issues.map((i) => `${i.path.join(".") || "row"}: ${i.message}`).join(" "),
-        );
+        // One plain sentence per bad field (#792): no `destination:` path in
+        // front, and a mistyped URL is not reported once per rule it trips.
+        errors.set(index, issuesToSentence(parsed.error.issues));
         continue;
       }
       const row = parsed.data;

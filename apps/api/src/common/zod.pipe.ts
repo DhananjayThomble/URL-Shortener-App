@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, type PipeTransform } from "@nestjs/common";
+import { dedupeIssuesByField, type ValidationIssue } from "@snapurl/contract";
 import { z } from "zod";
 
 /* ============================================================
@@ -14,13 +15,22 @@ import { z } from "zod";
    strings and joins them. Anything else renders as a bare status
    code in the UI, so the error format is part of the contract
    whether or not the contract file says so.
+
+   What the words are (#792): `message` is shown to people, so each entry is
+   a plain sentence ("Name must be 80 characters or fewer") with no
+   `field:` path in front of it, and there is at most one per field — a
+   single bad value can trip several rules, and three contradictory lines
+   for one box is worse than one. The wording itself lives in
+   @snapurl/contract (friendly-errors.ts), so the web forms' own validation
+   says the same thing. `issues` keeps the field path for clients that want
+   to attach each message to its input.
    ============================================================ */
 
 export interface ValidationErrorBody {
   statusCode: 400;
   error: "Bad Request";
   message: string[];
-  issues: Array<{ path: string; message: string }>;
+  issues: ValidationIssue[];
 }
 
 @Injectable()
@@ -31,17 +41,11 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
     const result = this.schema.safeParse(value);
     if (result.success) return result.data;
 
-    const issues = result.error.issues.map((issue) => ({
-      path: issue.path.join("."),
-      message: issue.message,
-    }));
-
-    // Name the field in the message — "destination: That doesn't look like a
-    // URL" is actionable where "Bad Request" is not.
+    const issues = dedupeIssuesByField(result.error.issues);
     const body: ValidationErrorBody = {
       statusCode: 400,
       error: "Bad Request",
-      message: issues.map((i) => (i.path ? `${i.path}: ${i.message}` : i.message)),
+      message: issues.map((i) => i.message),
       issues,
     };
     throw new BadRequestException(body);

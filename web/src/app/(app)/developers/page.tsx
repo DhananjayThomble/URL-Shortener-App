@@ -150,6 +150,7 @@ export default function DevelopersPage() {
               <Input
                 value={keyName}
                 autoFocus
+                maxLength={60}
                 placeholder="CI deploy bot"
                 onChange={(e) => { setKeyName(e.target.value); setProblem(null); }}
               />

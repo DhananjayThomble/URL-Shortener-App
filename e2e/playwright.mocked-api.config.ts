@@ -50,8 +50,9 @@ export default defineConfig({
        Only its specs run on the mobile project, to keep the lane short. Chromium
        only: CI installs no WebKit for this lane, so iPhone runs stay local. */
     /* #795 — the marketing pages are read on phones too; their copy spec runs here as well.
-       #791 — the search shortcut spec checks the phone shows no search or hint. */
-    { name: "pixel-7", use: { ...devices["Pixel 7"] }, testMatch: /(trust-page-.*|marketing-copy|search-shortcut)\.spec\.ts/ },
+       #791 — the search shortcut spec checks the phone shows no search or hint.
+       #792 — the validation copy spec runs on the phone too. */
+    { name: "pixel-7", use: { ...devices["Pixel 7"] }, testMatch: /(trust-page-.*|marketing-copy|search-shortcut|validation-copy)\.spec\.ts/ },
   ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
