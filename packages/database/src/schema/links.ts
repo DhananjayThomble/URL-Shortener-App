@@ -169,6 +169,28 @@ export const linkCounters = pgTable("link_counters", {
     .references(() => links.id, { onDelete: "cascade" }),
   clicks: integer("clicks").notNull().default(0),
   uniqueClicks: integer("unique_clicks").notNull().default(0),
+  /* The ATOMIC click-limit reservation counter (#763).
+
+     `clicks` above is the rollup's view — recomputed from click_daily every
+     minute and further frozen for LINK_CACHE_TTL_SECONDS on a cache hit — so a
+     burst against a small clickLimit overshoots the cap by a handful before the
+     rollup catches up (a limit of 2 could let 3–4 through). That is acceptable
+     for the dashboard count but not for a HARD cap.
+
+     `reserved` is maintained on the redirect hot path instead, and ONLY for
+     links that have a clickLimit set: a single-statement
+       INSERT ... ON CONFLICT DO UPDATE SET reserved = reserved + 1
+         WHERE link_counters.reserved < <limit> RETURNING reserved
+     reserves the Nth click atomically — the row lock serialises concurrent
+     reservations, so the (limit+1)th caller's predicate fails, no row returns,
+     and the redirect answers 410 with no stale-cache window. A link with no
+     clickLimit (clickLimit IS NULL) NEVER touches this column: its hot path
+     stays exactly the zero-extra-write resolve-and-redirect it always was.
+
+     It is deliberately NOT recomputed by the rollup — the rollup's upsert sets
+     only `clicks`/`unique_clicks`, so `reserved` is a durable monotonic tally
+     the gate owns. See docs/DECISIONS.md (#763). */
+  reserved: integer("reserved").notNull().default(0),
 });
 
 export const routingRules = pgTable(

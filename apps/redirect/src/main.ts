@@ -25,6 +25,11 @@ import { DynamoLinkResolver, PostgresLinkResolver, type LinkResolver, type Resol
 import { CachingLinkResolver } from "./caching-resolver.js";
 import { listenForCacheBust } from "./cache-bust-listener.js";
 import { PostgresClickSink, SqsClickSink, type ClickSink } from "./click-sink.js";
+import {
+  NoopClickReservation,
+  PostgresClickReservation,
+  type ClickReservation,
+} from "./click-reservation.js";
 import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
 import { sendError } from "./error-page.js";
 
@@ -144,6 +149,7 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustP
 let close: () => Promise<void> = async () => {};
 let resolver: LinkResolver;
 let clicks: ClickSink;
+let reservations: ClickReservation;
 let salts: SaltSource;
 let JWT_SECRET = JWT_SECRET_DEFAULT;
 
@@ -254,6 +260,19 @@ async function init(): Promise<void> {
      otherwise the shared CacheStore so a redirect that has left Postgres can
      still salt its visitor hashes without a connection. */
   salts = database ? new PostgresSaltCache(database.db) : new CacheStoreSaltCache(cacheStore);
+
+  /* The atomic click-limit gate (#763). It is used ONLY for links that have a
+     clickLimit set — an unlimited link never calls reserve() and keeps its
+     zero-extra-write hot path. On a Postgres-backed profile this is a
+     single-statement atomic reserve against link_counters.reserved, which
+     closes the overshoot window the cached rollup count leaves open. When the
+     redirect runs with no Postgres connection (LINK_PROJECTION=dynamo +
+     CLICK_SINK=sqs), the atomic reserve is unavailable, so the gate falls back
+     to the ordinary cached-count behaviour that profile already had — see the
+     port's header and docs/DECISIONS.md (#763). The PRIMARY db handle is used
+     deliberately (never a replica): the reserve is the authoritative cap, and a
+     replica's lag would reintroduce the very overshoot this removes. */
+  reservations = database ? new PostgresClickReservation(database.db) : new NoopClickReservation();
 }
 
 app.get("/health", async () => ({ status: "ok" }));
@@ -305,7 +324,34 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
     socketIp: request.raw.socket.remoteAddress ?? request.ip,
     trustedHops: TRUSTED_PROXY_HOPS,
   });
-  const blocked = gateFor(link);
+  /* The gate. gateFor() returns the ordinary verdict — archived, flagged,
+     expired, scheduled, or (from the ROLLUP's cached count) click_limit — in
+     the precedence @snapurl/domain owns.
+
+     For a link that HAS a clickLimit, that cached-count click verdict is the
+     one #763 fixes: it lags under a burst and overshoots the cap. So when the
+     link is limited AND nothing of higher precedence has already blocked it
+     (archived/flagged/expired/scheduled all come first and must NOT consume a
+     reservation), the ATOMIC reserve becomes the authoritative click-limit
+     decision — reading and writing the live link_counters.reserved row inside
+     one lock, with no stale-cache window. A reservation is spent only on this
+     narrow path; it is never consumed by a higher gate or by an unlimited link.
+
+     An unlimited link (clickLimit == null) skips reserve() entirely and keeps
+     its zero-extra-write hot path. */
+  let blocked = gateFor(link);
+  if (link.clickLimit != null && (blocked === null || blocked === "click_limit")) {
+    const reservation = await reservations.reserve(link.id, link.clickLimit);
+    /* `unavailable` (no-Postgres profile) leaves `blocked` as gateFor computed
+       it — the ordinary cached-count behaviour that profile already had. On a
+       Postgres profile the atomic verdict REPLACES the cached-count one in both
+       directions: a successful reservation clears a stale click_limit, and a
+       failed one sets click_limit even when the cached count had not yet caught
+       up to the burst. */
+    if ("ok" in reservation) {
+      blocked = reservation.ok ? null : "click_limit";
+    }
+  }
 
   if (blocked) {
     // Blocked clicks are still recorded — "how many people hit an expired
@@ -412,13 +458,15 @@ function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "
      link that is also expired is bounced to the warning page before any
      fallback, which is exactly the ordering the preview must not reverse.
 
-     The click count is the last rollup's, not a live one, so a hard cap can be
-     overshot by a handful under concurrency. A synchronous read-modify-write
-     here would cost more latency than the accuracy is worth. Note the
-     CachingLinkResolver freezes link.clicks for up to LINK_CACHE_TTL_SECONDS
-     on a cache hit, so on the hot path the overshoot window widens by that
-     TTL on top of the rollup lag; still bounded, still cheaper than a live
-     count, and the short TTL keeps it small.
+     The click_limit verdict this returns is the ROLLUP's cached count, which
+     lags live traffic (and is frozen for LINK_CACHE_TTL_SECONDS on a cache
+     hit). For a link that HAS a clickLimit the caller does NOT trust that
+     verdict as the final word: it performs an ATOMIC reservation against
+     link_counters.reserved and lets that decide the click-limit gate, which
+     closes the overshoot window (#763). This function still owns the OTHER
+     gates (archived/flagged/expired/scheduled) and their precedence, and still
+     computes the cached click_limit for the no-Postgres profile that has no
+     atomic reserve to fall back on.
 
      Nothing schedules activation. The row carries a date and every request
      compares it against the clock, so the link starts working at exactly that
