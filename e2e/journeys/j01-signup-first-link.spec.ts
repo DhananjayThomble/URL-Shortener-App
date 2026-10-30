@@ -16,7 +16,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { makeEmail, RUN_PASSWORD, REDIRECT_URL } from "./helpers";
+import { makeEmail, RUN_PASSWORD } from "./helpers";
 
 const DESTINATION = "https://example.com/j1-landing";
 

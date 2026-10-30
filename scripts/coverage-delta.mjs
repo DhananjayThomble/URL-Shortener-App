@@ -8,7 +8,7 @@
  * Usage: node scripts/coverage-delta.mjs --pr <summary> --baseline <summary> --base <ref>
  */
 import { readFileSync, existsSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(name);
@@ -31,7 +31,8 @@ const fail = (m) => {
 if (!existsSync(basePath)) pass(`no baseline artifact at ${basePath}; cannot compute a delta`);
 
 // 2. Classify the PR. Only PURE test-only PRs are in scope for the guard.
-const changed = execSync(`git diff --name-only ${base}...HEAD`, { encoding: "utf8" })
+// execFileSync, not a shell string: `--base` is caller-supplied and must never be parsed by a shell.
+const changed = execFileSync("git", ["diff", "--name-only", `${base}...HEAD`], { encoding: "utf8" })
   .split("\n")
   .map((s) => s.trim())
   .filter(Boolean);

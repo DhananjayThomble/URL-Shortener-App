@@ -23,12 +23,15 @@ export interface FormFieldDef {
  * rewriting a label must not orphan answers already collected under it.
  */
 export function fieldKeyFrom(label: string, taken: ReadonlySet<string> = new Set()): string {
-  const base =
-    label
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, 40) || "field";
+  /* Underscore runs are collapsed first (by the `[^a-z0-9]+` replace), so the
+     only possible leading/trailing underscore is a single one. Stripping it with
+     `/^_+|_+$/g` backtracks quadratically on long runs of `_`. */
+  const underscored = label.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const trimmed = underscored.slice(
+    underscored.startsWith("_") ? 1 : 0,
+    underscored.endsWith("_") && underscored.length > 1 ? -1 : undefined,
+  );
+  const base = trimmed.slice(0, 40) || "field";
 
   if (!taken.has(base)) return base;
   // Two fields legitimately share a label ("Address" twice, say). Suffixes

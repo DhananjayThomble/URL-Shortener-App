@@ -492,17 +492,14 @@ const form = formRes.json as { id?: string; slug?: string } | undefined;
 const bioRes = await call("PUT", "/bio-pages", { body: { domain: domainName, slug: `qa-l3-bio-${runId}`, profile: { name: "QA L3" } } });
 const bioRouteDef = routeDefs.find((r) => r.method === "put" && r.path === "/bio-pages")!;
 checkResponse("/bio-pages", "PUT", bioRes.status, bioRouteDef, bioRes.json, `curl -s -X PUT ${API_BASE}/bio-pages -d '{"domain":"${domainName}","slug":"qa-l3-bio-${runId}","profile":{"name":"QA L3"}}'`);
-const bioPage = bioRes.json as { id?: string } | undefined;
 
 const apiKeyRes = await call("POST", "/api-keys", { body: { name: "qa-l3-key", scopes: ["links:read"] } });
 const apiKeyRouteDef = routeDefs.find((r) => r.method === "post" && r.path === "/api-keys")!;
 checkResponse("/api-keys", "POST", apiKeyRes.status, apiKeyRouteDef, apiKeyRes.json, `curl -s -X POST ${API_BASE}/api-keys -d '{"name":"qa-l3-key","scopes":["links:read"]}'`);
-const apiKey = apiKeyRes.json as { id?: string } | undefined;
 
 const webhookRes = await call("POST", "/webhooks", { body: { endpoint: "https://example.com/qa-l3-hook", events: ["link.created"] } });
 const webhookRouteDef = routeDefs.find((r) => r.method === "post" && r.path === "/webhooks")!;
 checkResponse("/webhooks", "POST", webhookRes.status, webhookRouteDef, webhookRes.json, `curl -s -X POST ${API_BASE}/webhooks -d '{"endpoint":"https://example.com/qa-l3-hook","events":["link.created"]}'`);
-const webhook = webhookRes.json as { id?: string } | undefined;
 
 const domainAddRes = await call("POST", "/domains", { body: { domain: `qa-l3-${runId}.example.test` } });
 const domainAddRouteDef = routeDefs.find((r) => r.method === "post" && r.path === "/domains")!;

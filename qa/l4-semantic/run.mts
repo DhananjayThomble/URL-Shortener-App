@@ -34,7 +34,7 @@
  * mismatch/observation worth recording). Summary: .qa-runs/l4-semantic/summary.md.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
@@ -1383,7 +1383,7 @@ function writeSummary() {
 }
 
 function escapeMd(s: string): string {
-  return String(s).replace(/\|/g, "\\|").slice(0, 300);
+  return String(s).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").slice(0, 300);
 }
 
 main().catch((err) => {

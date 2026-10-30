@@ -11,7 +11,7 @@ import { useDomains, useExportLinks, useLinks } from "@/lib/api/hooks";
 import type { ListLinksQuery } from "@snapurl/contract";
 import { IMPORT_QUERY_PARAM } from "@/lib/import";
 import { countedDomains, plural } from "@/lib/plural";
-import { cn, full } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const FILTERS = [
   { value: "all", label: "All" },

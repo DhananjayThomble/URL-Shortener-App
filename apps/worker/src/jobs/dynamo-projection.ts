@@ -1,6 +1,5 @@
 import {
   DOMAIN_OP,
-  domainMetaKey,
   domains,
   eq,
   linkCounters,

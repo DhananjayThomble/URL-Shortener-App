@@ -20,5 +20,9 @@ export function bioPagePath(domain: string, slug: string): string {
  *  the per-domain bio path. `webOrigin` is the API's WEB_ORIGIN (no trailing
  *  slash expected, but one is tolerated). */
 export function bioManagedDestination(webOrigin: string, domain: string, slug: string): string {
-  return `${webOrigin.replace(/\/+$/, "")}${bioPagePath(domain, slug)}`;
+  // Trim trailing slashes with a scan, not `/\/+$/`, which backtracks
+  // quadratically on a long run of slashes that is not at the end.
+  let end = webOrigin.length;
+  while (end > 0 && webOrigin.charCodeAt(end - 1) === 47) end--;
+  return `${webOrigin.slice(0, end)}${bioPagePath(domain, slug)}`;
 }

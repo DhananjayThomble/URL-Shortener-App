@@ -16,7 +16,6 @@ import {
   makeEmail,
   registerUser,
   seedAccount,
-  createLink,
   REDIRECT_URL,
   API_URL,
 } from "./helpers";

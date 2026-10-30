@@ -96,12 +96,6 @@ async function apiPost(urlPath: string, body: unknown, token?: string): Promise<
   return resBody;
 }
 
-async function apiPut(urlPath: string, body: unknown, token: string): Promise<unknown> {
-  const { status, body: resBody } = await req("PUT", urlPath, body, token);
-  if (status >= 400) throw new Error(`PUT ${API_URL}${urlPath} → ${status}: ${JSON.stringify(resBody).slice(0, 400)}`);
-  return resBody;
-}
-
 async function apiPatch(urlPath: string, body: unknown, token: string): Promise<unknown> {
   const { status, body: resBody } = await req("PATCH", urlPath, body, token);
   if (status >= 400) throw new Error(`PATCH ${API_URL}${urlPath} → ${status}: ${JSON.stringify(resBody).slice(0, 400)}`);
@@ -537,23 +531,10 @@ export default async function globalSetup(): Promise<void> {
   }
 
   // ---- Validate / refresh token ----
-  let token: string;
-  let email: string;
-  let password: string;
-  let domain: string;
-  let workspaceId: string;
-  let refreshToken: string;
-
   if (state) {
     const { status } = await req("GET", "/workspaces/current", undefined, state.accessToken);
     if (status === 200) {
-      token = state.accessToken;
-      refreshToken = state.refreshToken;
-      email = state.email;
-      password = state.password;
-      domain = state.domain;
-      workspaceId = state.workspaceId;
-      console.log(`[seed] token valid, reusing workspace ${workspaceId}`);
+      console.log(`[seed] token valid, reusing workspace ${state.workspaceId}`);
     } else {
       console.log("[seed] token expired, re-logging in …");
       const loginResult = await apiPost("/auth/login", { email: state.email, password: state.password }) as {
@@ -561,16 +542,10 @@ export default async function globalSetup(): Promise<void> {
         refreshToken: string;
       } | null;
       if (loginResult?.accessToken) {
-        token = loginResult.accessToken;
-        refreshToken = loginResult.refreshToken;
-        email = state.email;
-        password = state.password;
-        domain = state.domain;
-        workspaceId = state.workspaceId;
         // Refresh stored tokens
-        state.accessToken = token;
-        state.refreshToken = refreshToken;
-        console.log(`[seed] re-logged in for ${email}`);
+        state.accessToken = loginResult.accessToken;
+        state.refreshToken = loginResult.refreshToken;
+        console.log(`[seed] re-logged in for ${state.email}`);
       } else {
         console.log("[seed] re-login failed, registering new workspace …");
         state = null;
@@ -582,26 +557,25 @@ export default async function globalSetup(): Promise<void> {
     const pw = randomBytes(24).toString("base64url");
     const em = `seed-ws-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}@e2e.local`;
     const session = await registerAccount("E2E Seed Workspace", em, pw);
-    token = session.accessToken;
-    refreshToken = session.refreshToken;
-    email = em;
-    password = pw;
 
-    const ws = await apiGet("/workspaces/current", token) as { id: string; defaultDomain: string };
-    domain = ws.defaultDomain;
-    workspaceId = ws.id;
-    console.log(`[seed] registered ${email}, workspaceId=${workspaceId}, domain=${domain}`);
+    const ws = await apiGet("/workspaces/current", session.accessToken) as { id: string; defaultDomain: string };
+    console.log(`[seed] registered ${em}, workspaceId=${ws.id}, domain=${ws.defaultDomain}`);
 
-    state = { accessToken: token, refreshToken, email, password, workspaceId, domain, linkIds: {}, formIds: {} };
+    state = {
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      email: em,
+      password: pw,
+      workspaceId: ws.id,
+      domain: ws.defaultDomain,
+      linkIds: {},
+      formIds: {},
+    };
   }
 
-  // Ensure narrowed bindings are assigned (TS flow)
-  token = state.accessToken;
-  refreshToken = state.refreshToken;
-  email = state.email;
-  password = state.password;
-  domain = state.domain;
-  workspaceId = state.workspaceId;
+  const token = state.accessToken;
+  const domain = state.domain;
+  const workspaceId = state.workspaceId;
 
   // ---- Step 1.5: Clean stale verifying custom domains ----
   // domains.spec.ts adds a custom domain per run; accumulated verifying domains
@@ -638,8 +612,6 @@ export default async function globalSetup(): Promise<void> {
   await seedConversions(token, state.linkIds);
 
   // ---- Persist ----
-  state.accessToken = token;
-  state.refreshToken = refreshToken;
   writeFileSync(SEED_STATE_FILE, JSON.stringify(state, null, 2));
   console.log(`[seed] state written to ${SEED_STATE_FILE}`);
   console.log("[seed] done.");

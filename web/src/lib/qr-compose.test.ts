@@ -82,7 +82,8 @@ describe("centre logo", () => {
     // No remote reference of any kind: the only URL in the document is the SVG namespace.
     const urls = [...svg.matchAll(/https?:\/\/[^"'\s)]+/g)].map((m) => m[0]);
     expect(urls.every((u) => u.startsWith("http://www.w3.org/"))).toBe(true);
-    expect(mark).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+    const markUrls = [...mark.matchAll(/https?:\/\/[^"'\s)]+/g)].map((m) => m[0]);
+    expect(markUrls.every((u) => u.startsWith("http://www.w3.org/"))).toBe(true);
   });
 
   it("sits exactly in the centre, inside the symbol, on a plate that clears it", async () => {

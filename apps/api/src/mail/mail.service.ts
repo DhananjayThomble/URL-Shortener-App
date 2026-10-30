@@ -42,9 +42,14 @@ export class MailService {
   async send(message: MailMessage): Promise<void> {
     if (this.env.MAIL_TRANSPORT === "outbox") {
       const dir = this.env.MAIL_OUTBOX_DIR ?? resolve(tmpdir(), "snapurl-outbox");
-      await mkdir(dir, { recursive: true });
+      // Messages carry single-use invite/reset tokens, and the default dir sits
+      // in the shared os temp dir, so keep both the dir and files owner-only.
+      await mkdir(dir, { recursive: true, mode: 0o700 });
       const file = resolve(dir, `${Date.now()}-${message.to.replace(/[^a-z0-9]/gi, "_")}.txt`);
-      await writeFile(file, `To: ${message.to}\nSubject: ${message.subject}\n\n${message.body}\n`, "utf8");
+      await writeFile(file, `To: ${message.to}\nSubject: ${message.subject}\n\n${message.body}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
       this.logger.log({ to: message.to, file }, "mail written to outbox");
       return;
     }

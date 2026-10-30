@@ -15,7 +15,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FOREVER_YEARS } from "@/lib/retention";
 import { retentionLoweringWarning, type RetentionWarning } from "@/lib/retention-change";
 import type { RedirectType, Workspace } from "@/lib/api/types";
-import { cn, compact } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { TwoFactorCard } from "./two-factor-card";
 
 /* Retention is offered as three choices but stored as a number of years, so

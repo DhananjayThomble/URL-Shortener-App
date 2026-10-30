@@ -182,7 +182,7 @@ test.describe("Journey 19 — dead controls (#661)", () => {
     }
     const text = await main.innerText();
     expect(text, "no copy promising a delete-workspace flow").not.toMatch(/Danger zone|wait 7 days|Delete workspace/i);
-    expect(text, "no Short.io import").not.toMatch(/Short\.io/);
+    expect(text, "no Short.io import").not.toContain("Short.io");
   });
 
   test("settings: Import from Bitly opens the import panel with Bitly selected", async () => {

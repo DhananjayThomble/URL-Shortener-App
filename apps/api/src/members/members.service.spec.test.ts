@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { MembersService } from "./members.service.js";
 
