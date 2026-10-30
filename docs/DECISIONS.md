@@ -153,6 +153,7 @@ it does not, delete the script and move on.
 | Logging | nestjs-pino | winston | Structured JSON straight into CloudWatch Logs Insights with no transport plugin |
 | Config | SSM Parameter Store | Secrets Manager | Standard parameters are free; Secrets Manager is $0.40/secret/month |
 | Tests | Vitest + Testcontainers | Jest + mocks | Real Postgres in CI catches the SQL bugs that mocks hide |
+| Mutation testing | Stryker (`@stryker-mutator/core` + `vitest-runner`) | Trust line coverage; PITest/other harnesses | Line coverage says a line ran, not that a test would notice it breaking. Stryker reuses the existing Vitest suite, runs on the two pure packages where it is cheap, and ratchets a kill-rate floor. See Part 4b |
 
 ### Things I deliberately did not use
 
@@ -1403,6 +1404,40 @@ another link is **left on the alias** and reported, never overwritten.
 web host; it would require the redirect service (or an edge function) to proxy or render the bio
 page itself, which is the architecture this decision deliberately declined. If that requirement
 arrives, it is a new epic, not a tweak to this one.
+
+### A dev-only dependency still gets an ADR — this entry sets that precedent (#894)
+
+**Found by:** Stryker mutation testing on `packages/domain` (#894), the first dependency this repo
+has added that ships in **no** runtime bundle — it is a `devDependencies` entry used only by CI and
+locally. `architecture.md` says "a new external dependency ... add an entry to `docs/DECISIONS.md`",
+with no carve-out for dev-only tools, and there was no prior example to copy.
+
+**Decision.** A dev-only dependency is recorded here the same as any other. The rule in
+`architecture.md` is about *supply-chain surface and intent*, not about whether the code reaches
+production: a test/build tool can still break CI, pin a toolchain, or pull a transitive tree worth
+knowing about, so "it never ships" is not a reason to add it silently. Stryker's stack-choice row is
+in Part 2 above; this entry is the dev-only precedent itself.
+
+Two build-forced specifics worth recording, because the next dev-tool ADR will hit the same walls:
+
+- **Version was pinned by the release-age policy, not chosen freely.** `pnpm-workspace.yaml` carries
+  a `minimumReleaseAgeExclude` list, so a just-published version can be refused. `@stryker-mutator/core`
+  and `@stryker-mutator/vitest-runner` are pinned to the same `10.1.1` (the vitest-runner's peer range
+  requires `@stryker-mutator/core` at the exact same version, and `vitest >= 2.0.0`, which the repo's
+  `3.2.7` satisfies). The install was accepted as-is; no exclude entry was added.
+- **Stryker gets its own trimmed Vitest config, not `vitest.config.ts`.** The design spec named
+  `vitest.config.ts`, but that file imports `../../vitest.coverage.base` from the repo root, and
+  Stryker copies only the package directory into its sandbox, so that relative import cannot resolve
+  there. `packages/domain/vitest.stryker.config.ts` is a copy with the coverage block dropped
+  (coverage is irrelevant to a mutation run) and a single-fork pool so the active mutant is visible
+  to the code under test. For the same sandbox reason, `coverageAnalysis` is `"all"` rather than the
+  spec's `"perTest"`: `perTest` reported mutants as survived that the suite in fact kills (a
+  coverage-attribution gap), and `"all"` is accurate and still finishes in ~3 min, well under the
+  15-min budget.
+
+**Revisit if** a dev-only dependency ever turns out to need a *different* governance path than a
+runtime one — for example a policy that dev tools may float within a major instead of being pinned.
+Until then, every external dependency, runtime or not, gets an entry here.
 
 ---
 

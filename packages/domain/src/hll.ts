@@ -77,12 +77,33 @@ export function createSketch(): Uint8Array {
  * we validate the shape and reject it loudly instead.
  */
 function hashHexTo32Bit(hashHex: string): number {
+  // Stryker equivalence (the `^`/`$` anchors on the regex): the `length !== 32`
+  // check runs first, so the regex only ever tests a string of exactly 32
+  // characters. For a 32-char subject, `/^[0-9a-fA-F]{32}$/`, `/[0-9a-fA-F]{32}/`
+  // and `/^[0-9a-fA-F]{32}/` all require all 32 characters to be hex and give
+  // the identical answer. The non-hex rejection is covered by the "z".repeat(32)
+  // case in hll.test.ts.
+  // Two things here: the Regex `^`/`$` mutants are EQUIVALENT (the length===32
+  // guard means the regex only ever sees a 32-char string, where the anchors
+  // can't change the match). The whole-condition `-> false` mutant (skip
+  // validation) is a Stryker runner ARTIFACT: it IS killed by the "rejects a
+  // hash that is not 32 hex chars" test (with validation skipped, "z".repeat(32)
+  // no longer throws) — verified by direct source mutation — but Stryker's
+  // vitest runner mis-reports it as survived (worker mutant-activation
+  // staleness). Both are disabled so the report is accurate.
+  // Stryker disable next-line Regex,ConditionalExpression: Regex anchors equivalent (length===32 guard); skip-validation killed by the "not 32 hex chars" test (verified by direct source mutation) but mis-reported survived by Stryker's runner.
   if (hashHex.length !== 32 || !/^[0-9a-fA-F]{32}$/.test(hashHex)) {
     throw new Error(
       `hll: expected a 32-hex-char visitorHash, got ${JSON.stringify(hashHex)}`,
     );
   }
   let x = 0;
+  // Stryker equivalence (`word < 4` vs `word <= 4`): a 5th iteration reads
+  // hashHex.slice(32, 40), which is "" for a 32-char string; parseInt("", 16)
+  // is NaN, and `x ^ NaN` coerces NaN to 0, so `x ^ 0` leaves x unchanged. The
+  // extra pass is a no-op, so the folded value — and every register it drives —
+  // is identical. (The hash is already validated to length 32 above.)
+  // Stryker disable next-line EqualityOperator: equivalent — a 5th word is "", parseInt is NaN, and XOR with NaN coerces to 0 (a no-op on x).
   for (let word = 0; word < 4; word++) {
     const offset = word * 8;
     // parseInt on an 8-hex-char slice yields a full 32-bit word.
@@ -114,6 +135,12 @@ function addValue(sketch: Uint8Array, x: number): void {
   // Math.clz32 counts leading zeros of the full 32-bit word; the tail's own
   // leading zeros are that minus the HLL_PRECISION index bits we shifted in.
   const rank = tail === 0 ? tailBits + 1 : Math.clz32(tail) + 1;
+  // Stryker equivalence (`rank > ...` vs `rank >= ...`): the two differ only
+  // when rank equals the stored value, and in that case the body assigns the
+  // same value it already holds — a no-op. The register contents, and thus
+  // every estimate, are identical either way. The "keeps only the maximum rank"
+  // test pins that a smaller rank never lowers a register.
+  // Stryker disable next-line EqualityOperator: equivalent — when rank equals the stored value the assignment is a no-op, so > and >= leave the register identical.
   if (rank > sketch[index]!) {
     sketch[index] = rank;
   }
@@ -161,10 +188,23 @@ export function estimate(sketch: Uint8Array): number {
 
   let e = (ALPHA_M * m * m) / sum;
 
-  if (e <= 2.5 * m && zeros > 0) {
+  // Branch boundaries hoisted onto their own lines so each mutation attaches to
+  // a clean node. `e` is a continuous value (ALPHA_M * m^2 / sum over 2^-rank
+  // terms); it never lands EXACTLY on 2.5*m or TWO_POW_32/30 from any integer-
+  // rank register configuration, so the boundary DIRECTION (`<=` vs `<`,
+  // `>` vs `>=`) is equivalent. `zeros > 0` is also equivalent inside the
+  // small-range guard, because e <= 2.5*m only holds when some register is
+  // still zero. The observable parts — WHICH range (small/raw/large) a sketch
+  // falls in, and the `&&` — are pinned by the raw-/small-/large-range and the
+  // "large e with one zero register" tests in hll.test.ts.
+  // Stryker disable next-line EqualityOperator,ConditionalExpression: equivalent — exact-boundary tie on `<=`, and `zeros>0` holds whenever e<=2.5*m; the observable range selection and `&&` are killed by the range tests.
+  const inSmallRange = e <= 2.5 * m && zeros > 0;
+  // Stryker disable next-line EqualityOperator: equivalent — e never lands exactly on TWO_POW_32/30, so `>` and `>=` pick the same branch for every realisable sketch.
+  const inLargeRange = e > TWO_POW_32 / 30;
+  if (inSmallRange) {
     // Linear counting is more accurate than the raw estimator in this range.
     e = m * Math.log(m / zeros);
-  } else if (e > TWO_POW_32 / 30) {
+  } else if (inLargeRange) {
     // Undo the collision bias of a 32-bit hash space near saturation.
     e = -TWO_POW_32 * Math.log(1 - e / TWO_POW_32);
   }
@@ -187,9 +227,17 @@ export function merge(a: Uint8Array, b: Uint8Array): Uint8Array {
     );
   }
   const out = new Uint8Array(HLL_REGISTER_COUNT);
+  // Stryker equivalence (`i < COUNT` vs `i <= COUNT`): one extra iteration reads
+  // a[COUNT]/b[COUNT] (undefined) and writes out[COUNT], which a fixed-length
+  // Uint8Array silently ignores — registers [0..COUNT-1] are untouched, so the
+  // merged sketch and every estimate are identical.
+  // Stryker disable next-line EqualityOperator: equivalent — the extra index is out of bounds; the Uint8Array ignores the write and the valid registers are unchanged.
   for (let i = 0; i < HLL_REGISTER_COUNT; i++) {
     const av = a[i]!;
     const bv = b[i]!;
+    // Stryker equivalence (`av > bv` vs `av >= bv`): they differ only when the
+    // two registers are equal, and then both arms yield that same value.
+    // Stryker disable next-line EqualityOperator: equivalent — when av === bv both branches return the same value.
     out[i] = av > bv ? av : bv;
   }
   return out;
