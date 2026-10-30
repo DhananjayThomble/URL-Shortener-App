@@ -46,8 +46,8 @@ Fixes # (issue)
 
 <!-- Please remove all the irrelevant bullets to your PR -->
 
-- I haven't read the [contributing guide](https://github.com/DhananjayThomble/URL-Shortener-App/blob/main/CONTRIBUTING.md)
-- My code doesn't follow the style guidelines of this project
-- I haven't commented my code, particularly in hard-to-understand areas
-- I haven't checked if my PR needs changes to the documentation
-- I haven't checked if my changes generate no new warnings
+- [ ] I have read the [contributing guide](https://github.com/DhananjayThomble/URL-Shortener-App/blob/main/CONTRIBUTING.md)
+- [ ] My code follows the style guidelines of this project
+- [ ] I have commented my code, particularly in hard-to-understand areas
+- [ ] I have checked if my PR needs changes to the documentation
+- [ ] I have checked that my changes generate no new warnings
