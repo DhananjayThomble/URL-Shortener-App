@@ -115,4 +115,20 @@ describe("TotpService — recovery codes", () => {
     // that somehow got corrupted must not 500 the login.
     await expect(svc.verifyRecoveryCode("not-a-hash", "ABCDE-FGHJK")).resolves.toBe(false);
   });
+
+  it("draws every alphabet character with equal probability (no modulo bias)", () => {
+    /* Code scanning (js/biased-cryptographic-random): taking a random byte
+       modulo the 31-character alphabet makes the first 256 % 31 = 8
+       characters ~12.5% likelier than the rest. 200k samples put the unbiased
+       share within a fraction of a percent of 8/31, so a 4.5% margin catches
+       the bias (about +9% on this group) without flaking. */
+    const alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+    const favoured = new Set(alphabet.slice(0, 256 % alphabet.length));
+    const chars = svc.generateRecoveryCodes(20_000).join("").replace(/-/g, "");
+    let hits = 0;
+    for (const c of chars) if (favoured.has(c)) hits++;
+    const ratio = hits / chars.length / (favoured.size / alphabet.length);
+    expect(ratio).toBeGreaterThan(0.955);
+    expect(ratio).toBeLessThan(1.045);
+  });
 });

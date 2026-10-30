@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { authenticator } from "otplib";
-import { randomBytes } from "node:crypto";
+import { randomInt } from "node:crypto";
 import * as argon2 from "argon2";
 
 /* ============================================================
@@ -51,10 +51,11 @@ export class TotpService {
     const alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
     const codes: string[] = [];
     for (let i = 0; i < count; i++) {
-      const bytes = randomBytes(10);
       let code = "";
       for (let j = 0; j < 10; j++) {
-        code += alphabet[bytes[j]! % alphabet.length];
+        // randomInt draws uniformly from [0, length). A random byte taken
+        // modulo 31 would favour the first 256 % 31 = 8 characters.
+        code += alphabet[randomInt(alphabet.length)];
         if (j === 4) code += "-";
       }
       codes.push(code);
