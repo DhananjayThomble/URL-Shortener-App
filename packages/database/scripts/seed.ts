@@ -150,11 +150,11 @@ async function main() {
       }
     }
 
-    const apiKey = `snap_live_${randomBytes(24).toString("base64url")}`;
+    const token = `snap_live_${randomBytes(24).toString("base64url")}`;
     await sql`
       insert into api_keys (workspace_id, name, key_hash, key_prefix, key_last4, scopes, created_by)
-      values (${workspace!.id}, 'Production', ${createHash("sha256").update(apiKey).digest("hex")},
-              ${apiKey.slice(0, 15)}, ${apiKey.slice(-4)}, ${["links:read", "links:write", "analytics:read"]}, ${user!.id})`;
+      values (${workspace!.id}, 'Production', ${fingerprintToken(token)},
+              ${token.slice(0, 15)}, ${token.slice(-4)}, ${["links:read", "links:write", "analytics:read"]}, ${user!.id})`;
 
     const audit: Array<[AuditAction, Record<string, unknown>, number]> = [
       ["link.created", { slug: "spring-sale" }, 3 * 3_600_000],
@@ -174,11 +174,17 @@ async function main() {
     console.log(`    sign in   ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
     console.log(`    links     ${LINKS.length} on ${DOMAIN}`);
     console.log(`    clicks    ${Number(total).toLocaleString()} across 90 days`);
-    console.log(`    api key   ${apiKey}`);
+    console.log(`    api key   ${token}`);
     console.log("");
   } finally {
     await sql.end();
   }
+}
+
+// High-entropy random token lookup digest (not a user password); must match
+// apps/api/src/developers/developers.service.ts, so it stays plain SHA-256.
+function fingerprintToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 main().catch((err) => {
