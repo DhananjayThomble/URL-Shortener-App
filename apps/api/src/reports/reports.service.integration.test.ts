@@ -120,6 +120,88 @@ describeDb("ReportsService.submitReport", () => {
 });
 
 /* ============================================================
+   submitReport with the same slug on two domains (#738). Slugs are unique per
+   domain, not globally, so the slug alone is ambiguous.
+   ============================================================ */
+describeDb("ReportsService.submitReport duplicate slug across domains (#738)", () => {
+  let handle: ReturnType<typeof createDatabase>;
+  let db: Database;
+  let service: ReportsService;
+  const stamp = Date.now();
+  const slug = `dup${stamp}`;
+  const hostA = `dup-a-${stamp}.test`;
+  const hostB = `dup-b-${stamp}.test`;
+  const ws: string[] = [];
+  const linkIds: string[] = [];
+  let singleSlug: string;
+
+  beforeAll(async () => {
+    handle = createDatabase({ url: DATABASE_URL!, max: 1 });
+    db = handle.db;
+    service = new ReportsService(db, cacheBustStub, nudgeStub);
+    for (const [i, host] of [hostA, hostB].entries()) {
+      const [w] = await db
+        .insert(workspaces)
+        .values({ name: `dup ${i}`, slug: `dup-${i}-${stamp}` })
+        .returning({ id: workspaces.id });
+      ws.push(w!.id);
+      const [d] = await db.insert(domains).values({ workspaceId: w!.id, domain: host }).returning({ id: domains.id });
+      const [l] = await db
+        .insert(links)
+        .values({ workspaceId: w!.id, domainId: d!.id, slug, destination: "https://example.com/x" })
+        .returning({ id: links.id });
+      linkIds.push(l!.id);
+    }
+    singleSlug = `uniq${stamp}`;
+    const [d] = await db.select({ id: domains.id }).from(domains).where(eq(domains.domain, hostA));
+    await db.insert(links).values({ workspaceId: ws[0]!, domainId: d!.id, slug: singleSlug, destination: "https://example.com/y" });
+  });
+
+  afterAll(async () => {
+    for (const id of ws) await db.delete(workspaces).where(eq(workspaces.id, id));
+    await db.delete(abuseReports).where(eq(abuseReports.slug, slug));
+    await handle?.close();
+  });
+
+  it("attributes the report to the workspace of the host it was filed on", async () => {
+    await service.submitReport(slug, { reason: "On B.", reporterContact: "b@example.com" }, hostB.toUpperCase());
+    await service.submitReport(slug, { reason: "On A." }, hostA);
+
+    const rows = await db.select().from(abuseReports).where(eq(abuseReports.slug, slug));
+    const onB = rows.find((r) => r.reason === "On B.")!;
+    const onA = rows.find((r) => r.reason === "On A.")!;
+    expect(onB.linkId).toBe(linkIds[1]);
+    expect(onB.workspaceId).toBe(ws[1]);
+    expect(onB.reporterContact).toBe("b@example.com");
+    expect(onA.linkId).toBe(linkIds[0]);
+    expect(onA.workspaceId).toBe(ws[0]);
+  });
+
+  it("does not guess when the slug is ambiguous and no host is given: unresolved, contact dropped", async () => {
+    const result = await service.submitReport(slug, { reason: "No host.", reporterContact: "x@example.com" });
+    expect(result).toEqual({ ok: true });
+    const [row] = await db.select().from(abuseReports).where(eq(abuseReports.reason, "No host."));
+    expect(row!.linkId).toBeNull();
+    expect(row!.workspaceId).toBeNull();
+    expect(row!.reporterContact).toBeNull();
+  });
+
+  it("still resolves an unambiguous slug without a host", async () => {
+    await service.submitReport(singleSlug, { reason: "Unique, no host." });
+    const [row] = await db.select().from(abuseReports).where(eq(abuseReports.reason, "Unique, no host."));
+    expect(row!.workspaceId).toBe(ws[0]);
+  });
+
+  it("stores unresolved when the host does not own the slug", async () => {
+    await service.submitReport(singleSlug, { reason: "Wrong host.", reporterContact: "w@example.com" }, hostB);
+    const [row] = await db.select().from(abuseReports).where(eq(abuseReports.reason, "Wrong host."));
+    expect(row!.linkId).toBeNull();
+    expect(row!.workspaceId).toBeNull();
+    expect(row!.reporterContact).toBeNull();
+  });
+});
+
+/* ============================================================
    ReportsService.list / review — operator side (#291, FEAT-003).
 
    These prove the invariants only a real DB can: the operator sees only their

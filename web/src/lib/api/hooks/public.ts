@@ -75,11 +75,12 @@ export function useUnlockLink(slug: string, host?: string) {
  * Unauthenticated, like preview and unlock. The server always answers
  * { ok: true } whether or not the slug resolves, so this cannot be used to
  * probe which short codes exist. No cache write — a report is a fire-and-forget
- * write, not page data.
+ * write, not page data. Carries the resolved host (#738) so a slug that exists
+ * on several domains is attributed to the right one.
  */
-export function useReportLink(slug: string) {
+export function useReportLink(slug: string, host?: string) {
   return useMutation({
     mutationFn: (input: SubmitReportInput) =>
-      request(`/public/links/${slug}/report`, SubmitReportResult, { method: "POST", body: input, anonymous: true }),
+      request(withHost(`/public/links/${slug}/report`, host), SubmitReportResult, { method: "POST", body: input, anonymous: true }),
   });
 }

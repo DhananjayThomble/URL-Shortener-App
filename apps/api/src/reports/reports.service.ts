@@ -28,15 +28,30 @@ export class ReportsService {
    * the system. So the raw slug is always stored, and the resolved link and
    * workspace are best-effort: null when the slug names nothing.
    */
-  async submitReport(slug: string, input: SubmitReportInput): Promise<SubmitReportResult> {
+  async submitReport(slug: string, input: SubmitReportInput, host?: string): Promise<SubmitReportResult> {
     // Best-effort resolution. lower() matching mirrors the preview/unlock path
-    // in public.service.ts — a printed QR read as SNAP.TO/Spring reports the
+    // in public.service.ts: a printed QR read as SNAP.TO/Spring reports the
     // same link as snap.to/spring.
-    const [link] = await this.db
+    //
+    // Slugs are unique per domain (domain_id, lower(slug)), NOT globally (#738),
+    // so the slug alone can name links in several workspaces. When the caller
+    // says which host the slug was seen on (the ?host= the redirect bounces
+    // with, as for preview/lock/unlock) the lookup is scoped to that domain and
+    // is unique. With no host we only attribute the report when exactly one
+    // link matches; if several do we do NOT guess (that could file the report,
+    // and the reporter's contact, under an unrelated workspace). It is stored
+    // as unresolved instead, exactly like an unknown slug, so the response and
+    // the non-oracle behaviour (#308) are unchanged.
+    const filters = [sql`lower(${links.slug}) = ${slug.toLowerCase()}`];
+    const hostname = typeof host === "string" ? host.trim() : "";
+    if (hostname) filters.push(sql`lower(${domains.domain}) = ${hostname.toLowerCase()}`);
+    const matches = await this.db
       .select({ id: links.id, workspaceId: links.workspaceId })
       .from(links)
-      .where(sql`lower(${links.slug}) = ${slug.toLowerCase()}`)
-      .limit(1);
+      .innerJoin(domains, eq(links.domainId, domains.id))
+      .where(and(...filters))
+      .limit(2);
+    const link = matches.length === 1 ? matches[0] : undefined;
 
     const trimmed = input.reporterContact?.trim() ? input.reporterContact.trim() : null;
     // #308: never persist a reporterContact for a slug that did not resolve.
