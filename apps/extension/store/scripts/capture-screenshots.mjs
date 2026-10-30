@@ -11,6 +11,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
+import { resolveWithin } from "./safe-path.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distDir = join(here, "..", "..", "dist");
@@ -44,7 +45,7 @@ async function shot(page, name){ await page.screenshot({ path: join(outDir,name)
 
 async function run() {
   const server = createServer(async (req,res) => {
-    try { const p = join(distDir, decodeURIComponent(req.url.split("?")[0])); const data = await readFile(p);
+    try { const p = resolveWithin(distDir, req.url.split("?")[0]); if (!p) { res.writeHead(404); res.end("not found"); return; } const data = await readFile(p);
       res.writeHead(200, { "content-type": MIME[extname(p)] || "application/octet-stream" }); res.end(data);
     } catch { res.writeHead(404); res.end("not found"); }
   });

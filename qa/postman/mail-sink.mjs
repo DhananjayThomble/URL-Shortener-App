@@ -91,6 +91,12 @@ async function backdateInvite(email, days) {
   return { code, updated };
 }
 
+/** 500 body for an unexpected failure: detail goes to the local log only, never into the response. */
+export function internalErrorBody(err) {
+  console.error("mail-sink error:", err);
+  return { error: "internal error" };
+}
+
 async function handle(req, res) {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   const send = (status, body) => {
@@ -118,7 +124,7 @@ async function handle(req, res) {
     }
     send(404, { error: "not found" });
   } catch (err) {
-    send(500, { error: String(err) });
+    send(500, internalErrorBody(err));
   }
 }
 
