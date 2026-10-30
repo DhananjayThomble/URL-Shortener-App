@@ -6,7 +6,7 @@ Epic: #881.
 |---|---|---|---|---|
 | D1 Stryker on `packages/domain` + ADR | #894 | 2 | free | — |
 | D2 Stryker on `packages/contract` | #895 | 2 | free | D1 (shares the ADR and root script) |
-| D3 CI: `mutation` job | #896 | 3 | — (`needs-human`) | D1, D2 |
+| D3 CI: `mutation` job | #896 | 3 | CI | D1, D2 |
 | D4 Whole-suite bug-injection gate | #897 | 4 | staging | every CI-wiring task merged |
 
 ## D1

@@ -15,7 +15,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 ---
 
 ## T1 — Self-host the webfonts via `next/font`
-**Blocks everything.** Row #1 in `design.md` §2. Issue label: `FrontEnd`, `performance`.
+**Blocks everything.** Row #1 in `design.md` §2.
 
 - [ ] Replace the three `<link>` tags in `web/src/app/layout.tsx:16-23` with `next/font/google`
       for Archivo, Public Sans and IBM Plex Mono, keeping the same weights
@@ -37,7 +37,7 @@ the choice.
 
 ## T2 — Honour reduced motion in the charts
 Row #9. An accessibility fix that happens to unblock stable chart screenshots.
-Issue label: `FrontEnd`, `UI/UX`.
+
 
 - [ ] Add a `useReducedMotion()` hook reading **both** `window.matchMedia('(prefers-reduced-motion:
       reduce)')` and the `reduce-motion` class the theme provider sets
@@ -54,7 +54,7 @@ mount animation, and a test proves it.
 
 ## T3 — The harness: config, `stabilise()`, container, one smoke spec
 No baselines yet. This PR proves the mechanism and brings up the repo's first `container:` job's
-image locally. Issue label: `agent:tests`, `infra`.
+image locally.
 
 - [ ] `e2e/playwright.visual.config.ts` per `design.md` §6 — port **3100**, pinned `locale`,
       `timezoneId`, `reducedMotion`, `deviceScaleFactor`, `snapshotPathTemplate`, `retries: 0`,
@@ -81,7 +81,7 @@ evidence is in the PR.
 ---
 
 ## T4 — Baselines, phase 1: Chromium, 28 routes × 3 viewports
-The bulk of the work. Issue label: `agent:tests`.
+The bulk of the work.
 
 - [ ] `marketing.spec.ts` — `/`, `/product`, `/pricing`, `/self-host`, `/for-developers`,
       `/privacy`, `/terms` (signed-out chrome; row #18).
@@ -104,7 +104,7 @@ The bulk of the work. Issue label: `agent:tests`.
 ---
 
 ## T5 — CI wiring
-Changes a workflow, so it needs maintainer merge. Issue label: `agent:infra`, `needs-human`, `infra`.
+Changes a workflow (CI lane).
 
 - [ ] Add the `visual` job to `.github/workflows/verify.yml` per `design.md` §7 — containerised on
       `mcr.microsoft.com/playwright:v1.63.0-noble`, `--ipc=host`, `timeout-minutes: 25`, gated on
@@ -125,7 +125,7 @@ required via `ci-gate`.
 
 ## T6 — Bug-injection gate
 Required by `.kiro/steering/qa-oracles.md` §4. Until this is done the suite is **not trusted**.
-Throwaway branch, nothing merged from it. Issue label: `qa-program`, `agent:tests`.
+Throwaway branch, nothing merged from it.
 
 - [ ] Inject, one at a time, and record caught / not caught plus which target caught it:
   - [ ] change a spacing token (e.g. the sidebar's `--density` multiplier at `app-shell/index.tsx:66`)
@@ -146,7 +146,7 @@ recorded gap.
 
 ## T7 — WebKit lane and the dark subset
 Last, because it roughly doubles baseline count for the covered routes. Only after T4's weight
-number is known. Issue label: `agent:tests`.
+number is known.
 
 - [ ] Enable the `webkit` and `desktop-dark` projects on the curated `testMatch` subsets.
 - [ ] Generate and review those baselines.

@@ -6,11 +6,11 @@
 |---|---|
 | `.kiro/steering/testing.md` | Canonical R1 text, the lane ladder, and the red-run evidence format. Loaded by Kiro natively and by Claude via `CLAUDE.md`'s import. |
 | `.kiro/prompts/developer.md` step 4/8 | One line: follow `testing.md` R1, and the PR body includes the red run. |
-| `.kiro/prompts/reviewer.md` §A.3 and §B.2 | §A.3: verify the red run, or reproduce it. §B.2: the filed issue body includes `Oracle:` and `Regression lane:` lines. |
-| `.kiro/prompts/manager.md` step 2 | Acceptance criteria always include the regression-test item. |
+| `.kiro/prompts/reviewer.md` §A.3 | Verify the red run, or reproduce it. (§B, QA-lab adjudication, is left alone: whether the QA lab stays is a separate decision.) |
 | `.github/PULL_REQUEST_TEMPLATE.md` | Add a "Regression test" section. Also fix the inverted checklist ("I haven't read…"), which is a separate bug, so keep it a separate commit. |
 
-`.claude/agents/*.md` and `.kiro/agents/*.json` reference the prompts by path and need no edits.
+`.kiro/prompts/manager.md` is not touched. It was the retired Factory's triage role. `.claude/agents/*.md`
+and `.kiro/agents/*.json` reference the prompts by path and need no edits.
 
 ### Lane ladder (for `testing.md`)
 
@@ -30,10 +30,11 @@ and exits non-zero on failure.
 
 1. Read the PR number and repo from env (`GITHUB_REPOSITORY`, `PR_NUMBER`).
 2. GraphQL `closingIssuesReferences(first: 20) { nodes { number labels(first: 30) { nodes { name } } } }`.
+   No issue-events or permissions calls are needed.
 3. If no closing issue carries `bug` or `qa:agent-confirmed`, PASS.
-4. For each such issue carrying `regression-test:n/a`, read `GET /repos/{r}/issues/{n}/events`. Find
-   the latest `labeled` event for that label and check its actor with
-   `GET /repos/{r}/collaborators/{login}/permission`. If the permission is `admin`, that issue is exempt.
+4. An issue carrying `regression-test:n/a` is exempt. Print `EXEMPT #<n> (regression-test:n/a)` for
+   each one, so the exemption is visible in the job log. No actor check: every session runs on the
+   maintainer's token, so one would prove nothing (requirements R4).
 5. Get changed files with `git diff --name-only origin/main...HEAD`. PASS if any of them matches
    `/\.(test|spec)\.(ts|tsx|mjs|js)$|\.test\.sh$|^e2e\/.+\.ts$/`.
 6. Otherwise FAIL, naming the issues and how to satisfy the rule.

@@ -16,7 +16,7 @@ them by hand, and prove the suites can fail, with no QA team. Each workstream is
 
 ## Sprints
 
-| Sprint | Goal | Staging lane (serial) | Free lane (parallel) | CI lane (`needs-human`, serial) |
+| Sprint | Goal | Staging lane (serial) | Free lane (parallel) | CI lane (serial) |
 |---|---|---|---|---|
 | 1 | Run what already exists; fix the known 500; start the authz oracle | #883 → #884 → #885 → #891 | #887, #867, #868, #898 | #886 |
 | 2 | Build the new harnesses | #888 | #869 → #870, #889, #894 → #895, #899 | — |
@@ -28,13 +28,13 @@ them by hand, and prove the suites can fail, with no QA team. Each workstream is
   (`snapurl-staging`), so two sessions would fight over one stack and its ports. **One staging
   task at a time.**
 - **Free lane.** Unit tests, Docker-contained visual runs, docs. Safe to run in parallel tabs.
-- **CI lane.** Edits `.github/workflows/verify.yml`. Only the maintainer merges these, and they
-  conflict with each other, so **merge each before starting the next.**
+- **CI lane.** Edits `.github/workflows/verify.yml`. These PRs conflict with each other, so **merge
+  each before starting the next.**
 
 ### Maintainer actions (the human-only steps)
-1. Merge every PR after looking at it. The free and staging lanes may self-verify, but nothing merges itself.
+1. Merge every PR after looking at it. There is no merge bot; the retired Factory autopilot is gone.
 2. #891: answer the five authz questions and approve the drafted matrix rows. #892 cannot start until then.
 3. #870 and #873: look at every baseline image once. That approval is the oracle.
 4. Every CI-lane PR: apply it if the agent's token cannot push workflow files.
 5. #893: promote `real-stack` to required only after 5 consecutive green `main` runs.
-6. Apply `regression-test:n/a` (admin-only) to fix issues that need no test.
+6. Apply `regression-test:n/a` yourself to bug issues that need no test. Sessions never apply it.

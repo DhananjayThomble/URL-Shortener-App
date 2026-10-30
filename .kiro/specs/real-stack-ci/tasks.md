@@ -8,8 +8,8 @@ staging**: the compose project name is fixed, so two worktrees would fight over 
 | A1 Journeys CI-ready: scripts, `psql` → `docker exec`, triage every spec | #883 | 1 | staging | — |
 | A2 a11y suite throttle-safe | #884 | 1 | staging | — |
 | A3 dom-xss self-seeding, never skips | #885 | 1 | staging | — |
-| A4 CI: `real-stack` job (report-only) + WebKit in `e2e` | #886 | 1 | — (`needs-human`) | A1, A2, A3 |
-| Promotion to required | #893 | 3 | — (`needs-human`) | 5 consecutive green `main` runs |
+| A4 CI: `real-stack` job (report-only) + WebKit in `e2e` | #886 | 1 | CI | A1, A2, A3 |
+| Promotion to required | #893 | 3 | CI | 5 consecutive green `main` runs |
 
 ## A1
 - [ ] `test:journeys` in `e2e/package.json`. Honour `QA_PREBUILT_WEB=1` (design §2).

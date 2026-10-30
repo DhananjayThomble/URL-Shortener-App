@@ -8,8 +8,9 @@ Status: proposed.
   before the fix and passes after"), `developer.md:51-52`, and `reviewer.md:21` ("would the test
   fail if the fix were reverted? try it").
 - **Nothing enforces it.** The PR template has no test field. Agent PRs skip the template anyway,
-  because `gh pr create --body` bypasses it. No CI job checks it. `autopilot.sh merge_approved`
-  checks only the approval SHA, `CI gate` and workflow paths.
+  because `gh pr create --body` bypasses it. No CI job checks it. The autopilot that used to merge
+  agent PRs is retired, so every PR is now merged by hand. That makes a mechanical check more useful,
+  not less, because one person is reviewing every agent PR.
 - **It mostly happens anyway.** Of 57 closed `qa:agent-confirmed` issues with a linked merged PR, 43
   (75%) shipped a test file. All 14 without one were dependency bumps, CI pinning, image hardening
   or smoke-script-only fixes. `[bug]`-titled issues were 27/28. (Census of all 69 closed issues,
@@ -28,15 +29,18 @@ So the gap is enforcement and proof, not habit.
      mocked-api < fixtures e2e < real-stack journey;
   3. name the issue in the test (title or header comment, `#<n>`);
   4. show the red run in the PR body (the new test run against `origin/main`).
-- **R2 Issue filing carries the plan.** When the reviewer files a confirmed finding, the body names
-  the oracle **and** a suggested regression lane. When the manager adds acceptance criteria, one item
-  is always the regression test.
+- **R2 Issue filing carries the plan.** Whoever files a confirmed bug (you, or a Kiro / Claude Code
+  session) writes an `Oracle:` line and a `Regression lane:` line in the body. The rule lives in
+  `testing.md`, so every session loads it.
 - **R3 CI guard.** A job fails a PR that closes a `bug`/`qa:agent-confirmed` issue without touching a
   test file. The test-file pattern is wider than `coverage-delta`'s (it must include `.spec.ts`,
   `.test.tsx`, `e2e/**` and `scripts/*.test.sh`).
-- **R4 Escape hatch.** The label `regression-test:n/a` on the issue skips the guard **only if a
-  repository admin applied it**, checked through the issue events API. This covers dependency bumps
-  and CI pinning. An agent applying the label does not count.
+- **R4 Escape hatch.** The label `regression-test:n/a` on the issue skips the guard, for dependency
+  bumps, CI pinning and similar. **It is honour-system.** Every Kiro and Claude Code session runs on
+  the maintainer's own token, so GitHub cannot tell a human-applied label from an agent-applied one
+  (an admin-only check would pass for every session). Two rules keep it honest instead:
+  sessions are told never to apply it (`testing.md`), and the guard prints every exemption it
+  honoured in its output, so the person merging sees it.
 - **R5 Backfill.** Spot-check that the existing regression tests actually fail when the fix is reverted,
   for a sample of 10 fixes across lanes. Close any real gaps with test-only issues.
 

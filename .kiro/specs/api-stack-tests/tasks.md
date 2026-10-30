@@ -10,7 +10,7 @@ Epic: #880. Staging lane = needs `pnpm staging:up` (one session at a time).
 | C4 Contract fuzz suite | #890 | 3 | staging | C2, C3 |
 | C1 Bug: non-UUID ids 500 on members/reports | #887 | 1 | free | — |
 | C6 Access-matrix suite | #892 | 3 | staging | C2, C5 approved |
-| C7 CI: `aux` shard + promote `real-stack` to required | #893 | 3 | — (`needs-human`) | C4, C6, #886, 5 green `main` runs |
+| C7 CI: `aux` shard + promote `real-stack` to required | #893 | 3 | CI | C4, C6, #886, 5 green `main` runs |
 
 ## C5 — draft the oracle
 - [ ] Produce `apps/api/src/stack/access-matrix.expected.ts` (design §7). Fill one row per route from
