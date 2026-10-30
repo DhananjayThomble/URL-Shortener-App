@@ -57,6 +57,10 @@ export const links = pgTable(
   "links",
   {
     id: id(),
+    /* CASCADE drops link rows without the app-level projection DELETE and cache
+       bust (#738). Migration 0021's AFTER DELETE trigger on links enqueues the
+       outbox DELETE for any link removed this way; workspaces are meant to be
+       deleted through WorkspaceRemovalService, which also busts the cache. */
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),

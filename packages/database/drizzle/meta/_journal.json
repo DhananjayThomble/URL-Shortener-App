@@ -148,6 +148,13 @@
       "when": 1792476292491,
       "tag": "0020_link_counters_reserved",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793374485921,
+      "tag": "0021_link_delete_outbox_guard",
+      "breakpoints": true
     }
   ]
 }
