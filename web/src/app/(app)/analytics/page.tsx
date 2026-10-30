@@ -8,7 +8,7 @@ import { useAnalytics, useExportLinks, useWorkspace } from "@/lib/api/hooks";
 import type { AnalyticsRange } from "@snapurl/contract";
 import { BLOCKED_VISITS_CAPTION, BLOCKED_VISITS_LABEL } from "@/lib/blocked-visits";
 import { analyticsSubtitle } from "@/lib/retention";
-import { compact, formatDelta, full } from "@/lib/utils";
+import { formatDelta, full } from "@/lib/utils";
 
 export default function AnalyticsPage() {
   const [range, setRange] = useState<AnalyticsRange>("30d");

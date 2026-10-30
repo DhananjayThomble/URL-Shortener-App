@@ -1128,7 +1128,6 @@ describe("DynamoProjection logs a swallowed ConditionalCheckFailedException (#72
       id: "dom-1",
       version: "2026-05-05T00:00:00.000Z",
     });
-    const projection = new DynamoProjection(emptyDb(), client, TABLE, logger.log);
 
     /* A live domain op whose write LOSES to the stored newer item. The op is a
        success (superseded) — projectDomain resolves — but it must now have

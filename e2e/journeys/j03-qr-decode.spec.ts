@@ -49,7 +49,6 @@ async function decodeRenderedQr(
     // Clone SVG and force explicit pixel dimensions so Chromium rasterises strokes
     const vb = svgEl.viewBox.baseVal;
     const svgW = vb.width || 196;
-    const svgH = vb.height || 196;
     const SIZE = svgW * 8; // 8× gives jsQR plenty of pixels
 
     const clone = svgEl.cloneNode(true) as SVGSVGElement;

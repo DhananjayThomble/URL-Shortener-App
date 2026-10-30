@@ -29,7 +29,6 @@ import { shortenableUrl } from "./lib/active-url.js";
 import { buildShortUrl } from "./lib/short-url.js";
 import { buildUtm } from "./lib/utm.js";
 import { toPngDataUrl, toSvgString, qrFilenameStem } from "./lib/qr.js";
-import { t } from "./lib/i18n.js";
 import type { Domain, Link, LinkList } from "@snapurl/contract";
 
 /** Everything the controller touches, injected so it is testable without a browser. */

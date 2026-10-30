@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { and, clickDaily, domains, eq, gte, links, sql, workspaces, type Database } from "@snapurl/database";
+import { and, clickDaily, domains, eq, gte, sql, workspaces, type Database } from "@snapurl/database";
 import type { UpdateWorkspaceInput, Workspace } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { initialsOf } from "../auth/auth.service.js";

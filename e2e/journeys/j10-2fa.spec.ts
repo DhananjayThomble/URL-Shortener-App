@@ -24,7 +24,6 @@ import {
   makeEmail,
   RUN_PASSWORD,
   registerUser,
-  seedAccount,
   API_URL,
   totpCode,
 } from "./helpers";

@@ -126,7 +126,7 @@ describeDb("atomic click-limit gate (#763)", () => {
        of 2 lets ALL of them through. This is the overshoot; the atomic test
        above is the fix. */
     const limit = 2;
-    const linkId = await makeLink("old-overshoot", limit);
+    await makeLink("old-overshoot", limit);
     const attempts = 4;
 
     const link = await resolver.resolve(host, "old-overshoot");

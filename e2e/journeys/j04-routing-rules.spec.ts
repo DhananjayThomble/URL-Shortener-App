@@ -76,7 +76,7 @@ test.describe("Journey 4 — Routing rules", () => {
     const shortUrl = `${REDIRECT_URL}/${link.slug}`;
 
     // A US-country request should land on DEST_US
-    const usRes = await page.request.get(shortUrl, {
+    await page.request.get(shortUrl, {
       headers: { "x-snapurl-country": "US" },
       maxRedirects: 5,
     });

@@ -262,11 +262,9 @@ async function createLink(token, domain, destination) {
 // return or mutate another workspace's row.
 // ============================================================
 async function phase1_idor() {
-  const phase = "idor-cross-workspace";
   const userA = await registerUser("idor-a");
   const userB = await registerUser("idor-b");
   const wsA = await currentWorkspace(userA.accessToken);
-  const wsB = await currentWorkspace(userB.accessToken);
 
   const linkRes = await createLink(userA.accessToken, wsA.defaultDomain, "https://example.com/idor-victim-link");
   const linkId = linkRes.body?.id;
@@ -327,7 +325,6 @@ async function phase2_db_isolation() {
   const userA = await registerUser("dbiso-a");
   const userB = await registerUser("dbiso-b");
   const wsA = await currentWorkspace(userA.accessToken);
-  const wsB = await currentWorkspace(userB.accessToken);
 
   const linkRes = await createLink(userA.accessToken, wsA.defaultDomain, "https://example.com/db-isolation-check");
   const linkId = linkRes.body?.id;
