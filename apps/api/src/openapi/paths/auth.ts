@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { refs, route } from "../registry.js";
 
 const tag = "Auth";
@@ -106,6 +107,27 @@ route({
   public: true,
   body: refs.EmailVerifyResendInput,
   responses: { 202: { description: "Accepted" } },
+});
+
+/* #668 — accept a team invitation. Session-only (no @Scope, so API keys are
+   refused; an anonymous caller gets 401). Throttled 10/min per IP. */
+route({
+  method: "post",
+  path: "/auth/invite/accept",
+  tag,
+  summary: "Accept a team invitation (10/min per IP, session required)",
+  body: refs.AcceptInviteInput,
+  responses: { 200: { description: "The caller as a member of the joined workspace", schema: refs.AcceptedInvite } },
+});
+
+/* #668 — the workspace switcher lists the workspaces the caller belongs to;
+   entering one is POST /auth/refresh with `workspaceId`. */
+route({
+  method: "get",
+  path: "/auth/workspaces",
+  tag,
+  summary: "The workspaces the signed-in user is a member of",
+  responses: { 200: { description: "The caller's workspaces", schema: z.array(refs.UserWorkspace) } },
 });
 
 route({
