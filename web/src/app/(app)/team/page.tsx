@@ -1,10 +1,10 @@
 "use client";
 
 import { PageHead } from "@/components/app-shell";
-import { Button, Card, CardBody, CardHeader, Chip, Field, Input, Segmented, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Chip, Field, Input, ActionsTd, ActionsTh, Segmented, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAudit, useChangeMemberRole, useInviteMember, useMembers, useRemoveMember, useWorkspace } from "@/lib/api/hooks";
 import { InviteMemberInput, type MemberRole } from "@snapurl/contract";
-import { useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { memberSummary } from "@/lib/plural";
 import { cn, full, timeAgo } from "@/lib/utils";
 import { auditEntryText } from "@/lib/audit-entry";
@@ -48,11 +48,48 @@ export default function TeamPage() {
   const [problem, setProblem] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  /* Where the open role editor renders (#859). It first opens inline in the pinned actions cell,
+     exactly as before. If that makes the Members table overflow its scroller (the wide editor would
+     push role options and Done into the horizontal overflow), it moves to the Member cell and only
+     Done stays pinned. Decided by measuring the real layout, not by viewport width. */
+  const [stacked, setStacked] = useState(false);
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
   /* Outcome of the last role change. Shown under the Members table, never above
      it, so reporting it cannot move the row being edited (#781). */
   const [roleNote, setRoleNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   // A ref, not state: a double click delivers its second click before a re-render.
   const roleInFlight = useRef(false);
+
+  const scroller = () => tbodyRef.current?.closest<HTMLElement>("[role=region]") ?? null;
+  const overflows = () => {
+    const el = scroller();
+    return !!el && el.scrollWidth > el.clientWidth + 1;
+  };
+
+  // Runs before paint, so an editor that does not fit never shows inline for a frame.
+  useLayoutEffect(() => {
+    if (editing === null) {
+      setStacked(false);
+      return;
+    }
+    if (stacked) {
+      // The Member cell is the first column: make sure the editor is on screen.
+      if (scroller()) scroller()!.scrollLeft = 0;
+      return;
+    }
+    if (overflows()) setStacked(true);
+  }, [editing, stacked, members]);
+
+  // On resize, drop back to inline and let the effect above measure again.
+  useEffect(() => {
+    if (editing === null) return;
+    const onResize = () => {
+      if (stacked) setStacked(false);
+      else if (overflows()) setStacked(true);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [editing, stacked]);
 
   async function sendInvite() {
     const parsed = InviteMemberInput.safeParse({ email: email.trim(), role });
@@ -89,6 +126,21 @@ export default function TeamPage() {
     } finally {
       roleInFlight.current = false;
     }
+  }
+
+  /* The inline role editor (#781). It renders in the pinned actions cell while the table fits, and in
+     the Member cell (wrapping) when it would not (#859). One element in one place at a time. */
+  function roleEditor(m: NonNullable<typeof members>[number]) {
+    return (
+      <Segmented
+        className={stacked ? "flex-wrap" : undefined}
+        aria-label={`Role for ${m.email}`}
+        /* While the change is in flight show the role being set, not the old one. */
+        value={changeRole.isPending && changeRole.variables?.id === m.id ? changeRole.variables.role : m.role}
+        onChange={(next) => void setMemberRole(m, next)}
+        options={ROLE_OPTIONS}
+      />
+    );
   }
 
   async function remove(id: string) {
@@ -166,10 +218,10 @@ export default function TeamPage() {
                   <Th>Links</Th>
                   <Th>Last active</Th>
                   <Th>2FA</Th>
-                  <Th />
+                  <ActionsTh />
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={tbodyRef}>
                 {(members ?? []).map((m, i) => (
                   <tr key={m.id}>
                     <Td>
@@ -199,6 +251,11 @@ export default function TeamPage() {
                           </span>
                         </div>
                       </div>
+                      {stacked && editing === m.id ? (
+                        <div className="mt-2" onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}>
+                          {roleEditor(m)}
+                        </div>
+                      ) : null}
                     </Td>
                     <Td>
                       <Chip tone={m.role === "owner" ? "accent" : m.status === "invited" ? "warn" : "default"}>
@@ -211,19 +268,16 @@ export default function TeamPage() {
                     <Td>
                       {m.status === "invited" ? "—" : <Chip tone={m.twoFactor ? "good" : "warn"}>{m.twoFactor ? "On" : "Off"}</Chip>}
                     </Td>
-                    <Td className="text-right whitespace-nowrap">
+                    {/* From `sm` up the buttons sit flush, as they did before ActionsTd (its default gap-1 would move every column by a few px). */}
+                    <ActionsTd className="sm:[&>div]:gap-0">
                       {editing === m.id ? (
                         <div
                           className="inline-flex items-center gap-2"
                           onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
                         >
-                          <Segmented
-                            aria-label={`Role for ${m.email}`}
-                            /* While the change is in flight show the role being set, not the old one. */
-                            value={changeRole.isPending && changeRole.variables?.id === m.id ? changeRole.variables.role : m.role}
-                            onChange={(next) => void setMemberRole(m, next)}
-                            options={ROLE_OPTIONS}
-                          />
+                          {/* Inline here, exactly as before, unless it does not fit: then it lives in
+                              the Member cell (see roleEditor) and only Done stays pinned (#859). */}
+                          {stacked ? null : roleEditor(m)}
                           <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
                             Done
                           </Button>
@@ -247,7 +301,7 @@ export default function TeamPage() {
                           </Button>
                         </>
                       )}
-                    </Td>
+                    </ActionsTd>
                   </tr>
                 ))}
               </tbody>
