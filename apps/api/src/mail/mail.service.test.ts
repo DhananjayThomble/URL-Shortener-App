@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +87,22 @@ describe("MailService — outbox transport", () => {
     // Guard: this send must not have written anything to process.cwd()/logs/outbox.
     const cwdOutboxAfter = existsSync(cwdOutbox) ? await readdir(cwdOutbox) : [];
     expect(cwdOutboxAfter).toEqual(cwdOutboxBefore);
+  });
+
+  it.skipIf(process.platform === "win32")("writes message files owner-only, since they carry live tokens", async () => {
+    /* Code scanning (js/insecure-temporary-file): the default outbox lives in
+       the shared os temp dir, so a file created with the default 0o644 mode
+       would let any local user read an invite or password-reset token. */
+    const dir = await mkdtemp(join(tmpdir(), "mail-test-"));
+    cleanup.push(dir);
+    const svc = new MailService(envStub({ MAIL_OUTBOX_DIR: join(dir, "outbox") }));
+
+    await svc.send({ to: "mode@example.com", subject: "Mode", body: "secret token" });
+
+    const outbox = join(dir, "outbox");
+    expect((await stat(outbox)).mode & 0o777).toBe(0o700);
+    const [file] = await readdir(outbox);
+    expect((await stat(join(outbox, file!))).mode & 0o777).toBe(0o600);
   });
 });
 
