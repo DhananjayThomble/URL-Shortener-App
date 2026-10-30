@@ -1404,6 +1404,48 @@ web host; it would require the redirect service (or an edge function) to proxy o
 page itself, which is the architecture this decision deliberately declined. If that requirement
 arrives, it is a new epic, not a tweak to this one.
 
+### Cross-workspace access answers 404, indistinguishable from a nonexistent id (#891)
+
+**Surfaced by #891, which drafts the access-matrix oracle and found this rule stated
+nowhere but in code comments and test titles. Recorded here so it is a decision, not an
+accident of each service's error handling.**
+
+Every `{id}` route is workspace-scoped by hand inside its service — there is no shared
+helper and no row-level security (`security-and-context.md`, "Multi-tenancy"). When a
+caller asks for a resource that belongs to **another** workspace, the service does not
+answer `403 Forbidden`. It answers `404 Not Found` — the same response it gives for an id
+that does not exist anywhere. Observed against staging for #891: `ownerB` requesting
+workspace A's link, form, domain, member, api-key, webhook or bio-page by id gets `404`
+on every one, identical to a random UUID.
+
+**This is deliberate, and it is the right default.** A `403` on a cross-tenant id is itself
+a disclosure: it confirms that *some* workspace owns that id, turning every `{id}` route
+into an existence oracle an authenticated member of any other workspace could enumerate.
+A `404` leaks nothing — "there is no such resource *that you can see*" is true whether the
+id is unused or simply not yours, and the caller cannot tell which. The cost is that a
+genuine "you typed the wrong id" and a "that belongs to someone else" are indistinguishable
+in the response, which is a worse debugging experience and the price paid for not leaking
+existence.
+
+This is the same posture as the workspace-scoped data queries, and it is the **opposite**
+trade from the one knowingly accepted for the global form-slug namespace (see "Forms: the
+slug namespace is global, and squattable — left that way", `DECISIONS.md:449`). There,
+`create()` reports a slug conflict *by name* across workspace boundaries, so the public
+form create path **is** a cross-tenant existence oracle — accepted because the public slug
+namespace is shared by design and the enumeration has no exploiter yet. The authenticated
+`{id}` routes make the stricter choice because nothing forces them to share a namespace:
+they can, and do, answer 404.
+
+Lists take the matching form: a cross-tenant caller does not get `403`, they get a `200`
+containing **only their own** workspace's rows (`own-only` in the matrix), never another
+workspace's — so a list cannot be used to confirm a sibling workspace's contents either.
+
+**Revisit if** a route ever needs to distinguish "not found" from "not yours" for a
+legitimate reason — for example a support or admin surface that may act across workspaces,
+which would need an explicit, separately-authorized cross-tenant read rather than relaxing
+this default. Until then, 404-on-cross-tenant is the invariant, and a route that returns
+`403` (or the resource itself) to a cross-workspace caller is a bug.
+
 ---
 
 ## Part 4c — Lighthouse performance baseline (#475)
