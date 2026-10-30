@@ -28,4 +28,20 @@ describe("bioManagedDestination", () => {
       "https://app.snapurl.dev/b/snap.to/ada",
     );
   });
+
+  it("strips every trailing slash and keeps interior ones", () => {
+    expect(bioManagedDestination("https://app.snapurl.dev///", "snap.to", "ada")).toBe(
+      "https://app.snapurl.dev/b/snap.to/ada",
+    );
+    expect(bioManagedDestination("https://a.dev//x/", "d", "s")).toBe("https://a.dev//x/b/d/s");
+    expect(bioManagedDestination("///", "d", "s")).toBe("/b/d/s");
+  });
+
+  it("is linear on a long run of slashes (ReDoS guard, js/polynomial-redos)", () => {
+    // `/\/+$/` took ~1.4s on 50k slashes followed by a non-slash; the scan is instant.
+    const hostile = `https://x${"/".repeat(50_000)}a`;
+    const start = performance.now();
+    bioManagedDestination(hostile, "d", "s");
+    expect(performance.now() - start).toBeLessThan(250);
+  });
 });

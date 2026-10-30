@@ -18,6 +18,13 @@ describe("fieldKeyFrom", () => {
     expect(fieldKeyFrom("")).toBe("field");
   });
 
+  it("trims a leading or trailing separator", () => {
+    expect(fieldKeyFrom("  Name  ")).toBe("name");
+    expect(fieldKeyFrom("__a__")).toBe("a");
+    expect(fieldKeyFrom("_")).toBe("field");
+    expect(fieldKeyFrom(`a${"_".repeat(50_000)}!${"_".repeat(50_000)}b`)).toBe("a_b");
+  });
+
   it("disambiguates a label used twice instead of colliding", () => {
     // Two "Address" fields must not overwrite each other's answers.
     expect(fieldKeyFrom("Address", new Set(["address"]))).toBe("address_2");
