@@ -25,7 +25,12 @@ import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { API_URL, REDIRECT_URL, createLink, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
 
-const DB_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5435/snapurl";
+// Run SQL inside the staging Postgres container with `docker exec`, the pattern
+// j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
+// docker CLI is always present on a GitHub runner. The container name comes
+// from the compose project name `snapurl-staging`, overridable with
+// DB_CONTAINER (docker-compose.staging.yml; spec design §1 "Facts").
+const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
 const CHROME_UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const EVIDENCE = process.env.QA_EVIDENCE_DIR;
@@ -44,7 +49,12 @@ const EXPECTED = { "24h": 5, "30d": 25, "12m": 125 } as const;
 const DELTA = { "24h": "—", "30d": "▼ 75.0% vs prev 30d", "12m": "▼ 87.5% vs prev 12m" } as const;
 const ALL_TIME = 5 + 20 + 100 + 1000;
 
-const psql = (sql: string) => execFileSync("psql", [DB_URL, "-v", "ON_ERROR_STOP=1", "-c", sql], { stdio: "pipe" });
+const psql = (sql: string) =>
+  execFileSync(
+    "docker",
+    ["exec", "-i", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-v", "ON_ERROR_STOP=1"],
+    { input: sql, stdio: ["pipe", "pipe", "pipe"] },
+  );
 
 async function getJson<T>(session: Session, p: string): Promise<T> {
   const res = await fetch(`${API_URL}${p}`, { headers: { authorization: `Bearer ${session.accessToken}` } });

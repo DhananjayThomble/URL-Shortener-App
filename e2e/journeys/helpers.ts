@@ -1,10 +1,19 @@
 /**
  * Shared helpers for the journey suite.
  *
- * Rules (brief-journey.md):
- *  - Never hardcode an id/slug/URL the app generates — read it back from page/API.
- *  - Every identity derived per run (no fixed emails, no fixed passwords).
- *  - Oracle: packages/contract (zod schemas) and observed behaviour.
+ * Journey-suite rules (these were previously cited as "brief-journey.md", a
+ * file that does not exist in the repo — the rules it stood for are written
+ * out here, and align with .kiro/steering/qa-oracles.md):
+ *  - Never hardcode an id/slug/URL the app generates — read it back from the
+ *    page or the API, so an assertion compares against the runtime's own value.
+ *  - No fixture-shaped assertions: journeys drive the REAL stack, never the
+ *    in-memory fixtures fake (qa-oracles.md §5).
+ *  - Every identity is derived per run (no fixed emails or passwords), because
+ *    a real Postgres backend keeps accounts between runs and a fixed email
+ *    collides on the second run.
+ *  - Oracle (qa-oracles.md §1): derive the expected value from
+ *    packages/contract (zod schemas), docs/, or an invariant that must hold —
+ *    never by reading the implementation back as its own oracle.
  *
  * The three keys below are mirrored from web/src/lib/api/client.ts so the
  * seedAccount helper can drop tokens into localStorage before the first nav.
