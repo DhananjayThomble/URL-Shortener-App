@@ -1645,3 +1645,43 @@ dedicated atomic store).
    ACM can be provisioned.
 4. **RDS or an external free-tier Postgres?** Costed in the architecture doc — RDS burns the $100
    credit in about six months, external Postgres in about six years.
+
+
+---
+
+## Part 6 — Frontend/build decisions
+
+### #867 · Webfonts are self-hosted at build time via `next/font/google`
+
+**Decision.** The three webfont families — **Archivo** (500/600/700/800), **Public Sans**
+(400/500/600) and **IBM Plex Mono** (400/500/600) — are loaded with `next/font/google` in
+`web/src/app/layout.tsx` instead of a runtime `<link rel="stylesheet">` to
+`fonts.googleapis.com`. `next/font` downloads the files at **build time** and serves them from the
+app's own origin. Each family exposes a CSS variable (`--font-archivo`, `--font-public-sans`,
+`--font-ibm-plex-mono`) applied on `<html>`; `globals.css` slots those variables ahead of the
+system fallbacks in the existing `--font-display` / `--font-sans` / `--font-mono` tokens, so **no
+component changed**. The two now-dead `preconnect` hints to `fonts.googleapis.com` /
+`fonts.gstatic.com` were removed.
+
+**Picked it over** keeping the `<link>` tags. That approach:
+
+1. loads the webfont over the network with `display=swap`, so the page paints a fallback face and
+   **reflows** when the font lands — every text metric then depends on network timing, which is
+   disqualifying for the pixel-baseline visual-regression suite
+   (`.kiro/specs/visual-regression/` design §2 row #1, §3);
+2. resolves `document.fonts.ready` on **failure** too, so a Google Fonts hiccup silently produces a
+   fallback-rendered frame rather than a diagnosable error;
+3. discloses **every visitor's IP to a third party** on every page load — which sits wrong against
+   the privacy-first posture in `.kiro/steering/security-and-context.md` (cookieless analytics,
+   daily-salt hashing, k-anonymity floor);
+4. is a render-blocking cross-origin stylesheet on the critical path, plus a swap reflow (CLS).
+
+The design doc also records a fallback — keep the `<link>` tags and have the visual lane block the
+Google hosts via `page.route` + pin a local stack with `stylePath`. That is **strictly worse**: the
+baselines would then show a face production never renders. It is rejected here in favour of the real
+fix.
+
+**Revisit if** a design needs a family `next/font/google` does not carry (its catalogue is Google
+Fonts only). In that case, host the font files in the repo and load them with `next/font/local`
+instead of reintroducing a third-party request — the build-time, same-origin, no-reflow property is
+the invariant to preserve, not the specific loader.

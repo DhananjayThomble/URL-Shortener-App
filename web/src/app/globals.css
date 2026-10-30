@@ -38,9 +38,12 @@
   --color-wash-bad: var(--wash-red);
   --color-wash-teal: var(--wash-teal);
 
-  --font-display: Archivo, ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* #867 — fonts are self-hosted via next/font/google (layout.tsx); each family
+     exposes a CSS variable that we slot in ahead of the system fallbacks, so
+     every --font-* consumer keeps working unchanged. */
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), ui-monospace, monospace;
 
   --radius-token: var(--radius);
   --radius-token-sm: var(--radius-sm);

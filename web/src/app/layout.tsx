@@ -1,7 +1,35 @@
 import type { Metadata } from "next";
+import { Archivo, Public_Sans, IBM_Plex_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import { PREPAINT_SESSION_HINT } from "@/lib/session-hint";
 import "./globals.css";
+
+// Self-hosted at build time (next/font/google) — see docs/DECISIONS.md Part 6.
+// Each family exposes a CSS variable that globals.css wires into the existing
+// --font-* design tokens, so no component changes. Weights match what the old
+// Google Fonts <link> requested; display:swap keeps the fallback-then-webfont
+// behaviour for first paint, now served from the app's own origin (no reflow
+// dependent on a third-party fetch, no IP disclosure to Google).
+const archivo = Archivo({
+  subsets: ["latin"],
+  weight: ["500", "600", "700", "800"],
+  display: "swap",
+  variable: "--font-archivo",
+});
+
+const publicSans = Public_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-public-sans",
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-ibm-plex-mono",
+});
 
 export const metadata: Metadata = {
   title: { default: "SnapURL", template: "%s · SnapURL" },
@@ -11,14 +39,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${archivo.variable} ${publicSans.variable} ${ibmPlexMono.variable}`}
+    >
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
-        />
         {/* Applies the saved appearance before first paint so the page never
             flashes the default accent or the wrong theme. */}
         <script
