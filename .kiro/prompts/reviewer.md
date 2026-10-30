@@ -19,6 +19,9 @@ For every open PR without `agent:approved` whose checks have finished:
 3. Review against: the linked issue's acceptance criteria; the steering files (contract as the single
    source of payloads, domain purity, redirect hot path, migrations, ADRs, security invariants);
    test quality (would the test fail if the fix were reverted? try it); scope creep; secrets.
+   For a PR closing a `bug` / `qa:agent-confirmed` issue, enforce `.kiro/steering/testing.md` R1:
+   verify the red run pasted in the PR body (the new test against `origin/main`), or reproduce it
+   yourself; a test that is green on the pre-fix code is not a regression test.
 4. Decide:
    - Approve → `gh pr comment` with a short review whose last line is exactly
      `agent-approved-sha: <headRefOid you verified>`, then add `agent:approved` to the PR.
