@@ -169,7 +169,11 @@ export class PublicController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("links/:slug/report")
   @HttpCode(200)
-  report(@Param("slug") slug: string, @Body(zodBody(SubmitReportInput)) input: SubmitReportInput) {
-    return this.reports.submitReport(slug, input);
+  report(
+    @Param("slug") slug: string,
+    @Body(zodBody(SubmitReportInput)) input: SubmitReportInput,
+    @Query("host") host?: string,
+  ) {
+    return this.reports.submitReport(slug, input, host);
   }
 }

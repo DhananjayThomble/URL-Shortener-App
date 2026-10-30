@@ -62,7 +62,7 @@ export default function LinkPreviewPage() {
      password form; see previewOutcome. */
   const outcome = data ? previewOutcome(data, trust) : null;
   const unlock = useUnlockLink(slug, host);
-  const report = useReportLink(slug);
+  const report = useReportLink(slug, host);
 
   const [password, setPassword] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
