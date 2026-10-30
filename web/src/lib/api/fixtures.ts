@@ -616,6 +616,13 @@ const reportStore: AbuseReport[] = [
   },
 ];
 
+/** Hex token of `length` characters from the platform CSPRNG (fixture secrets look real, so make them so). */
+const randomToken = (length: number) =>
+  Array.from(globalThis.crypto.getRandomValues(new Uint8Array(Math.ceil(length / 2))), (b) =>
+    b.toString(16).padStart(2, "0"),
+  )
+    .join("")
+    .slice(0, length);
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 /* Audit entries are rendered with the same copy table the API uses (#783), so
@@ -1266,7 +1273,7 @@ export async function fixtureRequest<T>(
   /* ---- api keys and webhooks ---- */
   else if (m(/^\/api-keys$/) && method === "POST") {
     const body = opts.body as { name: string; scopes: string[] };
-    const secret = `sk_live_${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
+    const secret = `sk_live_${randomToken(16)}`;
     const key: CreatedApiKey = {
       id: uid("key"),
       name: body.name,
@@ -1292,7 +1299,7 @@ export async function fixtureRequest<T>(
       events: body.events,
       health: "healthy",
       detail: "No deliveries yet",
-      secret: `whsec_${Math.random().toString(36).slice(2, 18)}`,
+      secret: `whsec_${randomToken(16)}`,
     };
     webhookStore.unshift({
       id: hook.id,
