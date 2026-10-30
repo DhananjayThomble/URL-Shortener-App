@@ -46,7 +46,12 @@ export default defineConfig({
     ["html", { outputFolder: path.join(ARTIFACTS, "html"), open: "never" }],
   ],
   outputDir: path.join(ARTIFACTS, "test-results"),
-  timeout: 60_000,         // journeys are longer than single-surface specs
+  /* Journeys are longer than single-surface specs. 120s (up from 60s) leaves
+     headroom for the /auth/register 5/min-per-IP back-off a registration-heavy
+     test performs against the real stack (THROTTLE_LIMIT does not lift the
+     route-level limit — see design §1 "Throttles" and the j790/j17 register
+     back-off). The slowest observed real journey is ~60s. */
+  timeout: 120_000,
   expect: { timeout: 15_000 },
   use: {
     baseURL: BASE_URL,

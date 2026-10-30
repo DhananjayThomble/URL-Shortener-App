@@ -59,14 +59,29 @@ export interface Session {
  * Oracle: packages/contract/src/auth.ts — AuthSession schema.
  */
 export async function registerUser(email: string, password = RUN_PASSWORD): Promise<Session> {
-  const res = await fetch(`${API_URL}/auth/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Journey Tester", email, password }),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`registerUser: POST /auth/register → ${res.status}; body=${text.slice(0, 400)}`);
+  // /auth/register carries a route-level 5/min-per-IP throttle (security
+  // behaviour that THROTTLE_LIMIT does NOT lift — .kiro/specs/real-stack-ci/
+  // design.md §1 "Throttles"). A spec that registers several accounts, or a
+  // CI shard running back-to-back specs on one IP, can hit a 429. Back off and
+  // retry (the j790-dead-ends.spec.ts pattern) so a real-stack register is
+  // resilient to its own route limit instead of failing the run.
+  let text = "";
+  let res: Response | undefined;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`${API_URL}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Journey Tester", email, password }),
+    });
+    if (res.status === 429 && attempt < 4) {
+      await new Promise((r) => setTimeout(r, 20_000));
+      continue;
+    }
+    text = await res.text();
+    break;
+  }
+  if (!res!.ok) {
+    throw new Error(`registerUser: POST /auth/register → ${res!.status}; body=${text.slice(0, 400)}`);
   }
   const body = JSON.parse(text) as {
     accessToken?: string;

@@ -22,11 +22,26 @@
  * apps/api/src/public/public.preview-state.integration.test.ts.
  */
 
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, registerUser } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
+
+// The API refuses creating a link whose expiresAt is already in the past
+// (apps/api validation; proven correct in j754-past-expiry.spec.ts). A real
+// user creates a link with a future expiry that later lapses, so to get a
+// genuinely-expired link we create it with a future expiry and then move
+// expires_at into the past in the staging DB — the docker exec psql pattern
+// j20/j23 use (CI has no host psql; the container name is overridable).
+const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
+const expireInPast = (slug: string) =>
+  execFileSync(
+    "docker",
+    ["exec", "-i", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-v", "ON_ERROR_STOP=1"],
+    { input: `update links set expires_at = now() - interval '1 day' where slug = '${slug}';`, stdio: ["pipe", "pipe", "pipe"] },
+  );
 
 test.describe("Journey 764 — preview shows the link's state @mobile", () => {
   test("expired, scheduled, archived and rule-routed links each read as what the redirect does", async ({ page }, testInfo) => {
@@ -75,10 +90,11 @@ test.describe("Journey 764 — preview shows the link's state @mobile", () => {
 
     /* ---- 1. QA's case: expired, with a fallback and a country rule ---- */
     const qaFull = await create({
-      expiresAt: new Date(Date.now() - DAY).toISOString(),
+      expiresAt: new Date(Date.now() + DAY).toISOString(),
       expiresTo: url("fallback-expired"),
       rules: [{ id: "r1", when: { country: "IN" }, then: url("rule-in") }],
     });
+    expireInPast(qaFull.slug);
     const r1 = await fetch(`${REDIRECT_URL}/${qaFull.slug}`, { redirect: "manual" });
     expect(r1.status, "the redirect sends an expired link to its fallback").toBe(302);
     expect(r1.headers.get("location")).toBe(url("fallback-expired"));
@@ -94,7 +110,8 @@ test.describe("Journey 764 — preview shows the link's state @mobile", () => {
     await landed;
 
     /* ---- 2. Expired, no fallback: the redirect answers 410 ---- */
-    const dead = await create({ expiresAt: new Date(Date.now() - DAY).toISOString() });
+    const dead = await create({ expiresAt: new Date(Date.now() + DAY).toISOString() });
+    expireInPast(dead.slug);
     expect((await fetch(`${REDIRECT_URL}/${dead.slug}`, { redirect: "manual" })).status).toBe(410);
     await openPreview(page, dead.slug);
     await expect(page.getByRole("heading", { name: "This link has expired" })).toBeVisible();
