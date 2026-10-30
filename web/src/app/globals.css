@@ -38,9 +38,10 @@
   --color-wash-bad: var(--wash-red);
   --color-wash-teal: var(--wash-teal);
 
-  /* #867 — fonts are self-hosted via next/font/google (layout.tsx); each family
-     exposes a CSS variable that we slot in ahead of the system fallbacks, so
-     every --font-* consumer keeps working unchanged. */
+  /* #867 — fonts are self-hosted via next/font/local (layout.tsx, OFL woff2
+     vendored under src/app/fonts); each family exposes a CSS variable that we
+     slot in ahead of the system fallbacks, so every --font-* consumer keeps
+     working unchanged. */
   --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-ibm-plex-mono), ui-monospace, monospace;

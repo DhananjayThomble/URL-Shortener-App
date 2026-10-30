@@ -1,34 +1,57 @@
 import type { Metadata } from "next";
-import { Archivo, Public_Sans, IBM_Plex_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { Providers } from "./providers";
 import { PREPAINT_SESSION_HINT } from "@/lib/session-hint";
 import "./globals.css";
 
-// Self-hosted at build time (next/font/google) — see docs/DECISIONS.md Part 6.
-// Each family exposes a CSS variable that globals.css wires into the existing
-// --font-* design tokens, so no component changes. Weights match what the old
-// Google Fonts <link> requested; display:swap keeps the fallback-then-webfont
-// behaviour for first paint, now served from the app's own origin (no reflow
-// dependent on a third-party fetch, no IP disclosure to Google).
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["500", "600", "700", "800"],
+// Self-hosted via next/font/local with OFL woff2 vendored under ./fonts — see
+// docs/DECISIONS.md Part 6. next/font/local reads the files off disk at build
+// time and performs NO network fetch (unlike next/font/google, whose build-time
+// fetch to fonts.googleapis.com is blocked on CI runners), so the build is
+// hermetic. Each family exposes a CSS variable that globals.css wires into the
+// existing --font-* design tokens, so no component changes. Weights match what
+// the old Google Fonts <link> requested; display:swap paints a fallback first
+// and swaps in the self-hosted face — now same-origin, no third-party request,
+// no IP disclosure to Google. adjustFontFallback sizes the fallback metrics to
+// the webfont so the swap does not shift layout.
+const archivo = localFont({
+  src: [
+    { path: "./fonts/archivo-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/archivo-600.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/archivo-700.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/archivo-800.woff2", weight: "800", style: "normal" },
+  ],
   display: "swap",
   variable: "--font-archivo",
+  fallback: ["ui-sans-serif", "system-ui", "sans-serif"],
+  adjustFontFallback: "Arial",
 });
 
-const publicSans = Public_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const publicSans = localFont({
+  src: [
+    { path: "./fonts/public-sans-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/public-sans-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/public-sans-600.woff2", weight: "600", style: "normal" },
+  ],
   display: "swap",
   variable: "--font-public-sans",
+  fallback: ["ui-sans-serif", "system-ui", "sans-serif"],
+  adjustFontFallback: "Arial",
 });
 
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const ibmPlexMono = localFont({
+  src: [
+    { path: "./fonts/ibm-plex-mono-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/ibm-plex-mono-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/ibm-plex-mono-600.woff2", weight: "600", style: "normal" },
+  ],
   display: "swap",
   variable: "--font-ibm-plex-mono",
+  fallback: ["ui-monospace", "monospace"],
+  // No size-adjusted fallback for mono: adjustFontFallback only knows Arial /
+  // Times New Roman metrics, neither of which models a monospace face, so a
+  // size-adjust there would be wrong. ui-monospace is the fallback.
+  adjustFontFallback: false,
 });
 
 export const metadata: Metadata = {

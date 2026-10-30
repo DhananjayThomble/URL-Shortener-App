@@ -58,7 +58,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className="flex justify-center gap-x-2 gap-y-2 sm:gap-[26px] flex-wrap mt-[26px] text-[12.5px] text-ink-3">
+          <div className="flex justify-center gap-x-4 gap-y-2 sm:gap-[26px] flex-wrap mt-[26px] text-[12.5px] text-ink-3">
             {["No tracking cookies", "Export everything, always", "Free tier that doesn't shrink"].map(
               (t) => (
                 <b key={t} className="flex items-center gap-[7px] font-medium">
