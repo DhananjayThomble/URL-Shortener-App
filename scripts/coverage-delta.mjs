@@ -45,6 +45,19 @@ if (changed.every(isDoc)) {
   pass(`docs-only PR (${changed.length} Markdown file(s)); the coverage guard does not apply`);
 }
 
+// Stack suites (`*.stack.test.ts`) are the same case as docs for this guard:
+// they drive the BUILT API over HTTP against a live stack (design §2) and are
+// SKIPPED in the unit coverage run (which has no stack — describeStack), so
+// they cannot raise covered lines there however real their assertions are. The
+// nightly real-stack lane (#893) is where they execute. A PR that only adds or
+// edits stack suites must therefore not be held to the covered-lines rule —
+// otherwise a genuine HTTP fuzz/access-matrix suite is unmergeable here purely
+// because the unit run never ran it.
+const isStackSuite = (f) => /\.stack\.test\.ts$/.test(f);
+if (changed.every((f) => isStackSuite(f) || isDoc(f))) {
+  pass(`stack-suite-only PR (${changed.filter(isStackSuite).length} *.stack.test.ts file(s)); runs only against a live stack, so the unit coverage guard does not apply`);
+}
+
 const isTestOrSupport = (f) =>
   /\.test\.ts$/.test(f) ||
   /(^|\/)__(tests|fixtures|mocks)__\//.test(f) ||
