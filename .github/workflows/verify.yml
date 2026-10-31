@@ -924,6 +924,64 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # Visual-regression lane (issue #869). The FIRST container: job in the repo.
+  # Runs the visual harness smoke inside the pinned Playwright image so that
+  # capture happens in the exact environment baselines (#870) are compared in.
+  #
+  # The image already carries the browsers at PLAYWRIGHT_BROWSERS_PATH=
+  # /ms-playwright, so the version-keyed cache and the two `playwright install`
+  # steps the e2e job needs are all dropped here — the image digest IS the pin.
+  #
+  # Pinned BY DIGEST, not the floating v1.63.0-noble tag: a re-tag upstream can
+  # never silently change the rendering stack. Keep this digest and
+  # e2e/package.json's @playwright/test version in lockstep (design §7) — a bump
+  # to one without the other invalidates every baseline. The tag is kept for
+  # human readability only; the @sha256 is the actual pin.
+  #
+  # This PR brings up the lane with ONE smoke target and NO committed baselines;
+  # the smoke captures to a buffer and asserts the capture path works, so it runs
+  # green on a fresh checkout.
+  visual:
+    name: Visual regression (fixtures, containerised)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --ipc=host # Chromium shared-memory headroom
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The image runs as root and carries Node 22; use corepack for pnpm rather
+      # than setup-node's pnpm cache, which needs a store path the container does
+      # not pre-provision.
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Build the workspace packages web depends on (@snapurl/contract, domain).
+      - name: Build packages
+        run: pnpm build:packages
+
+      # The webServer in playwright.visual.config.ts runs `next build && next
+      # start --port 3100` itself; no server step is needed here.
+      - name: Run visual harness smoke
+        run: pnpm --filter snapurl-e2e test:visual
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-visual
+          path: e2e/playwright-report-visual/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Publish the coverage baseline (issue #355). Non-PR only (nightly cron / push
   # to main): run the suite with coverage, merge the per-package summaries into
   # one, and upload it as an artifact the PR coverage-delta job downloads. Stored
@@ -1082,7 +1140,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, coverage-delta, actionlint, regression-guard]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
