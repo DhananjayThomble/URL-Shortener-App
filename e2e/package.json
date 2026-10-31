@@ -7,6 +7,8 @@
     "test:e2e": "playwright test",
     "test:e2e:mocked-api": "playwright test -c playwright.mocked-api.config.ts",
     "test:journeys": "playwright test -c playwright.journeys.config.ts",
+    "test:visual": "playwright test -c playwright.visual.config.ts --project=desktop",
+    "test:visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
     "test:e2e:ui": "playwright test --ui",
     "install:chromium": "playwright install --with-deps chromium",
     "type-check": "tsc --noEmit"

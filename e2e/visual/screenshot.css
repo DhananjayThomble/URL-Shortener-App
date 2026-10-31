@@ -1,0 +1,19 @@
+/* ============================================================================
+   Injected only at capture time via playwright.visual.config.ts
+   expect.toHaveScreenshot.stylePath (design §6). Every rule names what it
+   neutralises so a future reader knows why it is safe to apply at capture time
+   but not in the app itself.
+   ============================================================================ */
+
+/* Scrollbar gutter rendering is platform-dependent and feeds back into
+   clientWidth, which drives TableWrap's overflow flip (design §2 rows #19/#20).
+   Hide the scrollbars at capture time so the gutter never contributes pixels
+   and never shifts layout. */
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+* {
+  scrollbar-width: none !important;
+}
