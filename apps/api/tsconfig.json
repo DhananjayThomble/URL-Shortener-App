@@ -12,5 +12,9 @@
     "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+  // src/stack/zod-arbitrary.ts imports fast-check (a devDependency) and is only
+  // consumed by tests, so it must not land in the production build — exclude it
+  // alongside the test files. (The matching test is already covered by the
+  // src/**/*.test.ts glob.)
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/stack/zod-arbitrary.ts"]
 }
