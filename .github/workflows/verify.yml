@@ -936,9 +936,15 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Visual-regression lane (issue #869). The FIRST container: job in the repo.
-  # Runs the visual harness smoke inside the pinned Playwright image so that
-  # capture happens in the exact environment baselines (#870) are compared in.
+  # Visual-regression lane (issues #869 harness, #870 baselines, #871 gate).
+  # The FIRST container: job in the repo. Runs the suite inside the pinned
+  # Playwright image so capture/compare happens in the exact environment the
+  # committed baselines (e2e/visual/__screenshots__) were generated in.
+  #
+  # test:visual runs the 3 Chromium viewports and COMPARES each route against its
+  # committed baseline, so this job REDS on any unapproved pixel diff. It is in
+  # ci-gate's `needs` (below), which treats a failure here as a required-gate
+  # failure — the red-on-broken behaviour proven for #871.
   #
   # The image already carries the browsers at PLAYWRIGHT_BROWSERS_PATH=
   # /ms-playwright, so the version-keyed cache and the two `playwright install`
@@ -946,13 +952,10 @@ jobs:
   #
   # Pinned BY DIGEST, not the floating v1.63.0-noble tag: a re-tag upstream can
   # never silently change the rendering stack. Keep this digest and
-  # e2e/package.json's @playwright/test version in lockstep (design §7) — a bump
-  # to one without the other invalidates every baseline. The tag is kept for
-  # human readability only; the @sha256 is the actual pin.
-  #
-  # This PR brings up the lane with ONE smoke target and NO committed baselines;
-  # the smoke captures to a buffer and asserts the capture path works, so it runs
-  # green on a fresh checkout.
+  # e2e/package.json's @playwright/test version in lockstep (design §7; the
+  # pairing is recorded in .github/dependabot.yml) — a bump to one without the
+  # other invalidates every baseline. The tag is kept for human readability only;
+  # the @sha256 is the actual pin.
   visual:
     name: Visual regression (fixtures, containerised)
     needs: changes
@@ -981,8 +984,10 @@ jobs:
         run: pnpm build:packages
 
       # The webServer in playwright.visual.config.ts runs `next build && next
-      # start --port 3100` itself; no server step is needed here.
-      - name: Run visual harness smoke
+      # start --port 3100` itself; no server step is needed here. test:visual
+      # compares all 3 Chromium viewports against the committed baselines and
+      # reds on any unapproved diff.
+      - name: Run visual regression suite (compare against baselines)
         run: pnpm --filter snapurl-e2e test:visual
 
       - name: Upload Playwright report
