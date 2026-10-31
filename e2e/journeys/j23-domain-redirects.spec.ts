@@ -94,6 +94,20 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
     });
     expect(add.status, "POST /domains").toBe(201);
 
+    // The redirect service's resolver serves a custom domain's root/404
+    // redirects only when the domain is verified — it gates resolveDomain() on
+    // domains.status = 'live' (apps/redirect/src/resolver.ts:109,123,168; #712).
+    // DNS verification cannot run locally, so mark the domain live in the
+    // staging DB exactly as the verify endpoint would, the same pattern j20
+    // uses. Without this the later redirectFor() probes correctly get 404 and
+    // the test asserts behaviour the product never promises for an unverified
+    // domain.
+    const { stdout: lived } = await run("docker", [
+      "exec", "-i", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-At", "-c",
+      `update domains set status='live', ssl='active', verified_at=now() where domain='${host}' returning id`,
+    ]);
+    expect(lived.trim(), "custom domain marked live").not.toBe("");
+
     const list = (await (await fetch(`${API_URL}/domains`, {
       headers: { authorization: `Bearer ${token}` },
     })).json()) as Array<{ domain: string; shared?: boolean }>;
