@@ -31,7 +31,12 @@ import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
 
-const DB_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5435/snapurl";
+// Run SQL inside the staging Postgres container with `docker exec`, the pattern
+// j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
+// docker CLI is always present on a GitHub runner. The container name comes
+// from the compose project name `snapurl-staging`, overridable with
+// DB_CONTAINER (docker-compose.staging.yml; spec design §1 "Facts").
+const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
 const SHOTS = process.env.QA_EVIDENCE_DIR ?? path.resolve(__dirname, "../../.qa-runs/779");
 
 interface DomainRow {
@@ -67,7 +72,11 @@ const message = (json: unknown): string => {
 };
 
 function psql(sql: string) {
-  execFileSync("psql", [DB_URL, "-v", "ON_ERROR_STOP=1", "-c", sql], { stdio: "pipe" });
+  execFileSync(
+    "docker",
+    ["exec", "-i", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-v", "ON_ERROR_STOP=1"],
+    { input: sql, stdio: ["pipe", "pipe", "pipe"] },
+  );
 }
 
 async function signIn(page: Page, email: string) {

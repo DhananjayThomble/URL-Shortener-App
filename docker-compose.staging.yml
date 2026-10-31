@@ -142,6 +142,12 @@ services:
       # and clicks INSERT into Postgres — the same path single-node runs.
       CACHE_DRIVER: memory
       MAIL_TRANSPORT: outbox
+      # Global @nestjs/throttler bucket (default 120/60s). Raise ONLY this bucket
+      # for CI/local journey runs with `THROTTLE_LIMIT=100000 pnpm staging:up`;
+      # the default stays 120. The route-level 5/min limits on auth endpoints are
+      # security behaviour and are NOT affected by this var. See
+      # .kiro/specs/real-stack-ci/design.md §1 "Throttles".
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-120}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "3001:3001"

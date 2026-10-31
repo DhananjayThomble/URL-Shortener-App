@@ -216,3 +216,314 @@ describe("validateRoutingChain", () => {
     expect(validateRoutingChain(rules).some((p) => p.includes("identical"))).toBe(true);
   });
 });
+
+
+/* #894 — mutation testing. The tests above prove routing behaviour at the
+   feature level; these pin the remaining boundary arithmetic, the weighted-
+   catch-all predicate, and the validator's exact messages so no mutant of them
+   survives. */
+describe("isCatchAll via evaluateRouting — a rule with ANY single condition is not a catch-all", () => {
+  it.each<[string, Partial<RoutingRule["when"]>]>([
+    ["country only", { country: "IN" }],
+    ["device only", { device: "ios" }],
+    ["language only", { language: "fr" }],
+  ])("a %s rule is conditional, so a non-matching visitor falls through", (_label, when) => {
+    // If any of country/device/language were dropped from isCatchAll, such a
+    // rule would be misread as a catch-all and match everyone.
+    const rules = [rule({ id: "cond", when, then: "https://cond" })];
+    const out = evaluateRouting(rules, "https://fallback", ctx({ country: "ZZ", device: "desktop", language: "zz" }));
+    expect(out.destination).toBe("https://fallback");
+    expect(out.matchedRuleId).toBeNull();
+  });
+});
+
+describe("pickWeighted boundaries", () => {
+  it("routes everyone to the first arm when all weights are zero or missing", () => {
+    // total <= 0 returns rules[0]; a mutant flipping the guard would index past
+    // the array or divide by zero.
+    const rules = [
+      rule({ id: "a", when: {}, then: "https://a", weight: 0 }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 0 }),
+    ];
+    for (let i = 0; i < 20; i++) {
+      expect(evaluateRouting(rules, "https://f", ctx({ visitorHash: `v${i}` })).matchedRuleId).toBe("a");
+    }
+  });
+
+  it("reports the chosen arm as a variant N/total", () => {
+    const rules = [
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    const out = evaluateRouting(rules, "https://f", ctx({ visitorHash: "sticky" }));
+    expect(out.variant).toMatch(/^[12]\/2$/);
+  });
+});
+
+describe("validateRoutingChain — exact boundaries and messages", () => {
+  it("accepts weights that total exactly 100 and rejects just off it", () => {
+    const ok = [
+      rule({ when: {}, then: "https://a", weight: 50 }),
+      rule({ when: {}, then: "https://b", weight: 50 }),
+    ];
+    expect(validateRoutingChain(ok)).toEqual([]);
+    const off = [
+      rule({ when: {}, then: "https://a", weight: 50 }),
+      rule({ when: {}, then: "https://b", weight: 49.98 }),
+    ];
+    // 0.02 off exceeds the 0.01 tolerance; the message quotes the real total
+    // and says it is not 100%.
+    const problem = validateRoutingChain(off)[0]!;
+    expect(problem).toMatch(/not 100%\.$/);
+    expect(problem).toContain("99.9");
+  });
+
+  it("accepts weights within the 0.01 rounding tolerance", () => {
+    const rules = [
+      rule({ when: {}, then: "https://a", weight: 33.333 }),
+      rule({ when: {}, then: "https://b", weight: 33.333 }),
+      rule({ when: {}, then: "https://c", weight: 33.334 }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([]);
+  });
+
+  it("flags a one-armed split but not a two-armed one", () => {
+    expect(validateRoutingChain([rule({ when: {}, then: "https://a", weight: 100 })])[0]).toContain(
+      "at least two destinations",
+    );
+    expect(
+      validateRoutingChain([
+        rule({ when: {}, then: "https://a", weight: 50 }),
+        rule({ when: {}, then: "https://b", weight: 50 }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("counts stranded rules and uses the singular/plural form correctly", () => {
+    const one = [
+      rule({ when: {}, then: "https://everything" }),
+      rule({ when: { country: "IN" }, then: "https://in" }),
+    ];
+    expect(validateRoutingChain(one)[0]).toBe('1 rule after "everything else" can never match. Move them above it.');
+
+    const two = [
+      rule({ when: {}, then: "https://everything" }),
+      rule({ when: { country: "IN" }, then: "https://in" }),
+      rule({ when: { device: "ios" }, then: "https://ios" }),
+    ];
+    expect(validateRoutingChain(two)[0]).toBe('2 rules after "everything else" can never match. Move them above it.');
+  });
+
+  it("does not flag an unweighted catch-all that is genuinely last", () => {
+    const rules = [
+      rule({ when: { country: "IN" }, then: "https://in" }),
+      rule({ when: {}, then: "https://everything" }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([]);
+  });
+
+  it("detects duplicate conditions case-insensitively across country and language", () => {
+    const rules = [
+      rule({ when: { country: "IN", language: "EN" }, then: "https://one" }),
+      rule({ when: { country: "in", language: "en" }, then: "https://two" }),
+    ];
+    expect(validateRoutingChain(rules).some((p) => p.includes("identical"))).toBe(true);
+  });
+
+  it("does not call rules with different device conditions duplicates", () => {
+    const rules = [
+      rule({ when: { device: "ios" }, then: "https://one" }),
+      rule({ when: { device: "android" }, then: "https://two" }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([]);
+  });
+});
+
+
+/* #894 — mutation testing, second pass. These pin the remaining validator
+   predicates and the dedup key's slot independence. */
+describe("validateRoutingChain — weighted predicate and key slots", () => {
+  it("treats a catch-all with weight 0 as unweighted, not a split arm", () => {
+    // isWeightedCatchAll requires weight > 0. A weight-0 catch-all is therefore
+    // an ordinary "everything else", so a rule placed after it is stranded.
+    // Kills the `weight > 0` -> `weight >= 0` mutant (which would count it as a
+    // split arm and raise the one-armed-split error instead).
+    const rules = [
+      rule({ when: {}, then: "https://everything", weight: 0 }),
+      rule({ when: { country: "IN" }, then: "https://in" }),
+    ];
+    const problems = validateRoutingChain(rules);
+    expect(problems.some((p) => p.includes("can never match"))).toBe(true);
+    expect(problems.some((p) => p.includes("at least two"))).toBe(false);
+  });
+
+  it("does not raise the one-armed-split error for a valid two-arm split", () => {
+    // Kills `weighted.length === 1` -> `>= 1`.
+    expect(
+      validateRoutingChain([
+        rule({ when: {}, then: "https://a", weight: 50 }),
+        rule({ when: {}, then: "https://b", weight: 50 }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("raises the one-armed-split error only for exactly one weighted arm", () => {
+    expect(validateRoutingChain([rule({ when: {}, then: "https://a", weight: 100 })])).toEqual([
+      "A split test needs at least two destinations to split between.",
+    ]);
+    // Zero weighted arms: no split error.
+    expect(validateRoutingChain([rule({ when: { country: "IN" }, then: "https://in" })])).toEqual([]);
+  });
+
+  it("checks the weight total only when there is more than one arm", () => {
+    // A single arm must not reach the total check (which would read 100 off a
+    // one-arm 100% and stay silent anyway, but the guard is pinned here).
+    expect(validateRoutingChain([rule({ when: {}, then: "https://a", weight: 100 })])).toEqual([
+      "A split test needs at least two destinations to split between.",
+    ]);
+  });
+
+  it("counts stranded rules from the correct catch-all position", () => {
+    // firstCatchAll is at index 1; 3 total rules => 1 stranded. A mutated
+    // `rules.length + firstCatchAll` arithmetic would miscount.
+    const rules = [
+      rule({ when: { country: "IN" }, then: "https://in" }),
+      rule({ when: {}, then: "https://everything" }),
+      rule({ when: { device: "ios" }, then: "https://ios" }),
+    ];
+    expect(validateRoutingChain(rules)[0]).toBe('1 rule after "everything else" can never match. Move them above it.');
+  });
+
+  it("keeps country and language in distinct key slots (a country difference is not a duplicate)", () => {
+    // If the country slot collapsed to null (the `?? null` -> `&& null`
+    // mutant), these two would be wrongly flagged as identical.
+    const rules = [
+      rule({ when: { country: "IN", device: "ios" }, then: "https://in" }),
+      rule({ when: { country: "US", device: "ios" }, then: "https://us" }),
+    ];
+    expect(validateRoutingChain(rules).some((p) => p.includes("identical"))).toBe(false);
+  });
+
+  it("flags two rules identical once case is normalised, across all three slots", () => {
+    const rules = [
+      rule({ when: { country: "IN", device: "ios", language: "EN" }, then: "https://one" }),
+      rule({ when: { country: "in", device: "ios", language: "en" }, then: "https://two" }),
+    ];
+    expect(validateRoutingChain(rules).some((p) => p.includes("identical"))).toBe(true);
+  });
+
+  it("treats a language-only difference as distinct (language slot is real)", () => {
+    const rules = [
+      rule({ when: { language: "en" }, then: "https://en" }),
+      rule({ when: { language: "fr" }, then: "https://fr" }),
+    ];
+    expect(validateRoutingChain(rules).some((p) => p.includes("identical"))).toBe(false);
+  });
+});
+
+describe("evaluateRouting — device-family matching detail", () => {
+  it("a mobile rule matches ios, android and mobile but not desktop", () => {
+    const rules = [rule({ id: "m", when: { device: "mobile" }, then: "https://m" })];
+    for (const device of ["ios", "android", "mobile"] as const) {
+      expect(evaluateRouting(rules, "https://f", ctx({ device })).matchedRuleId).toBe("m");
+    }
+    expect(evaluateRouting(rules, "https://f", ctx({ device: "desktop" })).matchedRuleId).toBeNull();
+  });
+
+  it("an explicit device rule matches only that exact device", () => {
+    const rules = [rule({ id: "i", when: { device: "ios" }, then: "https://i" })];
+    expect(evaluateRouting(rules, "https://f", ctx({ device: "ios" })).matchedRuleId).toBe("i");
+    for (const device of ["android", "mobile", "desktop"] as const) {
+      expect(evaluateRouting(rules, "https://f", ctx({ device })).matchedRuleId).toBeNull();
+    }
+  });
+
+  it("a device rule does not match a visitor with an unknown (null) device", () => {
+    const rules = [rule({ id: "m", when: { device: "mobile" }, then: "https://m" })];
+    expect(evaluateRouting(rules, "https://f", ctx({ device: null })).matchedRuleId).toBeNull();
+  });
+});
+
+
+/* #894 — mutation testing, third pass: pin isWeightedCatchAll and the validator
+   weighted-filter precisely via observable variant/matchedRuleId/problem lists. */
+describe("isWeightedCatchAll via evaluateRouting — observable effects", () => {
+  it("a weight-0 catch-all is matched positionally with NO variant (not a split arm)", () => {
+    // If isWeightedCatchAll counted weight 0 (the `> 0` -> `>= 0` mutant), the
+    // rule would be skipped by the positional scan and chosen via the weighted
+    // path instead, which stamps a `variant`. Correct behaviour: it matches in
+    // the scan with variant === null.
+    const rules = [rule({ id: "zero", when: {}, then: "https://zero", weight: 0 })];
+    const out = evaluateRouting(rules, "https://f", ctx());
+    expect(out.matchedRuleId).toBe("zero");
+    expect(out.variant).toBeNull();
+  });
+
+  it("a conditional rule that also carries a weight is NOT a split arm", () => {
+    // isWeightedCatchAll requires isCatchAll (no conditions). A rule with a
+    // country AND a weight must match positionally, not via the weighted pick.
+    const rules = [
+      rule({ id: "cond", when: { country: "IN" }, then: "https://in", weight: 50 }),
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    const out = evaluateRouting(rules, "https://f", ctx({ country: "IN" }));
+    expect(out.matchedRuleId).toBe("cond");
+    expect(out.variant).toBeNull();
+  });
+
+  it("a positive-weight catch-all IS a split arm, stamped with a variant", () => {
+    const rules = [
+      rule({ id: "a", when: {}, then: "https://a", weight: 50 }),
+      rule({ id: "b", when: {}, then: "https://b", weight: 50 }),
+    ];
+    const out = evaluateRouting(rules, "https://f", ctx({ visitorHash: "x" }));
+    expect(out.variant).toMatch(/^[12]\/2$/);
+    expect(["a", "b"]).toContain(out.matchedRuleId);
+  });
+});
+
+describe("validateRoutingChain — weighted filter requires isCatchAll", () => {
+  it("does not count a conditional weighted rule toward the split total", () => {
+    // weighted = rules.filter(isCatchAll).filter(weight>0). Dropping the
+    // isCatchAll filter (the `rules.filter(isCatchAll)` -> `rules` mutant) would
+    // pull the conditional weighted rule into the split and change the total.
+    // Here the two true catch-alls already total 100; the conditional's weight
+    // must be ignored, so the chain is valid.
+    const rules = [
+      rule({ when: { country: "IN" }, then: "https://in", weight: 999 }),
+      rule({ when: {}, then: "https://a", weight: 50 }),
+      rule({ when: {}, then: "https://b", weight: 50 }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([]);
+  });
+
+  it("raises exactly the one-armed error for a single weighted catch-all among conditional rules", () => {
+    const rules = [
+      rule({ when: { country: "IN" }, then: "https://in" }),
+      rule({ when: {}, then: "https://only", weight: 100 }),
+    ];
+    expect(validateRoutingChain(rules)).toEqual([
+      "A split test needs at least two destinations to split between.",
+    ]);
+  });
+
+  it("does NOT run the weight-total check for a one-armed split (only length>1 does)", () => {
+    // A single weighted arm with a non-100 weight: the ONLY problem must be the
+    // one-armed error, never a "weights add up to N%" message. If the total
+    // check gate `weighted.length > 1` were weakened to `>= 1`, this one-arm
+    // chain would ALSO run the total check and append a second (weights) error.
+    const rules = [rule({ when: {}, then: "https://only", weight: 50 })];
+    expect(validateRoutingChain(rules)).toEqual([
+      "A split test needs at least two destinations to split between.",
+    ]);
+    // And a two-arm chain whose weights DO total 100 raises nothing — the
+    // total check runs (length>1) and passes.
+    expect(
+      validateRoutingChain([
+        rule({ when: {}, then: "https://a", weight: 50 }),
+        rule({ when: {}, then: "https://b", weight: 50 }),
+      ]),
+    ).toEqual([]);
+  });
+});

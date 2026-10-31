@@ -74,3 +74,30 @@ describe("clientIpFromXff", () => {
     );
   });
 });
+
+
+/* #894 — mutation testing. These pin the entry-filtering and the defensive
+   fallback that the spoof-proofing rests on. */
+describe("clientIpFromXff — entry filtering and defensive fallback", () => {
+  const socketIp = "10.0.0.1";
+
+  it("drops empty entries from the chain before indexing from the right", () => {
+    // Trailing empty segments must not be counted as hops — with them counted,
+    // the (hops+1)th-from-right would select the wrong (empty) slot. Kills the
+    // `entry.length > 0` filter mutant.
+    const xff = "203.0.113.9, 198.51.100.1, , ";
+    expect(clientIpFromXff({ xff, socketIp, trustedHops: 1 })).toBe("203.0.113.9");
+  });
+
+  it("collapses interior blank entries so the real client is still selected", () => {
+    const xff = "203.0.113.9,   , 198.51.100.1";
+    // After filtering blanks: [203.0.113.9, 198.51.100.1]; one hop -> client.
+    expect(clientIpFromXff({ xff, socketIp, trustedHops: 1 })).toBe("203.0.113.9");
+  });
+
+  it("selects exactly the Nth-from-right, not the Nth-from-left", () => {
+    // A left-indexing mutant would pick 1.1.1.1 here instead of 2.2.2.2.
+    const xff = "1.1.1.1, 2.2.2.2, 3.3.3.3";
+    expect(clientIpFromXff({ xff, socketIp, trustedHops: 1 })).toBe("2.2.2.2");
+  });
+});
