@@ -196,6 +196,14 @@ test.describe("Journey 754 — past expiry dates", () => {
 
     const garbage = await api(session, "POST", "/links", { destination: DEST, domain, slug: slugFor("g"), expiresAt: "not-a-date" });
     expect(garbage.status).toBe(400); // was a 500
-    expect(JSON.stringify(garbage.body.message)).toMatch(/expiresAt: Enter a valid date/);
+    // Oracle: the API's zod pipe (apps/api/src/common/zod.pipe.ts:48) puts the
+    // human messages in `message` (just the strings) and the field names in
+    // `issues[].path` — the field name is NOT prefixed onto the message. This
+    // is the contract apps/api/.../links.past-expiry.integration.test.ts:147-148
+    // asserts: message=["Enter a valid date."], issues=[{path:"expiresAt",…}].
+    expect(JSON.stringify(garbage.body.message)).toMatch(/Enter a valid date/);
+    const issues = garbage.body.issues as Array<{ path?: string; message?: string }> | undefined;
+    expect(issues?.some((i) => i.path === "expiresAt" && /Enter a valid date/.test(i.message ?? "")),
+      "the invalid-date issue names the expiresAt field").toBe(true);
   });
 });

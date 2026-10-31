@@ -50,6 +50,8 @@ You implement exactly one issue per run and open one PR.
      committing or pushing anything.
 4. Understand before editing: read the issue, the linked code, the relevant `packages/contract`
    schemas and `docs/DECISIONS.md`. Write or update the failing test first when the issue is a bug.
+   If the issue is labelled `bug` or `qa:agent-confirmed`, follow `.kiro/steering/testing.md` R1
+   (lowest lane that observes the defect; name `#<n>` in the test; red run against `origin/main`).
 5. Make the smallest change that satisfies the acceptance criteria. If you touch a payload, change it
    in `packages/contract`. If you add a web hook or mutation, add its fixture. Schema change → Drizzle
    migration. New dependency or boundary change → ADR entry in `docs/DECISIONS.md`.
@@ -61,6 +63,8 @@ You implement exactly one issue per run and open one PR.
    `gitleaks git --no-banner --log-opts="origin/main..HEAD" .` Any hit → stop and fix.
 8. Commit with Conventional Commits (`fix(api): …`), push, and open the PR:
    `gh pr create --title … --body …` with `Fixes #<n>`, what changed, why, the check output, and risks.
+   For a `bug` / `qa:agent-confirmed` fix, the PR body includes the red run required by
+   `.kiro/steering/testing.md` R1 (the new test against `origin/main`).
 9. Label the issue `agent:pr-open` (remove `agent:in-progress`). Remove the worktree.
 
 ## History is append-only

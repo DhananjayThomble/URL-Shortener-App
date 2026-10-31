@@ -28,12 +28,26 @@ Fixes # (issue)
 - What are the minimal test data to have?
 - Any other important info that could help to test that PR
 
+## Regression test
+
+<!-- Required when this PR closes an issue labelled `bug` or `qa:agent-confirmed`.
+     See `.kiro/steering/testing.md` R1 for the full rule and the lane ladder. -->
+
+- Issue: #
+- Lane (lowest that observes the defect): <!-- unit / DB integration / mocked-api / fixtures e2e / real-stack journey -->
+- Test name (includes `#<issue>`):
+- Red run against `origin/main` (new test failing on the unfixed code):
+
+```
+<!-- paste the failing run here -->
+```
+
 ## Checklist
 
 <!-- Please remove all the irrelevant bullets to your PR -->
 
-- I haven't read the [contributing guide](https://github.com/DhananjayThomble/URL-Shortener-App/blob/main/CONTRIBUTING.md)
-- My code doesn't follow the style guidelines of this project
-- I haven't commented my code, particularly in hard-to-understand areas
-- I haven't checked if my PR needs changes to the documentation
-- I haven't checked if my changes generate no new warnings
+- [ ] I have read the [contributing guide](https://github.com/DhananjayThomble/URL-Shortener-App/blob/main/CONTRIBUTING.md)
+- [ ] My code follows the style guidelines of this project
+- [ ] I have commented my code, particularly in hard-to-understand areas
+- [ ] I have checked if my PR needs changes to the documentation
+- [ ] I have checked that my changes generate no new warnings
