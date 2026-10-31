@@ -244,6 +244,51 @@ images were viewed, and `git diff --stat` on `__screenshots__/` is the list to r
 - Firefox is not covered at all.
 - Chart *plot* fidelity depends on §4 landing; if it is masked instead, chart rendering is uncovered.
 
+### 9.1 Bug-injection gate results (issue #872, qa-oracles.md §4)
+
+The suite was proven to fail by injecting known visual defects one at a time on a
+throwaway branch (nothing merged), each isolated (file-backup revert) against a
+clean control run (87 passed, 0 diffs). Full evidence and run links are in the
+#872 PR. Results:
+
+| # | Injected defect | Caught? | Caught by |
+|---|---|---|---|
+| 1 | `--density` multiplier `7px`→`14px` (app-shell padding) | ✅ | app routes on every viewport; drawers |
+| 2 | light `--surface` `#ffffff`→`#e8edf3` (near-white grey) | ❌ *(sub-threshold)* | — |
+| 3 | footer `flex-col sm:flex-row`→`flex-row` | ✅ | **mobile only** |
+| 4 | sidebar/mobile-nav breakpoint `lg`→`xl` | ❌ *(no render change at the 3 viewports)* | — |
+| 5 | remove `tap-target` `min-height/width: 44px` | ✅ | **mobile + tablet, NOT desktop** ✓ |
+
+Injection 5 confirms the viewport projects are correctly scoped: the rule is
+`@media (max-width: 1023.98px)`, and only mobile (390) and tablet (768) caught
+it — desktop (1440) did not, exactly as required.
+
+**The two uncaught injections are characterized properties, not route/viewport
+blind spots — recorded here rather than papered over:**
+
+- **Injection 2 is a comparator-threshold property, not a gap.** Playwright's
+  per-pixel YIQ comparator tolerates imperceptible colour shifts (this is what
+  absorbs antialiasing). `#ffffff`→`#e8edf3` is below that threshold so no pixel
+  counts as different. **Verified it is NOT a coverage hole:** re-injecting a
+  *meaningful* colour change (`--surface`→`#ff0000`) reds 86 of 87 targets across
+  all three viewports. So the gate catches any real colour regression; only a
+  sub-perceptual shift slips through, which is the intended antialiasing
+  tolerance, not missing coverage.
+- **Injection 4 produces no rendered change at the three chosen viewports.**
+  Tailwind `xl` is 1280px; raising the sidebar/MobileNav swap from `lg` (1024) to
+  `xl` only changes rendering in the 1024–1279px band, which none of
+  390 / 768 / 1440 occupies (desktop 1440 ≥ 1280 still shows the sidebar; tablet
+  768 and mobile 390 were already below `lg` showing MobileNav). The suite is
+  therefore blind to regressions confined to the **1024–1279px band** — a real
+  gap, left unclosed deliberately: a fourth "small-desktop" viewport would double
+  the baseline weight (no Git LFS, §10) for a narrow band, so it is recorded here
+  rather than added. Revisit alongside the T7 viewport expansion.
+
+Injection 3 (footer) was caught by mobile only, not tablet, because
+`flex-col sm:flex-row` only differs below Tailwind `sm` (640px); tablet (768) and
+desktop (1440) both render the row layout already, so there is nothing for them
+to catch. That is correct behaviour for this specific change, not a gap.
+
 ## 10. Risks
 
 | Risk | Mitigation |
