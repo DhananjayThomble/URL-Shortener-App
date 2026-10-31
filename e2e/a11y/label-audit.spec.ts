@@ -1,7 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
-import { seedSession } from "../support/session";
-import { createRealLink, registerRealUser, seedSessionTokens } from "../support/real-session";
+import { type Page } from "@playwright/test";
+// Issue #884: one registration per worker, not per test. The worker-scoped
+// `workerSession` / `workerLink` fixtures and the `seedWorker` helper come from
+// a11y-fixtures.ts; `test`/`expect` are re-exported from there so every test in
+// this file gets the worker fixtures without changing how assertions are
+// written. `seedWorker` replaces the former per-test `seedSession` call.
+import { expect, seedWorker, test } from "./a11y-fixtures";
 
 /* ============================================================
    Issue #459 — programmatic-label audit (axe `label` + `select-name`).
@@ -115,9 +119,11 @@ for (const theme of THEMES) {
     test.describe(`${theme} / ${vp.name}`, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
-      test.beforeEach(async ({ page }) => {
+      test.beforeEach(async ({ page, workerSession }) => {
         await seedTheme(page, theme);
-        await seedSession(page);
+        // #884: reuse the worker's single registration instead of minting a
+        // fresh account per test (the former seedSession → registerRealUser).
+        await seedWorker(page, workerSession);
       });
 
       for (const route of ROUTES) {
@@ -262,15 +268,16 @@ for (const theme of THEMES) {
         await expect(page.getByRole("group", { name: "Conversions date range" })).toBeVisible();
       });
 
-      test("/links/[id] edit drawer has no label/select-name violations", async ({ page }) => {
-        // Dynamic route: no globalSetup seeds a link, so create one against the
-        // real API as a fresh account and drive the browser as that same account.
+      test("/links/[id] edit drawer has no label/select-name violations", async ({ page, workerSession, workerLink }) => {
+        // Dynamic route: no globalSetup seeds a link. #884: the link and the
+        // session come from the worker-scoped fixtures (one link + one
+        // registration per worker) rather than a fresh per-test
+        // registerRealUser()/createRealLink() pair; the beforeEach already
+        // seeded workerSession's tokens and workerLink belongs to that account.
         // The edit drawer (#644 — EditLinkDrawer) replaced the old
         // destination-only `<Field label="Destination">`; "Edit" now opens the
         // same tabbed form the create-link drawer uses, labeled "Destination URL".
-        const session = await registerRealUser();
-        const link = await createRealLink(session);
-        await seedSessionTokens(page, session);
+        const link = workerLink;
 
         await page.goto(`/links/${link.id}`);
         await page.waitForLoadState("networkidle").catch(() => {});

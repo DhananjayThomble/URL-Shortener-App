@@ -1,7 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
-import { seedSession } from "../support/session";
-import { createRealLink, registerRealUser, seedSessionTokens } from "../support/real-session";
+import { type Page } from "@playwright/test";
+// Issue #884: one registration per worker, not per test. The worker-scoped
+// `workerSession` / `workerLink` fixtures and the `seedWorker` helper come from
+// a11y-fixtures.ts; `test`/`expect` are re-exported from there so every test in
+// this file gets the worker fixtures without changing how assertions are
+// written. `seedWorker` replaces the former per-test `seedSession` call.
+import { expect, seedWorker, test } from "./a11y-fixtures";
 
 /* ============================================================
    Issue #558 — dark-theme WCAG AA color-contrast audit (axe `color-contrast`).
@@ -101,9 +105,11 @@ for (const theme of THEMES) {
     test.describe(`${theme} / ${vp.name}`, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
-      test.beforeEach(async ({ page }) => {
+      test.beforeEach(async ({ page, workerSession }) => {
         await seedTheme(page, theme);
-        await seedSession(page);
+        // #884: reuse the worker's single registration instead of minting a
+        // fresh account per test (the former seedSession → registerRealUser).
+        await seedWorker(page, workerSession);
       });
 
       for (const route of ROUTES) {
@@ -133,15 +139,17 @@ for (const theme of THEMES) {
         }
       });
 
-      test("/links/[id] edit drawer has no color-contrast violations", async ({ page }) => {
-        // Dynamic route: create a real link via the API, same approach as
-        // label-audit.spec.ts, so this scans the actually-rendered drawer.
+      test("/links/[id] edit drawer has no color-contrast violations", async ({ page, workerSession, workerLink }) => {
+        // Dynamic route: scan the actually-rendered edit drawer for a real
+        // link. #884: the link and session come from the worker-scoped fixtures
+        // (one link + one registration per worker) rather than a fresh
+        // per-test registerRealUser()/createRealLink() pair. The beforeEach
+        // already seeded workerSession's tokens; re-seed here is harmless but
+        // the shared fixtures make the account and link identical to it.
         // The edit drawer (#644 — EditLinkDrawer) replaced the old
         // destination-only Field; "Edit" now opens the same tabbed form the
         // create-link drawer uses.
-        const session = await registerRealUser();
-        const link = await createRealLink(session);
-        await seedSessionTokens(page, session);
+        const link = workerLink;
 
         await page.goto(`/links/${link.id}`);
         await page.waitForLoadState("networkidle").catch(() => {});
