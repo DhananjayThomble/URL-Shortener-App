@@ -1,6 +1,7 @@
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { installRealSession } from "./support/real-session";
+import { webServerCommand } from "./support/web-server";
 
 /* ============================================================
    Issue #459 — a11y label/select-name audit against the REAL stack.
@@ -12,6 +13,14 @@ import { installRealSession } from "./support/real-session";
 
    Requires a running staging stack (api :3001). Set QA_REUSE_SERVER=1 to adopt
    a web server you already built with NEXT_PUBLIC_USE_FIXTURES=false.
+
+   Issue #884: the web server now comes from the shared QA_PREBUILT_WEB switch
+   (support/web-server.ts, .kiro/specs/real-stack-ci/design.md §2), the same one
+   #883 wired into playwright.journeys.config.ts. QA_PREBUILT_WEB=1 (CI runs
+   `next build` as its own step first) → `next start` only; unset (a bare local
+   run) → `next build && next start`, so a fresh checkout still serves a
+   production bundle with no extra step. The NEXT_PUBLIC_* values are prefixed
+   inline so build and start bake/read identical values.
    ============================================================ */
 
 installRealSession();
@@ -42,7 +51,14 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
+    command: webServerCommand({
+      port: PORT,
+      env: [
+        "NEXT_PUBLIC_USE_FIXTURES=false",
+        `NEXT_PUBLIC_API_URL=${API_URL}`,
+        "SNAPURL_ALLOW_UNCONFIGURED_BUILD=true",
+      ],
+    }),
     url: BASE_URL,
     reuseExistingServer: process.env.QA_REUSE_SERVER === "1",
     timeout: 300_000,
