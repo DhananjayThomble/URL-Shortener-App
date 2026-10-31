@@ -99,6 +99,17 @@ minimumReleaseAgeExclude:
 # every one of its consumers here, never shipped. Forced to the version
 # drizzle-kit's own direct esbuild dependency already resolves to elsewhere
 # in this lockfile. See issue #632.
+#
+# vite, source-map-js and fast-copy are all transitive, devDependency-only
+# copies pulled in through the vitest/vite test toolchain — never shipped to
+# production. The direct devDeps (vitest 3->4, happy-dom 15->20) are bumped in
+# each package.json, which clears happy-dom (crit x6), vitest (med x10),
+# @vitest/mocker (med x2) and drops tinypool entirely (vitest 4 no longer
+# depends on it, closing the tinypool crit x2). These three laggards resolve
+# within their existing major line but below the patched floor, so they are
+# pinned here: vite@<7.3.7 carries 5 high-severity advisories fixed at 7.3.7;
+# source-map-js@<1.2.2 carries a high-severity advisory fixed at 1.2.2;
+# fast-copy@<4.1.0 carries a medium advisory fixed at 4.1.0. See issue #916.
 overrides:
   fastify@<5.12.6: ^5.12.6
   sharp@<0.35.5: ^0.35.5
@@ -110,3 +121,6 @@ overrides:
   js-yaml@<4.3.2: ^4.3.2
   js-yaml@5.3.0: ^5.4.1
   esbuild@<0.25.0: ^0.25.12
+  vite@>=7.0.0 <7.3.7: ^7.3.7
+  source-map-js@<1.2.2: ^1.2.2
+  fast-copy@<4.1.0: ^4.1.0

@@ -7,12 +7,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const send = vi.fn();
 
 const { SecretsManagerClient } = vi.hoisted(() => ({
-  SecretsManagerClient: vi.fn().mockImplementation(() => ({ send })),
+  // vitest 4's @vitest/mocker invokes a mock implementation with the caller's
+  // `new`, and an arrow function has no [[Construct]], so `new
+  // SecretsManagerClient()` threw "is not a constructor". A regular function
+  // constructs fine and still returns the stub. (vitest 3 tolerated the arrow.)
+  SecretsManagerClient: vi.fn().mockImplementation(function () {
+    return { send };
+  }),
 }));
 
 vi.mock("@aws-sdk/client-secrets-manager", () => ({
   SecretsManagerClient,
-  GetSecretValueCommand: vi.fn().mockImplementation((input: { SecretId: string }) => ({ input })),
+  GetSecretValueCommand: vi.fn().mockImplementation(function (input: { SecretId: string }) {
+    return { input };
+  }),
 }));
 
 import {

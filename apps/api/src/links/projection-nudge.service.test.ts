@@ -9,8 +9,16 @@ import { ProjectionNudgeService } from "./projection-nudge.service.js";
    surface a test would have to register a provider for. */
 const sendMock = vi.fn();
 vi.mock("@aws-sdk/client-lambda", () => ({
-  LambdaClient: vi.fn().mockImplementation(() => ({ send: sendMock })),
-  InvokeCommand: vi.fn().mockImplementation((input: unknown) => ({ input })),
+  // vitest 4's @vitest/mocker invokes a mock implementation with the caller's
+  // `new`, and an arrow function has no [[Construct]], so `new LambdaClient()`
+  // threw "is not a constructor". A regular function constructs fine and still
+  // returns the stub object. (vitest 3 tolerated the arrow; 4 does not.)
+  LambdaClient: vi.fn().mockImplementation(function () {
+    return { send: sendMock };
+  }),
+  InvokeCommand: vi.fn().mockImplementation(function (input: unknown) {
+    return { input };
+  }),
   InvocationType: { Event: "Event" },
 }));
 
