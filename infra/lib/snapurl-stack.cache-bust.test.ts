@@ -58,9 +58,15 @@ describe("SnapUrlStack — API/redirect CacheStore pairing for immediate cache i
   // suite close to that single cost instead of multiplying it by 3.
   let template: Template;
 
+  // A full stack synth is 25-30s of blocking CPU nominally, but spikes well
+  // past that on a loaded runner; the other four synth suites (nat, nat-none,
+  // redirect-accept, safe-browsing) all budget 120s for this same beforeAll.
+  // This file alone used 60s, which the synth straddled under load, tripping
+  // "Hook timed out in 60000ms" and aborting the coverage leg (#921). Match
+  // the sibling budget so a slow-but-correct synth never races the boundary.
   beforeAll(() => {
     template = synthTemplate();
-  }, 60_000);
+  }, 120_000);
 
   it("gives ApiFn the same CACHE_DRIVER=dynamodb + CACHE_DYNAMO_TABLE env RedirectFn gets", () => {
     const cacheTables = template.findResources("AWS::DynamoDB::Table", {
