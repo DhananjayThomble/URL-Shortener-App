@@ -10,6 +10,7 @@
     "start": "node --env-file-if-exists=.env dist/main.js",
     "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
     "test": "pnpm -w build:packages && vitest run",
+    "test:stack": "vitest run -c vitest.stack.config.ts",
     "emit:openapi": "pnpm build && node scripts/emit-openapi.mjs",
     "dev:nest": "nest start --watch"
   },

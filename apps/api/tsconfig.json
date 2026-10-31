@@ -15,6 +15,14 @@
   // src/stack/zod-arbitrary.ts imports fast-check (a devDependency) and is only
   // consumed by tests, so it must not land in the production build — exclude it
   // alongside the test files. (The matching test is already covered by the
-  // src/**/*.test.ts glob.)
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/stack/zod-arbitrary.ts"]
+  // src/**/*.test.ts glob.) src/stack/env.ts and principals.ts are the #888
+  // stack-test harness helpers, excluded for the same reason.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "src/stack/zod-arbitrary.ts",
+    "src/stack/env.ts",
+    "src/stack/principals.ts"
+  ]
 }

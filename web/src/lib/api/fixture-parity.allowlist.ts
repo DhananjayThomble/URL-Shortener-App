@@ -31,4 +31,10 @@ export const FIXTURE_PARITY_ALLOWLIST: ReadonlyArray<AllowlistEntry> = [
     path: "/health",
     reason: "Liveness endpoint for the load balancer; no dashboard hook calls it.",
   },
+  {
+    method: "POST",
+    path: "/members/{id}/resend",
+    reason:
+      "Resending a pending team invitation has no dashboard hook wired through the fixture client — the only resend flows in fixtures mode are email verification (verify-email / invite pages), not member re-invites — so fixtures mode never calls it.",
+  },
 ];
