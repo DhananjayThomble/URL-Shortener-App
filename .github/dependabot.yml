@@ -10,3 +10,19 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+# ── Visual-regression version lockstep (issues #869/#870/#871) ──────────────
+# The visual lane renders baselines inside a PINNED Playwright container whose
+# tag MUST match the @playwright/test npm pin, or every committed baseline is
+# silently invalidated:
+#   - container image: .github/workflows/verify.yml  → the `visual` job's
+#     `container.image` (mcr.microsoft.com/playwright:v1.63.0-noble@sha256:…)
+#   - npm pin:         e2e/package.json               → "@playwright/test": "1.63.0"
+#     (JSON carries no inline comment, so the pairing is recorded here)
+# These live in two different ecosystems (a workflow image string vs an npm dep),
+# so Dependabot cannot group them into one PR. When a bump touches EITHER:
+#   1. bump BOTH to the same Playwright version in the same PR, and
+#   2. re-resolve the image's @sha256 digest for the new tag, then
+#   3. regenerate the baselines in the new image (scripts/visual-baselines.sh)
+#      — a version change legitimately moves pixels.
+# A bump to one alone must be held, not merged.
