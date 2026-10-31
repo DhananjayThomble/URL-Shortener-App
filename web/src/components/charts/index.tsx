@@ -2,6 +2,7 @@
 
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import type { Breakdown, TimeseriesPoint } from "@/lib/api/types";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { cn, compact, dropOffLabel, full, NO_VALUE, ratePct } from "@/lib/utils";
 
 /* ---------------- Sparkline ----------------
@@ -78,6 +79,12 @@ export function TrafficChart({
     scans: "var(--chart-2)",
   };
 
+  // #868 — Recharts animates the mount in JS, which the CSS reduce-motion
+  // kill-switch in globals.css cannot reach. Turn the animation off when the
+  // user has asked for reduced motion (OS media query OR the in-app
+  // reduce-motion class) so the chart renders at its final state.
+  const reduced = useReducedMotion();
+
   return (
     <div>
       <div className="flex gap-4 mb-3">
@@ -128,6 +135,7 @@ export function TrafficChart({
               fill={i === 0 ? "url(#fillPrimary)" : "transparent"}
               dot={false}
               activeDot={{ r: 3.5, strokeWidth: 2, stroke: "var(--surface)" }}
+              isAnimationActive={!reduced}
             />
           ))}
         </AreaChart>

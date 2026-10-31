@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from "@nestjs/common";
 import { ChangeRoleInput, InviteMemberInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, type RequestActor } from "../auth/auth.guard.js";
@@ -24,7 +24,7 @@ export class MembersController {
   @HttpCode(204)
   async changeRole(
     @Actor() actor: RequestActor,
-    @Param("id") id: string,
+    @Param("id", ParseUUIDPipe) id: string,
     @Body(zodBody(ChangeRoleInput)) input: ChangeRoleInput,
   ) {
     await this.members.changeRole(actor.workspaceId, id, input.role, actor.label, actor.role);
@@ -34,14 +34,14 @@ export class MembersController {
      invite/changeRole/remove: deciding who may rejoin the team is an admin act. */
   @Post("members/:id/resend")
   @Roles("admin")
-  resend(@Actor() actor: RequestActor, @Param("id") id: string) {
+  resend(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     return this.members.resend(actor.workspaceId, id, actor.label);
   }
 
   @Delete("members/:id")
   @Roles("admin")
   @HttpCode(204)
-  async remove(@Actor() actor: RequestActor, @Param("id") id: string) {
+  async remove(@Actor() actor: RequestActor, @Param("id", ParseUUIDPipe) id: string) {
     await this.members.remove(actor.workspaceId, id, actor.label);
   }
 

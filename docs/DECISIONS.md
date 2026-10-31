@@ -1680,3 +1680,66 @@ dedicated atomic store).
    ACM can be provisioned.
 4. **RDS or an external free-tier Postgres?** Costed in the architecture doc — RDS burns the $100
    credit in about six months, external Postgres in about six years.
+
+
+---
+
+## Part 6 — Frontend/build decisions
+
+### #867 · Webfonts are self-hosted at build time via `next/font/local` (vendored OFL woff2)
+
+**Decision.** The three webfont families — **Archivo** (500/600/700/800), **Public Sans**
+(400/500/600) and **IBM Plex Mono** (400/500/600) — are loaded with `next/font/local` in
+`web/src/app/layout.tsx`, reading `.woff2` files vendored in `web/src/app/fonts/`, instead of a
+runtime `<link rel="stylesheet">` to `fonts.googleapis.com`. `next/font` fingerprints and serves the
+files from the app's own origin. Each family exposes a CSS variable (`--font-archivo`,
+`--font-public-sans`, `--font-ibm-plex-mono`) applied on `<html>`; `globals.css` slots those
+variables ahead of the system fallbacks in the existing `--font-display` / `--font-sans` /
+`--font-mono` tokens, so **no component changed**. The two now-dead `preconnect` hints to
+`fonts.googleapis.com` / `fonts.gstatic.com` were removed.
+
+**Why `next/font/local`, not `next/font/google`.** `next/font/google` was the first implementation
+and it fails on CI: the Google subloader **fetches `fonts.googleapis.com` at build time**, and the CI
+runners have no build-time egress to Google — the build dies with `An error occurred in next/font —
+TypeError: Cannot read properties of null (reading '1')` at `@next/font/dist/google/loader.js:122`.
+That is the *same* no-egress condition the issue cites as the runtime problem, now moved to build
+time. `next/font/local` makes the build **hermetic**: its loader
+(`@next/font/dist/local/loader.js`) does only `loaderContext.fs.readFile` — no `fetch`, no HTTP, so
+no network is possible during the build. Proven two ways: the loader source has zero network calls,
+and `next build` succeeds with all HTTP(S) traffic pointed at a dead proxy. This is strictly better
+for the issue's privacy/determinism intent — zero Google request at build *or* runtime.
+
+**Picked it over** keeping the `<link>` tags. That approach:
+
+1. loads the webfont over the network with `display=swap`, so the page paints a fallback face and
+   **reflows** when the font lands — every text metric then depends on network timing, which is
+   disqualifying for the pixel-baseline visual-regression suite
+   (`.kiro/specs/visual-regression/` design §2 row #1, §3);
+2. resolves `document.fonts.ready` on **failure** too, so a Google Fonts hiccup silently produces a
+   fallback-rendered frame rather than a diagnosable error;
+3. discloses **every visitor's IP to a third party** on every page load — which sits wrong against
+   the privacy-first posture in `.kiro/steering/security-and-context.md` (cookieless analytics,
+   daily-salt hashing, k-anonymity floor);
+4. is a render-blocking cross-origin stylesheet on the critical path, plus a swap reflow (CLS).
+
+The design doc also records a fallback — keep the `<link>` tags and have the visual lane block the
+Google hosts via `page.route` + pin a local stack with `stylePath`. That is **strictly worse**: the
+baselines would then show a face production never renders. It is rejected here in favour of the real
+fix.
+
+**Vendored files & licensing.** The `.woff2` are the latin subset of each family, pulled from the
+Fontsource CDN (`cdn.jsdelivr.net/fontsource/fonts/<family>@5.3.0/latin-<weight>-normal.woff2`),
+which repackages the upstream `github.com/google/fonts` releases. All three families are **SIL Open
+Font License 1.1 (OFL-1.1)**, which permits redistribution with the fonts. The full OFL text for
+each family travels with the fonts (`web/src/app/fonts/OFL-*.txt`), as OFL requires. Total vendored
+payload ≈ 146 KB (10 woff2, latin only) + 3 license files. The sans families use
+`adjustFontFallback: "Arial"` so the size-adjusted fallback keeps the swap from shifting layout;
+IBM Plex Mono uses `adjustFontFallback: false` (Arial/Times metrics do not model a monospace face)
+and falls back to `ui-monospace`.
+
+**Revisit if** a design needs a family or weight not vendored here — add the OFL `.woff2` to
+`web/src/app/fonts/` and extend the `localFont({ src: [...] })` list; do **not** switch back to
+`next/font/google` (its build-time fetch to Google is what broke CI) and do **not** reintroduce a
+runtime `<link>`. The build-time-hermetic, same-origin, no-reflow property is the invariant to
+preserve. For a non-OFL family, confirm the licence permits redistribution before vendoring, or load
+it from the app's own asset host instead.
