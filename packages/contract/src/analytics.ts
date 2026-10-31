@@ -84,7 +84,11 @@ export type AnalyticsRange = z.infer<typeof AnalyticsRange>;
 export const AnalyticsQuery = z
   .object({
     range: AnalyticsRange.default("30d"),
-    linkId: z.string().optional(),
+    // A uuid, not any string: the value reaches a uuid column (click_daily.link_id),
+    // so a malformed one surfaced as a 500 from Postgres (22P02) rather than a 400
+    // naming the field. Same refinement the sibling RecordConversionInput.linkId
+    // already carries — linkId is a link id (#908, same class as #887).
+    linkId: z.string().uuid("linkId must be a link id").optional(),
   })
   .strict();
 export type AnalyticsQuery = z.infer<typeof AnalyticsQuery>;
