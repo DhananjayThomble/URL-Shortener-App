@@ -126,3 +126,121 @@ describe("exportColumns", () => {
     expect(exportColumns(fields, responses)).toEqual(["name", "email", "phone"]);
   });
 });
+
+
+/* #894 — mutation testing. These pin the key-trimming boundary, the exact
+   validation messages, and the email regex anchors that the suite above left
+   unasserted. */
+describe("fieldKeyFrom — trimming boundary", () => {
+  it("keeps a single interior character rather than trimming it away", () => {
+    // A one-char label must not be sliced to empty by the trailing-underscore
+    // slice (underscored.length > 1 guard). "A" -> "a", not "field".
+    expect(fieldKeyFrom("A")).toBe("a");
+    expect(fieldKeyFrom("Z!")).toBe("z");
+  });
+
+  it("caps the base at 40 characters", () => {
+    expect(fieldKeyFrom("a".repeat(50))).toBe("a".repeat(40));
+  });
+
+  it("suffixes a Date-based key only after exhausting _2.._999", () => {
+    // Build a taken set of base plus base_2..base_999 and confirm the fallback
+    // is base_<digits>, proving the loop bound is 1000, not smaller.
+    const taken = new Set<string>(["dup"]);
+    for (let n = 2; n < 1000; n++) taken.add(`dup_${n}`);
+    const key = fieldKeyFrom("Dup", taken);
+    expect(key).toMatch(/^dup_\d{10,}$/); // a timestamp, not dup_2
+  });
+});
+
+describe("validateSubmission — exact messages and boundaries", () => {
+  const fields = [
+    field({ key: "name", label: "Name", required: true }),
+    field({ key: "email", label: "Email", type: "email" }),
+    field({ key: "plan", label: "Plan", type: "select", options: ["Free", "Pro"] }),
+  ];
+
+  it("uses the field label verbatim in each message", () => {
+    expect(validateSubmission(fields, {}).errors.name).toBe("Name is required.");
+    expect(validateSubmission(fields, { name: "A", email: "nope" }).errors.email).toBe(
+      "Email needs to look like an email address.",
+    );
+    expect(validateSubmission(fields, { name: "A", plan: "Team" }).errors.plan).toBe("Plan isn't one of the choices.");
+    expect(validateSubmission(fields, { name: "x".repeat(4001) }).errors.name).toBe("Name is too long.");
+  });
+
+  it("accepts exactly 4000 chars and rejects 4001 (the length boundary)", () => {
+    expect(validateSubmission(fields, { name: "x".repeat(4000) }).ok).toBe(true);
+    expect(validateSubmission(fields, { name: "x".repeat(4001) }).ok).toBe(false);
+  });
+
+  it("anchors the email regex at both ends", () => {
+    // Leading/trailing junk around an otherwise-valid address must be rejected
+    // — kills the `^`-drop and `$`-drop regex mutants.
+    expect(validateSubmission(fields, { name: "A", email: "ada@example.com" }).ok).toBe(true);
+    expect(validateSubmission(fields, { name: "A", email: "x ada@example.com" }).errors.email).toBeDefined();
+    expect(validateSubmission(fields, { name: "A", email: "ada@example.com y" }).errors.email).toBeDefined();
+  });
+
+  it("only constrains a select that actually declares options", () => {
+    // A select with no options accepts any non-empty value (kills the
+    // `field.options?.length` short-circuit and optional-chaining mutants).
+    const open = [field({ key: "note", label: "Note", type: "select" })];
+    expect(validateSubmission(open, { note: "anything at all" }).ok).toBe(true);
+    const empty = [field({ key: "note", label: "Note", type: "select", options: [] })];
+    expect(validateSubmission(empty, { note: "anything at all" }).ok).toBe(true);
+  });
+});
+
+
+/* #894 — mutation testing, second pass. */
+describe("withFieldKeys — new keyless fields are deduped against each other", () => {
+  it("gives two keyless fields with the same label distinct keys", () => {
+    // If the `taken` set were not seeded from existing keys, or a new key were
+    // not added back to it, both would collapse to the same key and the second
+    // field's answers would overwrite the first's.
+    const out = withFieldKeys([
+      { label: "Address", type: "text", required: false },
+      { label: "Address", type: "text", required: false },
+    ]);
+    expect(out[0]!.key).toBe("address");
+    expect(out[1]!.key).toBe("address_2");
+    expect(out[0]!.key).not.toBe(out[1]!.key);
+  });
+
+  it("seeds the taken set from pre-existing keys so a generated key avoids them", () => {
+    const out = withFieldKeys([
+      { key: "address", label: "Frozen", type: "text", required: false },
+      { label: "Address", type: "text", required: false },
+    ]);
+    expect(out[1]!.key).toBe("address_2");
+  });
+});
+
+describe("validateSubmission — number field message", () => {
+  const fields = [field({ key: "age", label: "Age", type: "number", required: false })];
+  it("uses the exact 'needs to be a number' copy", () => {
+    expect(validateSubmission(fields, { age: "not-a-number" }).errors.age).toBe("Age needs to be a number.");
+    expect(validateSubmission(fields, { age: "42" }).ok).toBe(true);
+    expect(validateSubmission(fields, { age: "3.14" }).ok).toBe(true);
+  });
+});
+
+
+/* #894 — mutation testing, third pass: the select-only option check must not
+   fire for a non-select field, even one that happens to carry options. */
+describe("validateSubmission — option check is gated on type === select", () => {
+  it("accepts any value for a non-select field even when it declares options", () => {
+    // The `field.type === "select"` guard must hold: a text field with options
+    // present must NOT have its value constrained to those options. Forcing the
+    // guard true would reject "freeform" here.
+    const fields = [field({ key: "note", label: "Note", type: "text", options: ["A", "B"] })];
+    expect(validateSubmission(fields, { note: "freeform value" }).ok).toBe(true);
+  });
+
+  it("still constrains a genuine select to its options", () => {
+    const fields = [field({ key: "plan", label: "Plan", type: "select", options: ["Free", "Pro"] })];
+    expect(validateSubmission(fields, { plan: "Enterprise" }).ok).toBe(false);
+    expect(validateSubmission(fields, { plan: "Pro" }).ok).toBe(true);
+  });
+});

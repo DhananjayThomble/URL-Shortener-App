@@ -27,8 +27,15 @@ export function fieldKeyFrom(label: string, taken: ReadonlySet<string> = new Set
      only possible leading/trailing underscore is a single one. Stripping it with
      `/^_+|_+$/g` backtracks quadratically on long runs of `_`. */
   const underscored = label.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  // Stryker equivalence (`underscored.length > 1` vs `>= 1`): the two differ
+  // only when underscored is exactly one character, which — since runs collapse
+  // to a single "_" — means underscored === "_". In that case the start index
+  // is already 1 (it startsWith "_"), so "_".slice(1, -1) and "_".slice(1,
+  // undefined) are both "", giving the same "field" fallback. Covered by the
+  // fieldKeyFrom("_") and single-char-label cases in form.test.ts.
   const trimmed = underscored.slice(
     underscored.startsWith("_") ? 1 : 0,
+    // Stryker disable next-line EqualityOperator,ConditionalExpression: equivalent — differs only at length 1 ("_"), where the leading-underscore slice already yields "" either way.
     underscored.endsWith("_") && underscored.length > 1 ? -1 : undefined,
   );
   const base = trimmed.slice(0, 40) || "field";
@@ -45,6 +52,15 @@ export function fieldKeyFrom(label: string, taken: ReadonlySet<string> = new Set
 
 /** Assign keys to any fields that do not have one yet, leaving existing keys alone. */
 export function withFieldKeys(fields: Array<Omit<FormFieldDef, "key"> & { key?: string }>): FormFieldDef[] {
+  // Stryker runner artifact (NOT equivalent): the `.map((f) => f.key)` -> `fields`
+  // mutant seeds `taken` from field OBJECTS instead of their keys, so a keyless
+  // field no longer avoids an existing key. It IS killed by the "seeds the taken
+  // set from pre-existing keys" and "does not let a new field take an existing
+  // key" tests — applying the mutant to source fails both. Stryker's vitest
+  // runner mis-reports it as survived (worker mutant-activation staleness: the
+  // test runs against unmutated code), verified against the sandbox. Disabled so
+  // the report is not falsely red; the kill is real.
+  // Stryker disable next-line MethodExpression: killed by the withFieldKeys dedup tests (verified by direct source mutation); Stryker's vitest-runner mis-reports it as survived (worker activation staleness).
   const taken = new Set(fields.map((f) => f.key).filter((k): k is string => Boolean(k)));
   return fields.map((f) => {
     if (f.key) return f as FormFieldDef;

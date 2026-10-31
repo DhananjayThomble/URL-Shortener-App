@@ -109,3 +109,21 @@ describe("validateExpiry (#754)", () => {
     ]);
   });
 });
+
+
+/* #894 — mutation testing. Every assertion above compares against the
+   EXPIRY_IN_PAST_MESSAGE constant itself, so blanking the constant mutates
+   both sides and survives. This pins the exact user-facing copy to a literal. */
+describe("EXPIRY_IN_PAST_MESSAGE is the exact copy shown to the user", () => {
+  it("names the consequence and both remedies", () => {
+    expect(EXPIRY_IN_PAST_MESSAGE).toBe(
+      "That expiry date has already passed, so the link would stop working straight away. Choose a later date, or remove the expiry.",
+    );
+  });
+
+  it("validateExpiry returns that literal string for a past date", () => {
+    expect(validateExpiry("2000-01-01T00:00:00.000Z", { now })).toEqual([
+      "That expiry date has already passed, so the link would stop working straight away. Choose a later date, or remove the expiry.",
+    ]);
+  });
+});

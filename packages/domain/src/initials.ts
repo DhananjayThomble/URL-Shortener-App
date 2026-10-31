@@ -19,6 +19,13 @@
      "🎉 Ada"              → "AD"   a word with no letters does not count
      "" / "   " / "🎉"     → "?"    nothing to show */
 
+// Stryker equivalence: the `^` and `$` anchors are not observable here. LETTER
+// is only ever tested against a single code point produced by `for (const ch
+// of word)` (see lettersOf), so the subject string is exactly one code point
+// and `/\p{L}/u`, `/^\p{L}/u`, `/\p{L}$/u` and `/^\p{L}$/u` all give the same
+// answer for every such input. Covered by the letter/non-letter cases in
+// initials.test.ts (emoji, markup, combining marks, astral letters).
+// Stryker disable next-line Regex: equivalent — the subject is always a single code point, so the ^/$ anchors cannot change the match.
 const LETTER = /^\p{L}$/u;
 
 /** Upper-cased code points of every letter in `word`, in order. */
@@ -36,8 +43,13 @@ function lettersOf(word: string): string[] {
 }
 
 export function initialsOf(name: string): string {
-  const words = name
-    .split(/\s+/u)
+  // Stryker equivalence: `/\s+/u` vs `/\s/u` is not observable. Splitting on a
+  // single whitespace char leaves empty strings between runs of whitespace, but
+  // lettersOf("") is [] and the `.filter(length > 0)` below drops every empty
+  // word, so collapsing runs (`+`) or not produces the same word list. Covered
+  // by the "  Grace   Hopper  " and tab/newline cases in initials.test.ts.
+  // Stryker disable next-line Regex: equivalent — empty words from splitting on single whitespace are removed by the length>0 filter below.
+  const words = name.split(/\s+/u)
     .map(lettersOf)
     .filter((letters) => letters.length > 0);
   if (words.length === 0) return "?";

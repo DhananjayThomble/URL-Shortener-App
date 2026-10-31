@@ -369,3 +369,120 @@ describe("effectiveGateFromState", () => {
     }
   });
 });
+
+
+/* #894 — mutation testing. These pin the full UTM parameter set, the 302
+   Pragma header, the seven-day boundary and validateSchedule, which the suite
+   above exercised only partially. */
+import { validateSchedule } from "./destination.js";
+
+describe("buildDestination — every UTM parameter", () => {
+  it("writes all four UTM keys, each under its own parameter name", () => {
+    const out = buildDestination({
+      destination: "https://acme.com/x",
+      forwardQuery: false,
+      utm: { source: "s-val", medium: "m-val", campaign: "c-val", content: "co-val" },
+    });
+    const q = new URL(out).searchParams;
+    expect(q.get("utm_source")).toBe("s-val");
+    expect(q.get("utm_medium")).toBe("m-val");
+    expect(q.get("utm_campaign")).toBe("c-val");
+    expect(q.get("utm_content")).toBe("co-val");
+  });
+
+  it("skips a UTM value that is null/empty rather than writing a blank one", () => {
+    const out = buildDestination({
+      destination: "https://acme.com/x",
+      forwardQuery: false,
+      utm: { source: "s", medium: null, campaign: "", content: undefined },
+    });
+    const q = new URL(out).searchParams;
+    expect(q.get("utm_source")).toBe("s");
+    expect(q.has("utm_medium")).toBe(false);
+    expect(q.has("utm_campaign")).toBe(false);
+    expect(q.has("utm_content")).toBe(false);
+  });
+
+  it("does not forward the incoming query when forwardQuery is on but the query is empty", () => {
+    expect(buildDestination({ destination: "https://acme.com/x", forwardQuery: true, incomingQuery: "" })).toBe(
+      "https://acme.com/x",
+    );
+  });
+});
+
+describe("cacheHeadersFor — 302 sends Pragma: no-cache alongside no-store", () => {
+  it("includes the Pragma header for the default 302", () => {
+    expect(cacheHeadersFor("302").Pragma).toBe("no-cache");
+  });
+  it("omits Pragma on a 301 (only Cache-Control)", () => {
+    expect(cacheHeadersFor("301").Pragma).toBeUndefined();
+    expect(Object.keys(cacheHeadersFor("301"))).toEqual(["Cache-Control"]);
+  });
+});
+
+describe("deriveStatus — the seven-day expiring boundary is inclusive", () => {
+  const now = new Date("2026-06-15T12:00:00Z");
+  it("calls a link expiring exactly seven days out 'expiring'", () => {
+    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    expect(deriveStatus({ expiresAt: sevenDays }, now)).toBe("expiring");
+  });
+  it("calls a link expiring just past seven days 'active'", () => {
+    const justOver = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000 + 1000).toISOString();
+    expect(deriveStatus({ expiresAt: justOver }, now)).toBe("active");
+  });
+});
+
+describe("validateSchedule", () => {
+  it("accepts an empty schedule and a start strictly before expiry", () => {
+    expect(validateSchedule(null, null)).toEqual([]);
+    expect(validateSchedule("2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z")).toEqual([]);
+  });
+
+  it("rejects a start at or after expiry with the exact message", () => {
+    const msg = "A link cannot be scheduled to start after it expires.";
+    expect(validateSchedule("2026-06-02T00:00:00Z", "2026-06-01T00:00:00Z")).toEqual([msg]);
+    // Equal instants are rejected too (kills the `>=` -> `>` boundary mutant).
+    expect(validateSchedule("2026-06-01T00:00:00Z", "2026-06-01T00:00:00Z")).toEqual([msg]);
+  });
+
+  it("does not judge a schedule missing either endpoint", () => {
+    // Both must be present for the rule to apply (kills the && -> || mutants).
+    expect(validateSchedule("2026-06-02T00:00:00Z", null)).toEqual([]);
+    expect(validateSchedule(null, "2026-06-01T00:00:00Z")).toEqual([]);
+    expect(validateSchedule("not a date", "2026-06-01T00:00:00Z")).toEqual([]);
+  });
+
+  it("allows a start date in the past (editing an old link)", () => {
+    expect(validateSchedule("2020-01-01T00:00:00Z", "2030-01-01T00:00:00Z")).toEqual([]);
+  });
+});
+
+
+/* #894 — mutation testing, final pass: force the clickLimit gate's condition
+   to matter. A link with NO click limit must never be reported as limited —
+   kills the `if (clickLimit != null && clicks >= limit)` -> `true` mutant in
+   both deriveStatus and lifecycleGate. */
+describe("click-limit gate requires a limit to be set", () => {
+  const now = new Date("2026-06-15T12:00:00Z");
+
+  it("deriveStatus: a link with no click limit and no expiry is active, not expired", () => {
+    expect(deriveStatus({}, now)).toBe("active");
+    expect(deriveStatus({ clickLimit: null, clicks: 9999 }, now)).toBe("active");
+    expect(deriveStatus({ clickLimit: undefined }, now)).toBe("active");
+  });
+
+  it("deriveStatus: below the limit stays active, at/over the limit is expired", () => {
+    expect(deriveStatus({ clickLimit: 10, clicks: 9 }, now)).toBe("active");
+    expect(deriveStatus({ clickLimit: 10, clicks: 10 }, now)).toBe("expired");
+  });
+
+  it("lifecycleGate: a link with no click limit passes (null), it is not click_limit", () => {
+    expect(lifecycleGate({ archived: false }, now)).toBeNull();
+    expect(lifecycleGate({ archived: false, clickLimit: null, clicks: 9999 }, now)).toBeNull();
+  });
+
+  it("lifecycleGate: below the limit passes, at/over the limit gates as click_limit", () => {
+    expect(lifecycleGate({ archived: false, clickLimit: 10, clicks: 9 }, now)).toBeNull();
+    expect(lifecycleGate({ archived: false, clickLimit: 10, clicks: 10 }, now)).toBe("click_limit");
+  });
+});

@@ -96,3 +96,80 @@ describe("buildDeepLink", () => {
     expect(DEEP_LINK_HOSTS.length).toBeGreaterThan(5);
   });
 });
+
+
+/* #894 — mutation testing. The table above assigned only a handful of hosts to
+   a package by name; emptying any other row or blanking any host/package string
+   survived. The mapping is what the feature does, so every entry is pinned. */
+describe("every known host maps to its documented Android package", () => {
+  it.each<[string, string]>([
+    ["youtube.com", "com.google.android.youtube"],
+    ["youtu.be", "com.google.android.youtube"],
+    ["spotify.com", "com.spotify.music"],
+    ["instagram.com", "com.instagram.android"],
+    ["twitter.com", "com.twitter.android"],
+    ["x.com", "com.twitter.android"],
+    ["tiktok.com", "com.zhiliaoapp.musically"],
+    ["whatsapp.com", "com.whatsapp"],
+    ["wa.me", "com.whatsapp"],
+    ["facebook.com", "com.facebook.katana"],
+    ["fb.com", "com.facebook.katana"],
+    ["soundcloud.com", "com.soundcloud.android"],
+    ["etsy.com", "com.etsy.android"],
+    ["amazon.com", "com.amazon.mShop.android.shopping"],
+    ["amazon.in", "com.amazon.mShop.android.shopping"],
+    ["amazon.co.uk", "com.amazon.mShop.android.shopping"],
+  ])("%s -> package=%s", (host, pkg) => {
+    const out = buildDeepLink(`https://${host}/some/path`, "android", true);
+    expect(out).toContain(`package=${pkg};`);
+    expect(out.startsWith(`intent://${host}/some/path#Intent;`)).toBe(true);
+    // Each host is also advertised to the dashboard, exactly once.
+    expect(DEEP_LINK_HOSTS).toContain(host);
+  });
+
+  it("DEEP_LINK_HOSTS is exactly the table's host column, in order", () => {
+    expect(DEEP_LINK_HOSTS).toStrictEqual([
+      "youtube.com",
+      "youtu.be",
+      "spotify.com",
+      "instagram.com",
+      "twitter.com",
+      "x.com",
+      "tiktok.com",
+      "whatsapp.com",
+      "wa.me",
+      "facebook.com",
+      "fb.com",
+      "soundcloud.com",
+      "etsy.com",
+      "amazon.com",
+      "amazon.in",
+      "amazon.co.uk",
+    ]);
+  });
+});
+
+describe("host normalisation and scheme handling", () => {
+  it("strips a leading www. before matching (so www.youtube.com resolves)", () => {
+    // Kills the /^www\./ -> /www\./ regex mutant: an interior 'www.' must NOT
+    // be stripped, only a leading one, and the leading one must be removed.
+    expect(buildDeepLink("https://www.youtube.com/x", "android", true)).toContain(
+      "package=com.google.android.youtube;",
+    );
+    // A host that merely contains "www." mid-string is left unmatched.
+    expect(buildDeepLink("https://awww.example.com/x", "android", true)).toBe("https://awww.example.com/x");
+  });
+
+  it("accepts http as well as https (both are web schemes)", () => {
+    // Kills the EqualityOperator/ConditionalExpression mutants on L99: an
+    // http:// destination to a known host must still build an intent.
+    const out = buildDeepLink("http://youtube.com/x", "android", true);
+    expect(out).toContain("package=com.google.android.youtube;");
+    expect(out.startsWith("intent://youtube.com/x#Intent;")).toBe(true);
+  });
+
+  it("rejects a non-web scheme even for a known host name", () => {
+    // ftp:// to a known host is still not a web URL.
+    expect(buildDeepLink("ftp://youtube.com/x", "android", true)).toBe("ftp://youtube.com/x");
+  });
+});
