@@ -58,12 +58,12 @@ export default defineConfig({
       maxDiffPixelRatio: 0.002,
     },
   },
-  // The three active Chromium viewports (issue #870). desktop-dark and webkit
-  // are deliberately NOT in this list: they belong to a later phase (T7), need a
-  // WebKit browser the Chromium lane does not install, and would otherwise match
-  // the marketing/auth/public spec filenames and generate out-of-scope baselines.
-  // They are documented in EXTRA_PROJECTS below and only added when
-  // VISUAL_EXTRA_PROJECTS=1, so the default lane is exactly the 3 Chromium shots.
+  // Five projects (issues #870 Chromium viewports, #873 WebKit + dark subsets).
+  // The three Chromium viewports run the full route set; desktop-dark and webkit
+  // run curated testMatch SUBSETS (not full matrices) because each roughly
+  // doubles the baseline count for the routes it covers and there is no Git LFS
+  // (design §10). The subsets are scoped by SPEC FILE (Playwright testMatch is
+  // file-level), aligned to the actual spec filenames in e2e/visual/.
   projects: [
     {
       name: "desktop",
@@ -83,29 +83,36 @@ export default defineConfig({
       name: "mobile",
       use: { ...devices["Pixel 7"], viewport: { width: 390, height: 844 }, colorScheme: "light" },
     },
-    // T7 projects, inert by default. Enabled only with VISUAL_EXTRA_PROJECTS=1.
-    ...(process.env.VISUAL_EXTRA_PROJECTS === "1"
-      ? [
-          {
-            name: "desktop-dark",
-            use: {
-              ...devices["Desktop Chrome"],
-              viewport: { width: 1440, height: 900 },
-              colorScheme: "dark" as const,
-            },
-            testMatch: /(marketing|app-links|app-analytics)/,
-          },
-          {
-            name: "webkit",
-            use: {
-              ...devices["Desktop Safari"],
-              viewport: { width: 1440, height: 900 },
-              colorScheme: "light" as const,
-            },
-            testMatch: /(marketing|auth|app-links|app-team|public)/,
-          },
-        ]
-      : []),
+    // desktop-dark (issue #873): dark mode is a token swap (globals.css:110
+    // prefers-color-scheme branch, :163 explicit data-theme="dark"), so a
+    // handful of representative pages proves the token set. Subset: marketing +
+    // app-core (which carries both /links and /analytics — the two routes the
+    // issue names). colorScheme:"dark" drives the prefers-color-scheme branch;
+    // seedAppearance() leaves mode:"" so the project's colorScheme resolves.
+    {
+      name: "desktop-dark",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 },
+        colorScheme: "dark" as const,
+      },
+      testMatch: /(marketing|app-core)\.spec\.ts/,
+    },
+    // webkit (issue #873): WebKit on Linux rasterises text differently from
+    // Chromium, so it needs its own baselines — but a curated desktop subset, not
+    // all 84 Chromium targets (that would double maintenance for a thin marginal
+    // catch). Subset: marketing + auth + public (signed-out and public pages,
+    // which render the same whether or not a session is seeded — good text-raster
+    // coverage without auth-session timing in a second engine).
+    {
+      name: "webkit",
+      use: {
+        ...devices["Desktop Safari"],
+        viewport: { width: 1440, height: 900 },
+        colorScheme: "light" as const,
+      },
+      testMatch: /(marketing|auth|public)\.spec\.ts/,
+    },
   ],
   webServer: {
     command: `pnpm --filter snapurl-web exec next build && pnpm --filter snapurl-web exec next start --port ${PORT}`,
