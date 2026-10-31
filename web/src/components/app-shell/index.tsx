@@ -62,7 +62,7 @@ function NavLinks({ counts, onNavigate }: { counts: Counts; onNavigate?: () => v
                 onClick={onNavigate}
                 className={cn(
                   "flex items-center gap-[10px] px-[10px] rounded-[var(--radius-sm)] text-[13.5px] font-medium transition-colors",
-                  "py-[calc(7px*var(--density))]",
+                  "py-[calc(14px*var(--density))]",
                   active ? "bg-accent-wash text-accent font-semibold" : "text-ink-2 hover:bg-surface-3 hover:text-ink",
                 )}
               >
