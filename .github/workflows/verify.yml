@@ -39,6 +39,7 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       non_e2e: ${{ steps.filter.outputs.non_e2e }}
       workflows: ${{ steps.filter.outputs.workflows }}
+      mutation: ${{ steps.filter.outputs.mutation }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -61,13 +62,24 @@ jobs:
             # so the actionlint job runs exactly when it has something to check.
             workflows:
               - '.github/workflows/**'
+            # `mutation` is true when either Stryker-covered package changes, so
+            # the mutation job runs exactly when a PR could change their kill
+            # rate (issue #896). The two packages are pure, DB/network-free
+            # logic — the only ones mutation testing is cheap on.
+            mutation:
+              - 'packages/domain/**'
+              - 'packages/contract/**'
       # A push to main has no PR diff for paths-filter to read; force code=true
-      # there so the default branch always runs the full suite.
+      # there so the default branch always runs the full suite. The mutation
+      # job is forced the same way so nightly and push-to-main always run it.
       - name: Force full run on push to main
         if: github.event_name != 'pull_request'
         run: |
-          echo "code=true" >> "$GITHUB_OUTPUT"
-          echo "workflows=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "code=true"
+            echo "workflows=true"
+            echo "mutation=true"
+          } >> "$GITHUB_OUTPUT"
 
   # Regression-test guard (issue #900, wiring the #899 script into CI as a PR
   # gate; spec .kiro/specs/regression-rule/ design §3). Fails a PR that closes an
@@ -1136,6 +1148,65 @@ jobs:
         with:
           args: -color
 
+  # Mutation testing (issue #896). Stryker on the two pure packages
+  # (packages/domain, packages/contract) proves the tests can actually fail, not
+  # just that a line ran. Runs on a PR that touches either package (the
+  # `mutation` path filter) and always on nightly / push-to-main (forced in the
+  # changes job). Each package's `test:mutation` fails the job when its measured
+  # score drops below the `thresholds.break` committed in its stryker.config.json
+  # (#894 domain = 100, #895 contract = 95), so a surviving mutant that pushes
+  # the score under the bar reds this job. 30-minute budget — each package runs
+  # in ~2-7 min on an 8-core runner, well inside it.
+  mutation:
+    name: Mutation testing (domain + contract)
+    needs: changes
+    if: needs.changes.outputs.mutation == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Stryker's vitest runner imports each package's built workspace deps, so
+      # the packages must be compiled before the mutation run (same as the test
+      # lane).
+      - name: Build packages
+        run: pnpm build:packages
+
+      # Run each package on its own so its wall time is visible and either one
+      # breaching its committed `break` threshold fails the job independently.
+      - name: Mutation testing — @snapurl/domain
+        run: pnpm --filter @snapurl/domain test:mutation
+
+      - name: Mutation testing — @snapurl/contract
+        run: pnpm --filter @snapurl/contract test:mutation
+
+      # Upload both HTML reports even when the run fails (a breached threshold
+      # exits non-zero) so the surviving mutants are inspectable from the run.
+      - name: Upload mutation reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-reports
+          path: |
+            packages/domain/reports/mutation/
+            packages/contract/reports/mutation/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Single required status for this workflow (issue #349). A required check that
   # gets SKIPPED by path filtering never reports a conclusion, which leaves a PR
   # pending forever — so the branch protection requires THIS job, not the heavy
@@ -1145,7 +1216,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard, mutation]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
