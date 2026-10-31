@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "outDir": "./dist", "rootDir": "./src", "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo" },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts", "reports", ".stryker-tmp"]
 }
