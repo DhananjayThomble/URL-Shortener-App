@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "vitest": { "configFile": "vitest.stryker.config.ts" },
+  "mutate": ["src/**/*.ts", "!src/**/*.test.ts"],
+
+  "S5_StringLiteral_decision_comment": [
+    "S5 decision: the StringLiteral mutator is excluded for packages/contract.",
+    "This package is almost entirely declarative zod schema definitions: wire DTOs",
+    "and input shapes. Measured StringLiteral survivors (164 of 390) are dominated",
+    "by z.enum([...]) member identifiers ('owner', 'live', 'day'), .describe() text",
+    "and object-key spellings - internal wire identifiers, not product copy. A test",
+    "pinning each exact enum string asserts a tautology TypeScript already enforces.",
+    "The genuine product copy (#792 plain-words validation) lives in friendly-errors.ts",
+    "and the schemas' own error: messages; those are asserted BEHAVIOURALLY (the",
+    "rendered sentence a user sees) by friendly-errors.test.ts and http-url.test.ts,",
+    "which is the right oracle - not that a literal equals itself. Every NON-string",
+    "mutator stays enabled and is killed by a real test, including all logic in",
+    "http-url.ts (the SSRF guard), where no survivor is tolerated or marked equivalent."
+  ],
+  "mutator": { "excludedMutations": ["StringLiteral"] },
+
+  "coverageAnalysis": "all",
+  "reporters": ["clear-text", "progress", "html", "json"],
+  "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "thresholds": { "high": 90, "low": 75, "break": 95 },
+  "incremental": false,
+  "tempDirName": ".stryker-tmp"
+}
