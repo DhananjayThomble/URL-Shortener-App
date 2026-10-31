@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HttpUrl, isDeniedHost } from "./http-url.js";
+import { HttpUrl, isDeniedHost, isDeniedIpv4, isDeniedIpv6 } from "./http-url.js";
 import { CreateLinkInput, RoutingRule } from "./link.js";
 import { AddDomainInput, CreateWebhookInput, UpdateDomainInput, UpsertBioPageInput } from "./workspace.js";
 
@@ -252,5 +252,217 @@ describe("every contract field routes through HttpUrl", () => {
     expect(UpsertBioPageInput.safeParse({ ...base, blocks: [block(bad)] }).success).toBe(false);
     expect(UpsertBioPageInput.safeParse({ ...base, blocks: [block(metadata)] }).success).toBe(false);
     expect(UpsertBioPageInput.safeParse({ ...base, blocks: [block(good)] }).success).toBe(true);
+  });
+});
+
+
+/* ── SSRF denylist, exercised directly on the exported guards (#895) ──────────
+   The URL-level tests above prove the schema rejects internal hosts, but they
+   route through zod's `.url()` normalisation, which hides which *branch* of the
+   range logic did the rejecting — so a mutant that flips one octet comparison
+   can survive if another branch happens to catch the same literal. These tests
+   call `isDeniedIpv4`/`isDeniedIpv6`/`isDeniedHost` directly and pin each range
+   boundary and each guard clause, so every mutant in that logic is killed by a
+   test that would turn green→red if the guard weakened. This is the SSRF guard;
+   a surviving mutant here is a security test gap, never an equivalent. */
+describe("isDeniedIpv4 — structural guards and every range boundary", () => {
+  it("only treats a 4-part dotted quad as an IPv4 address (kills parts.length !== 4)", () => {
+    // Fewer or more than four parts is not a v4 address and must not be denied.
+    expect(isDeniedIpv4("10.0.0")).toBe(false); // 3 parts — not an address
+    expect(isDeniedIpv4("10.0.0.0.0")).toBe(false); // 5 parts — not an address
+    expect(isDeniedIpv4("10")).toBe(false);
+    // The same literal WITH four parts IS denied, so the check is load-bearing.
+    expect(isDeniedIpv4("10.0.0.0")).toBe(true);
+  });
+
+  it("rejects any octet that is non-integer or out of 0..255 (kills the .some octet guard)", () => {
+    // Each of these has exactly one bad octet; a weakened guard would classify
+    // them against the 10/8 or 192.168 rule instead of bailing to false.
+    expect(isDeniedIpv4("10.0.0.256")).toBe(false); // > 255
+    expect(isDeniedIpv4("10.0.0.-1")).toBe(false); // < 0
+    expect(isDeniedIpv4("10.0.0.1.5")).toBe(false); // not 4 parts anyway
+    expect(isDeniedIpv4("10.0.0.x")).toBe(false); // NaN octet
+    expect(isDeniedIpv4("192.168.0.999")).toBe(false); // bad octet on an otherwise-private prefix
+    expect(isDeniedIpv4("999.168.0.1")).toBe(false);
+    // A valid, in-range private address still denies — proves the guard only
+    // rejects the malformed ones (kills .some→.every and the || → && mutants:
+    // .every would be false here because the first octet IS a valid integer).
+    expect(isDeniedIpv4("192.168.0.1")).toBe(true);
+  });
+
+  it("denies 0.0.0.0/8, 10/8 and 127/8 but not neighbours", () => {
+    expect(isDeniedIpv4("0.0.0.0")).toBe(true);
+    expect(isDeniedIpv4("0.1.2.3")).toBe(true);
+    expect(isDeniedIpv4("10.255.255.255")).toBe(true);
+    expect(isDeniedIpv4("127.0.0.1")).toBe(true);
+    expect(isDeniedIpv4("126.0.0.1")).toBe(false);
+    expect(isDeniedIpv4("128.0.0.1")).toBe(false);
+    expect(isDeniedIpv4("11.0.0.1")).toBe(false);
+    expect(isDeniedIpv4("1.2.3.4")).toBe(false);
+  });
+
+  it("denies 169.254/16 only when BOTH octets match (kills && → || and branch forcing)", () => {
+    expect(isDeniedIpv4("169.254.169.254")).toBe(true); // the metadata address
+    expect(isDeniedIpv4("169.254.0.0")).toBe(true);
+    // a === 169 but b !== 254 must be ALLOWED; a || mutant would deny this.
+    expect(isDeniedIpv4("169.1.1.1")).toBe(false);
+    expect(isDeniedIpv4("169.253.0.1")).toBe(false);
+    // b === 254 but a !== 169 must be ALLOWED; a || mutant would deny this.
+    expect(isDeniedIpv4("8.254.0.1")).toBe(false);
+  });
+
+  it("denies 172.16.0.0/12 across its range only (kills the b>=16 && b<=31 boundary)", () => {
+    expect(isDeniedIpv4("172.16.0.1")).toBe(true); // bottom of range
+    expect(isDeniedIpv4("172.31.255.255")).toBe(true); // top of range
+    expect(isDeniedIpv4("172.23.0.1")).toBe(true); // mid range
+    expect(isDeniedIpv4("172.15.0.1")).toBe(false); // just below
+    expect(isDeniedIpv4("172.32.0.1")).toBe(false); // just above
+    expect(isDeniedIpv4("171.16.0.1")).toBe(false); // a !== 172
+  });
+
+  it("denies 192.168/16 only when BOTH octets match (kills && → ||)", () => {
+    expect(isDeniedIpv4("192.168.1.1")).toBe(true);
+    expect(isDeniedIpv4("192.167.1.1")).toBe(false); // a === 192, b !== 168
+    expect(isDeniedIpv4("8.168.1.1")).toBe(false); // b === 168, a !== 192
+  });
+
+  it("denies 100.64.0.0/10 across its range only (kills the b>=64 && b<=127 boundary)", () => {
+    expect(isDeniedIpv4("100.64.0.1")).toBe(true); // bottom
+    expect(isDeniedIpv4("100.127.255.255")).toBe(true); // top
+    expect(isDeniedIpv4("100.100.0.1")).toBe(true); // mid
+    expect(isDeniedIpv4("100.63.0.1")).toBe(false); // just below
+    expect(isDeniedIpv4("100.128.0.1")).toBe(false); // just above
+    expect(isDeniedIpv4("99.64.0.1")).toBe(false); // a !== 100
+  });
+
+  it("a public address matching no rule is allowed (kills the final return true mutant)", () => {
+    expect(isDeniedIpv4("8.8.8.8")).toBe(false);
+    expect(isDeniedIpv4("1.1.1.1")).toBe(false);
+    expect(isDeniedIpv4("203.0.113.7")).toBe(false);
+  });
+});
+
+describe("isDeniedIpv6 — bracket stripping, fe80::/10 and IPv4-mapped forms", () => {
+  it("strips surrounding brackets and the zone id before matching (kills the replace() regexes)", () => {
+    expect(isDeniedIpv6("[::1]")).toBe(true); // brackets stripped → ::1 loopback
+    expect(isDeniedIpv6("[fe80::1%eth0]")).toBe(true); // brackets + zone id stripped
+    expect(isDeniedIpv6("::1")).toBe(true); // already bare
+    expect(isDeniedIpv6("fe80::1%25eth0")).toBe(true); // zone split on %
+  });
+
+  it("denies the unspecified and loopback addresses", () => {
+    expect(isDeniedIpv6("::")).toBe(true);
+    expect(isDeniedIpv6("::1")).toBe(true);
+  });
+
+  it("denies the whole fe80::/10 link-local block, not just the fe80 literal", () => {
+    expect(isDeniedIpv6("fe80::1")).toBe(true); // bottom of range
+    expect(isDeniedIpv6("fe90::1")).toBe(true); // inside range, outside fe80 literal
+    expect(isDeniedIpv6("fea0::1")).toBe(true);
+    expect(isDeniedIpv6("febf::1")).toBe(true); // top of range
+    expect(isDeniedIpv6("fe7f::1")).toBe(false); // just below the range
+    expect(isDeniedIpv6("fec0::1")).toBe(false); // just above the range
+  });
+
+  it("denies fc00::/7 unique-local (fc and fd prefixes)", () => {
+    expect(isDeniedIpv6("fc00::1")).toBe(true);
+    expect(isDeniedIpv6("fd12:3456::1")).toBe(true);
+    expect(isDeniedIpv6("fe00::1")).toBe(false); // neither fc/fd nor in fe80::/10
+  });
+
+  it("denies IPv4-mapped metadata in BOTH dotted and compressed hex forms (kills the ::ffff: parsing)", () => {
+    // Dotted-quad tail → the `tail.includes(".")` branch.
+    expect(isDeniedIpv6("::ffff:169.254.169.254")).toBe(true);
+    expect(isDeniedIpv6("::ffff:10.0.0.1")).toBe(true);
+    // Two-hex-group tail → the else branch that rebuilds the dotted quad.
+    // a9fe:a9fe == 169.254.169.254; 0a00:0001 == 10.0.0.1.
+    expect(isDeniedIpv6("::ffff:a9fe:a9fe")).toBe(true);
+    expect(isDeniedIpv6("::ffff:0a00:0001")).toBe(true);
+    // A mapped PUBLIC address is allowed — proves the rebuild feeds the v4 rules
+    // rather than denying every ::ffff: address (kills the force-true mutants).
+    expect(isDeniedIpv6("::ffff:8.8.8.8")).toBe(false);
+    expect(isDeniedIpv6("::ffff:0808:0808")).toBe(false); // 8.8.8.8 in hex
+  });
+
+  it("a public IPv6 address is allowed (kills the final return true mutant)", () => {
+    expect(isDeniedIpv6("2001:4860:4860::8888")).toBe(false); // Google DNS v6
+    expect(isDeniedIpv6("2606:4700:4700::1111")).toBe(false); // Cloudflare v6
+  });
+});
+
+describe("isDeniedHost — dispatch between name, IPv6 and IPv4", () => {
+  it("denies localhost and its subdomains, case-insensitively", () => {
+    expect(isDeniedHost("localhost")).toBe(true);
+    expect(isDeniedHost("LOCALHOST")).toBe(true);
+    expect(isDeniedHost("api.localhost")).toBe(true);
+    expect(isDeniedHost("notlocalhost")).toBe(false); // does not end in .localhost and isn't localhost
+    expect(isDeniedHost("localhost.example.com")).toBe(false); // a real public host
+  });
+
+  it("routes bracketless colon-bearing hosts to the IPv6 guard and the rest to IPv4", () => {
+    expect(isDeniedHost("fe80::1")).toBe(true); // has a colon → v6 path
+    expect(isDeniedHost("::ffff:169.254.169.254")).toBe(true);
+    expect(isDeniedHost("10.0.0.1")).toBe(true); // no colon → v4 path
+    expect(isDeniedHost("example.com")).toBe(false);
+    expect(isDeniedHost("8.8.8.8")).toBe(false);
+  });
+});
+
+
+/* #895: the last SSRF-guard mutants, pinned so http-url.ts has zero unjustified
+   survivors. These exercise the bracket-strip anchors, the ::ffff: prefix
+   anchor and the hex-group reconstruction guards directly, and the HttpUrl
+   scheme regex and its three product-copy messages. */
+describe("isDeniedIpv6 — guard-clause edges (kills the remaining logic mutants)", () => {
+  it("only strips a bracket at the host boundary, not one in the middle (kills the ^/$ anchor drops on the replace)", () => {
+    // A string with brackets in the WRONG places: with the anchors, nothing is
+    // stripped and it is not a recognised address → false. Drop either anchor
+    // and the brackets are stripped anywhere, exposing "::1" → would deny.
+    expect(isDeniedIpv6("]::1[")).toBe(false);
+  });
+
+  it("recognises the ::ffff: prefix only at the START of the host (kills the ^ anchor drop on the match)", () => {
+    // Prefixed with junk: the anchored regex does not match, so the mapped-v4
+    // path is skipped and the address is not denied. Drop the ^ and it matches
+    // mid-string, reconstructs the metadata v4 and would deny a non-mapped host.
+    expect(isDeniedIpv6("x::ffff:169.254.169.254")).toBe(false);
+  });
+
+  it("only reconstructs a two-group hex tail (kills groups.length === 2 → true)", () => {
+    // Three groups is not the ::ffff:hi:lo shape; forcing the branch true would
+    // take the first two groups (a9fe:a9fe = 169.254.169.254) and deny it.
+    expect(isDeniedIpv6("::ffff:a9fe:a9fe:0")).toBe(false);
+  });
+
+  it("requires BOTH hex groups to parse as integers (kills the && → || and the forced-true)", () => {
+    // One valid group, one unparseable: with && the branch is skipped → false.
+    // With || (or forcing the condition true), NaN >> 8 === 0 rebuilds
+    // 169.254.0.0 and would wrongly deny it.
+    expect(isDeniedIpv6("::ffff:a9fe:zzzz")).toBe(false);
+    expect(isDeniedIpv6("::ffff:zzzz:a9fe")).toBe(false);
+    // the genuinely-mapped metadata address in hex form is still denied
+    expect(isDeniedIpv6("::ffff:a9fe:a9fe")).toBe(true);
+  });
+});
+
+describe("HttpUrl — scheme regex anchors and the three guard messages", () => {
+  it("anchors the http(s) scheme at both ends (kills /^https?/ and /https?$/)", () => {
+    // Dropping the $ anchor would accept a scheme that merely STARTS with http(s);
+    // dropping the ^ would accept one that merely ENDS with it.
+    expect(HttpUrl.safeParse("httpsx://example.com").success).toBe(false); // trailing junk → needs $
+    expect(HttpUrl.safeParse("xhttps://example.com").success).toBe(false); // leading junk → needs ^
+    expect(HttpUrl.safeParse("https://example.com").success).toBe(true);
+  });
+
+  it("surfaces the length, control-character and credential messages (kills the {error} → {} object mutants)", () => {
+    const msg = (v: string) => {
+      const r = HttpUrl.safeParse(v);
+      return r.success ? null : r.error.issues[0]?.message;
+    };
+    const longValid = "https://example.com/" + "a".repeat(2049 - 20);
+    expect(longValid).toHaveLength(2049);
+    expect(msg(longValid)).toBe("Keep it under 2048 characters");
+    expect(msg("https://example.com/\u0000")).toBe("That URL contains a control character");
+    expect(msg("https://user:pass@example.com/")).toBe("A URL can't include a username or password");
   });
 });

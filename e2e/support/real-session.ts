@@ -105,6 +105,28 @@ export interface RealSession {
  * silently producing a half-authenticated page.
  */
 export async function registerRealUser(): Promise<RealSession> {
+  // The register route is throttled to 5/min per IP (apps/api/src/auth/
+  // auth.controller.ts: `@Throttle({ default: { limit: 5, ttl: 60_000 } })`,
+  // added 2026-10-17 in #658). A suite that registers more than five accounts
+  // inside a minute from one IP therefore starts getting 429s. Workers that
+  // register once (issue #884) stay well under that, but a bounded back-off
+  // keeps the single registration robust when several workers' first sign-ups
+  // land in the same window. Modelled on e2e/journeys/j790-dead-ends.spec.ts:
+  // at most 4 retries, each waiting a throttle window (20s) for the bucket to
+  // refill. Non-429 failures are not retried — they are real errors.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await registerRealUserOnce();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (attempt >= 4 || !/\b429\b/.test(message)) throw err;
+      diag(`register throttled (429); back-off attempt ${attempt + 1}/4`);
+      await new Promise((r) => setTimeout(r, 20_000));
+    }
+  }
+}
+
+async function registerRealUserOnce(): Promise<RealSession> {
   // The 409 this previously hit ("That already exists") was NOT an email
   // collision — 8 random bytes do not collide across dozens of registrations,
   // and a duplicate email produces a different message
