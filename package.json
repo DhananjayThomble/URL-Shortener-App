@@ -19,6 +19,7 @@
     "test": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test",
     "test:coverage": "COVERAGE=1 pnpm build:packages && COVERAGE=1 pnpm -r --workspace-concurrency=1 test",
     "test:mutation": "pnpm build:packages && pnpm -r --workspace-concurrency=1 --if-present test:mutation",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "coverage:merge": "node scripts/merge-coverage.mjs",
     "lint": "pnpm -r lint",
     "db:up": "docker compose up -d postgres",
