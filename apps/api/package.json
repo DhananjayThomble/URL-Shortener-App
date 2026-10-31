@@ -10,6 +10,7 @@
     "start": "node --env-file-if-exists=.env dist/main.js",
     "type-check": "pnpm -w build:packages && tsc -p tsconfig.json --noEmit",
     "test": "pnpm -w build:packages && vitest run",
+    "test:stack": "vitest run -c vitest.stack.config.ts",
     "emit:openapi": "pnpm build && node scripts/emit-openapi.mjs",
     "dev:nest": "nest start --watch"
   },
@@ -45,6 +46,7 @@
     "@nestjs/cli": "^11.0.10",
     "@nestjs/schematics": "^11.0.9",
     "@types/node": "^22",
+    "fast-check": "^4.9.0",
     "typescript": "^5.7.3",
     "vitest": "^3.2.7"
   }

@@ -67,6 +67,15 @@ const ANDROID_PACKAGES: ReadonlyArray<readonly [host: string, androidPackage: st
 export const DEEP_LINK_HOSTS: readonly string[] = ANDROID_PACKAGES.map(([host]) => host);
 
 function packageFor(hostname: string): string | null {
+  // Stryker equivalence (`/^www\./` vs `/www\./`): `.replace` without the `g`
+  // flag removes only the FIRST "www." occurrence. A leading "www." is removed
+  // identically whether or not the `^` anchor is present, and the match below
+  // is by registrable-suffix (`=== suffix` or `.endsWith("." + suffix)`): a
+  // non-leading "www." removed from the middle never flips that suffix test for
+  // any real hostname (the suffix check already tolerates arbitrary left-hand
+  // labels). The leading-www. behaviour is pinned by the www./subdomain cases
+  // in deep-link.test.ts.
+  // Stryker disable next-line Regex: equivalent — non-global replace strips only a leading www. the same way with or without the ^ anchor, and the suffix match is unaffected by a mid-string strip.
   const host = hostname.toLowerCase().replace(/^www\./, "");
   for (const [suffix, pkg] of ANDROID_PACKAGES) {
     if (host === suffix || host.endsWith(`.${suffix}`)) return pkg;

@@ -23,6 +23,11 @@ export function bioManagedDestination(webOrigin: string, domain: string, slug: s
   // Trim trailing slashes with a scan, not `/\/+$/`, which backtracks
   // quadratically on a long run of slashes that is not at the end.
   let end = webOrigin.length;
+  // Stryker equivalence: neither `end > 0` -> `end >= 0` nor `end > 0` -> `true`
+  // is observable. At end === 0 the second operand is webOrigin.charCodeAt(-1),
+  // which is NaN, and NaN === 47 is false, so the loop stops at end === 0 under
+  // every one of those forms. Covered by the "///" and "" cases in bio.test.ts.
+  // Stryker disable next-line EqualityOperator,ConditionalExpression: equivalent — charCodeAt(-1) is NaN so the `=== 47` operand halts the loop at end===0 regardless of the first operand's form.
   while (end > 0 && webOrigin.charCodeAt(end - 1) === 47) end--;
   return `${webOrigin.slice(0, end)}${bioPagePath(domain, slug)}`;
 }

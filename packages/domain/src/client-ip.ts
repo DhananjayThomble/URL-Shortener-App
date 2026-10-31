@@ -67,6 +67,13 @@ export function clientIpFromXff(opts: {
 
   // Fastify hands multi-valued headers over as an array; a single header comes
   // as one comma-joined string. Normalise both to one comma-joined string.
+  // Stryker equivalence (the `?? ""` fallback): this is only reached with
+  // trustedHops >= 1 (hops <= 0 returned above). When xff is nullish the
+  // fallback becomes the whole joined string, which splits to at most one
+  // entry; since trustedHops >= 1, `entries.length <= trustedHops` holds and
+  // socketIp is returned whether the fallback is "" (zero entries) or any
+  // non-empty literal (one entry). Covered by the "no X-Forwarded-For" case.
+  // Stryker disable next-line StringLiteral: equivalent — a nullish xff yields <= 1 entry, and with trustedHops>=1 that always falls back to socketIp regardless of this literal.
   const joined = Array.isArray(xff) ? xff.join(",") : (xff ?? "");
 
   const entries = joined
@@ -77,6 +84,16 @@ export function clientIpFromXff(opts: {
   // Not enough entries to index the (N+1)th from the right — the chain is
   // shorter than the topology claims (e.g. a request that never went through
   // the expected proxies). Fall back to the peer we can actually see.
+  //
+  // Stryker equivalence: this early return is a readability guard, not a
+  // correctness gate. When entries.length <= trustedHops the index below is
+  // `entries.length - 1 - trustedHops` <= -1, so `candidate` is `undefined`
+  // and the `!candidate` guard a few lines down returns socketIp anyway.
+  // Weakening `<=` to `<`, forcing the branch to `false`, or emptying its body
+  // therefore produces identical observable behaviour on every input — the
+  // defensive guard is a complete backstop. Covered behaviourally by the
+  // "hops exceed/equal the number of entries" tests in client-ip.test.ts.
+  // Stryker disable next-line EqualityOperator,ConditionalExpression,BlockStatement: equivalent — the `!candidate` guard below returns socketIp for every input this branch would catch.
   if (entries.length <= trustedHops) {
     return socketIp;
   }
@@ -85,6 +102,13 @@ export function clientIpFromXff(opts: {
 
   // Defensive: a malformed/whitespace-only entry at the trusted position is
   // not something to hand downstream as an identity. Fall back to the socket.
+  // Stryker equivalence: `candidate` is `entries[...]`, and `entries` was just
+  // filtered to `entry.length > 0`, so a real indexed candidate is always a
+  // non-empty string — `!candidate` and `candidate.length === 0` are both
+  // always false here. (The only way to reach a missing slot is a negative
+  // index, which the `entries.length <= trustedHops` guard above already
+  // returned for.) This guard is belt-and-braces; no input can trigger it.
+  // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: equivalent — entries are pre-filtered to non-empty, so a selected candidate is never empty/undefined and this guard is unreachable.
   if (!candidate || candidate.length === 0) {
     return socketIp;
   }

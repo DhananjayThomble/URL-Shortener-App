@@ -30,6 +30,9 @@
   "/auth/email/verify": [
     "POST"
   ],
+  "/auth/invite/accept": [
+    "POST"
+  ],
   "/auth/login": [
     "POST"
   ],
@@ -53,6 +56,9 @@
   ],
   "/auth/register": [
     "POST"
+  ],
+  "/auth/workspaces": [
+    "GET"
   ],
   "/bio-pages": [
     "GET",
@@ -119,6 +125,9 @@
   "/members/{id}": [
     "DELETE",
     "PATCH"
+  ],
+  "/members/{id}/resend": [
+    "POST"
   ],
   "/public/bio-pages/{slug}": [
     "GET"

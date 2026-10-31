@@ -37,6 +37,16 @@ route({
   responses: { 204: { description: "Removed" } },
 });
 
+/* #700 — resend a pending/expired invitation. @Roles("admin"), like invite. */
+route({
+  method: "post",
+  path: "/members/{id}/resend",
+  tag: "Members",
+  summary: "Resend a pending invitation",
+  params: IdParam,
+  responses: { 201: { description: "The re-invited member", schema: refs.Member } },
+});
+
 route({
   method: "get",
   path: "/audit",

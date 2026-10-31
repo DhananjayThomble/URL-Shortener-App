@@ -23,16 +23,30 @@ import { API_URL, RUN_ID, RUN_PASSWORD, TOKEN_KEY, REFRESH_KEY, makeEmail, type 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
 
+/**
+ * Register one account. /auth/register carries a route-level 5/min-per-IP
+ * throttle (apps/api, @Throttle on the auth routes) that THROTTLE_LIMIT does
+ * NOT lift — it is security behaviour (.kiro/specs/real-stack-ci/design.md §1
+ * "Throttles"). This spec registers 8 accounts across its tests, so on a
+ * single IP the 6th+ would 429. Back off and retry on a 429, the same pattern
+ * j790-dead-ends.spec.ts uses, instead of failing the run.
+ */
 async function register(name: string, email: string): Promise<Session> {
-  const res = await fetch(`${API_URL}/auth/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, email, password: RUN_PASSWORD }),
-  });
-  expect(res.status, "register").toBe(201);
-  const b = (await res.json()) as { accessToken: string; refreshToken: string; user: { id: string } };
-  const wid = JSON.parse(Buffer.from(b.accessToken.split(".")[1]!, "base64url").toString()).wid as string;
-  return { accessToken: b.accessToken, refreshToken: b.refreshToken, email, userId: b.user.id, workspaceId: wid };
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${API_URL}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, email, password: RUN_PASSWORD }),
+    });
+    if (res.status === 429 && attempt < 4) {
+      await new Promise((r) => setTimeout(r, 20_000));
+      continue;
+    }
+    expect(res.status, "register").toBe(201);
+    const b = (await res.json()) as { accessToken: string; refreshToken: string; user: { id: string } };
+    const wid = JSON.parse(Buffer.from(b.accessToken.split(".")[1]!, "base64url").toString()).wid as string;
+    return { accessToken: b.accessToken, refreshToken: b.refreshToken, email, userId: b.user.id, workspaceId: wid };
+  }
 }
 
 async function api(token: string, path: string, init: RequestInit = {}) {

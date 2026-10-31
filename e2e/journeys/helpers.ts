@@ -1,10 +1,19 @@
 /**
  * Shared helpers for the journey suite.
  *
- * Rules (brief-journey.md):
- *  - Never hardcode an id/slug/URL the app generates — read it back from page/API.
- *  - Every identity derived per run (no fixed emails, no fixed passwords).
- *  - Oracle: packages/contract (zod schemas) and observed behaviour.
+ * Journey-suite rules (these were previously cited as "brief-journey.md", a
+ * file that does not exist in the repo — the rules it stood for are written
+ * out here, and align with .kiro/steering/qa-oracles.md):
+ *  - Never hardcode an id/slug/URL the app generates — read it back from the
+ *    page or the API, so an assertion compares against the runtime's own value.
+ *  - No fixture-shaped assertions: journeys drive the REAL stack, never the
+ *    in-memory fixtures fake (qa-oracles.md §5).
+ *  - Every identity is derived per run (no fixed emails or passwords), because
+ *    a real Postgres backend keeps accounts between runs and a fixed email
+ *    collides on the second run.
+ *  - Oracle (qa-oracles.md §1): derive the expected value from
+ *    packages/contract (zod schemas), docs/, or an invariant that must hold —
+ *    never by reading the implementation back as its own oracle.
  *
  * The three keys below are mirrored from web/src/lib/api/client.ts so the
  * seedAccount helper can drop tokens into localStorage before the first nav.
@@ -50,14 +59,29 @@ export interface Session {
  * Oracle: packages/contract/src/auth.ts — AuthSession schema.
  */
 export async function registerUser(email: string, password = RUN_PASSWORD): Promise<Session> {
-  const res = await fetch(`${API_URL}/auth/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Journey Tester", email, password }),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`registerUser: POST /auth/register → ${res.status}; body=${text.slice(0, 400)}`);
+  // /auth/register carries a route-level 5/min-per-IP throttle (security
+  // behaviour that THROTTLE_LIMIT does NOT lift — .kiro/specs/real-stack-ci/
+  // design.md §1 "Throttles"). A spec that registers several accounts, or a
+  // CI shard running back-to-back specs on one IP, can hit a 429. Back off and
+  // retry (the j790-dead-ends.spec.ts pattern) so a real-stack register is
+  // resilient to its own route limit instead of failing the run.
+  let text = "";
+  let res: Response | undefined;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`${API_URL}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Journey Tester", email, password }),
+    });
+    if (res.status === 429 && attempt < 4) {
+      await new Promise((r) => setTimeout(r, 20_000));
+      continue;
+    }
+    text = await res.text();
+    break;
+  }
+  if (!res!.ok) {
+    throw new Error(`registerUser: POST /auth/register → ${res!.status}; body=${text.slice(0, 400)}`);
   }
   const body = JSON.parse(text) as {
     accessToken?: string;

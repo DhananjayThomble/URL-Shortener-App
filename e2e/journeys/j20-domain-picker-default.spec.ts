@@ -33,7 +33,18 @@ const DEST = "https://example.com/j20-destination";
 const slugFor = (tag: string) => `j20-${tag}-${Math.random().toString(36).slice(2, 8)}`;
 const isCreatePost = (r: Request) => r.method() === "POST" && /\/links$/.test(r.url());
 
-const DB_URL = process.env.DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5435/snapurl";
+// Run SQL inside the staging Postgres container with `docker exec`, the pattern
+// j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
+// docker CLI is always present on a GitHub runner. The container name comes
+// from the compose project name `snapurl-staging`, overridable with
+// DB_CONTAINER (docker-compose.staging.yml; spec design §1 "Facts").
+const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
+const psql = (sql: string) =>
+  execFileSync(
+    "docker",
+    ["exec", "-i", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-v", "ON_ERROR_STOP=1"],
+    { input: sql, stdio: ["pipe", "pipe", "pipe"] },
+  );
 
 interface DomainRow {
   id: string;
@@ -94,11 +105,7 @@ test.describe("Journey 20 — domain picker default (#651)", () => {
     });
     // DNS verification cannot run locally; mark the second domain verified in
     // the staging DB exactly as the verify endpoint would.
-    execFileSync(
-      "psql",
-      [DB_URL, "-v", "ON_ERROR_STOP=1", "-c", `update domains set status='live', ssl='active', verified_at=now() where id='${verified.id}'`],
-      { stdio: "pipe" },
-    );
+    psql(`update domains set status='live', ssl='active', verified_at=now() where id='${verified.id}'`);
 
     // Independent read of the precondition: one pending, one live, in that order.
     const list = await api<DomainRow[]>(session, "/domains");

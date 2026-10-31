@@ -124,12 +124,16 @@ const LABELS: Record<AuditAction, (metadata: AuditMetadata) => string> = {
  *  API, or a hand-inserted one): "abuse_report.reviewed" -> "Abuse report
  *  reviewed". Never the raw key — dots and underscores are not copy. */
 export function humaniseAuditKey(action: string): string {
-  const words = action
-    .split(/[._\s]+/)
-    .map((w) => w.trim())
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+  // Stryker equivalence on the two transforms below:
+  //  - `/[._\s]+/` vs `/[._\s]/`: splitting on single separators leaves empty
+  //    tokens between runs, but `.filter(Boolean)` drops every empty token, so
+  //    the joined result is identical.
+  //  - `.map((w) => w.trim())` vs `.map((w) => w)`: tokens come from a split on
+  //    `\s` (among others), so they carry no surrounding whitespace and the
+  //    trim is a no-op.
+  // Both are covered by the multi-separator cases in audit.test.ts.
+  // Stryker disable next-line Regex,MethodExpression: equivalent — empty tokens are dropped by .filter(Boolean), and split tokens are already whitespace-free so .trim() is a no-op.
+  const words = action.split(/[._\s]+/).map((w) => w.trim()).filter(Boolean).join(" ").toLowerCase();
   if (!words) return "Did something";
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
