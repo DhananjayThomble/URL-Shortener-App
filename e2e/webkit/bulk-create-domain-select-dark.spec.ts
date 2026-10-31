@@ -67,9 +67,7 @@ async function openLinks(page: Page): Promise<void> {
 test.describe("#810 — Bulk create Domain select is readable in dark theme on WebKit", () => {
   test("dark theme stamps data-theme=dark", async ({ page }) => {
     await openLinks(page);
-    // SCRATCH RED-ON-BROKEN PROOF (#886) — reverted before merge. Asserts an
-    // impossible theme value so the required e2e WebKit lane reds and ci-gate fails.
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "scratch-red-on-broken-proof");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   });
 
   test("the Domain select follows the dark theme tokens, not light system colours", async ({ page }) => {
