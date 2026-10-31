@@ -69,6 +69,54 @@ jobs:
           echo "code=true" >> "$GITHUB_OUTPUT"
           echo "workflows=true" >> "$GITHUB_OUTPUT"
 
+  # Regression-test guard (issue #900, wiring the #899 script into CI as a PR
+  # gate; spec .kiro/specs/regression-rule/ design §3). Fails a PR that closes an
+  # issue labelled `bug` or `qa:agent-confirmed` without touching a test file,
+  # unless the issue carries the `regression-test:n/a` exemption. The rule: every
+  # confirmed finding ships a regression test.
+  #
+  # PR-only (`if: pull_request`): the script resolves the PR's closing issues via
+  # the GraphQL API from github.event.pull_request.number, which only exists on a
+  # pull_request event. On push to main and the nightly schedule this job skips,
+  # and ci-gate tolerates the skip (it treats skipped as acceptable), so the guard
+  # never reds the default branch for the absence of a PR.
+  regression-guard:
+    name: Regression-test guard
+    needs: changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Read-only: the script reads the PR's closing issues and their labels via
+    # GraphQL (github.token) and diffs the checkout. It writes nothing.
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      # fetch-depth: 0 so the full history is present; the script diffs
+      # origin/main...HEAD to find the PR's changed files.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The script's git diff is against refs/remotes/origin/main, which the
+      # shallow-to-full checkout above does not create on a PR; fetch it so the
+      # three-dot diff has a merge base.
+      - name: Ensure origin/main is available
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # curl is preinstalled on the runner and the script has no npm deps, so no
+      # pnpm install is needed. GITHUB_REPOSITORY is a default Actions env var.
+      - name: Run the regression-test guard
+        run: node scripts/regression-test-guard.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
   verify:
     name: Type-check, build, test
     needs: changes
@@ -1034,7 +1082,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, coverage-delta, actionlint]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, coverage-delta, actionlint, regression-guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
