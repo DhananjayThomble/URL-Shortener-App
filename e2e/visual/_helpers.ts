@@ -82,12 +82,17 @@ export async function stabilise(page: Page): Promise<void> {
     await expect(chartPath).toBeVisible();
   }
 
-  // 4. If a QR is present, its SVG must be non-empty. The QR composes
-  //    asynchronously (blank frame first) (design §2 row #21;
-  //    qr/qr-preview.tsx:26, :70-72 — data-testid="qr-preview").
+  // 4. If a QR container is present, wait for it to actually COMPOSE its SVG.
+  //    qr-preview.tsx starts from svg="" and injects the markup asynchronously
+  //    via dangerouslySetInnerHTML, so the container mounts with NO <svg> child
+  //    and a blank first frame; the child appears only once composition finishes
+  //    (design §2 row #21; qr/qr-preview.tsx:25-26, :70-72 —
+  //    data-testid="qr-preview"). Waiting for the composed <svg> to be visible is
+  //    what rules out capturing the blank frame — a bare "element exists" check
+  //    would pass on that blank frame.
   const qr = page.locator('[data-testid="qr-preview"]');
   if ((await qr.count()) > 0) {
-    await expect(qr.locator("svg")).not.toHaveCount(0);
+    await expect(qr.locator("svg")).toBeVisible();
   }
 
   // 5. Fonts loaded. document.fonts.ready resolves once every @font-face used on
