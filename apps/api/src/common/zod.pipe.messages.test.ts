@@ -90,6 +90,30 @@ describe("validation errors reach people as plain sentences", () => {
     expect(body.message).toHaveLength(2);
   });
 
+  /* #908 (same class as #887) — a non-UUID `linkId` must be rejected at the
+     contract layer as a 400. Without `.uuid()` on AnalyticsQuery.linkId the
+     string flows into the click_daily.link_id uuid column and Postgres raises
+     `invalid input syntax for type uuid` (22P02), which the error filter does
+     not map: HTTP 500 plus an unhandled-exception pino error-level log line.
+     The pipe here is the SAME one the controller runs (zodQuery -> this pipe),
+     so a 400 from the pipe is a 400 from the endpoint. */
+  it("/analytics: a non-UUID linkId is a 400, not a 500 from Postgres", () => {
+    const body = rejection(AnalyticsQuery, { range: "30d", linkId: "not-a-uuid" });
+    expect(body.statusCode).toBe(400);
+    expect(body.issues.map((i) => i.path)).toEqual(["linkId"]);
+    expectHuman(body);
+  });
+
+  it("/analytics: a valid UUID linkId passes validation (the fix does not reject real ids)", () => {
+    // A valid-but-nonexistent UUID is a clean 200 at runtime; here it must
+    // simply survive the pipe rather than being rejected.
+    const query = new ZodValidationPipe(AnalyticsQuery).transform({
+      range: "30d",
+      linkId: "00000000-0000-7000-8000-000000000000",
+    });
+    expect(query).toMatchObject({ range: "30d", linkId: "00000000-0000-7000-8000-000000000000" });
+  });
+
   it("/domains: an empty domain", () => {
     const body = rejection(AddDomainInput, { domain: "" });
     expect(body.message).toHaveLength(1);
