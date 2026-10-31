@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch } from "@nestjs/common";
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch } from "@nestjs/common";
 import { UpdateAbuseReportInput } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Roles, Scope, type RequestActor } from "../auth/auth.guard.js";
@@ -29,7 +29,7 @@ export class ReportsController {
   @Scope("links:write")
   update(
     @Actor() actor: RequestActor,
-    @Param("id") id: string,
+    @Param("id", ParseUUIDPipe) id: string,
     @Body(zodBody(UpdateAbuseReportInput)) input: UpdateAbuseReportInput,
   ) {
     return this.reports.review(actor.workspaceId, id, toActor(actor), input);
