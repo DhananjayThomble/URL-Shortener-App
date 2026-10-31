@@ -102,8 +102,13 @@ describeDb("DomainsService version-under-lock + verify() enqueue (#729 items 1, 
        the DATABASE's, not a value the caller stamped. */
     const frozen = new Date("2026-03-03T03:03:03.000Z").getTime();
     const RealDate = Date;
-    const dateSpy = vi.spyOn(globalThis, "Date").mockImplementation(((...args: unknown[]) =>
-      args.length ? new (RealDate as any)(...args) : new (RealDate as any)(frozen)) as never);
+    // vitest 4 invokes a mock implementation with the caller's `new`, and the
+    // app code does `new Date()`. An arrow function has no [[Construct]], so it
+    // threw "is not a constructor" under vitest 4; a regular function constructs
+    // fine. (vitest 3 tolerated the arrow.)
+    const dateSpy = vi.spyOn(globalThis, "Date").mockImplementation(function (...args: unknown[]) {
+      return args.length ? new (RealDate as any)(...args) : new (RealDate as any)(frozen);
+    } as never);
     (globalThis.Date as any).now = () => frozen;
 
     try {
@@ -229,8 +234,13 @@ describeDb("DomainsService version-under-lock + verify() enqueue (#729 items 1, 
 
     const frozen = new Date("2026-04-04T04:04:04.000Z").getTime();
     const RealDate = Date;
-    const dateSpy = vi.spyOn(globalThis, "Date").mockImplementation(((...args: unknown[]) =>
-      args.length ? new (RealDate as any)(...args) : new (RealDate as any)(frozen)) as never);
+    // vitest 4 invokes a mock implementation with the caller's `new`, and the
+    // app code does `new Date()`. An arrow function has no [[Construct]], so it
+    // threw "is not a constructor" under vitest 4; a regular function constructs
+    // fine. (vitest 3 tolerated the arrow.)
+    const dateSpy = vi.spyOn(globalThis, "Date").mockImplementation(function (...args: unknown[]) {
+      return args.length ? new (RealDate as any)(...args) : new (RealDate as any)(frozen);
+    } as never);
     (globalThis.Date as any).now = () => frozen;
 
     try {
