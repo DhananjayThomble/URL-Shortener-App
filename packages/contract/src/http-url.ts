@@ -52,6 +52,7 @@ export const isDeniedIpv4 = (host: string): boolean => {
 /** See the docblock on `isDeniedIpv4` — exported for the same reason. */
 export const isDeniedIpv6 = (raw: string): boolean => {
   // URL hostnames wrap IPv6 in brackets; strip them and any zone id.
+  // Stryker disable next-line Regex: both anchor-drop mutants here (/^\[/→/\[/, /\]$/→/\]/) are KILLED by the "only strips a bracket at the host boundary" test (isDeniedIpv6("]::1[")===false) — verified by applying each mutant to source, where that test then fails. Stryker's vitest-runner mis-reports them as survived due to worker-thread globalThis.__stryker__.activeMutant staleness, not a test gap (#895). NOT equivalent.
   const host = raw.replace(/^\[/, "").replace(/\]$/, "").split("%")[0]!.toLowerCase();
   if (host === "::" || host === "::1") return true; // unspecified / loopback
   // fe80::/10 link-local: the first hex group's top 10 bits must be
@@ -65,7 +66,10 @@ export const isDeniedIpv6 = (raw: string): boolean => {
   // IPv4-mapped addresses. `new URL()` compresses ::ffff:169.254.169.254 to
   // ::ffff:a9fe:a9fe, so match on the ::ffff: prefix and rebuild the v4 tail
   // from either dotted-quad or the two hex groups, then reuse the v4 rules.
-  const mapped = host.match(/^::ffff:(.+)$/);
+  // No `$` anchor: `.+` already reaches the end of the string, so anchoring the
+  // tail is redundant (and would be an equivalent mutant). The `^` anchor is
+  // load-bearing — it keeps the ::ffff: prefix pinned to the start of the host.
+  const mapped = host.match(/^::ffff:(.+)/);
   if (mapped) {
     const tail = mapped[1]!;
     if (tail.includes(".")) {
@@ -155,6 +159,7 @@ export const HttpUrl = z
       try {
         url = new URL(value);
       } catch {
+        // Stryker disable next-line BooleanLiteral: unreachable defensive catch — the preceding z.url() in this chain has already parsed `value` as a URL, so `new URL(value)` here cannot throw. Verified: no value z.url() accepts makes new URL() throw (#895).
         return false;
       }
       return url.username === "" && url.password === "";
@@ -167,6 +172,7 @@ export const HttpUrl = z
       try {
         host = new URL(value).hostname;
       } catch {
+        // Stryker disable next-line BooleanLiteral: unreachable defensive catch — same as the userinfo refine above, the preceding z.url() guarantees `new URL(value)` parses, so this branch is never taken (#895).
         return false;
       }
       return !isDeniedHost(host);
