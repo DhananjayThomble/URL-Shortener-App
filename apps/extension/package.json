@@ -23,8 +23,8 @@
     "@types/node": "^22",
     "@types/qrcode": "^1.5.5",
     "esbuild": "^0.24.2",
-    "happy-dom": "^15.11.7",
+    "happy-dom": "^20.8.9",
     "typescript": "^5.7.3",
-    "vitest": "^3.2.7"
+    "vitest": "^5.0.5"
   }
 }
