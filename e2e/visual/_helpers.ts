@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect } from "@playwright/test";
+import { seedSession } from "../support/session";
+
+/* Re-export so specs import one module. seedSession seeds the fixtures-mode
+   auth tokens before first navigation (e2e/support/session.ts). */
+export { seedSession };
 
 /* ============================================================================
    Visual-regression determinism contract — issue #869.
@@ -111,4 +116,77 @@ export async function stabilise(page: Page): Promise<void> {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       }),
   );
+}
+
+
+/* ============================================================================
+   Baseline capture helpers — issue #870.
+
+   Every route target follows the same order (design §5):
+     seedAppearance → setFixedTime(VISUAL_EPOCH) → [seedSession] → goto →
+     wait for real content → stabilise() → toHaveScreenshot.
+
+   captureRoute() encapsulates that so each spec is a one-liner per target and
+   the order can never drift between targets.
+   ============================================================================ */
+
+import { test } from "@playwright/test";
+
+export interface CaptureOptions {
+  /** Authenticated route: seed the fixtures-mode session before navigation. */
+  authed?: boolean;
+  /** Full-page capture instead of the viewport clip. Default false (§870: default
+   *  to viewport-clipped; use fullPage only where below-fold content is not
+   *  covered by another target, and justify it at the call site). */
+  fullPage?: boolean;
+  /** Snapshot file name (…{arg}{ext} in snapshotPathTemplate). Defaults to a
+   *  slug derived from the route. */
+  name?: string;
+}
+
+/** Derive a stable snapshot name from a route path. "/" → "home". */
+function routeName(route: string): string {
+  const cleaned = route.split("?")[0].replace(/^\/+|\/+$/g, "");
+  return cleaned === "" ? "home" : cleaned.replace(/\//g, "-");
+}
+
+/**
+ * Seed determinism, navigate to `route`, settle, and assert a page screenshot
+ * against the committed baseline. Call once per target.
+ *
+ * The fixed clock is set BEFORE navigation (and before seedSession/goto) so the
+ * fixture module evaluates against frozen time (design §2 rows #3/#4/#7/#8).
+ */
+export async function captureRoute(page: Page, route: string, opts: CaptureOptions = {}): Promise<void> {
+  await seedAppearance(page);
+  await page.clock.setFixedTime(VISUAL_EPOCH);
+  if (opts.authed) await seedSession(page);
+
+  await page.goto(route, { waitUntil: "domcontentloaded" });
+
+  // Settle network: fixtures answer in-process with a 120ms latency
+  // (fixtures.ts:823), so wait for the request flurry to go quiet. This clears
+  // the (app)/layout.tsx transient "Booting" ("Checking your session…") and the
+  // AuthShell SessionCheck states, which resolve once the session check settles.
+  await page.waitForLoadState("networkidle");
+
+  // Belt-and-braces: wait until a transient boot/session-check banner is gone.
+  // These are plain status text (not <main>), so they are checked by text, and
+  // not every page shows one — hence a short, tolerant wait.
+  await page
+    .getByText(/Checking your session…|Taking you to your dashboard…/)
+    .waitFor({ state: "hidden", timeout: 5_000 })
+    .catch(() => {});
+
+  await stabilise(page);
+
+  await expect(page).toHaveScreenshot(`${opts.name ?? routeName(route)}.png`, {
+    fullPage: opts.fullPage ?? false,
+  });
+}
+
+/** Shared describe wrapper: serial, so one target's failure does not perturb the
+ *  next (the lane is workers:1 anyway, but this documents intent). */
+export function visualSuite(title: string, body: () => void): void {
+  test.describe.serial(title, body);
 }
