@@ -1123,6 +1123,12 @@ jobs:
           found=0
           for svc in api redirect; do
             logs="$(docker compose -f docker-compose.staging.yml logs --no-color "$svc" 2>&1)"
+            # ---- TEMPORARY red-on-broken PROOF (#893, DO NOT MERGE) ----
+            # Append a DIFFERENT level:50 line (NOT the allow-listed #947 signature)
+            # to prove the tightened gate still reds on an unexpected error. Remove
+            # with this throwaway branch.
+            logs="$logs$(printf '\n%s' ''"$svc"'-1 | {"level":50,"context":"SomeOtherFilter","req":{"method":"POST","url":"/api/v1/domains"},"msg":"synthetic unexpected 500 red-on-broken proof"}')"
+            # ---- END TEMPORARY PROOF ----
             # All level:50 lines, minus the exact #947 signature (PostgresErrorFilter
             # + PATCH + /links/ + the specific "real"-column out-of-range message, all
             # on the same JSON line). grep -v drops only lines matching every token.
