@@ -1,37 +1,47 @@
-import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import {
   AdminAnalyticsCsvView,
   AdminAnalyticsQuery,
   AdminAuditQuery,
+  AdminListQuery,
+  AdminUpdateWorkspaceInput,
+  type AdminActionResult,
   type AdminAuditPage,
   type AdminBacklogs,
   type AdminMe,
   type AdminRetryResult,
   type AdminServiceHealth,
+  type AdminUserDetail,
+  type AdminUserList,
+  type AdminViewAsWorkspace,
+  type AdminWorkspaceDetail,
+  type AdminWorkspaceList,
   type PlatformAnalytics,
 } from "@snapurl/contract";
-import { zodQuery } from "../common/zod.pipe.js";
+import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { AdminGuard, Admin, AdminRequestIp } from "./admin.guard.js";
 import type { AdminIdentity } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
+import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 
 /* ============================================================
-   #968 — the platform-admin API surface (/api/v1/admin/*).
+   #968 + #974 + #969 — the platform-admin API surface (/api/v1/admin/*).
 
-   Every route is behind AdminGuard, so reaching any handler here already means
-   the caller is a confirmed platform admin (verified allow-listed email + 2FA).
-   #968 shipped GET /admin/me; #974 added system health + operations; #973 adds
-   the platform-wide analytics the admin panel reads. Later parts of the epic
-   (#975) add their own operations, each WRITE of which records through
-   writeAdminAuditEntry — the analytics and health READ routes here do not audit;
-   the health RETRY/RELEASE writes do.
+   Every route is behind AdminGuard, so reaching any handler already means the
+   caller is a confirmed platform admin (verified allow-listed email + 2FA).
+   #968 shipped GET /admin/me; #974 adds system health and operations; #969 adds
+   the users-and-workspaces tools; #973 adds the platform-wide analytics the
+   admin panel reads. Every WRITE (the #969 management actions, the #974
+   retries/release) records a row in the platform audit log through its service;
+   the analytics and health READ routes do not audit.
    ============================================================ */
 @Controller("admin")
 @UseGuards(AdminGuard)
 export class AdminController {
   constructor(
+    private readonly management: AdminManagementService,
     private readonly health: AdminHealthService,
     private readonly adminAnalytics: AdminAnalyticsService,
   ) {}
@@ -44,7 +54,103 @@ export class AdminController {
     return { id: admin.id, name: admin.name, email: admin.email, isPlatformAdmin: true };
   }
 
-  /* ---- #974 system health and operations ---- */
+  /* ── users (#969) ── */
+
+  @Get("users")
+  listUsers(@Query(zodQuery(AdminListQuery)) query: AdminListQuery): Promise<AdminUserList> {
+    return this.management.listUsers(query);
+  }
+
+  @Get("users/:id")
+  getUser(@Param("id", ParseUUIDPipe) id: string): Promise<AdminUserDetail> {
+    return this.management.getUser(id);
+  }
+
+  @Post("users/:id/suspend")
+  async suspendUser(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.management.suspendUser(id, actor(admin, ip));
+    return { id, action: "suspend", ok: true };
+  }
+
+  @Post("users/:id/unsuspend")
+  async unsuspendUser(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.management.unsuspendUser(id, actor(admin, ip));
+    return { id, action: "unsuspend", ok: true };
+  }
+
+  @Post("users/:id/signout-everywhere")
+  async signOutEverywhere(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.management.signOutEverywhere(id, actor(admin, ip));
+    return { id, action: "signout_everywhere", ok: true };
+  }
+
+  @Post("users/:id/resend-verification")
+  async resendVerification(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.management.resendVerification(id, actor(admin, ip));
+    return { id, action: "resend_verification", ok: true };
+  }
+
+  @Delete("users/:id")
+  @HttpCode(200)
+  async deleteUser(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.management.deleteAccount(id, actor(admin, ip));
+    return { id, action: "delete", ok: true };
+  }
+
+  /* ── workspaces (#969) ── */
+
+  @Get("workspaces")
+  listWorkspaces(@Query(zodQuery(AdminListQuery)) query: AdminListQuery): Promise<AdminWorkspaceList> {
+    return this.management.listWorkspaces(query);
+  }
+
+  @Get("workspaces/:id")
+  getWorkspace(@Param("id", ParseUUIDPipe) id: string): Promise<AdminWorkspaceDetail> {
+    return this.management.getWorkspace(id);
+  }
+
+  @Patch("workspaces/:id")
+  updateWorkspace(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(AdminUpdateWorkspaceInput)) input: AdminUpdateWorkspaceInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminWorkspaceDetail> {
+    return this.management.updateWorkspace(id, input, actor(admin, ip));
+  }
+
+  /** Read-only "view as": a GET that assembles the owner's view and records the
+   *  access. It returns data only — there is no write path to abuse. */
+  @Get("workspaces/:id/view-as")
+  viewAsWorkspace(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminViewAsWorkspace> {
+    return this.management.viewAsWorkspace(id, actor(admin, ip));
+  }
+
+  /* ── system health and operations (#974) ── */
 
   /** The state of the api, database, redirect edge and background worker. */
   @Get("health/services")
@@ -137,4 +243,9 @@ export class AdminController {
     reply.header("Content-Disposition", `attachment; filename="snapurl-admin-${parsed}-${query.range}.csv"`);
     return this.adminAnalytics.csv(query, parsed);
   }
+}
+
+/** Fold the two guard-supplied params into the service's AdminActor. */
+function actor(admin: AdminIdentity, ip: string | null): AdminActor {
+  return { admin, ip };
 }
