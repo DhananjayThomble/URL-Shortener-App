@@ -163,7 +163,16 @@ export const ACCESS_MATRIX: Row[] = [
   // never an admin). `adminA` here is a WORKSPACE admin role, which is unrelated
   // to platform admin and correctly denied.
   { route: "GET /api/v1/admin/me", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #973 — platform-wide analytics + its CSV export. Same gate as GET /admin/me:
+  // the platform-admin surface. No matrix principal is a platform admin
+  // (PLATFORM_ADMIN_EMAILS is unset in the staging stack, so the allowlist is
+  // empty and AdminGuard fails closed), so every authenticated principal is
+  // 403, anon is 401, and API keys are 403 (no user behind the key). The CSV
+  // export is a read behind the same guard, so it shares the row shape.
+  { route: "GET /api/v1/admin/analytics", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/analytics/export/{view}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
 ];
 
-// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me).
-export const EXPECTED_ROUTE_COUNT = 72;
+// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
+// + 2 for #973's GET /admin/analytics and its CSV export).
+export const EXPECTED_ROUTE_COUNT = 74;

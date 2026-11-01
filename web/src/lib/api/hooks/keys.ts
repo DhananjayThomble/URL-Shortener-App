@@ -6,6 +6,7 @@
 export const qk = {
   me: ["me"] as const,
   adminMe: ["admin-me"] as const,
+  adminAnalytics: (range: string, compare: boolean) => ["admin-analytics", range, compare] as const,
   workspace: ["workspace"] as const,
   myWorkspaces: ["my-workspaces"] as const,
   links: (filter?: string) => ["links", filter ?? "all"] as const,
