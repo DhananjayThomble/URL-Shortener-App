@@ -1131,6 +1131,12 @@ jobs:
             # grep chain rather than one ordered regex — a line kept by ALL of these
             # greps is the #947 signature and is dropped; any line missing even one
             # (i.e. any other level:50) is NOT dropped and still reds the gate.
+            # ---- TEMPORARY red-on-broken PROOF (#893, DO NOT MERGE) ----
+            # Append a DIFFERENT level:50 (SomeOtherFilter POST /domains) that the
+            # #947 allow-list must NOT match, proving the corrected gate still reds
+            # on an unexpected error while the real #947 line stays suppressed.
+            logs="$logs$(printf '\n%s' ''"$svc"'-1 | {"level":50,"req":{"method":"POST","url":"/api/v1/domains"},"context":"SomeOtherFilter","msg":"synthetic unexpected 500 red-on-broken proof"}')"
+            # ---- END TEMPORARY PROOF ----
             unexpected="$(echo "$logs" | grep -F '"level":50' || true)"
             expected947="$(printf '%s\n' "$unexpected" \
               | grep -F '"context":"PostgresErrorFilter"' \
