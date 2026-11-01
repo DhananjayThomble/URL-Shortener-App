@@ -969,6 +969,21 @@ export class SnapUrlStack extends Stack {
       }),
     );
 
+    /* #973 — the platform-analytics email tile reads the account's SES figures:
+       ses:GetSendStatistics (delivery attempts, bounces, complaints over the
+       window) and ses:GetSendQuota (the rolling-24h send quota and sent count).
+       Both are ACCOUNT-LEVEL, read-only actions that take no resource ARN — SES
+       only accepts "*" for them — so this is a separate statement from the
+       identity-scoped SendEmail grant above. Read-only and harmless when
+       MAIL_TRANSPORT stays "outbox" (the reader reports "unavailable" then and
+       never makes the call). */
+    apiFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ses:GetSendStatistics", "ses:GetSendQuota"],
+        resources: ["*"],
+      }),
+    );
+
     /* Two API consumers share this table once CACHE_DRIVER=dynamodb:
        LinkCacheBustService.bust() only calls CacheStore.del(), and the rate
        limiter (apps/api/src/common/cache-throttler-storage.ts) calls incr()

@@ -25,6 +25,8 @@ export const qk = {
   adminBlockedDomains: ["admin-blocked-domains"] as const,
   adminFlaggedLinks: ["admin-flagged-links"] as const,
   adminCustomDomains: ["admin-custom-domains"] as const,
+  // #973 — platform-wide analytics.
+  adminAnalytics: (range: string, compare: boolean) => ["admin-analytics", range, compare] as const,
   workspace: ["workspace"] as const,
   myWorkspaces: ["my-workspaces"] as const,
   links: (filter?: string) => ["links", filter ?? "all"] as const,

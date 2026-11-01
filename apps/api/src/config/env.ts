@@ -98,6 +98,11 @@ export const EnvSchema = z.object({
       Optional so nothing else changes. */
   MAIL_OUTBOX_DIR: z.string().optional(),
   MAIL_FROM: z.string().default("SnapURL <no-reply@snapurl.local>"),
+  /** The AWS region for SES calls (the platform-analytics email figures and,
+      implicitly, SendEmail). On Lambda the runtime sets AWS_REGION and the SDK
+      reads it by default; this lets the SES reader pin it explicitly (the stack
+      is ap-south-1). Optional so the outbox/local profile needs nothing set. */
+  AWS_REGION: z.string().optional(),
 
   THROTTLE_TTL_SECONDS: z.coerce.number().int().default(60),
   THROTTLE_LIMIT: z.coerce.number().int().default(120),
