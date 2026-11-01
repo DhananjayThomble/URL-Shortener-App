@@ -6,6 +6,7 @@ import { LinksService } from "./links.service.js";
 import type { SafeBrowsingService, ScanResult } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import { toActor } from "../common/activity.js";
 
 /* ============================================================
@@ -62,7 +63,7 @@ describeDb("LinksService — refusing flagged, chained and self-referencing dest
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
 
     const [ws] = await db
       .insert(workspaces)
