@@ -10,6 +10,7 @@ import {
 } from "@snapurl/contract";
 import { ZodValidationPipe, type ValidationErrorBody } from "./zod.pipe.js";
 import { LinksService } from "../links/links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import { toActor } from "./activity.js";
 
 /* #792 — the words a person reads when the API rejects their input.
@@ -140,7 +141,7 @@ describe("validation errors reach people as plain sentences", () => {
    query, so the database is a stub whose transaction has nothing to insert. */
 describe("LinksService.bulkCreate — per-row validation copy", () => {
   const db = { transaction: async (fn: (tx: unknown) => unknown) => fn({}) };
-  const service = new LinksService(db as never, db as never, {} as never, {} as never, {} as never);
+  const service = new LinksService(db as never, db as never, {} as never, {} as never, {} as never, openPlatformSettingsStub());
   const actor = toActor({ userId: null, label: "test" });
   const row = (over: Record<string, unknown>) => ({ domain: "snap.example", ...over });
 

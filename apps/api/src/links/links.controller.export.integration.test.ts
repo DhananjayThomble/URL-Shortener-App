@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, domains, eq, links, workspaces, type Database } from "@snapurl/database";
 import { LinksController } from "./links.controller.js";
 import { LinksService } from "./links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import type { RequestActor } from "../auth/auth.guard.js";
 
 /* ============================================================
@@ -95,7 +96,7 @@ describeDb("LinksController.export CORS headers (#636)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub()));
 
     const [ws] = await db
       .insert(workspaces)

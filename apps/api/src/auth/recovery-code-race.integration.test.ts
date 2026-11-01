@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { JwtService } from "@nestjs/jwt";
 import { createDatabase, domains, eq, inArray, memberships, recoveryCodes, users, workspaces, type Database } from "@snapurl/database";
 import { AuthService } from "./auth.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -63,6 +64,7 @@ describeDb("AuthService.verifyTotp recovery code under concurrency", () => {
       slowAcceptingTotp,
       {} as unknown as OAuthService,
       new FakeMail() as unknown as MailService,
+      openPlatformSettingsStub(),
     );
     const session = await auth.register({
       name: `RC Race ${stamp}`,
