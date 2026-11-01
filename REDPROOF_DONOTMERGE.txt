@@ -1,0 +1,6 @@
+DO NOT MERGE — red-on-broken proof for #960 gitleaks job.
+This file plants an obviously fake, throwaway AWS-key-shaped string to prove the
+new gitleaks PR-diff job reds on a secret in the PR diff. Not a real credential.
+
+aws_access_key_id = AKIAZ7QW3RTY6KLMNP2B
+aws_secret_access_key = Xk9fQ2mB7pLr4TvN8sWaE1yZ0cHdUgJ6RiOq3M+
