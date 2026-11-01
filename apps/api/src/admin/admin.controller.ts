@@ -11,6 +11,7 @@ import {
   AdminLinkSearchQuery,
   AdminListQuery,
   AdminUpdateWorkspaceInput,
+  PlatformSettingsInput,
   type AdminAbuseQueuePage,
   type AdminActionResult,
   type AdminAuditPage,
@@ -29,6 +30,7 @@ import {
   type AdminWorkspaceDetail,
   type AdminWorkspaceList,
   type PlatformAnalytics,
+  type PlatformSettings,
 } from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { AdminGuard, Admin, AdminRequestIp } from "./admin.guard.js";
@@ -37,6 +39,7 @@ import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
+import { PlatformSettingsService } from "./platform-settings.service.js";
 
 /* ============================================================
    #968 + #974 + #969 + #971 + #973 — the platform-admin API surface (/api/v1/admin/*).
@@ -58,6 +61,7 @@ export class AdminController {
     private readonly moderation: AdminModerationService,
     private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   /** Who the caller is, confirmed as a platform admin. The client uses a 200
@@ -66,6 +70,28 @@ export class AdminController {
   @Get("me")
   me(@Admin() admin: AdminIdentity): AdminMe {
     return { id: admin.id, name: admin.name, email: admin.email, isPlatformAdmin: true };
+  }
+
+  /* ── runtime platform settings (#972) ── */
+
+  /** The settings page: the effective values, the defaults, and who last
+   *  changed each. */
+  @Get("settings")
+  getSettings(): Promise<PlatformSettings> {
+    return this.settings.getForAdmin();
+  }
+
+  /** Change one or more settings. Every changed key writes a before/after audit
+   *  row (in the service, in one transaction with the upsert). A change takes
+   *  effect within the runtime cache window without a restart — the rate limit
+   *  and the signup gate read the same store. */
+  @Patch("settings")
+  updateSettings(
+    @Body(zodBody(PlatformSettingsInput)) input: PlatformSettingsInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<PlatformSettings> {
+    return this.settings.update(input, actor(admin, ip));
   }
 
   /* ── users (#969) ── */

@@ -6,6 +6,7 @@ import { zodBody } from "../common/zod.pipe.js";
 import type { RequestActor } from "../auth/auth.guard.js";
 import { LinksController } from "./links.controller.js";
 import { LinksService } from "./links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import { toActor } from "../common/activity.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
@@ -69,7 +70,7 @@ describeDb("POST /links and /links/bulk fall back to the workspace's defaultRedi
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub()));
 
     for (const [key, w] of Object.entries(ws)) {
       const [row] = await db
@@ -161,7 +162,7 @@ describeDb("POST /links and /links/bulk fall back to the workspace's defaultRedi
     await setDefault(ws.a.id, "302");
     const source = await create(ws.a, { redirectType: "307" });
     await setDefault(ws.a.id, "301");
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
     const copy = await service.clone(ws.a.id, source.id, toActor({ userId: null, label: "test" }), {});
     expect(await storedType(copy.id)).toBe("307");
   });

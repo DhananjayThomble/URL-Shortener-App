@@ -25,6 +25,8 @@ const NAV: NavItem[] = [
   { href: "/admin/moderation", label: "Moderation" },
   // #973 — platform-wide analytics.
   { href: "/admin/analytics", label: "Analytics" },
+  // #972 — runtime platform settings.
+  { href: "/admin/settings", label: "Settings" },
   // #974 — system health and operations.
   { href: "/admin/health", label: "System health" },
 ];

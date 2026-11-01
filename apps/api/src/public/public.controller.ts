@@ -1,12 +1,13 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { SubmitFormInput, SubmitReportInput, UnlockLinkInput } from "@snapurl/contract";
+import { SubmitFormInput, SubmitReportInput, UnlockLinkInput, type PlatformBanner } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Public } from "../auth/auth.guard.js";
 import { PublicService } from "./public.service.js";
 import { FormsService } from "../forms/forms.service.js";
 import { ReportsService } from "../reports/reports.service.js";
 import { BioPagesService } from "../bio-pages/bio-pages.service.js";
+import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 
 /* Every route here is unauthenticated, and each one says so individually.
    @Public() on the controller would mean one forgotten decorator on a future
@@ -18,7 +19,17 @@ export class PublicController {
     private readonly forms: FormsService,
     private readonly reports: ReportsService,
     private readonly bio: BioPagesService,
+    private readonly settings: PlatformSettingsService,
   ) {}
+
+  /* #972 — the site-wide banner, readable without auth so it shows for every
+     visitor (signed-in or not). A cached field read, so polling it is cheap;
+     an empty `message` means no banner and the client renders nothing. */
+  @Public()
+  @Get("platform/banner")
+  banner(): Promise<PlatformBanner> {
+    return this.settings.getBanner();
+  }
 
   @Public()
   @Get("links/:slug/preview")

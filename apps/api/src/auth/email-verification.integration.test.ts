@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
 import { and, createDatabase, eq, emailVerificationTokens, isNull, users, type Database } from "@snapurl/database";
 import { AuthService } from "./auth.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -62,6 +63,7 @@ describeDb("AuthService email verification", () => {
       {} as unknown as TotpService,
       {} as unknown as OAuthService,
       mail as unknown as MailService,
+      openPlatformSettingsStub(),
     );
 
     const passwordHash = await argon2.hash("some-password-1234", ARGON);

@@ -1,0 +1,11 @@
+-- Down migration for 0024_platform_settings (#972).
+--
+-- drizzle-kit's migrator is forward-only (it tracks applied migrations in
+-- __drizzle_migrations and never runs a down), so this file is not executed
+-- automatically. It is the authoritative, reviewed reverse: 0024 only ADDED a
+-- new table, so dropping it leaves the schema byte-identical to before. Safe
+-- because nothing else references platform_settings.
+--
+-- To roll back by hand: delete the 0024 row from __drizzle_migrations and run
+-- the statement below.
+DROP TABLE IF EXISTS "platform_settings";
