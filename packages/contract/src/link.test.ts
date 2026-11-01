@@ -86,6 +86,25 @@ describe("RoutingRule shape and weight bounds", () => {
     expect(RoutingRule.safeParse({ ...valid, weight: -1 }).success).toBe(false); // min(0) → max(0) mutant rejects 100
     expect(RoutingRule.safeParse({ ...valid, weight: 101 }).success).toBe(false);
   });
+
+  /* #947 — a positive weight below float32's subnormal floor (~1.4e-45) is not
+     storable in the Postgres `real` column and used to reach the DB and 500.
+     The contract now rejects it (400) at validation time. These are the exact
+     values proven to 500 / to be fine against the live stack in the issue, so
+     the test is the ruling's checkable conditions, not a preference. */
+  it("rejects a positive weight too small to store as float32 (#947 — degenerate → 400, not 500)", () => {
+    // Condition 1: every value proven to 500 on main is now rejected by the contract.
+    for (const w of [5e-324, 1e-46, 7e-46, 1e-50]) {
+      expect(RoutingRule.safeParse({ ...valid, weight: w }).success, `weight ${w} must be rejected`).toBe(false);
+    }
+  });
+  it("still accepts every legitimate weight, including tiny-but-representable ones (#947 — no valid weight regresses)", () => {
+    // Condition 2: no legitimate weight (proven 200 on the live stack, plus the
+    // 0/100 boundaries and ordinary shares) regresses to a 400.
+    for (const w of [0, 100, 50, 0.1, 1e-45, 1e-40, 2.5e-39, 1e-30]) {
+      expect(RoutingRule.safeParse({ ...valid, weight: w }).success, `weight ${w} must be accepted`).toBe(true);
+    }
+  });
 });
 
 describe("Link response shape — defaults and nested blocks", () => {
