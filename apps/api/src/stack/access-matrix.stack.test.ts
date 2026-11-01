@@ -25,9 +25,9 @@
  * pnpm staging:up`, then
  * `STACK_API_URL=… STACK_DATABASE_URL=… pnpm --filter @snapurl/api test:stack`.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { describeStack, STACK_API_URL, STACK_DATABASE_URL } from "./env.js";
-import { seedPrincipals, type Principal, type PrincipalName, type SeededStack } from "./principals.js";
+import { beforeAll, describe, expect, inject, it } from "vitest";
+import { describeStack, STACK_API_URL } from "./env.js";
+import { sharedStack, type Principal, type PrincipalName, type SeededStack } from "./principals.js";
 import {
   DEFAULT_DOMAIN,
   seedResources,
@@ -157,16 +157,18 @@ describeStack("access-matrix (M2–M5): every route × principal matches the app
   let aIds: Set<string>;
 
   beforeAll(async () => {
-    if (!STACK_DATABASE_URL) throw new Error("STACK_DATABASE_URL is required for the access-matrix suite.");
-    stack = await seedPrincipals({ apiUrl: STACK_API_URL!, databaseUrl: STACK_DATABASE_URL });
+    // Principals are seeded once by the globalSetup and shared via inject; this
+    // suite only creates its own per-workspace RESOURCES (seedResources hits
+    // /links, /forms, … — not the throttled /auth/register). Teardown of the
+    // shared principals (and, by workspace cascade, these resources) is the
+    // globalSetup's.
+    const shared = inject("stackPrincipals");
+    if (!shared) throw new Error("stackPrincipals not provided — globalSetup did not seed (is STACK_API_URL set?)");
+    stack = sharedStack(shared);
     resA = await seedResources(STACK_API_URL!, stack.principals.ownerA);
     resB = await seedResources(STACK_API_URL!, stack.principals.ownerB);
     aIds = new Set<string>([resA.linkId, resA.formId, resA.domainId, resA.bioPageId, resA.webhookId, resA.apiKeyId, resA.memberId]);
   }, 120_000);
-
-  afterAll(async () => {
-    await stack?.cleanup();
-  });
 
   /* M2 + approval gate — plain assertions, fail fast and clear. */
   describe("oracle integrity (M2, approval gate)", () => {

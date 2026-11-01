@@ -60,6 +60,43 @@ export interface SeededStack {
   cleanup: () => Promise<void>;
 }
 
+/**
+ * The serialisable slice of a {@link SeededStack} — everything except the live
+ * `cleanup` closure (which holds a DB handle and cannot cross a process
+ * boundary). This is what the vitest `globalSetup` (`global-seed.ts`) seeds
+ * ONCE and `provide()`s to every stack file, so the nine principals are
+ * registered a single time per run instead of once per file.
+ *
+ * Why: `/auth/register` carries a 5/min-per-IP route throttle that
+ * `THROTTLE_LIMIT` does not lift. Each `seedPrincipals` makes five register
+ * calls; three stack files each calling it serially on one IP = fifteen
+ * registers, which exhausts the window and 429s a later file's seed. Seeding
+ * once removes the redundant registrations entirely. (#893 / tracked fragility
+ * alongside #950.)
+ */
+export interface SharedStackData {
+  principals: Record<PrincipalName, Principal>;
+  workspaceA: string;
+  workspaceB: string;
+}
+
+/**
+ * Rebuild the {@link SeededStack} shape a stack file consumes from the
+ * process-crossing {@link SharedStackData} the globalSetup provided. The
+ * `cleanup` here is a no-op: teardown is owned ONCE by the globalSetup's own
+ * teardown (which holds the real DB handle), not per file.
+ */
+export function sharedStack(data: SharedStackData): SeededStack {
+  return {
+    principals: data.principals,
+    workspaceA: data.workspaceA,
+    workspaceB: data.workspaceB,
+    cleanup: async () => {
+      /* no-op: the globalSetup tears the shared principals down once */
+    },
+  };
+}
+
 const ALL_SCOPES = ["links:read", "links:write", "analytics:read", "domains:read", "domains:write", "conversions:write"];
 
 interface SeedConfig {

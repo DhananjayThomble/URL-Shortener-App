@@ -44,11 +44,11 @@
  * shape as zod-arbitrary.test.ts / route-inventory.test.ts (proven on #889).
  */
 import { createRequire } from "node:module";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import fc from "fast-check";
 import { z } from "zod";
-import { describeStack, STACK_API_URL, STACK_DATABASE_URL } from "./env.js";
-import { seedPrincipals, type SeededStack } from "./principals.js";
+import { describeStack, STACK_API_URL } from "./env.js";
+import { sharedStack, type SeededStack } from "./principals.js";
 import { DEFAULT_DOMAIN, seedResources, type SeededResources } from "./resources.js";
 
 /* 1. Patch the CJS zod the externalised contract uses, BEFORE importing it. */
@@ -311,8 +311,14 @@ describeStack("contract fuzz (F3–F5): no 5xx, invalid→4xx, valid never valid
   let auth: string;
 
   beforeAll(async () => {
-    if (!STACK_DATABASE_URL) throw new Error("STACK_DATABASE_URL is required for the fuzz suite.");
-    stack = await seedPrincipals({ apiUrl: STACK_API_URL!, databaseUrl: STACK_DATABASE_URL });
+    // Principals are seeded once by the globalSetup and shared via inject; this
+    // suite only creates its own per-workspace RESOURCES (seedResources hits
+    // /links, /forms, … — not the throttled /auth/register). Teardown of the
+    // shared principals (and, by workspace cascade, these resources) is the
+    // globalSetup's.
+    const shared = inject("stackPrincipals");
+    if (!shared) throw new Error("stackPrincipals not provided — globalSetup did not seed (is STACK_API_URL set?)");
+    stack = sharedStack(shared);
     resA = await seedResources(STACK_API_URL!, stack.principals.ownerA);
     auth = stack.principals.ownerA.authorization!;
     // eslint-disable-next-line no-console
@@ -322,8 +328,7 @@ describeStack("contract fuzz (F3–F5): no 5xx, invalid→4xx, valid never valid
     );
   }, 120_000);
 
-  afterAll(async () => {
-    await stack?.cleanup();
+  afterAll(() => {
     // eslint-disable-next-line no-console
     console.log(`[fuzz] total requests=${totalRequests} 429s=${total429} (${((total429 / Math.max(1, totalRequests)) * 100).toFixed(1)}%)`);
   });

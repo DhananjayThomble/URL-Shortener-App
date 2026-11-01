@@ -13,22 +13,20 @@
  * Runs only against a live stack (describeStack). `pnpm staging:up`, then
  * `STACK_API_URL=... STACK_DATABASE_URL=... pnpm --filter @snapurl/api test:stack`.
  */
-import { afterAll, beforeAll, expect, it } from "vitest";
-import { describeStack, STACK_API_URL, STACK_DATABASE_URL } from "./env.js";
-import { seedPrincipals, type PrincipalName, type SeededStack } from "./principals.js";
+import { beforeAll, expect, inject, it } from "vitest";
+import { describeStack, STACK_API_URL } from "./env.js";
+import { sharedStack, type PrincipalName, type SeededStack } from "./principals.js";
 
 describeStack("seeded principals — GET /auth/me smoke (design §4)", () => {
   let stack: SeededStack;
 
-  beforeAll(async () => {
-    if (!STACK_DATABASE_URL) {
-      throw new Error("STACK_DATABASE_URL is required for the stack suites (seeding roles and API keys).");
-    }
-    stack = await seedPrincipals({ apiUrl: STACK_API_URL!, databaseUrl: STACK_DATABASE_URL });
-  });
-
-  afterAll(async () => {
-    await stack?.cleanup();
+  beforeAll(() => {
+    // Principals are seeded once by the globalSetup (global-seed.ts) and shared
+    // across every stack file via provide/inject, so /auth/register is hit five
+    // times per run, not five times per file. Teardown is the globalSetup's.
+    const shared = inject("stackPrincipals");
+    if (!shared) throw new Error("stackPrincipals not provided — globalSetup did not seed (is STACK_API_URL set?)");
+    stack = sharedStack(shared);
   });
 
   async function me(authorization: string | null): Promise<Response> {
