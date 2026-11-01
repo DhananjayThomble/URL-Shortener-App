@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { z } from "zod";
-import { HttpUrl, LinkDateInput, UpdateDomainInput } from "@snapurl/contract";
+import { HttpUrl, LinkDateInput, UpdateDomainInput, WeightInput } from "@snapurl/contract";
 
 /* ============================================================
    A zod -> fast-check generator for the contract schemas (F1/F2).
@@ -253,8 +253,24 @@ const updateDomainInvalidArb = fc.oneof(
   fc.oneof(fc.string(), fc.integer(), fc.constant(null)), // not an object
 );
 
+/* RoutingRule.weight (#947): z.number().min(0).max(100) plus a representability
+   refine — a nonzero weight must survive the round-trip into a float32 (the
+   Postgres `real` column) without collapsing to zero. The walker cannot read
+   the refine's closure, so both modes are built by hand.
+     valid   — 0, 100, and doubles in (0,100] that Math.fround keeps nonzero.
+     invalid — the degenerate band (0, float32-min): positive doubles that
+               Math.fround collapses to 0, which the contract now rejects as a
+               400 (and which used to 500 on persist). 5e-324 is the exact value
+               the #890 fuzz oracle filed; the rest span the unstorable band. */
+const weightValidArb: fc.Arbitrary<number> = fc.oneof(
+  fc.constantFrom(0, 100, 50, 0.1, 1, 25, 1e-45, 1e-40, 1e-30),
+  fc.double({ min: 0, max: 100, noNaN: true, noDefaultInfinity: true }).filter((w) => w === 0 || Math.fround(w) !== 0),
+);
+const weightInvalidArb: fc.Arbitrary<number> = fc.constantFrom(5e-324, 1e-46, 7e-46, 1e-50, 1e-100, 1e-300);
+
 const OVERRIDE_LIST: Array<{ schema: z.ZodType; override: Override }> = [
   { schema: HttpUrl, override: { valid: safeHttpUrlArb, invalid: hostileHttpUrlArb } },
+  { schema: WeightInput, override: { valid: weightValidArb, invalid: weightInvalidArb } },
   {
     schema: LinkDateInput,
     override: {
@@ -299,7 +315,7 @@ export function validArb(schema: z.ZodType, path = "<root>"): fc.Arbitrary<unkno
     case "string":
       return validString(d, path);
     case "number":
-      return validNumber(d);
+      return validNumber(d, path);
     case "boolean":
       return fc.boolean();
     case "enum": {
@@ -403,8 +419,17 @@ const nonSpaceChar = fc.constantFrom(
   ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.".split(""),
 );
 
-function validNumber(d: ZodDef): fc.Arbitrary<number> {
+function validNumber(d: ZodDef, path = "<number>"): fc.Arbitrary<number> {
   const c = numberChecks(d);
+  // A .refine()/custom check on a number is a closure the walker cannot read
+  // (#947: RoutingRule.weight's representability guard). Without an override,
+  // the plain range walk below would emit values the refine rejects and label
+  // them "valid" — so require an override, exactly as validString does.
+  if (c.hasCustom) {
+    throw new UnsupportedSchemaError(
+      `validArb: number with a .refine()/custom check at ${path} has no override — add it to OVERRIDES`,
+    );
+  }
   // Inclusive bounds resolved from gte/gt/lte/lt.
   let min = c.gte ?? (c.gt !== undefined ? c.gt + (c.int ? 1 : Number.EPSILON) : undefined);
   let max = c.lte ?? (c.lt !== undefined ? c.lt - (c.int ? 1 : Number.EPSILON) : undefined);
@@ -450,7 +475,7 @@ export function invalidArb(schema: z.ZodType, path = "<root>"): fc.Arbitrary<unk
     case "string":
       return invalidString(d, path);
     case "number":
-      return invalidNumber(d);
+      return invalidNumber(d, path);
     case "boolean":
       return fc.oneof(fc.string(), fc.integer(), fc.constant(null));
     case "enum": {
@@ -555,8 +580,15 @@ function invalidString(d: ZodDef, path: string): fc.Arbitrary<unknown> {
   return fc.oneof(...strategies);
 }
 
-function invalidNumber(d: ZodDef): fc.Arbitrary<unknown> {
+function invalidNumber(d: ZodDef, path = "<number>"): fc.Arbitrary<unknown> {
   const c = numberChecks(d);
+  // A .refine()/custom check on a number needs a hand-built invalid arbitrary
+  // (#947: RoutingRule.weight). Require an override, as invalidString does.
+  if (c.hasCustom) {
+    throw new UnsupportedSchemaError(
+      `invalidArb: number with a .refine()/custom check at ${path} has no override — add it to OVERRIDES`,
+    );
+  }
   const strategies: fc.Arbitrary<unknown>[] = [];
 
   if (c.coerce) {

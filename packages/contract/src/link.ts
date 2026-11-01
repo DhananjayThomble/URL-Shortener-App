@@ -75,6 +75,36 @@ function isReadableDate(value: string): boolean {
 }
 export const LinkDateInput = z.string().refine(isReadableDate, "Enter a valid date.");
 
+/**
+ * A routing-rule weight on the way IN.
+ *
+ * A weight is a 0–100 share of a weighted split. The bounds have always been
+ * 0..100; what this adds (#947) is a lower-magnitude guard the range could not
+ * express. `routing_rules.weight` is stored as a Postgres `real` (IEEE
+ * single-precision float), so a positive weight smaller than the smallest value
+ * `real` can hold — anything below float32's subnormal floor (~1.4e-45), such
+ * as the smallest-positive-double 5e-324 the #890 fuzz oracle surfaced — cannot
+ * be stored: the INSERT threw "out of range for type real" and the request came
+ * back a 500 instead of a 400.
+ *
+ * The guard is phrased as *representability*, not a hard-coded 1.4e-45 literal:
+ * a nonzero weight must survive the round-trip into a float32 (`Math.fround`)
+ * without collapsing to zero. That rejects exactly the unstorable band
+ * `(0, float32-min)` and nothing a caller actually means — `0`, `100`, `0.1`,
+ * and tiny-but-representable values like `1e-45`/`1e-40`/`1e-30` all pass,
+ * because `real` rounds them to a nonzero value rather than erroring. Such a
+ * degenerate weight is also physically meaningless as a routing share, so the
+ * right contract is to reject it at validation time (a 400) before it ever
+ * reaches the database.
+ */
+export const WeightInput = z
+  .number()
+  .min(0)
+  .max(100)
+  .refine((w) => w === 0 || Math.fround(w) !== 0, {
+    message: "Weight is too small to store; use 0 or a larger value.",
+  });
+
 /** One rule in a link's routing chain. First match wins. */
 export const RoutingRule = z.object({
   id: z.string(),
@@ -84,7 +114,7 @@ export const RoutingRule = z.object({
     language: z.string().nullable().optional(),
   }),
   then: HttpUrl,
-  weight: z.number().min(0).max(100).nullable().optional(),
+  weight: WeightInput.nullable().optional(),
 });
 export type RoutingRule = z.infer<typeof RoutingRule>;
 

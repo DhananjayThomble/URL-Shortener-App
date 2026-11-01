@@ -187,13 +187,13 @@ interface ExpectedFailure {
   /** The path kind to target (uses the owner's own seeded resource). */
 }
 const EXPECTED_5XX: ExpectedFailure[] = [
-  {
-    route: "PATCH /links/{id}",
-    issue: 947,
-    // A routing rule whose weight is the smallest positive subnormal double.
-    // Passes RoutingRule's z.number().min(0).max(100) but 500s on persist.
-    body: { rules: [{ id: "", when: { country: "US" }, then: "https://example.com", weight: 5e-324 }] },
-  },
+  // #947 RESOLVED: PATCH /links/{id} with a routing-rule weight below float32's
+  // subnormal floor (e.g. 5e-324) used to pass RoutingRule's z.number().min(0).
+  // max(100) and then 500 on persist (Postgres `real` "out of range"). The
+  // contract now rejects such a degenerate weight as a 400 (WeightInput's
+  // representability refine in packages/contract), so it is no longer contract-
+  // valid and never reaches the DB. Marker removed; the route is held to the
+  // normal no-5xx oracle again.
 ];
 function expectedFailureFor(label: string): ExpectedFailure | undefined {
   return EXPECTED_5XX.find((e) => e.route === label);
@@ -480,6 +480,15 @@ describeStack("contract fuzz (F3–F5): no 5xx, invalid→4xx, valid never valid
      stops 5xx'ing, this test goes red, and whoever fixed it must delete the
      EXPECTED_5XX entry (and the oracle-1 suppression goes with it). */
   describe("known 5xx-on-valid cases are still broken (expected failures)", () => {
+    // When EXPECTED_5XX is empty (every filed 5xx-on-valid case has been fixed,
+    // e.g. #947), the loop below registers nothing — and vitest fails an empty
+    // describe. This sentinel keeps the block non-empty and documents the clean
+    // state; the moment a new entry is added the loop takes over again.
+    if (EXPECTED_5XX.length === 0) {
+      it("no known 5xx-on-valid cases remain (all filed issues fixed)", () => {
+        expect(EXPECTED_5XX).toHaveLength(0);
+      });
+    }
     for (const ef of EXPECTED_5XX) {
       it(`${ef.route} still 500s on the input filed in #${ef.issue} — remove the marker when fixed`, async () => {
         const [method, path] = [ef.route.slice(0, ef.route.indexOf(" ")) as Method, ef.route.slice(ef.route.indexOf(" ") + 1)];
