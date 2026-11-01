@@ -13,9 +13,18 @@ import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyval
    Without it every PutKey/DeleteKey/DescribeKeyValueStore fails and the #289 edge
    fast path never fills, silently, with redirects still served by the Lambda. */
 import "@aws-sdk/signature-v4a";
-import { createDatabase, resolveDatabaseUrl, type Database } from "@snapurl/database";
+import { resolve as dnsResolve } from "node:dns/promises";
+import { createDatabase, resolveDatabaseUrl, resolveSafeBrowsingApiKey, type Database } from "@snapurl/database";
 import { DynamoDbCacheStore, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
+import { makeSafeBrowsingScanner, type UrlScanner } from "./jobs/safe-browsing.js";
+import {
+  DEFAULT_RESCAN_CONFIG,
+  rescanLinks,
+  reputationWatch,
+  type DomainBlocklistLookup,
+  type ReputationHit,
+} from "./jobs/link-scanning.js";
 import { NoProjection, backfillDomainMeta, drainOutbox, pruneOutbox, stuckProjections, sweepExpired, type ProjectionTarget } from "./jobs/outbox.js";
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
 import { KvsWriter } from "./jobs/kvs-projection.js";
@@ -167,6 +176,55 @@ function cacheBuster(): CacheStore | undefined {
   return cacheBusterStore;
 }
 
+/* #994 — the Safe Browsing scanner the rescan job and the reputation watch
+   share. Built once from the API key resolved at cold start (Secrets Manager
+   via the ARN, or the plain env var, or neither — in which case it scans every
+   URL "clean" without a network call, exactly as the API documents). Memoised
+   across warm invocations like the db handle. A one-time warn is logged when no
+   key is configured so a silently-off scanner is discoverable. */
+let safeBrowsingScanner: UrlScanner | undefined;
+let safeBrowsingWarned = false;
+async function scannerFor(): Promise<UrlScanner> {
+  if (!safeBrowsingScanner) {
+    const { apiKey, error } = await resolveSafeBrowsingApiKey();
+    if (error) log.warn({ err: error }, "could not resolve the Safe Browsing API key — scanning is off");
+    if (!apiKey && !safeBrowsingWarned) {
+      safeBrowsingWarned = true;
+      log.warn("GOOGLE_SAFE_BROWSING_API_KEY is not set — the rescan job marks links clean without scanning them");
+    }
+    safeBrowsingScanner = makeSafeBrowsingScanner(apiKey);
+  }
+  return safeBrowsingScanner;
+}
+
+/* #994 point 5 — the public domain-blocklist lookup (Spamhaus DBL by default).
+   DBL is a DNS blocklist: a host is listed iff "<host>.dbl.spamhaus.org"
+   resolves to a 127.0.1.x A record. A lookup that does not resolve (NXDOMAIN)
+   means "not listed" — that is the normal case, and dnsResolve throwing
+   ENOTFOUND is how DBL signals it, so a throw is treated as not-listed. The
+   zone is overridable via DOMAIN_BLOCKLIST_ZONE; set it empty to turn the DBL
+   check off (the lookup then always returns false). */
+const domainBlocklistLookup: DomainBlocklistLookup = async (host: string): Promise<boolean> => {
+  const zone = process.env.DOMAIN_BLOCKLIST_ZONE ?? "dbl.spamhaus.org";
+  if (!zone) return false;
+  try {
+    const records = await dnsResolve(`${host}.${zone}`, "A");
+    // DBL returns 127.0.1.2–127.0.1.99 for a listing; 127.255.255.x is an error
+    // response (e.g. a query from an open resolver), which is NOT a listing.
+    return records.some((ip) => ip.startsWith("127.0.1."));
+  } catch {
+    return false;
+  }
+};
+
+/* Where a reputation hit on one of our own hosts is reported. Logged at error
+   here (the single-node/Kubernetes worker); a production deployment can point
+   REPUTATION_ALERT at an SNS topic, but the log line is always emitted so the
+   signal is never silent. */
+async function reputationAlert(hit: ReputationHit): Promise<void> {
+  log.error({ host: hit.host, source: hit.source }, "reputation watch: one of our own hosts is LISTED");
+}
+
 function projectionFor(database: Database): ProjectionTarget {
   if (!projectionTarget) {
     if (LINK_PROJECTION === "dynamo") {
@@ -261,18 +319,35 @@ export async function runFrequent(database: Database) {
   const rolled = await rollupClicks(database);
   const webhooks = await deliverWebhooks(database);
 
-  if (rolled.events || webhooks.sent || webhooks.failed) {
+  /* #994 point 2 — rescan links due a re-check (pending within minutes, recent
+     daily, click-burst). On the frequent timer so a pending link is re-checked
+     within minutes of creation; the per-link cadence inside rescanLinks keeps
+     the recent/burst sets to roughly daily. Isolated so a scanner outage never
+     takes the rollup down. */
+  let rescan = { scanned: 0, flagged: 0 };
+  try {
+    rescan = await rescanLinks(database, await scannerFor(), DEFAULT_RESCAN_CONFIG);
+  } catch (err) {
+    log.error({ err }, "link rescan pass failed");
+  }
+
+  if (rolled.events || webhooks.sent || webhooks.failed || rescan.scanned) {
     log.info(
       {
         clicks: rolled.events,
         days: rolled.days,
         webhooksSent: webhooks.sent,
         webhookFailures: webhooks.failed,
+        rescanned: rescan.scanned,
+        rescanFlagged: rescan.flagged,
       },
       "frequent pass",
     );
   }
-  return { rolled, webhooks };
+  if (rescan.flagged > 0) {
+    log.warn({ flagged: rescan.flagged }, "rescan flagged links that turned unsafe after creation — gated at the edge");
+  }
+  return { rolled, webhooks, rescan };
 }
 
 /** Runs hourly: housekeeping, and the jobs that keep the privacy promise. */
@@ -324,6 +399,26 @@ export async function runMaintenance(database: Database) {
   const outbox = await step("pruneOutbox", () => pruneOutbox(database), 0);
   const deliveries = await step("pruneDeliveries", () => pruneDeliveries(database), 0);
   const stuck = await step("stuckProjections", () => stuckProjections(database), 0);
+
+  /* #994 point 5 — the domain reputation watch runs DAILY, not hourly: it is
+     gated to the configured UTC hour (REPUTATION_WATCH_HOUR, default 0) so a
+     maintenance pass fires it at most once a day. Kept OUT of the counted
+     maintenance jobs above (and its own try/catch) so it never contributes to
+     the all-failed check and a reputation-source outage never fails the pass.
+     The alert sink always logs, so a hit is never silent. */
+  const reputationHour = Number(process.env.REPUTATION_WATCH_HOUR ?? 0);
+  if (new Date().getUTCHours() === reputationHour) {
+    try {
+      const rep = await reputationWatch({
+        scan: await scannerFor(),
+        domainBlocklist: domainBlocklistLookup,
+        alert: reputationAlert,
+      });
+      log.info({ checked: rep.checked, hits: rep.hits.length }, "reputation watch pass");
+    } catch (err) {
+      log.error({ err }, "reputation watch pass failed");
+    }
+  }
 
   /* Isolation is per job, not for the pass as a whole.
    *
