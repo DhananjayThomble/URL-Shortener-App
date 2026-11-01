@@ -154,7 +154,16 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "PATCH /api/v1/reports/{id}", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: 403, ownerB: "allow", "keyA-all": "allow", "keyA-links-read": 403, "keyB-all": "allow" }, status: "approved" },
   // ── analytics ──
   { route: "GET /api/v1/analytics", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "allow", "keyA-all": "allow", "keyA-links-read": 403, "keyB-all": "allow" }, status: "approved" },
+  // ── admin (#968) ──
+  // The platform-admin gate. None of the matrix principals is a platform admin:
+  // admin is derived from PLATFORM_ADMIN_EMAILS (unset in the staging stack, so
+  // the allowlist is empty) AND a verified email AND 2FA — none of the seeded
+  // principals clears that, so every authenticated principal is 403 (AdminGuard
+  // fail-closed), anon is 401, and API keys are 403 (no user behind the key, so
+  // never an admin). `adminA` here is a WORKSPACE admin role, which is unrelated
+  // to platform admin and correctly denied.
+  { route: "GET /api/v1/admin/me", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
 ];
 
-// Sanity: one row per inventory route.
-export const EXPECTED_ROUTE_COUNT = 71;
+// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me).
+export const EXPECTED_ROUTE_COUNT = 72;
