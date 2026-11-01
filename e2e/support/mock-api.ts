@@ -82,7 +82,20 @@ export const nestError = (status: number, message: string, error = "Unauthorized
  * A request with no handler is answered 599 and kept in `calls`, so a spec fails
  * loudly instead of hanging.
  */
+/* Baseline handlers merged into every mockApi() call, so a spec need not
+   re-declare endpoints the app shell polls unconditionally on every page.
+   #972 added a site-wide banner that the authenticated shell polls via
+   GET /public/platform/banner; without a default handler every mocked-api spec
+   that enters the shell would get a 599 for it and trip its "no console errors"
+   assertion. An empty message means "no banner" (the component renders nothing),
+   which is the right default for a test that is not about the banner. A spec can
+   still override it by passing its own handler for the same key. */
+const DEFAULT_HANDLERS: Record<string, MockReply | MockHandler> = {
+  "GET /public/platform/banner": { status: 200, body: { message: "", level: "info" } },
+};
+
 export async function mockApi(page: Page, handlers: Record<string, MockReply | MockHandler>): Promise<MockApi> {
+  handlers = { ...DEFAULT_HANDLERS, ...handlers };
   const calls: MockRequest[] = [];
   const counts = new Map<string, number>();
 

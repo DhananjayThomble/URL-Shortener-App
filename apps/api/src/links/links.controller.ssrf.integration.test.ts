@@ -6,6 +6,7 @@ import { zodBody } from "../common/zod.pipe.js";
 import type { RequestActor } from "../auth/auth.guard.js";
 import { LinksController } from "./links.controller.js";
 import { LinksService } from "./links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 
 /* ============================================================
    Issue #534, request-level regression.
@@ -60,7 +61,7 @@ describeDb("LinksController.create — request-level SSRF DNS regression (#534)"
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub()));
 
     const [ws] = await db
       .insert(workspaces)

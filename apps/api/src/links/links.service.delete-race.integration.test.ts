@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, domains, eq, links, sql, workspaces, type Database } from "@snapurl/database";
 import { LinksService } from "./links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -60,7 +61,7 @@ describeDb("LinksService.remove — concurrent click rollup", () => {
     rollupHandle = createDatabase({ url: DATABASE_URL!, max: 1 });
     observerHandle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = serviceHandle.db;
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
 
     const [ws] = await db
       .insert(workspaces)
