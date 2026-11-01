@@ -39,13 +39,22 @@ export const FREE_ENTITLEMENTS: PlanEntitlements = {
   maxCustomDomains: 0,
 };
 
-/* A generic paid tier: custom domains allowed, with a generous cap. Every plan
-   that is not Free resolves to this today. #970 will let an operator give each
-   named plan its own row; until then one paid shape covers Pro/Team/Business/
-   Enterprise and every other non-Free name an operator sets by hand. */
+/* A generic paid tier: custom domains allowed, with a generous cap. Most non-
+   Free plans resolve to this today. #970 will let an operator give each named
+   plan its own row; until then one paid shape covers Pro/Team/Business/Growth/
+   Agency and every other non-Free name an operator sets by hand. */
 export const PAID_ENTITLEMENTS: PlanEntitlements = {
   customDomains: true,
   maxCustomDomains: 25,
+};
+
+/* The top tier. Custom domains allowed with a much larger cap than the generic
+   paid tier — an Enterprise customer routinely connects far more domains than a
+   Pro one, so the distinction is real, not a test convenience. #970 will make
+   each tier's cap operator-editable; this is a sensible default until then. */
+export const ENTERPRISE_ENTITLEMENTS: PlanEntitlements = {
+  customDomains: true,
+  maxCustomDomains: 1000,
 };
 
 /* Explicit, known plan definitions. Keys are compared case-insensitively
@@ -59,7 +68,7 @@ export const PLAN_ENTITLEMENTS: Record<string, PlanEntitlements> = {
   business: PAID_ENTITLEMENTS,
   growth: PAID_ENTITLEMENTS,
   agency: PAID_ENTITLEMENTS,
-  enterprise: PAID_ENTITLEMENTS,
+  enterprise: ENTERPRISE_ENTITLEMENTS,
 };
 
 /**

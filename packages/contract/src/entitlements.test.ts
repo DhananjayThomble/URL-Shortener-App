@@ -6,6 +6,7 @@ import {
   PLAN_ENTITLEMENTS,
   FREE_ENTITLEMENTS,
   PAID_ENTITLEMENTS,
+  ENTERPRISE_ENTITLEMENTS,
 } from "./entitlements.js";
 
 describe("entitlementsFor", () => {
@@ -50,6 +51,13 @@ describe("entitlementsFor", () => {
     const e = entitlementsFor("CustomEnterprisePlus");
     expect(e.customDomains).toBe(true);
     expect(e.maxCustomDomains).toBe(PAID_ENTITLEMENTS.maxCustomDomains);
+  });
+
+  it("gives Enterprise a larger custom-domain cap than the generic paid tier", () => {
+    const ent = entitlementsFor("Enterprise");
+    expect(ent.customDomains).toBe(true);
+    expect(ent.maxCustomDomains).toBe(ENTERPRISE_ENTITLEMENTS.maxCustomDomains);
+    expect(ent.maxCustomDomains).toBeGreaterThan(PAID_ENTITLEMENTS.maxCustomDomains);
   });
 
   it("never returns undefined", () => {

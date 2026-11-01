@@ -244,6 +244,18 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
     const workspaceB = await ownerWorkspaceId(db, ownerBReg.userId);
     workspaceIds.push(workspaceB);
 
+    /* #966: custom domains are a paid-plan feature — POST /domains 403s a Free
+       workspace. register() creates workspaces on the default "Free" plan, so
+       put both seed workspaces on a paid plan here. This suite (and the fuzz
+       suite, which shares this seed) exercises role/tenancy access control and
+       input fuzzing, not plan entitlements — the plan gate itself is proven in
+       domains.plan-gate.integration.test.ts. With a paid plan the approved
+       access-matrix oracle for POST /domains (owner/admin "allow") is exactly
+       what runs, and seedResources' freshDomain() can connect its fixture.
+       Enterprise (not Pro) so the per-plan domain cap is well clear of the many
+       fresh domains the M4/M5 probes mint across the run without cleanup. */
+    await db.update(workspaces).set({ plan: "Enterprise" }).where(inArray(workspaces.id, [workspaceA, workspaceB]));
+
     // admin / editor / viewer of A: register a fresh account, add an active
     // membership of A with the target role, then refresh into A so the token
     // carries that role.
