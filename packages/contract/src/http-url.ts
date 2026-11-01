@@ -149,10 +149,21 @@ export const HTTP_URL_MAX_LENGTH = 2048;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
+// The length cap and the control-character check run on the RAW input string,
+// BEFORE z.url() touches it, and pipe the survivor into the URL/host checks.
+// This ordering is load-bearing as of zod 4.6 (issue #956): zod 4.6's `z.url()`
+// now NORMALISES its output to the WHATWG-parsed form, which silently strips
+// tab/CR/LF — so a check placed AFTER `.url()` in the chain receives the
+// already-cleaned string and never sees the control characters. The stored
+// value and the Location header are built from the ORIGINAL string, which
+// still carries them (that is the whole header-splitting / #711 Minor-2
+// concern), so the guard has to inspect the raw input. Earlier zod (4.1)
+// returned `.url()` output unchanged, which hid this ordering requirement.
 export const HttpUrl = z
-  .url({ protocol: /^https?$/, error: "Enter an absolute http(s) URL" })
+  .string()
   .max(HTTP_URL_MAX_LENGTH, { error: `Keep it under ${HTTP_URL_MAX_LENGTH} characters` })
   .refine((value) => !CONTROL_CHARS.test(value), { error: "That URL contains a control character" })
+  .pipe(z.url({ protocol: /^https?$/, error: "Enter an absolute http(s) URL" }))
   .refine(
     (value) => {
       let url: URL;
