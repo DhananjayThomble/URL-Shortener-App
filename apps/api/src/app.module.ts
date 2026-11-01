@@ -12,6 +12,7 @@ import { DatabaseModule } from "./database/database.module.js";
 import { MailModule } from "./mail/mail.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { AuthGuard } from "./auth/auth.guard.js";
+import { AdminModule } from "./admin/admin.module.js";
 import { SafeBrowsingModule } from "./safe-browsing/safe-browsing.module.js";
 import { WorkspacesModule } from "./workspaces/workspaces.module.js";
 import { LinksModule } from "./links/links.module.js";
@@ -90,6 +91,7 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
     FormsModule,
     ReportsModule,
     PublicModule,
+    AdminModule,
   ],
   controllers: [HealthController],
   providers: [

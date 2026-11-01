@@ -52,6 +52,7 @@ beforeAll(async () => {
   // openapi/document.ts does. Then the inventory, which pulls in the controllers.
   const { registry } = await import("../openapi/registry.js");
   await Promise.all([
+    import("../openapi/paths/admin.js"),
     import("../openapi/paths/analytics.js"),
     import("../openapi/paths/auth.js"),
     import("../openapi/paths/bio-pages.js"),
@@ -88,7 +89,7 @@ describe("registry parity: the reflected inventory equals the OpenAPI registry",
     ).toEqual({ missingFromRegistry: [], missingFromControllers: [] });
   });
 
-  it("the inventory has the 71 routes the design records (design Appendix A)", () => {
-    expect(inventoryCount).toBe(71);
+  it("the inventory has the 72 routes the design records (design Appendix A + #968 GET /admin/me)", () => {
+    expect(inventoryCount).toBe(72);
   });
 });
