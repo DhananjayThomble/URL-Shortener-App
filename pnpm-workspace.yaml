@@ -110,6 +110,16 @@ minimumReleaseAgeExclude:
 # pinned here: vite@<7.3.7 carries 5 high-severity advisories fixed at 7.3.7;
 # source-map-js@<1.2.2 carries a high-severity advisory fixed at 1.2.2;
 # fast-copy@<4.1.0 carries a medium advisory fixed at 4.1.0. See issue #916.
+#
+# qs, minimatch and glob are all transitive copies pulled in through the
+# dependency tree (qs via the body-parser / express chain and the AWS SDK's
+# query serialiser; minimatch and glob via the test-exclude / rimraf /
+# @nestjs/cli tooling chains). All three are flagged by open Dependabot alerts
+# and patched upstream. qs carries GHSA-q8mj-m7cp-5q26, GHSA-4mjr-xmp4-gh2g,
+# GHSA-x5fp-wj9c-mxmx and GHSA-6pq8-jhm2-2vcw; the last is fixed only at
+# 6.16.1, so the floor below pins the whole 6.15.2/6.16.0/6.16.1 advisory span
+# to 6.16.1 at once. minimatch carries GHSA-g3hv-75wg-m249, fixed at 11.0.1.
+# glob carries GHSA-3g3m-2fjr-6pw4, fixed at 14.0.2. See issue #956.
 overrides:
   fastify@<5.12.6: ^5.12.6
   sharp@<0.35.5: ^0.35.5
@@ -124,3 +134,6 @@ overrides:
   vite@>=7.0.0 <7.3.7: ^7.3.7
   source-map-js@<1.2.2: ^1.2.2
   fast-copy@<4.1.0: ^4.1.0
+  qs@<6.16.1: ^6.16.1
+  minimatch@<11.0.1: ^11.0.1
+  glob@<14.0.2: ^14.0.2
