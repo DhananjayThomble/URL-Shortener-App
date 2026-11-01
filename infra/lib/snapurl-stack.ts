@@ -934,7 +934,15 @@ export class SnapUrlStack extends Stack {
     apiFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["ses:SendEmail", "ses:SendRawEmail"],
-        resources: [`arn:aws:ses:${this.region}:${this.account}:identity/*`],
+        resources: [
+          `arn:aws:ses:${this.region}:${this.account}:identity/*`,
+          // The account's default config set (my-first-configuration-set) is
+          // forced onto every SendEmail, so the send is also authorized
+          // against the configuration-set resource — without this the API
+          // Lambda role 403s on configuration-set/my-first-configuration-set
+          // even though identity/* is granted (prod SES SendEmail AccessDenied).
+          `arn:aws:ses:${this.region}:${this.account}:configuration-set/*`,
+        ],
       }),
     );
 
