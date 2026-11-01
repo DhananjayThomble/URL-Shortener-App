@@ -129,6 +129,71 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
+  # Secret-scan the PR's own diff (issue #960), a CI second layer behind the now
+  # enabled GitHub push protection (follow-up to #574). PR-only and modelled on
+  # regression-guard: it scans ONLY the commits this PR adds — origin/main..HEAD
+  # via gitleaks' --log-opts — never full history. That scope is deliberate:
+  # main's history still contains the known #574 historical JWT-shaped fixture
+  # (not rewritten, deferred to a later bulk PR — see #574), so a full-history
+  # scan would red forever and a public .gitleaksignore listing those commits
+  # would advertise them. Neither is done here. --redact keeps any finding out
+  # of the public CI log. gitleaks is not a GitHub-hosted-runner default tool,
+  # so the job installs a PINNED CLI (v8.30.1) and verifies its checksum before
+  # running — the official gitleaks-action went commercial/Node-20-EOL, and a
+  # checksum-pinned CLI gives exact control of the diff-scoped command with no
+  # third-party action or org licence key.
+  gitleaks:
+    name: Secret scan (PR diff)
+    needs: changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Read-only: it reads the checkout and the PR's commit range. Writes nothing.
+    permissions:
+      contents: read
+    env:
+      # Pinned CLI version + the SHA-256 of its linux_x64 tarball (from the
+      # release's published gitleaks_8.30.1_checksums.txt). Bump both together.
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      # fetch-depth: 0 so HEAD and the merge base are both present; the scan
+      # diffs origin/main..HEAD to see exactly the commits this PR adds.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The shallow-to-full checkout does not create refs/remotes/origin/main on
+      # a PR; fetch it so the origin/main..HEAD range resolves.
+      - name: Ensure origin/main is available
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      # Download the pinned release tarball and verify its checksum before it
+      # runs — a tampered binary must not execute on CI.
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }} (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          curl --fail --silent --show-error --location --retry 3 -o "$tarball" "$url"
+          echo "${GITLEAKS_SHA256}  ${tarball}" | sha256sum --check --status
+          tar -xzf "$tarball" gitleaks
+          ./gitleaks version
+
+      # Scan ONLY origin/main..HEAD — the commits this PR adds — never full
+      # history. --redact keeps a finding out of the public log; a non-empty
+      # finding set exits non-zero and reds this job (and so the CI gate).
+      - name: Scan the PR diff for secrets
+        run: |
+          set -euo pipefail
+          echo "Resolved scan command: gitleaks detect --source . --log-opts=origin/main..HEAD --redact --no-banner --exit-code 1"
+          ./gitleaks detect \
+            --source . \
+            --log-opts="origin/main..HEAD" \
+            --redact \
+            --no-banner \
+            --exit-code 1
+
   verify:
     name: Type-check, build, test
     needs: changes
@@ -1447,7 +1512,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard, mutation]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard, mutation, gitleaks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
