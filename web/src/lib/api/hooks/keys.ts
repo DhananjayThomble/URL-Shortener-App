@@ -19,6 +19,12 @@ export const qk = {
   adminAudit: (filter?: string) => ["admin-audit", filter ?? "all"] as const,
   adminWorkspaceAudit: (workspaceId: string, filter?: string) =>
     ["admin-workspace-audit", workspaceId, filter ?? "all"] as const,
+  // #971 — admin moderation and abuse.
+  adminAbuseQueue: (filter?: string) => ["admin-abuse-queue", filter ?? "all"] as const,
+  adminLinkSearch: (filter?: string) => ["admin-link-search", filter ?? "all"] as const,
+  adminBlockedDomains: ["admin-blocked-domains"] as const,
+  adminFlaggedLinks: ["admin-flagged-links"] as const,
+  adminCustomDomains: ["admin-custom-domains"] as const,
   workspace: ["workspace"] as const,
   myWorkspaces: ["my-workspaces"] as const,
   links: (filter?: string) => ["links", filter ?? "all"] as const,

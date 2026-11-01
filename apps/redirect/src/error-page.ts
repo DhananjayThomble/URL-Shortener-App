@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
    on the very next click.
    ============================================================ */
 
-export type ErrorKind = "not_found" | "expired" | "click_limit" | "scheduled" | "root";
+export type ErrorKind = "not_found" | "expired" | "click_limit" | "scheduled" | "root" | "disabled";
 
 interface Copy {
   status: 404 | 410;
@@ -64,6 +64,17 @@ const COPY: Record<ErrorKind, Copy> = {
     text: "Nothing here.",
     title: "Nothing here",
     body: "This is a short-link domain. Add a link's code after the slash to follow it.",
+  },
+  /* #971 — a platform admin disabled this link for abuse or a policy breach.
+     410 (not 404): the link existed and has been deliberately turned off, which
+     is "was here, is gone" — the same status an expired link gets. The copy
+     deliberately does not say what the link pointed at or why, only that it was
+     disabled. */
+  disabled: {
+    status: 410,
+    text: "This link has been disabled.",
+    title: "This link has been disabled",
+    body: "It was turned off by the SnapURL team, usually because it was reported for abuse or broke the acceptable-use policy.",
   },
 };
 

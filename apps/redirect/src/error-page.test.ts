@@ -18,6 +18,8 @@ const CASES: Array<[ErrorKind, 404 | 410, string]> = [
   ["click_limit", 410, "This link has reached its click limit."],
   ["scheduled", 404, "This link is not live yet."],
   ["root", 404, "Nothing here."],
+  // #971 — a platform admin disabled the link: 410, its own plain-text body.
+  ["disabled", 410, "This link has been disabled."],
 ];
 
 describe("wantsHtml", () => {

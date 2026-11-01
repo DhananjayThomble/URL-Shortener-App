@@ -61,6 +61,7 @@ describe("toLinkItem / fromLinkItem round-trip", () => {
     hideReferrer: true,
     publicPreview: false,
     archived: true,
+    disabled: true,
     safeBrowsingStatus: "safe",
     utm: { source: "print", medium: "qr", campaign: "spring", content: "a" },
   };
@@ -101,6 +102,24 @@ describe("toLinkItem / fromLinkItem round-trip", () => {
 
     expect(fromLinkItem(item)).toEqual(minimal);
   });
+
+  /* #971 — the disabled flag round-trips, and a LINK item projected BEFORE the
+     attribute existed (no `disabled` key) revives as false, so a pre-#971 link
+     already in DynamoDB keeps resolving rather than silently reading as
+     disabled and going dark. */
+  it("round-trips disabled=true", () => {
+    const item = toLinkItem({ ...full, disabled: true }, "snap.to", "d");
+    expect(item.disabled).toBe(true);
+    expect(fromLinkItem(item).disabled).toBe(true);
+  });
+
+  it("revives a legacy item with no disabled attribute as not disabled", () => {
+    const item = toLinkItem({ ...full, disabled: false }, "snap.to", "legacy");
+    // Simulate an item written before #971: strip the attribute entirely.
+    const legacy = { ...item };
+    delete (legacy as Record<string, unknown>).disabled;
+    expect(fromLinkItem(legacy).disabled).toBe(false);
+  });
 });
 
 /* The edge fast path (#289): the eligibility rule, the KVS key format and the
@@ -127,6 +146,7 @@ const plain: ProjectedLink = {
   hideReferrer: false,
   publicPreview: false,
   archived: false,
+  disabled: false,
   safeBrowsingStatus: "clean",
   utm: null,
 };
@@ -170,6 +190,14 @@ describe("isEdgeEligible", () => {
 
   it("is false when the link is archived", () => {
     expect(isEdgeEligible({ ...plain, archived: true })).toBe(false);
+  });
+
+  /* #971 — a disabled link is never edge-served: the CloudFront Function cannot
+     render the "link disabled" page, so it must fall through to the Lambda
+     whose gate stops it. Without this the KVS would keep redirecting a link an
+     admin just disabled until the entry aged out. */
+  it("is false when the link is disabled by an admin", () => {
+    expect(isEdgeEligible({ ...plain, disabled: true })).toBe(false);
   });
 
   it("is false when safe-browsing is not clean", () => {

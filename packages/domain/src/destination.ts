@@ -109,28 +109,37 @@ export function deriveStatus(link: {
 /** Why the redirect refuses to send a visitor to a link's destination. */
 export type LifecycleGate = "archived" | "expired" | "click_limit" | "scheduled";
 
-/** Every gate the redirect applies before it will route a visitor, flagged
- *  included. `null` means the link is live and a visitor reaches routing. */
-export type EffectiveGate = "archived" | "flagged" | LifecycleGate;
+/** Every gate the redirect applies before it will route a visitor, the admin
+ *  disable and a Safe Browsing flag included. `null` means the link is live and
+ *  a visitor reaches routing. */
+export type EffectiveGate = "disabled" | "archived" | "flagged" | LifecycleGate;
 
 /**
- * The FULL gate order the redirect applies, flagged included — the single
- * source of truth for "what does a visitor get" (#764).
+ * The FULL gate order the redirect applies, disabled and flagged included — the
+ * single source of truth for "what does a visitor get" (#764, #971).
  *
- * It mirrors `apps/redirect/src/main.ts` exactly: archived, then a Safe
- * Browsing flag, then the lifecycle gates below. The order is load-bearing and
- * the reason this lives in one place: a flagged link that is ALSO expired is
- * bounced to the warning page before any lifecycle fallback is consulted and
- * before routing rules run, so the preview must say "flagged", not "expired",
- * and must not promise a fallback or that rules may send the visitor
- * elsewhere. Getting that precedence wrong is exactly the compound-state bug
- * the public preview had.
+ * It mirrors `apps/redirect/src/main.ts` exactly: a platform-admin DISABLE
+ * first of all, then archived, then a Safe Browsing flag, then the lifecycle
+ * gates below. The order is load-bearing and the reason this lives in one
+ * place: a flagged link that is ALSO expired is bounced to the warning page
+ * before any lifecycle fallback is consulted and before routing rules run, so
+ * the preview must say "flagged", not "expired", and must not promise a
+ * fallback or that rules may send the visitor elsewhere. Getting that
+ * precedence wrong is exactly the compound-state bug the public preview had.
+ *
+ * `disabled` outranks everything, including archived: an admin turning a link
+ * off for abuse is the strongest possible verdict and must not be masked by any
+ * state the link's own owner set. It is read loosely (a truthy `disabled`
+ * flag, or a `disabledAt` timestamp) so both the redirect's resolved link
+ * (boolean) and an API/DB row (timestamp) fit.
  *
  * `safeBrowsingStatus` is read loosely (any value, "flagged" is the only one
  * that gates) so both the redirect's resolved link and the API row fit.
  */
 export function effectiveGate(
   link: {
+    disabled?: boolean | null;
+    disabledAt?: Date | string | null;
     archived: boolean;
     safeBrowsingStatus?: string | null;
     expiresAt?: Date | string | null;
@@ -140,6 +149,7 @@ export function effectiveGate(
   },
   now: Date = new Date(),
 ): EffectiveGate | null {
+  if (link.disabled === true || link.disabledAt != null) return "disabled";
   if (link.archived) return "archived";
   if (link.safeBrowsingStatus === "flagged") return "flagged";
   return lifecycleGate(link, now);
@@ -147,16 +157,23 @@ export function effectiveGate(
 
 /**
  * The same precedence as `effectiveGate`, but from parts a caller has ALREADY
- * derived: `flagged`, and the lifecycle verdict (the result of `lifecycleGate`,
- * or `null`/`"active"` for a live link). The public preview uses this: the API
- * sends it the lifecycle `state` and the Safe Browsing flag separately, and
- * this folds them in the redirect's order (archived > flagged > lifecycle)
- * without re-deriving anything from dates. One ordering, two entry points.
+ * derived: an admin `disabled` flag, `flagged`, and the lifecycle verdict (the
+ * result of `lifecycleGate`, or `null`/`"active"` for a live link). The public
+ * preview uses this: the API sends it the lifecycle `state` and the Safe
+ * Browsing flag separately, and this folds them in the redirect's order
+ * (disabled > archived > flagged > lifecycle) without re-deriving anything from
+ * dates. One ordering, two entry points.
+ *
+ * `disabled` is the last parameter and defaults to false so an existing caller
+ * that has no disable signal (the public preview — a disabled link never
+ * reaches it, since it stops resolving) stays correct without passing it.
  */
 export function effectiveGateFromState(
   flagged: boolean,
   lifecycle: LifecycleGate | "active" | null | undefined,
+  disabled = false,
 ): EffectiveGate | null {
+  if (disabled) return "disabled";
   if (lifecycle === "archived") return "archived";
   if (flagged) return "flagged";
   return lifecycle && lifecycle !== "active" ? lifecycle : null;

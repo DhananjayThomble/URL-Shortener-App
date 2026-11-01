@@ -31,7 +31,7 @@ import { API_URL, createLink, makeEmail, REDIRECT_URL, registerUser, seedAccount
 
 const BROWSER_UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-const CAPTION = "Expired, scheduled, over limit, archived or unsafe";
+const CAPTION = "Expired, scheduled, over limit, archived, unsafe or disabled";
 const EVIDENCE = process.env.QA_EVIDENCE_DIR ?? path.resolve(__dirname, "../../.qa-runs/767");
 
 async function patchLink(token: string, id: string, body: Record<string, unknown>) {

@@ -39,6 +39,7 @@ function eligibleLink(overrides: Partial<ProjectedLink> = {}): ProjectedLink {
     hideReferrer: false,
     publicPreview: true,
     archived: false,
+    disabled: false,
     safeBrowsingStatus: "clean",
     utm: null,
     ...overrides,
@@ -101,6 +102,9 @@ describe("KvsWriter.putIfEligible", () => {
     ["expiresAt", { expiresAt: new Date("2099-01-01T00:00:00.000Z") }],
     ["activatesAt", { activatesAt: new Date("2099-01-01T00:00:00.000Z") }],
     ["archived", { archived: true }],
+    // #971 — a platform-admin disable makes a link ineligible so the edge drops
+    // it and the Lambda serves the "link disabled" page.
+    ["disabled", { disabled: true }],
     ["unsafe", { safeBrowsingStatus: "malware" }],
     /* Transform behaviours the edge cannot reproduce (each independently makes a
        link ineligible so it stays on the authoritative Lambda).

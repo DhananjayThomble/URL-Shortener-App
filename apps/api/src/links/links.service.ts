@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import * as argon2 from "argon2";
-import { and, asc, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, workspaces, type Database, type Executor } from "@snapurl/database";
+import { and, asc, blockedDomains, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, workspaces, type Database, type Executor } from "@snapurl/database";
 import { CreateLinkInput as CreateLinkInputSchema, RedirectType as RedirectTypeSchema, issuesToSentence } from "@snapurl/contract";
 import type {
   BulkCreateLinksInput,
@@ -30,6 +30,7 @@ import { isUniqueViolation } from "../common/postgres-error.filter.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import { escapeLike } from "../common/sql-like.js";
 import { assertNoSsrfDnsTarget, resolvesToDeniedAddress } from "../common/ssrf-guard.js";
+import { matchBlockedDomain } from "../common/blocklist.js";
 import {
   SPARKLINE_DAYS,
   buildSparkline,
@@ -294,6 +295,11 @@ export class LinksService {
     const destinationOf = (raw: Record<string, unknown>) =>
       typeof raw.destination === "string" ? raw.destination : "";
 
+    /* #971 — the destination blocklist, read once for the whole batch. A
+       blocked destination is a per-row problem, exactly like a denied SSRF
+       address below: it fails its own row and never 400s the batch. */
+    const blocklist = await this.loadBlocklist();
+
     /* One lookup per distinct domain rather than per row: a hundred links on
        the same domain is the normal shape of a batch. */
     const domainCache = new Map<string, { id: string; name: string } | string>();
@@ -357,6 +363,13 @@ export class LinksService {
          social.image), but caught as a per-row problem rather than thrown —
          one row resolving to a denied address must not 400 the whole batch,
          matching every other per-row check above it. */
+      /* #971 — a blocked destination is a per-row problem, like the SSRF check
+         below: it fails its own row, never the batch. */
+      const blocked = matchBlockedDomain(row.destination, blocklist);
+      if (blocked) {
+        problems.push(`That destination points at ${blocked}, which an administrator has blocked.`);
+      }
+
       for (const url of [row.destination, row.social?.image]) {
         if (url && (await resolvesToDeniedAddress(url))) {
           problems.push(`That host isn't allowed (it resolves to a private, loopback or link-local address): ${url}`);
@@ -673,6 +686,10 @@ export class LinksService {
        destination itself and the social preview image. */
     await assertNoSsrfDnsTarget([input.destination, input.social?.image]);
 
+    /* #971 — refuse a destination an administrator has blocked (same stage as
+       the SSRF check: authorization/validation before any write). */
+    this.assertDestinationNotBlocked(input.destination, await this.loadBlocklist());
+
     const scan = await this.safeBrowsing.check(input.destination);
 
     /* An omitted redirect type means the workspace's setting (#753); an
@@ -804,6 +821,15 @@ export class LinksService {
        keeps whatever the row already had, which was checked when it was
        written. */
     await assertNoSsrfDnsTarget([input.destination, input.social?.image]);
+
+    /* #971 — a CHANGED destination is checked against the blocklist, the same
+       way it is on create. An omitted destination keeps the row's existing one
+       (which may predate a block); only an edit that actually points the link
+       at a new destination is judged, so a block never retroactively makes an
+       unrelated edit fail. */
+    if (input.destination !== undefined) {
+      this.assertDestinationNotBlocked(input.destination, await this.loadBlocklist());
+    }
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (input.destination !== undefined) {
@@ -987,6 +1013,31 @@ export class LinksService {
      stale destination with nothing to notice. The row and the outbox entry
      commit together, and the worker drains it — so a failed projection retries
      instead of silently diverging. */
+  /* #971 — the platform destination blocklist.
+
+     A platform admin maintains a list of hosts no link may point to
+     (blocked_domains, via the admin moderation surface). It is enforced here,
+     on create and update, right beside the SSRF guard: a destination whose
+     hostname equals a blocked host, or is a sub-domain of one, is refused.
+     This is platform policy, not a workspace setting, so the whole list is
+     read (there is no workspace to scope it to) — it is a small operator-
+     curated table, read once per write. */
+  private async loadBlocklist(): Promise<string[]> {
+    const rows = await this.readDb.select({ domain: blockedDomains.domain }).from(blockedDomains);
+    return rows.map((r) => r.domain);
+  }
+
+  /** Throw a 400 if `destination` points at a blocked host. `blocklist` is the
+   *  list loaded once by the caller (so a bulk create does one read, not N). */
+  private assertDestinationNotBlocked(destination: string, blocklist: string[]): void {
+    const hit = matchBlockedDomain(destination, blocklist);
+    if (hit) {
+      throw new BadRequestException(
+        `That destination points at ${hit}, which an administrator has blocked. Use a different link destination.`,
+      );
+    }
+  }
+
   private async enqueueProjection(tx: Executor, linkId: string, operation: "upsert" | "delete") {
     await tx.insert(projectionOutbox).values({ linkId, operation, payload: { linkId, operation } });
     /* #394: nudge the worker to drain now instead of waiting out the 1-minute

@@ -364,6 +364,16 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
       return reply.redirect(trustPageUrl(rawSlug, host, { warning: "unsafe" }), 302);
     }
 
+    /* #971 — a platform admin disabled this link for abuse/moderation. It does
+       not redirect anywhere and it is not a dead-end "expired" either: the
+       visitor gets the dedicated "link disabled" page (410). This is checked
+       before the expired/click-limit fallthrough below so a disabled link that
+       is ALSO expired still reads as disabled, matching effectiveGate's
+       precedence. */
+    if (blocked === "disabled") {
+      return sendError(request, reply, "disabled", { host, slug: rawSlug, webOrigin: WEB_ORIGIN });
+    }
+
     /* 404, not 410, and not 503.
        410 means "was here, is gone", which is the opposite of a link that has
        not started yet. 503 would invite crawlers to hammer it and reads as an
@@ -451,7 +461,7 @@ app.get("/", async (request, reply) => {
  *  dashboard says about a link and what a visitor to it experiences cannot
  *  disagree: a link that has already expired reports expired even if it also
  *  has an activation date still ahead of it. */
-function gateFor(link: ResolvedLink): "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
+function gateFor(link: ResolvedLink): "disabled" | "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
   /* The whole order — archived, flagged, then the lifecycle gates — lives in
      @snapurl/domain's effectiveGate so the public "+" preview reports the same
      verdict the redirect acts on, in the same precedence (#764). A flagged
