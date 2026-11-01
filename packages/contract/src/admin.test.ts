@@ -269,6 +269,17 @@ describe("AdminUpdateWorkspaceInput", () => {
     expect(AdminUpdateWorkspaceInput.safeParse({ clicksIncluded: 0 }).success).toBe(true);
     expect(AdminUpdateWorkspaceInput.safeParse({ clicksIncluded: 2_147_483_647 }).success).toBe(true);
   });
+
+  /* #993 — the new-account-limits lift satisfies the "at least one" refine on
+     its own, both true and false. */
+  it("accepts a liftNewAccountLimits-only edit (true or false)", () => {
+    expect(AdminUpdateWorkspaceInput.safeParse({ liftNewAccountLimits: true }).success).toBe(true);
+    expect(AdminUpdateWorkspaceInput.safeParse({ liftNewAccountLimits: false }).success).toBe(true);
+  });
+
+  it("requires liftNewAccountLimits to be boolean", () => {
+    expect(AdminUpdateWorkspaceInput.safeParse({ liftNewAccountLimits: "yes" }).success).toBe(false);
+  });
 });
 
 describe("AdminViewAsWorkspace", () => {

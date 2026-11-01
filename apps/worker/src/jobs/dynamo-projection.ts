@@ -4,10 +4,12 @@ import {
   eq,
   linkCounters,
   links,
+  memberships,
   routingRules,
   sql,
   toDomainItem,
   toLinkItem,
+  users,
   LINK_ID_ATTR,
   LINK_ID_GSI,
   type Database,
@@ -498,6 +500,21 @@ export class DynamoProjection implements ProjectionTarget {
           notFoundRedirect: domains.notFoundRedirect,
           domainUpdatedAt: domains.updatedAt,
           clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
+          /* #993 — true when the link's workspace has an active OWNER whose
+             email is not yet verified. Computed as a correlated EXISTS so the
+             projection reflects the owner's LIVE state each time the link is
+             (re)projected: verifying the owner re-projects their links (see
+             AuthService.verifyEmail) and this flips to false, taking the hold
+             off at the edge. A workspace with no unverified owner (the common
+             case, and every pre-#993 account) reads false. */
+          ownerUnverified: sql<boolean>`exists (
+            select 1 from ${memberships} m
+            join ${users} u on u.id = m.user_id
+            where m.workspace_id = ${links.workspaceId}
+              and m.role = 'owner'
+              and m.status = 'active'
+              and u.email_verified_at is null
+          )`,
         })
         .from(links)
         .innerJoin(domains, eq(links.domainId, domains.id))
@@ -553,6 +570,7 @@ export class DynamoProjection implements ProjectionTarget {
       publicPreview: row.link.publicPreview,
       archived: Boolean(row.link.archivedAt),
       disabled: Boolean(row.link.disabledAt),
+      ownerUnverified: Boolean(row.ownerUnverified),
       safeBrowsingStatus: row.link.safeBrowsingStatus,
       utm: row.link.utm,
     };

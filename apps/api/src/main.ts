@@ -14,7 +14,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { SwaggerModule, type OpenAPIObject } from "@nestjs/swagger";
 import { Logger } from "nestjs-pino";
 import cors from "@fastify/cors";
-import { resolveSafeBrowsingApiKey, resolveSecrets } from "@snapurl/database";
+import { resolveBotProtectionSecret, resolveSafeBrowsingApiKey, resolveSecrets } from "@snapurl/database";
 import { AppModule } from "./app.module.js";
 import { ENV, type Env } from "./config/env.js";
 import { resolveCorsOrigins } from "./config/cors-origins.js";
@@ -25,22 +25,27 @@ import { resolveCorsOrigins } from "./config/cors-origins.js";
    this makes no SDK call and touches nothing, so the plain-env path (local dev,
    compose, single-node, Kubernetes) is byte-identical. Nothing in the API reads
    these vars at import time, so running this first is safe. */
-async function hydrateSecretsIntoEnv(): Promise<{ safeBrowsingError?: Error }> {
-  const [{ databaseUrl, jwtAccessSecret, jwtRefreshSecret }, safeBrowsing] = await Promise.all([
+async function hydrateSecretsIntoEnv(): Promise<{ safeBrowsingError?: Error; botProtectionError?: Error }> {
+  const [{ databaseUrl, jwtAccessSecret, jwtRefreshSecret }, safeBrowsing, botProtection] = await Promise.all([
     resolveSecrets(),
     /* Optional, so non-fatal: a failure leaves Safe Browsing off and is
        reported below once the logger exists, instead of failing the boot. */
     resolveSafeBrowsingApiKey(),
+    /* #993 — optional for the same reason: with the provider switch off (the
+       default) there is no secret to resolve, and a failure leaves the secret
+       unset. A sign-up whose provider is on then fails the challenge closed. */
+    resolveBotProtectionSecret(),
   ]);
   if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
   if (jwtAccessSecret !== undefined) process.env.JWT_ACCESS_SECRET = jwtAccessSecret;
   if (jwtRefreshSecret !== undefined) process.env.JWT_REFRESH_SECRET = jwtRefreshSecret;
   if (safeBrowsing.apiKey !== undefined) process.env.GOOGLE_SAFE_BROWSING_API_KEY = safeBrowsing.apiKey;
-  return { safeBrowsingError: safeBrowsing.error };
+  if (botProtection.secret !== undefined) process.env.BOT_PROTECTION_SECRET = botProtection.secret;
+  return { safeBrowsingError: safeBrowsing.error, botProtectionError: botProtection.error };
 }
 
 async function bootstrap() {
-  const { safeBrowsingError } = await hydrateSecretsIntoEnv();
+  const { safeBrowsingError, botProtectionError } = await hydrateSecretsIntoEnv();
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
@@ -135,6 +140,10 @@ async function bootstrap() {
   if (safeBrowsingError) {
     // The message names the secret and the SDK error, never the key itself.
     logger.warn(`Could not read the Safe Browsing API key secret: ${safeBrowsingError.message}`);
+  }
+  if (botProtectionError) {
+    // #993 — names the secret and the SDK error, never the secret value.
+    logger.warn(`Could not read the bot-protection secret: ${botProtectionError.message}`);
   }
   if (!env.GOOGLE_SAFE_BROWSING_API_KEY) {
     logger.warn(

@@ -75,6 +75,17 @@ export const EnvSchema = z.object({
      is not true. Either set this or soften the copy. See docs/DECISIONS.md A10. */
   GOOGLE_SAFE_BROWSING_API_KEY: z.string().optional(),
 
+  /* #993 — the bot-protection (sign-up challenge) secret key. The PROVIDER
+     (turnstile/hcaptcha/none) is chosen at runtime from platform settings; this
+     is the matching server-side secret the siteverify call needs. Resolved from
+     SSM like the rest of config on AWS (via the _SECRET_ARN below) and from .env
+     locally. Kept OUT of platform settings on purpose (#972 keeps secrets out of
+     that store). When the provider is on but this is unset, register fails
+     closed — a sign-up gate that cannot verify must refuse, not wave everyone
+     through. See docs/DECISIONS.md D2. */
+  BOT_PROTECTION_SECRET: z.string().optional(),
+  BOT_PROTECTION_SECRET_ARN: z.string().optional(),
+
   /* #968 — the platform-admin allowlist. Comma-separated emails, resolved from
      SSM like the rest of config on AWS and from .env locally. A user is a
      platform admin ONLY if their VERIFIED email is in this list (compared

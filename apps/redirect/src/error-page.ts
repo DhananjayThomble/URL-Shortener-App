@@ -24,7 +24,14 @@ import { createHash } from "node:crypto";
    on the very next click.
    ============================================================ */
 
-export type ErrorKind = "not_found" | "expired" | "click_limit" | "scheduled" | "root" | "disabled";
+export type ErrorKind =
+  | "not_found"
+  | "expired"
+  | "click_limit"
+  | "scheduled"
+  | "root"
+  | "disabled"
+  | "not_active";
 
 interface Copy {
   status: 404 | 410;
@@ -75,6 +82,18 @@ const COPY: Record<ErrorKind, Copy> = {
     text: "This link has been disabled.",
     title: "This link has been disabled",
     body: "It was turned off by the SnapURL team, usually because it was reported for abuse or broke the acceptable-use policy.",
+  },
+  /* #993 — the link's owner has not verified their email yet, so the link is
+     held. 404 (not 410): like a scheduled link, it has not started rather than
+     being gone, and 404 keeps crawlers from treating it as permanently dead.
+     The copy addresses the OWNER, since they are the one who can lift it, and
+     does not leak that the account merely needs to confirm its email to anyone
+     but them. */
+  not_active: {
+    status: 404,
+    text: "This link isn't active yet.",
+    title: "This link isn't active yet",
+    body: "The person who created it needs to verify their email address before it will start working. If it's yours, check your inbox for the verification link.",
   },
 };
 
