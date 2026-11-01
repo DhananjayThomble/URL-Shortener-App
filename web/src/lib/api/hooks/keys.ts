@@ -6,6 +6,13 @@
 export const qk = {
   me: ["me"] as const,
   adminMe: ["admin-me"] as const,
+  // #974 — admin system health and operations.
+  adminServices: ["admin-services"] as const,
+  adminBacklogs: ["admin-backlogs"] as const,
+  adminAudit: (filter?: string) => ["admin-audit", filter ?? "all"] as const,
+  adminWorkspaceAudit: (workspaceId: string, filter?: string) =>
+    ["admin-workspace-audit", workspaceId, filter ?? "all"] as const,
+  // #973 — platform-wide analytics.
   adminAnalytics: (range: string, compare: boolean) => ["admin-analytics", range, compare] as const,
   workspace: ["workspace"] as const,
   myWorkspaces: ["my-workspaces"] as const,

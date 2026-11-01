@@ -3,6 +3,7 @@ import type { Database } from "@snapurl/database";
 import { READ_DB } from "../database/database.module.js";
 import { AdminController } from "./admin.controller.js";
 import { AdminService } from "./admin.service.js";
+import { AdminHealthService } from "./admin.health.service.js";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { ADMIN_ANALYTICS_READER, PostgresAdminAnalyticsReader } from "./analytics/admin-analytics.reader.js";
@@ -10,15 +11,18 @@ import { EMAIL_STATS_READER, UnavailableEmailStatsReader } from "./analytics/ema
 
 /* #968 — the platform-admin module. AdminService resolves the role from the
    live user row + PLATFORM_ADMIN_EMAILS; AdminGuard enforces it on every route.
-   #973 adds the platform-wide analytics: its reader reads the daily summary
-   tables off the read replica (same token+useFactory seam as analytics.module
-   and database.module), and the SES figures sit behind EmailStatsReader whose
-   default binding reports "not available" until a CloudWatch adapter + IAM
-   grant land. DB and ENV come from the global DatabaseModule/ConfigModule. */
+   #974 adds AdminHealthService (system health, backlogs, audited retries, audit
+   viewers). #973 adds the platform-wide analytics: its reader reads the daily
+   summary tables off the read replica (same token+useFactory seam as
+   analytics.module and database.module), and the SES figures sit behind
+   EmailStatsReader whose default binding reports "not available" until a
+   CloudWatch adapter + IAM grant land. DB and ENV come from the global
+   DatabaseModule/ConfigModule. */
 @Module({
   controllers: [AdminController],
   providers: [
     AdminService,
+    AdminHealthService,
     AdminGuard,
     AdminAnalyticsService,
     {

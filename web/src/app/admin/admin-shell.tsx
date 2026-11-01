@@ -20,6 +20,8 @@ const NAV: NavItem[] = [
   { href: "/admin", label: "Overview" },
   // #973 — platform-wide analytics.
   { href: "/admin/analytics", label: "Analytics" },
+  // #974 — system health and operations.
+  { href: "/admin/health", label: "System health" },
 ];
 
 export function AdminShell({ admin, children }: { admin: AdminMe; children: React.ReactNode }) {
