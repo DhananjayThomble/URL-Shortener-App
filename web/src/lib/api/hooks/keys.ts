@@ -16,6 +16,9 @@ export const qk = {
   // #974 — admin system health and operations.
   adminServices: ["admin-services"] as const,
   adminBacklogs: ["admin-backlogs"] as const,
+  // #972 — runtime platform settings + the public banner read.
+  adminSettings: ["admin-settings"] as const,
+  platformBanner: ["platform-banner"] as const,
   adminAudit: (filter?: string) => ["admin-audit", filter ?? "all"] as const,
   adminWorkspaceAudit: (workspaceId: string, filter?: string) =>
     ["admin-workspace-audit", workspaceId, filter ?? "all"] as const,
