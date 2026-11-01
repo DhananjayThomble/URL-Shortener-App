@@ -163,7 +163,19 @@ export const ACCESS_MATRIX: Row[] = [
   // never an admin). `adminA` here is a WORKSPACE admin role, which is unrelated
   // to platform admin and correctly denied.
   { route: "GET /api/v1/admin/me", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #974 — system health and operations. Same gate as every /admin/* route:
+  // AdminGuard fails closed, so none of the matrix principals (none is a
+  // platform admin) reaches any of these — anon 401, every authed principal
+  // 403, every API key 403.
+  { route: "GET /api/v1/admin/health/services", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/health/backlogs", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/health/backlogs/projection-outbox/retry", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/health/backlogs/webhook-deliveries/retry", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/health/backlogs/job-leases/{name}/release", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/audit", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{workspaceId}/audit", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
 ];
 
-// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me).
-export const EXPECTED_ROUTE_COUNT = 72;
+// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
+// + 7 for #974's system-health routes).
+export const EXPECTED_ROUTE_COUNT = 79;
