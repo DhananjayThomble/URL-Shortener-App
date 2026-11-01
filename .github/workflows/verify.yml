@@ -1071,9 +1071,36 @@ jobs:
         if: matrix.leg == 'aux'
         run: QA_PREBUILT_WEB=1 pnpm --filter snapurl-e2e test:dom-xss
 
+      # On the nightly `schedule`, widen the fuzz budget to FUZZ_RUNS=300 and
+      # key the fuzz seed to the run id (github.run_id) so a nightly failure is
+      # deterministically replayable; print that seed to the step summary before
+      # the suite runs so it survives even if the suite then reds (#893, spec
+      # api-stack-tests design §8). On PR/push neither FUZZ_ var is exported, so
+      # the suite's own defaults apply (FUZZ_RUNS=25, a fixed FUZZ_SEED) — a
+      # cheap, deterministic PR run. The vars are exported ONLY on the schedule
+      # path: the suite reads `Number(process.env.FUZZ_RUNS ?? 25)`, so an empty
+      # string would wrongly resolve to 0 — leaving them unset is what triggers
+      # the `?? 25` default. The fuzz suite also echoes the effective
+      # FUZZ_RUNS/FUZZ_SEED to its own stdout (fuzz.stack.test.ts).
       - name: API stack suite (aux)
         if: matrix.leg == 'aux'
-        run: STACK_API_URL=http://localhost:3001/api/v1 STACK_DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl pnpm --filter @snapurl/api test:stack
+        env:
+          STACK_API_URL: http://localhost:3001/api/v1
+          STACK_DATABASE_URL: postgres://snapurl:snapurl@localhost:5435/snapurl
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ "$GH_EVENT_NAME" = "schedule" ]; then
+            export FUZZ_RUNS=300
+            export FUZZ_SEED="$GH_RUN_ID"
+            {
+              echo "### Real-stack fuzz (nightly)"
+              echo ""
+              echo "- \`FUZZ_RUNS\`: ${FUZZ_RUNS}"
+              echo "- \`FUZZ_SEED\`: ${FUZZ_SEED} (github.run_id — replay a failure with this seed)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          pnpm --filter @snapurl/api test:stack
 
       # Pino error-level gate (R7), copied from the integration job and pointed
       # at the staging compose logs. api/redirect only — a "level":50 line there

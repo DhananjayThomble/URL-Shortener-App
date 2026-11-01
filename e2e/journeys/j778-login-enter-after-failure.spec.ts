@@ -107,6 +107,16 @@ test.describe("Journey 778 — Enter after a failed login", () => {
 
   test("2FA step: Enter re-submits the code after a wrong one @mobile", async ({ page, baseURL }, info) => {
     test.setTimeout(180_000);
+    // The password-step test above runs immediately before this one in the same
+    // worker (workers:1, fullyParallel:false), on the SAME IP, and spends
+    // /auth/login requests from the 5/min-per-IP bucket. Without a stagger the
+    // login this test makes to reach the 2FA challenge lands in that same window
+    // and 429s, so the challenge never renders (#950 — a pre-existing throttle
+    // timing fragility, not a product bug). Age the window out first, exactly
+    // as the password-step test and the j776 sibling already do for the same
+    // reason. 61s > the 60s window; the test budget is 180s.
+    await page.waitForTimeout(61_000);
+
     const email = makeEmail(`j778-2fa-${info.project.name}`);
     const session = await registerUser(email);
     const secret = await enable2fa(session.accessToken);
