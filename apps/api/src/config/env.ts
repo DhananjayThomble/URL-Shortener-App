@@ -75,6 +75,15 @@ export const EnvSchema = z.object({
      is not true. Either set this or soften the copy. See docs/DECISIONS.md A10. */
   GOOGLE_SAFE_BROWSING_API_KEY: z.string().optional(),
 
+  /* #968 — the platform-admin allowlist. Comma-separated emails, resolved from
+     SSM like the rest of config on AWS and from .env locally. A user is a
+     platform admin ONLY if their VERIFIED email is in this list (compared
+     case-insensitively) AND they have 2FA enabled — the guard checks all three
+     against the live user row, so a stale token or a config typo fails closed.
+     Empty/absent means NO platform admins, which is the safe default: the role
+     cannot be granted from inside the app, only by an operator editing this. */
+  PLATFORM_ADMIN_EMAILS: z.string().optional(),
+
   /* OAuth sign-in. Each provider is enabled by the presence of its client id
      and switched off by its absence, so a deployment that has not set one up
      simply does not offer it. The client id is public — it ships in the page
@@ -141,6 +150,25 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error(`Invalid environment configuration:\n${detail}\n\nCopy .env.example to .env and fill it in.`);
   }
   return parsed.data;
+}
+
+/**
+ * The platform-admin allowlist as a normalised set of lower-cased emails.
+ *
+ * Parses PLATFORM_ADMIN_EMAILS: split on commas, trim, drop blanks, lower-case.
+ * An absent or all-whitespace value yields an EMPTY set — i.e. no platform
+ * admins — which is the deliberate default. Lower-casing here means the guard
+ * compares `has(email.toLowerCase())` and never has to think about case again,
+ * matching how `users.email` is uniquely indexed on `lower(email)`.
+ */
+export function platformAdminEmails(value: string | undefined): Set<string> {
+  if (!value) return new Set();
+  return new Set(
+    value
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.length > 0),
+  );
 }
 
 export const ENV = Symbol("ENV");
