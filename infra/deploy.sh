@@ -48,6 +48,10 @@ ctx=(-c "account=$CDK_DEFAULT_ACCOUNT" -c "region=$CDK_DEFAULT_REGION" -c "natSt
 [ -n "${BUDGET_EMAIL:-}" ]           && ctx+=(-c "budgetEmail=$BUDGET_EMAIL")
 [ -n "${GOOGLE_OAUTH_CLIENT_ID:-}" ] && ctx+=(-c "googleOAuthClientId=$GOOGLE_OAUTH_CLIENT_ID")
 [ -n "${SAFE_BROWSING_SECRET_NAME:-}" ] && ctx+=(-c "safeBrowsingSecretName=$SAFE_BROWSING_SECRET_NAME")
+# #968 — platform-admin allowlist. Source of truth is the SSM parameter
+# <prefix>/platform-admin-emails; CI reads it into PLATFORM_ADMIN_EMAILS. Unset
+# means no admins, so like the flags above it is only appended when present.
+[ -n "${PLATFORM_ADMIN_EMAILS:-}" ] && ctx+=(-c "platformAdminEmails=$PLATFORM_ADMIN_EMAILS")
 
 echo "deploy.sh: cdk deploy ${ctx[*]}"
 npx cdk deploy --require-approval never "${ctx[@]}" "$@"
