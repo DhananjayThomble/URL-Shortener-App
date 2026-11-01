@@ -16,7 +16,11 @@ interface NavItem {
 }
 
 /** The admin nav. Kept as data so later epic parts add a line, not a layout. */
-const NAV: NavItem[] = [{ href: "/admin", label: "Overview" }];
+const NAV: NavItem[] = [
+  { href: "/admin", label: "Overview" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/workspaces", label: "Workspaces" },
+];
 
 export function AdminShell({ admin, children }: { admin: AdminMe; children: React.ReactNode }) {
   const pathname = usePathname();
