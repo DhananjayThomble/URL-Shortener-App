@@ -6,6 +6,8 @@
 -- reviewed reverse: the issue requires the migration be reversible, and this
 -- is what "reversible" means for an additive change — dropping the three tables
 -- and their indexes/constraints leaves the schema byte-identical to before 0025.
+-- (The forward-compat columns trial_ends_at / offer_id / plan_version_id live
+-- inside the subscriptions table, so dropping the table removes them too.)
 --
 -- To roll back by hand: delete the 0025 row from __drizzle_migrations (so the
 -- migrator does not think it is still applied) and run the statements below.

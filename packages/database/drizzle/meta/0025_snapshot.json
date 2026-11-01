@@ -1,5 +1,5 @@
 {
-  "id": "e9a2a606-20c4-46a2-8659-340ff9559b5e",
+  "id": "acb10d6a-59b9-462b-b4e6-687bf80e4709",
   "prevId": "5a8614a4-6eac-41fb-ac3d-4caaa2bf678d",
   "version": "7",
   "dialect": "postgresql",
@@ -4004,6 +4004,24 @@
         "cancel_at_period_end": {
           "name": "cancel_at_period_end",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "trial_ends_at": {
+          "name": "trial_ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "offer_id": {
+          "name": "offer_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "plan_version_id": {
+          "name": "plan_version_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },

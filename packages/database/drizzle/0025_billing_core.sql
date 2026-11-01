@@ -32,6 +32,9 @@ CREATE TABLE "subscriptions" (
 	"status" varchar(20) NOT NULL,
 	"current_period_end" timestamp with time zone,
 	"cancel_at_period_end" timestamp with time zone,
+	"trial_ends_at" timestamp with time zone,
+	"offer_id" varchar(255),
+	"plan_version_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

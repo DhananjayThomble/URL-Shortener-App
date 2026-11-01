@@ -67,6 +67,25 @@ export const subscriptions = pgTable(
      *  currentPeriodEnd, then lapses to free. */
     cancelAtPeriodEnd: timestamp("cancel_at_period_end", { withTimezone: true }),
 
+    /* ── Forward-compat columns for the later SaaS plan-management work. Added
+         now, nullable and unused in #986, so #992 / #970 extend behaviour
+         without a schema migration. #986 writes none of them. ── */
+    /** #992 — end of a free trial, or null when there is no trial. A trialing
+     *  subscription is entitled until this instant even before the first
+     *  charge. Unused in #986 (no trials here). */
+    trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+    /** #992 — an applied offer/coupon/discount id at the provider, or null when
+     *  the subscription is at list price. A plain id, not a FK: the offer lives
+     *  at the provider (or in a later offers table), so this must not cascade.
+     *  Unused in #986 (no coupons here). */
+    offerId: varchar("offer_id", { length: 255 }),
+    /** #970 — which versioned plan (feature matrix) this subscription is on.
+     *  Null for now: plans are referenced by key in #986 and versioning does
+     *  not exist yet. A plain uuid, not a FK, until #970 creates the table it
+     *  would reference — so adding that table later is additive, not a change
+     *  to this column. */
+    planVersionId: uuid("plan_version_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

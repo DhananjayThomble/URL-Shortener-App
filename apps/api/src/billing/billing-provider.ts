@@ -51,6 +51,35 @@ export interface CreateCheckoutParams {
   workspaceId: string;
   /** The billing owner's email, for the provider's customer record. */
   customerEmail: string;
+  /** #992 (forward-compat, unused in #986) — an optional offer/coupon id to
+   *  apply to the new subscription. Ignored by the #986 Razorpay implementation. */
+  offerId?: string;
+}
+
+/**
+ * #992 (forward-compat, unused in #986) — WHEN a plan change takes effect:
+ * immediately (prorated/charged now) or at the end of the current billing
+ * cycle. An admin upgrade/downgrade in #992 chooses one; #986 never issues an
+ * update, so this type is defined but not acted on here.
+ */
+export type ApplyTiming = "now" | "at_cycle_end";
+
+/**
+ * #992 (forward-compat, unused in #986) — the shape of a subscription change
+ * (upgrade/downgrade/retarget plan, apply or clear an offer). Defined so the
+ * provider method below has a stable signature the later work implements; #986
+ * ships no caller.
+ */
+export interface UpdateSubscriptionParams {
+  /** The provider subscription id to change. */
+  providerSubscriptionId: string;
+  /** The plan key to move to. */
+  planKey: PaidPlanKey;
+  interval: BillingInterval;
+  /** Immediately (prorated) or at the end of the current cycle. */
+  when: ApplyTiming;
+  /** An offer/coupon id to apply, or null to clear any applied offer. */
+  offerId?: string | null;
 }
 
 export interface BillingProvider {
@@ -69,6 +98,14 @@ export interface BillingProvider {
   /** Cancel a subscription at the provider. `atPeriodEnd` keeps the plan live
    *  until the period ends; false cancels immediately. */
   cancel(providerSubscriptionId: string, atPeriodEnd: boolean): Promise<void>;
+
+  /**
+   * #992 (forward-compat) — change a subscription's plan/offer, now or at cycle
+   * end. OPTIONAL on the interface so #986 need not implement it: the admin
+   * upgrade/downgrade + proration work adds the real behaviour. A provider that
+   * does not implement it simply omits the method.
+   */
+  updateSubscription?(params: UpdateSubscriptionParams): Promise<void>;
 
   /** Refund a payment at the provider. */
   refund(providerPaymentId: string): Promise<void>;
