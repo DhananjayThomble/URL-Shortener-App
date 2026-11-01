@@ -17,12 +17,14 @@
     "playwright.a11y.config.ts",
     "playwright.mocked-api.config.ts",
     "playwright.visual.config.ts",
+    "playwright.webkit.config.ts",
     "visual/**/*.ts",
     "mocked-api/**/*.ts",
     "tests/**/*.ts",
     "support/**/*.ts",
     "journeys/**/*.ts",
     "a11y/**/*.ts",
-    "adversarial/**/*.ts"
+    "adversarial/**/*.ts",
+    "webkit/**/*.ts"
   ]
 }

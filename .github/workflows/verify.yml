@@ -925,6 +925,37 @@ jobs:
       - name: Run E2E (real API client, mocked responses)
         run: pnpm --filter snapurl-e2e test:e2e:mocked-api
 
+      # WebKit lane (#886, design §2 "WebKit"). The merged #810 suite
+      # (e2e/webkit/, playwright.webkit.config.ts) is a real-client /
+      # browser-mocked-API lane on WebKit (iPhone 15) that reproduces the
+      # dark-theme <select> bug Chromium cannot see. It runs HERE, in the
+      # already-required e2e job, so WebKit becomes a required gate immediately
+      # (R8: WebKit joins the existing required job, unlike the report-only
+      # real-stack job). Same cache-hit split as Chromium above: on a cache MISS
+      # install the browser with its OS deps; on a HIT the binary is present but
+      # its deps may not be, so install deps only. The engine is WebKit, never
+      # Chromium — a missing/again-substituted engine would fail `playwright
+      # install webkit`, not silently fall back. Port 3100 (WEBKIT_PORT default)
+      # is free here; the config builds + starts its own production web server.
+      - name: Install WebKit
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter snapurl-e2e exec playwright install --with-deps webkit
+
+      # On a cache HIT the cached ms-playwright dir may predate this WebKit lane
+      # (the cache key is the Playwright version, which a WebKit-only addition
+      # does not change), so the WebKit BROWSER can be absent even on a hit.
+      # `playwright install webkit` is idempotent — a no-op when the binary is
+      # already cached — so run it unconditionally on a hit, then its OS deps.
+      # It never substitutes Chromium: it installs the WebKit engine or fails.
+      - name: Install WebKit (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: |
+          pnpm --filter snapurl-e2e exec playwright install webkit
+          pnpm --filter snapurl-e2e exec playwright install-deps webkit
+
+      - name: Run WebKit (real API client, mocked responses)
+        run: pnpm --filter snapurl-e2e test:webkit
+
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -933,8 +964,149 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/playwright-report-mocked-api/
+            e2e/playwright-report-webkit/
           retention-days: 7
           if-no-files-found: ignore
+
+  # Real-stack lane (#886, spec .kiro/specs/real-stack-ci/ design §2). Runs the
+  # journeys, a11y and dom-xss suites against a freshly built staging stack
+  # (THROTTLE_LIMIT=100000 pnpm staging:up): api :3001, redirect :3002, postgres
+  # :5435. Each matrix leg is its own runner with its own stack and its own IP,
+  # so the route-level 5/min throttle buckets never collide across legs.
+  #
+  # REPORT-ONLY (R8 phased gating): this job is deliberately NOT in ci-gate's
+  # `needs`. It is promoted to required only after 5 consecutive green `main`
+  # runs (#893). A red here is a visible finding on the PR, not a merge block —
+  # yet. WebKit, by contrast, is required immediately through the e2e job above.
+  #
+  # Legs: j1..j3 each run a journeys shard (K/3, N from #883's A1 timing table);
+  # aux runs a11y, then dom-xss, then the api HTTP stack suite (design C7).
+  # retries: 0 stays in every config — a real-stack failure is a finding, not
+  # noise to retry away (R4).
+  real-stack:
+    name: Real-stack (${{ matrix.leg }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [j1, j2, j3, aux]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Bring up the full staging stack (api/redirect/worker/postgres) from built
+      # images; --build --wait blocks on the api/redirect healthchecks and the
+      # migrate step applies the schema. THROTTLE_LIMIT lifts only the GLOBAL
+      # bucket; the route-level 5/min buckets stay, which the suites back off on.
+      - name: Start staging stack
+        run: THROTTLE_LIMIT=100000 pnpm staging:up
+
+      # The web app the suites drive is built ONCE here (QA_PREBUILT_WEB=1 then
+      # tells each config's webServer to `next start` only, not rebuild). Same
+      # three NEXT_PUBLIC_* / build-guard env vars the qa-lab lane uses, so the
+      # baked bundle points at the staging API and not a localhost guard-reject.
+      - name: Build packages
+        run: pnpm build:packages
+
+      - name: Build web (fixtures off, against the staging API)
+        run: pnpm --filter snapurl-web exec next build
+        env:
+          NEXT_PUBLIC_USE_FIXTURES: "false"
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+          SNAPURL_ALLOW_UNCONFIGURED_BUILD: "true"
+
+      # Version-keyed Playwright cache, copied from the e2e job: a version bump
+      # busts the cache, everything else reuses it.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter snapurl-e2e exec playwright install --with-deps chromium
+
+      - name: Install Chromium system deps
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter snapurl-e2e exec playwright install-deps chromium
+
+      # jK: one journeys shard (K of 3). QA_PREBUILT_WEB=1 → the config's
+      # webServer runs `next start` only against the bundle built above.
+      - name: Journeys (shard ${{ matrix.leg }})
+        if: matrix.leg != 'aux'
+        run: |
+          shard="${{ matrix.leg }}"       # j1 | j2 | j3
+          k="${shard#j}"
+          QA_PREBUILT_WEB=1 pnpm --filter snapurl-e2e test:journeys -- --shard="${k}/3"
+
+      # aux: the a11y audit, then the dom-xss adversarial suite, then the api
+      # HTTP stack suite (design C7) against the same running stack.
+      - name: a11y (aux)
+        if: matrix.leg == 'aux'
+        run: QA_PREBUILT_WEB=1 pnpm --filter snapurl-e2e test:a11y
+
+      - name: dom-xss (aux)
+        if: matrix.leg == 'aux'
+        run: QA_PREBUILT_WEB=1 pnpm --filter snapurl-e2e test:dom-xss
+
+      - name: API stack suite (aux)
+        if: matrix.leg == 'aux'
+        run: STACK_API_URL=http://localhost:3001/api/v1 STACK_DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl pnpm --filter @snapurl/api test:stack
+
+      # Pino error-level gate (R7), copied from the integration job and pointed
+      # at the staging compose logs. api/redirect only — a "level":50 line there
+      # means a silently-broken adapter served a wrong-but-2xx response the suite
+      # assertions might miss. The worker is excluded (benign error-level lines).
+      - name: Fail on staging container errors
+        run: |
+          found=0
+          for svc in api redirect; do
+            logs="$(docker compose -f docker-compose.staging.yml logs --no-color "$svc" 2>&1)"
+            if echo "$logs" | grep -F '"level":50'; then
+              echo "::error::staging $svc logged a pino error-level line"
+              found=1
+            fi
+          done
+          if [ "$found" -ne 0 ]; then exit 1; fi
+
+      - name: Staging logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.staging.yml logs --no-color
+
+      - name: Upload real-stack artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: real-stack-${{ matrix.leg }}
+          path: .qa-runs/**/artifacts
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Tear down staging stack
+        if: always()
+        run: pnpm staging:down
 
   # Visual-regression lane (issues #869 harness, #870 baselines, #871 gate).
   # The FIRST container: job in the repo. Runs the suite inside the pinned
