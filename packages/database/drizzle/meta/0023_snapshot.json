@@ -1,5 +1,5 @@
 {
-  "id": "bc9d4149-03b5-4487-8114-b851e293218a",
+  "id": "3bbfe459-fb1e-4c00-89cd-1f00dd56e117",
   "prevId": "de2c077b-b9d9-413e-9d69-284270a0e331",
   "version": "7",
   "dialect": "postgresql",
@@ -703,6 +703,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "suspended_at": {
+          "name": "suspended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1347,12 +1353,6 @@
         },
         "safe_browsing_checked_at": {
           "name": "safe_browsing_checked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "disabled_at": {
-          "name": "disabled_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -3559,102 +3559,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.blocked_domains": {
-      "name": "blocked_domains",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "uuidv7()"
-        },
-        "domain": {
-          "name": "domain",
-          "type": "varchar(253)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "added_by": {
-          "name": "added_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "added_by_label": {
-          "name": "added_by_label",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "blocked_domains_domain_key": {
-          "name": "blocked_domains_domain_key",
-          "columns": [
-            {
-              "expression": "lower(\"domain\")",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "blocked_domains_created_idx": {
-          "name": "blocked_domains_created_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "blocked_domains_added_by_users_id_fk": {
-          "name": "blocked_domains_added_by_users_id_fk",
-          "tableFrom": "blocked_domains",
-          "tableTo": "users",
-          "columnsFrom": [
-            "added_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
