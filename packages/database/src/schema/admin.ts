@@ -60,3 +60,47 @@ export const adminAuditLog = pgTable(
     index("admin_audit_log_actor_time_idx").on(t.actorId, t.at.desc()),
   ],
 );
+
+/* ============================================================
+   #972 — the platform-settings store (admin panel 5/7, epic #975).
+
+   Settings an operator can change from the admin panel WITHOUT a redeploy:
+   whether signups are open, the runtime rate-limit values, reserved slugs,
+   feature switches and the site-wide banner. Deliberately NOT here: secrets,
+   database and JWT config, and AWS infrastructure — those stay in
+   SSM/Secrets Manager (issue #972, "out of scope on purpose").
+
+   One row per setting KEY rather than a single wide row: every setting then
+   carries its own "who changed it last, and when", which is exactly what the
+   admin UI shows per setting, and a later part of the epic can add a new key
+   with no migration. A key with no row means "never set" — the API falls back
+   to the compiled-in default (and, for the rate limits, to the env values), so
+   a fresh deploy behaves identically to before this table existed.
+
+   The VALUE is jsonb, not a typed column, because the settings are a mix of
+   shapes (an enum string, two integers, a string array, a map of booleans, a
+   nullable string). The API validates every value against a per-key zod schema
+   on write, so the jsonb only ever holds a shape the contract already blessed —
+   the column is a container, the schema is the type.
+
+   NOT append-only: a setting's current value lives in its row and is updated in
+   place. The history of WHO changed WHAT to WHAT is the admin_audit_log above —
+   every settings write records a before/after row there — so the store itself
+   only needs the current value plus the last-writer stamp the UI reads.
+   ============================================================ */
+
+export const platformSettings = pgTable("platform_settings", {
+  /** The setting key, e.g. "signup_mode" or "rate_limit". A short stable
+   *  identifier the API maps to its per-key schema and default. */
+  key: varchar("key", { length: 64 }).primaryKey(),
+  /** The current value, validated against the key's schema before it is
+   *  written. jsonb so one table holds every setting's shape. */
+  value: jsonb("value").notNull(),
+  /** The platform admin who last wrote this setting. SET NULL on user delete so
+   *  the setting survives the admin who set it; the label preserves who it was. */
+  updatedById: uuid("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  /** That admin's email at write time, retained even if updatedById is nulled,
+   *  so the UI's "last changed by" is never anonymous. */
+  updatedByLabel: varchar("updated_by_label", { length: 255 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

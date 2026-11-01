@@ -169,6 +169,13 @@
       "when": 1793556414246,
       "tag": "0023_user_suspended_at",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793560000000,
+      "tag": "0024_platform_settings",
+      "breakpoints": true
     }
   ]
 }
