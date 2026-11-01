@@ -18,6 +18,7 @@ interface NavItem {
 /** The admin nav. Kept as data so later epic parts add a line, not a layout. */
 const NAV: NavItem[] = [
   { href: "/admin", label: "Overview" },
+  { href: "/admin/moderation", label: "Moderation" },
   { href: "/admin/health", label: "System health" },
 ];
 

@@ -13,6 +13,9 @@ export const BLOCKED_REASON_TERMS = {
   click_limit: "over limit",
   archived: "archived",
   flagged: "unsafe",
+  // #971 — a platform admin can disable a link for abuse; the redirect records
+  // the blocked visit like any other gate, so the tile counts it too.
+  disabled: "disabled",
 } as const;
 
 export const BLOCKED_VISITS_LABEL = "Blocked visits";
