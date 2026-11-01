@@ -194,7 +194,7 @@ describeStack("access-matrix (M2–M5): every route × principal matches the app
       ).toEqual({ missingRow: [], phantomRow: [], dupes: [] });
     });
 
-    it("the oracle has the 71 rows the design records", () => {
+    it("the oracle has the 72 rows the design records (71 at #891 + GET /admin/me at #968)", () => {
       expect(ACCESS_MATRIX.length).toBe(EXPECTED_ROUTE_COUNT);
     });
   });

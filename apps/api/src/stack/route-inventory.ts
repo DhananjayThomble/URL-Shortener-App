@@ -16,6 +16,7 @@ import { RequestMethod } from "@nestjs/common";
 import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { IS_PUBLIC, REQUIRED_ROLES, REQUIRED_SCOPE } from "../auth/auth.guard.js";
 
+import { AdminController } from "../admin/admin.controller.js";
 import { AnalyticsController } from "../analytics/analytics.controller.js";
 import { AuthController } from "../auth/auth.controller.js";
 import { BioPagesController } from "../bio-pages/bio-pages.controller.js";
@@ -49,6 +50,7 @@ export interface RouteInfo {
  *  to the parity guard, which is why the guard also checks the registry→inventory
  *  direction (a registered route with no controller fails too). */
 const CONTROLLERS = [
+  AdminController,
   AnalyticsController,
   AuthController,
   BioPagesController,

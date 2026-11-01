@@ -22,7 +22,7 @@
 # CloudFormation at deploy time (see infra/lib/config.ts for why).
 set -euo pipefail
 
-PREFIX="${1:?usage: put-parameters.sh <prefix> <web-origin> <redirect-origin> [mail-transport] [mail-from]}"
+PREFIX="${1:?usage: put-parameters.sh <prefix> <web-origin> <redirect-origin> [mail-transport] [mail-from] [platform-admin-emails]}"
 WEB_ORIGIN="${2:?missing web origin, e.g. https://snapurl.vercel.app}"
 REDIRECT_ORIGIN="${3:?missing redirect origin, e.g. https://snap.to}"
 # Both optional. `ses` only actually delivers once the sending identity is
@@ -34,6 +34,13 @@ REDIRECT_ORIGIN="${3:?missing redirect origin, e.g. https://snap.to}"
 # every other feature that needs a call out.
 MAIL_TRANSPORT="${4:-outbox}"
 MAIL_FROM="${5:-SnapURL <no-reply@snapurl.local>}"
+# #968 — optional platform-admin allowlist: comma-separated emails that may
+# reach /admin (still only admin if verified + 2FA on). Default empty = NO
+# platform admins. SSM String parameters cannot hold an empty string, so when
+# this is empty the parameter is simply not written — an absent parameter and
+# an empty list mean the same thing to the app (apps/api/src/config/env.ts).
+# The deploy reads this value and passes it as `-c platformAdminEmails=...`.
+PLATFORM_ADMIN_EMAILS="${6:-}"
 PREFIX="${PREFIX%/}"
 
 put() {
@@ -51,6 +58,11 @@ put mail-from            "$MAIL_FROM"
 put mail-transport       "$MAIL_TRANSPORT"
 put throttle-limit       "120"
 put throttle-ttl-seconds "60"
+# Only written when a non-empty allowlist was given (SSM rejects empty Strings,
+# and an absent parameter already means "no admins").
+if [[ -n "$PLATFORM_ADMIN_EMAILS" ]]; then
+  put platform-admin-emails "$PLATFORM_ADMIN_EMAILS"
+fi
 
 echo
 echo "Done. Secrets are not set here: the database password and the two JWT"

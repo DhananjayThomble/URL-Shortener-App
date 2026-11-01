@@ -13,3 +13,4 @@ export * from "./public.js";
 export * from "./form.js";
 export * from "./report.js";
 export * from "./friendly-errors.js";
+export * from "./admin.js";

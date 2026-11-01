@@ -5,6 +5,7 @@
    create or a delete. */
 export const qk = {
   me: ["me"] as const,
+  adminMe: ["admin-me"] as const,
   workspace: ["workspace"] as const,
   myWorkspaces: ["my-workspaces"] as const,
   links: (filter?: string) => ["links", filter ?? "all"] as const,

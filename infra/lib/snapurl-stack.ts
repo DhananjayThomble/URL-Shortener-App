@@ -182,6 +182,23 @@ export interface SnapUrlStackProps extends StackProps {
    */
   googleOAuthClientId?: string;
   /**
+   * #968 — the platform-admin allowlist: a comma-separated list of emails that
+   * may reach the `/admin` area (a user is only actually an admin if their
+   * VERIFIED email is in the list AND they have 2FA on — see
+   * `apps/api/src/admin/admin.service.ts`). Lands on the API Lambda ONLY, as
+   * `PLATFORM_ADMIN_EMAILS`; the redirect and worker never serve `/admin`.
+   *
+   * Optional and spread-only-when-set, like {@link googleOAuthClientId}: unset
+   * means an empty allowlist, i.e. NO platform admins, which is the safe
+   * default. The operator's source of truth is the SSM parameter
+   * `<prefix>/platform-admin-emails` (written by `infra/bin/put-parameters.sh`,
+   * optional there too); the deploy passes its value through here with
+   * `-c platformAdminEmails=<a@x.com,b@y.com>`. Not read via `config.get()`,
+   * which has no default and fails the deploy on a missing parameter — wrong
+   * for config that is meant to be optional.
+   */
+  platformAdminEmails?: string;
+  /**
    * NAME of an operator-created Secrets Manager secret holding the Google
    * Safe Browsing API key, e.g. `snapurl/prod/google-safe-browsing-api-key`.
    * Optional and opt-in, like {@link googleOAuthClientId}: unset means Safe
@@ -893,6 +910,12 @@ export class SnapUrlStack extends Stack {
            "off" rather than "misconfigured". Only the API verifies OAuth ID
            tokens, so redirectFn and workerFn never get this key. */
         ...(props.googleOAuthClientId ? { GOOGLE_OAUTH_CLIENT_ID: props.googleOAuthClientId } : {}),
+        /* #968 — the platform-admin allowlist, API-only. Spread-only-when-set
+           like the keys above: PLATFORM_ADMIN_EMAILS must be genuinely absent
+           (not empty) for env.ts to read it as "no admins" rather than parse an
+           empty string. redirectFn and workerFn never serve /admin, so they
+           never get this key. */
+        ...(props.platformAdminEmails ? { PLATFORM_ADMIN_EMAILS: props.platformAdminEmails } : {}),
         /* Same spread-only-when-set rule. A name, not an ARN: GetSecretValue
            accepts either, and an operator-created secret's full ARN carries a
            random suffix the stack cannot know. Resolved at cold start by

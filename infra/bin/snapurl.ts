@@ -113,6 +113,12 @@ new SnapUrlStack(app, "SnapUrl", {
      Google Cloud Console client's id exactly, and matching
      NEXT_PUBLIC_GOOGLE_CLIENT_ID on the frontend. */
   googleOAuthClientId: app.node.tryGetContext("googleOAuthClientId"),
+  /* #968 — optional platform-admin allowlist (comma-separated emails), set on
+     the API Lambda as PLATFORM_ADMIN_EMAILS. Unset means no platform admins.
+     The operator's source of truth is the SSM parameter
+     <prefix>/platform-admin-emails (put-parameters.sh); the deploy passes it
+     through with `-c platformAdminEmails=<a@x.com,b@y.com>`. */
+  platformAdminEmails: app.node.tryGetContext("platformAdminEmails"),
   /* Optional: the NAME of a Secrets Manager secret holding the Google Safe
      Browsing API key, created by the operator beforehand. Unset leaves Safe
      Browsing off. Set with `-c safeBrowsingSecretName=<name>`. */
