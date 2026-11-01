@@ -342,7 +342,16 @@ async function rawRequest<T>(path: string, schema: z.ZodType<T>, opts: RequestOp
   // see. Refuse, and let the guard move the screen to the real workspace.
   // /auth/* is user-scoped (sign-out, 2FA, accepting an invitation), not
   // workspace-scoped, so it is exempt.
-  if ((opts.method ?? "GET") !== "GET" && !opts.anonymous && !path.startsWith("/auth/") && checkWorkspaceCoherence()) {
+  // /admin/* (#969) is PLATFORM-scoped, not workspace-scoped — an admin acting
+  // on another workspace's user is the whole point — so it is exempt from the
+  // coherence guard the same way /auth/* is.
+  if (
+    (opts.method ?? "GET") !== "GET" &&
+    !opts.anonymous &&
+    !path.startsWith("/auth/") &&
+    !path.startsWith("/admin/") &&
+    checkWorkspaceCoherence()
+  ) {
     throw new ApiError(
       409,
       "This tab was showing a different workspace, so nothing was saved. It has been reloaded — check and try again.",

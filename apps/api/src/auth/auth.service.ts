@@ -68,6 +68,11 @@ function inviteError(
 const DUMMY_HASH =
   "$argon2id$v=19$m=19456,t=2,p=1$c25hcHVybC1kdW1teS1zYWx0$4Xk1Yh0lPQKRZ0T0lLQKzXKXCVLuQ0dCMuoJXqLYQmY";
 
+/** #969 — shown to a suspended user who otherwise cleared authentication. Kept
+ *  generic (no reason, no contact) on purpose; a suspension is a moderation
+ *  action and the message should not invite a dialogue with the account. */
+const ACCOUNT_SUSPENDED_MESSAGE = "This account has been suspended.";
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -283,6 +288,7 @@ export class AuthService {
 
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user) throw new UnauthorizedException();
+    this.assertNotSuspended(user);
 
     if (user.totpEnabledAt && user.totpSecret) {
       return { challenge: "totp" as const, challengeToken: await this.tokens.signChallengeToken(user.id) };
@@ -322,6 +328,12 @@ export class AuthService {
       throw new UnauthorizedException("That email and password don't match.");
     }
 
+    /* #969 — the credentials are right; refuse here if the account is
+       suspended. Placed AFTER the generic rejection so a wrong password still
+       gets the same answer as an unknown address (no enumeration), and only a
+       correct sign-in learns the account is barred. */
+    this.assertNotSuspended(user);
+
     /* G6 — with 2FA on, login returns a challenge rather than a session.
        Without it, the response shape is exactly what it was before, so the
        existing frontend keeps working untouched. */
@@ -337,6 +349,9 @@ export class AuthService {
     const userId = await this.tokens.verifyChallengeToken(challengeToken);
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user?.totpSecret) throw new UnauthorizedException("Two-factor authentication isn't set up.");
+    // #969 — a suspension between the password step and the 2FA step still bars
+    // the sign-in: check here too, not only on the first factor.
+    this.assertNotSuspended(user);
 
     let accepted = this.totp.verify(code, user.totpSecret);
 
@@ -428,6 +443,10 @@ export class AuthService {
     const { userId, refreshToken: next } = await this.tokens.rotate(refreshToken, userAgent);
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user) throw new UnauthorizedException();
+    // #969 — refuse to renew a suspended account's session. Suspension already
+    // revokes the refresh families (so rotate above usually throws first), but
+    // this holds even for a token minted in a race before the revocation lands.
+    this.assertNotSuspended(user);
 
     /* Rebuild claims from current data so a role change lands on next refresh.
        The workspace hint (#668) keeps a multi-workspace user where they are;
@@ -541,6 +560,17 @@ export class AuthService {
     } catch {
       return null;
     }
+  }
+
+  /* #969 — a suspended account cannot start or continue a session.
+     Called on every sign-in entry point (password, OAuth, the 2FA step) and on
+     refresh, so a session that was live when the account was suspended stops
+     the moment its short-lived access token expires and the client tries to
+     refresh — suspension also revokes the refresh-token families outright, so
+     the refresh fails even before this check. A ForbiddenException (not 401)
+     says the credentials were right but the account is barred. */
+  private assertNotSuspended(user: { suspendedAt: Date | null }): void {
+    if (user.suspendedAt) throw new ForbiddenException(ACCOUNT_SUSPENDED_MESSAGE);
   }
 
   /* The workspace a fresh sign-in lands in.

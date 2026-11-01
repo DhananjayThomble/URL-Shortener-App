@@ -6,6 +6,13 @@
 export const qk = {
   me: ["me"] as const,
   adminMe: ["admin-me"] as const,
+  /* #969 — admin users & workspaces. List keys are serialised prefixes so a
+     mutation invalidating ["admin-users"] clears every filtered variant. */
+  adminUsers: (q?: string) => ["admin-users", q ?? "all"] as const,
+  adminUser: (id: string) => ["admin-user", id] as const,
+  adminWorkspaces: (q?: string) => ["admin-workspaces", q ?? "all"] as const,
+  adminWorkspace: (id: string) => ["admin-workspace", id] as const,
+  adminWorkspaceViewAs: (id: string) => ["admin-workspace", id, "view-as"] as const,
   // #974 — admin system health and operations.
   adminServices: ["admin-services"] as const,
   adminBacklogs: ["admin-backlogs"] as const,

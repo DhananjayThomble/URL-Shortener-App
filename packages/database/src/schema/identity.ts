@@ -48,6 +48,19 @@ export const users = pgTable(
     totpEnabledAt: timestamp("totp_enabled_at", { withTimezone: true }),
 
     lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+
+    /**
+     * #969 — when a platform admin suspended this account, or null for an
+     * active account. A suspended user cannot sign in (the password, OAuth and
+     * 2FA paths all refuse) and cannot refresh an existing session, so their
+     * live sessions stop the moment their short-lived access token expires;
+     * suspending also revokes every refresh-token family outright. Their links
+     * keep redirecting — disabling those is the moderation issue's job, not
+     * this one. Set and cleared only through the admin API, which records both
+     * in the platform audit log.
+     */
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

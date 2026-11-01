@@ -162,6 +162,13 @@
       "when": 1793549941324,
       "tag": "0022_admin_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793556414246,
+      "tag": "0023_user_suspended_at",
+      "breakpoints": true
     }
   ]
 }
