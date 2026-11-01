@@ -10,6 +10,7 @@ import { AuthController } from "./auth.controller.js";
 import type { AuthService } from "./auth.service.js";
 import { ProxyAwareThrottlerGuard } from "../common/proxy-aware-throttler.guard.js";
 import { CacheStoreThrottlerStorage } from "../common/cache-throttler-storage.js";
+import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 import { ENV } from "../config/env.js";
 
 /* ============================================================
@@ -62,6 +63,16 @@ const authStub = {
 /* Only the field ProxyAwareThrottlerGuard reads. */
 const envStub = { TRUSTED_PROXY_HOPS: 1 } as never;
 
+/* #972 — the guard now also takes PlatformSettingsService (it reads the runtime
+   global rate limit). This test's two routes both carry a route-level @Throttle
+   (5/min), so the guard takes the decorator path and never calls getValues — but
+   Nest still constructs the guard, so the provider must resolve. A stub whose
+   getValues returns the same generous global limit as the module default keeps
+   the harness's behaviour identical regardless. */
+const settingsStub = {
+  getValues: async () => ({ rateLimit: { limit: 100, ttlSeconds: 60 } }),
+} as unknown as PlatformSettingsService;
+
 /* The vitest transform (esbuild) does not emit `design:paramtypes`, so Nest
    cannot resolve AuthController's constructor dependency by reflection the way
    `nest build` (tsc, emitDecoratorMetadata) does in production. We sidestep
@@ -103,6 +114,7 @@ const LOGIN_BODY = { email: "someone@example.com", password: "a-long-enough-pass
   controllers: [TestAuthController],
   providers: [
     { provide: ENV, useValue: envStub },
+    { provide: PlatformSettingsService, useValue: settingsStub },
     { provide: APP_GUARD, useClass: ProxyAwareThrottlerGuard },
   ],
 })

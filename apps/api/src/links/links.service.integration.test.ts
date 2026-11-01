@@ -3,6 +3,7 @@ import { NotFoundException } from "@nestjs/common";
 import { createDatabase, domains, eq, linkCounters, links, workspaces, type Database } from "@snapurl/database";
 import { CloneLinkInput, ListLinksQuery, UpdateLinkInput } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -100,7 +101,7 @@ describeDb("LinksService.list", () => {
     db = handle.db;
     // Second arg is the read-only handle. Single-node here, so it is the same
     // db handle as the primary (matches READ_DB === DB when no replica is set).
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
 
     const [ws] = await db
       .insert(workspaces)
@@ -357,7 +358,7 @@ describeDb("LinksService.get / clone / update / remove — workspace ownership",
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
 
     const [a] = await db
       .insert(workspaces)
@@ -498,6 +499,7 @@ describeDb("LinksService.remove() — cache-bust trigger", () => {
       safeBrowsingStub,
       projectionNudgeStub,
       cacheBust as unknown as LinkCacheBustService,
+      openPlatformSettingsStub(),
     );
 
     const [dom] = await db.select({ id: domains.id }).from(domains).where(eq(domains.domain, domainHost)).limit(1);
@@ -526,6 +528,7 @@ describeDb("LinksService.remove() — cache-bust trigger", () => {
       safeBrowsingStub,
       projectionNudgeStub,
       cacheBust as unknown as LinkCacheBustService,
+      openPlatformSettingsStub(),
     );
 
     await expect(

@@ -3,6 +3,17 @@ import { refs, route, SlugParam } from "../registry.js";
 
 const tag = "Public";
 
+/* #972 — the site-wide banner, readable without auth so it shows for every
+   visitor. The web app polls it; an empty message means no banner. */
+route({
+  method: "get",
+  path: "/public/platform/banner",
+  tag,
+  summary: "The current site-wide banner (empty message means none)",
+  public: true,
+  responses: { 200: { description: "The banner message and level", schema: refs.PlatformBanner } },
+});
+
 route({
   method: "get",
   path: "/public/links/{slug}/preview",

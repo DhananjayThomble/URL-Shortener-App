@@ -42,6 +42,7 @@ import { TokenService } from "./token.service.js";
 import { TotpService } from "./totp.service.js";
 import { OAuthService, type OAuthProvider } from "./oauth.service.js";
 import { MailService } from "../mail/mail.service.js";
+import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 
 /** "Dhananjay Thomble" → "DT". The UI renders these in avatars. The rule lives in
  *  @snapurl/domain so the web editor's live preview computes the identical value
@@ -82,9 +83,17 @@ export class AuthService {
     private readonly totp: TotpService,
     private readonly oauth: OAuthService,
     private readonly mail: MailService,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   async register(input: RegisterInput, userAgent?: string): Promise<AuthSession> {
+    // #972 — the runtime signup gate. Open registration is a NEW-ACCOUNT path,
+    // so it is refused whenever signups are not "open" (both "invite_only" and
+    // "closed"): an invited person joins through /auth/invite/accept, which is
+    // a different route and stays open. Read through the settings cache, so a
+    // change an admin makes applies within the cache window without a restart.
+    await this.assertSignupsAllow("register");
+
     const email = input.email.toLowerCase().trim();
 
     const [existing] = await this.db
@@ -262,6 +271,14 @@ export class AuthService {
           .values({ userId: existing.id, provider, subject: profile.subject, email: profile.email });
         userId = existing.id;
       } else {
+        // #972 — creating a brand-new account from an OAuth sign-in is a
+        // NEW-ACCOUNT path too, so it is gated exactly like password register:
+        // a "closed" or "invite_only" platform refuses it here, so a new Google
+        // user cannot get around the gate by signing in with the provider. The
+        // two branches above (already-linked, email-matches-existing) are
+        // sign-ins to accounts that already exist and are never gated.
+        await this.assertSignupsAllow("oauth");
+
         // Apple sends a name only on the very first authorisation, and may
         // send none at all, so the local-part is the fallback rather than an
         // empty string that would render as a blank account everywhere.
@@ -571,6 +588,32 @@ export class AuthService {
      says the credentials were right but the account is barred. */
   private assertNotSuspended(user: { suspendedAt: Date | null }): void {
     if (user.suspendedAt) throw new ForbiddenException(ACCOUNT_SUSPENDED_MESSAGE);
+  }
+
+  /* #972 — refuse a new-account path when the platform signup gate is not open.
+     Called by the password register and the OAuth first-sign-in branch, the two
+     ways a brand-new account is created. The gate is read through the settings
+     cache, so an operator closing signups from the admin panel takes effect
+     within the cache window with no restart.
+
+       - "open":        allowed (today's behaviour, and the default).
+       - "invite_only": refused here; an invited person joins through the
+                        invite-accept route instead, which is not a new-account
+                        self-service path and is unaffected.
+       - "closed":      refused; no new accounts by any self-service path.
+
+     A ForbiddenException (403), with a message that names the mode so the
+     sign-up page can tell the visitor why — this is public policy, not a secret
+     like an account's existence, so there is nothing to leak. */
+  private async assertSignupsAllow(_path: "register" | "oauth"): Promise<void> {
+    const { signupMode } = await this.settings.getValues();
+    if (signupMode === "open") return;
+    if (signupMode === "invite_only") {
+      throw new ForbiddenException(
+        "New sign-ups are invite-only right now. Ask a workspace owner for an invitation.",
+      );
+    }
+    throw new ForbiddenException("New sign-ups are closed right now.");
   }
 
   /* The workspace a fresh sign-in lands in.

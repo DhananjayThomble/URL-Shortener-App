@@ -29,6 +29,7 @@ vi.mock("node:dns/promises", () => ({
 }));
 
 const { LinksService } = await import("../links/links.service.js");
+const { openPlatformSettingsStub } = await import("../test/platform-settings.stub.js");
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeDb = DATABASE_URL ? describe : describe.skip;
@@ -81,7 +82,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
 
   it("LinksService.create rejects a destination that resolves to a denied address", async () => {
     denyLookup();
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
     const input = {
       destination: rebindingUrl,
       domain: domainName,
@@ -99,7 +100,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
 
   it("LinksService.create accepts a destination that only resolves to public addresses", async () => {
     allowLookup();
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
     const input = {
       destination: `https://example.com/ok-${stamp}`,
       domain: domainName,
@@ -129,7 +130,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
         ? [{ address: "169.254.169.254", family: 4 }]
         : [{ address: "93.184.216.34", family: 4 }],
     );
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
     const input = {
       destination: `https://example.com/social-${stamp}`,
       domain: domainName,
@@ -148,7 +149,7 @@ describeDb("SSRF DNS guard — LinksService.create/.update (#534)", () => {
 
   it("LinksService.update rejects a destination patch that resolves to a denied address", async () => {
     allowLookup();
-    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub);
+    const service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
     const created = await service.create(workspaceId, actor, {
       destination: `https://example.com/before-update-${stamp}`,
       domain: domainName,

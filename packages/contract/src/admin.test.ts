@@ -800,3 +800,189 @@ describe("AdminCustomDomainRow / AdminCustomDomains (#971)", () => {
     expect(AdminCustomDomains.safeParse({}).success).toBe(false);
   });
 });
+
+/* #972 — runtime platform-settings shapes. Behavioural parse tests covering
+   every bound, default, coercion, refinement and wire literal so the Stryker
+   mutation gate on packages/contract stays above threshold: a mutant that
+   loosens a bound, drops a default, flips an enum member or removes the
+   "at least one" refine must fail at least one assertion here. */
+
+import {
+  BannerSetting,
+  PlatformBanner,
+  PlatformSettings,
+  PlatformSettingsInput,
+  PlatformSettingsValues,
+  PlatformSettingMeta,
+  RateLimitSetting,
+  SignupMode,
+} from "./admin.js";
+
+describe("SignupMode", () => {
+  it("accepts exactly the three modes", () => {
+    for (const m of ["open", "invite_only", "closed"]) {
+      expect(SignupMode.safeParse(m).success).toBe(true);
+    }
+  });
+
+  it("rejects anything else", () => {
+    for (const m of ["Open", "invite", "disabled", "", "INVITE_ONLY"]) {
+      expect(SignupMode.safeParse(m).success).toBe(false);
+    }
+  });
+});
+
+describe("RateLimitSetting", () => {
+  it("accepts a limit and ttl in range", () => {
+    expect(RateLimitSetting.safeParse({ limit: 120, ttlSeconds: 60 }).success).toBe(true);
+  });
+
+  it("requires both fields", () => {
+    expect(RateLimitSetting.safeParse({ limit: 120 }).success).toBe(false);
+    expect(RateLimitSetting.safeParse({ ttlSeconds: 60 }).success).toBe(false);
+  });
+
+  it("enforces integer, min and max on limit", () => {
+    expect(RateLimitSetting.safeParse({ limit: 0, ttlSeconds: 60 }).success).toBe(false);
+    expect(RateLimitSetting.safeParse({ limit: 1, ttlSeconds: 60 }).success).toBe(true);
+    expect(RateLimitSetting.safeParse({ limit: 100_000, ttlSeconds: 60 }).success).toBe(true);
+    expect(RateLimitSetting.safeParse({ limit: 100_001, ttlSeconds: 60 }).success).toBe(false);
+    expect(RateLimitSetting.safeParse({ limit: 1.5, ttlSeconds: 60 }).success).toBe(false);
+  });
+
+  it("enforces integer, min and max on ttlSeconds", () => {
+    expect(RateLimitSetting.safeParse({ limit: 120, ttlSeconds: 0 }).success).toBe(false);
+    expect(RateLimitSetting.safeParse({ limit: 120, ttlSeconds: 1 }).success).toBe(true);
+    expect(RateLimitSetting.safeParse({ limit: 120, ttlSeconds: 86_400 }).success).toBe(true);
+    expect(RateLimitSetting.safeParse({ limit: 120, ttlSeconds: 86_401 }).success).toBe(false);
+    expect(RateLimitSetting.safeParse({ limit: 120, ttlSeconds: 2.5 }).success).toBe(false);
+  });
+});
+
+describe("BannerSetting", () => {
+  it("defaults level to info when omitted", () => {
+    const parsed = BannerSetting.parse({ message: "Scheduled maintenance tonight" });
+    expect(parsed.level).toBe("info");
+  });
+
+  it("trims the message and bounds it at 500 chars", () => {
+    expect(BannerSetting.parse({ message: "  hi  " }).message).toBe("hi");
+    expect(BannerSetting.safeParse({ message: "x".repeat(500) }).success).toBe(true);
+    expect(BannerSetting.safeParse({ message: "x".repeat(501) }).success).toBe(false);
+  });
+
+  it("accepts an empty message (no banner)", () => {
+    expect(BannerSetting.safeParse({ message: "" }).success).toBe(true);
+  });
+
+  it("accepts only the three levels", () => {
+    expect(BannerSetting.safeParse({ message: "m", level: "warning" }).success).toBe(true);
+    expect(BannerSetting.safeParse({ message: "m", level: "critical" }).success).toBe(true);
+    expect(BannerSetting.safeParse({ message: "m", level: "error" }).success).toBe(false);
+  });
+});
+
+describe("PlatformSettingsInput", () => {
+  it("accepts a single setting on its own", () => {
+    expect(PlatformSettingsInput.safeParse({ signupMode: "closed" }).success).toBe(true);
+    expect(PlatformSettingsInput.safeParse({ rateLimit: { limit: 10, ttlSeconds: 30 } }).success).toBe(true);
+    expect(PlatformSettingsInput.safeParse({ reservedSlugs: ["admin", "api"] }).success).toBe(true);
+    expect(PlatformSettingsInput.safeParse({ featureFlags: { bioPages: true } }).success).toBe(true);
+    expect(PlatformSettingsInput.safeParse({ banner: { message: "hello" } }).success).toBe(true);
+  });
+
+  it("rejects an empty body (the at-least-one refine)", () => {
+    expect(PlatformSettingsInput.safeParse({}).success).toBe(false);
+  });
+
+  it("treats an all-undefined body as empty too", () => {
+    expect(PlatformSettingsInput.safeParse({ signupMode: undefined }).success).toBe(false);
+  });
+
+  it("bounds reservedSlugs entries and count", () => {
+    expect(PlatformSettingsInput.safeParse({ reservedSlugs: [""] }).success).toBe(false);
+    expect(PlatformSettingsInput.safeParse({ reservedSlugs: ["x".repeat(65)] }).success).toBe(false);
+    expect(PlatformSettingsInput.safeParse({ reservedSlugs: Array(501).fill("a") }).success).toBe(false);
+  });
+
+  it("requires featureFlags values to be boolean", () => {
+    expect(PlatformSettingsInput.safeParse({ featureFlags: { x: "yes" } }).success).toBe(false);
+    expect(PlatformSettingsInput.safeParse({ featureFlags: { x: 1 } }).success).toBe(false);
+  });
+
+  it("validates a nested rateLimit through the body", () => {
+    expect(PlatformSettingsInput.safeParse({ rateLimit: { limit: 0, ttlSeconds: 30 } }).success).toBe(false);
+  });
+});
+
+describe("PlatformSettingsValues", () => {
+  const valid = {
+    signupMode: "open" as const,
+    rateLimit: { limit: 120, ttlSeconds: 60 },
+    reservedSlugs: ["admin"],
+    featureFlags: { bioPages: true },
+    banner: { message: "", level: "info" as const },
+  };
+
+  it("accepts a fully-specified effective value set", () => {
+    expect(PlatformSettingsValues.safeParse(valid).success).toBe(true);
+  });
+
+  it("requires every field (it is the resolved state, not a patch)", () => {
+    const { signupMode, ...missing } = valid;
+    expect(PlatformSettingsValues.safeParse(missing).success).toBe(false);
+  });
+});
+
+describe("PlatformSettingMeta", () => {
+  it("accepts a never-set setting (both null)", () => {
+    expect(PlatformSettingMeta.safeParse({ updatedAt: null, updatedBy: null }).success).toBe(true);
+  });
+
+  it("accepts a changed setting", () => {
+    expect(
+      PlatformSettingMeta.safeParse({ updatedAt: "2026-11-01T00:00:00.000Z", updatedBy: "ada@x.com" }).success,
+    ).toBe(true);
+  });
+
+  it("requires both keys present (nullable, not optional)", () => {
+    expect(PlatformSettingMeta.safeParse({ updatedAt: null }).success).toBe(false);
+  });
+});
+
+describe("PlatformSettings", () => {
+  const values = {
+    signupMode: "invite_only" as const,
+    rateLimit: { limit: 60, ttlSeconds: 60 },
+    reservedSlugs: [] as string[],
+    featureFlags: {} as Record<string, boolean>,
+    banner: { message: "", level: "info" as const },
+  };
+
+  it("accepts values + defaults + per-key meta", () => {
+    const parsed = PlatformSettings.safeParse({
+      values,
+      defaults: values,
+      meta: { signupMode: { updatedAt: "2026-11-01T00:00:00.000Z", updatedBy: "ada@x.com" } },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("requires the defaults block", () => {
+    expect(PlatformSettings.safeParse({ values, meta: {} }).success).toBe(false);
+  });
+});
+
+describe("PlatformBanner", () => {
+  it("accepts a banner for the public read", () => {
+    expect(PlatformBanner.safeParse({ message: "Down for maintenance", level: "warning" }).success).toBe(true);
+  });
+
+  it("requires both message and level (no default on the public read)", () => {
+    expect(PlatformBanner.safeParse({ message: "hi" }).success).toBe(false);
+  });
+
+  it("accepts an empty message (client renders nothing)", () => {
+    expect(PlatformBanner.safeParse({ message: "", level: "info" }).success).toBe(true);
+  });
+});
