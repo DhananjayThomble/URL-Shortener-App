@@ -1108,11 +1108,31 @@ jobs:
       # assertions might miss. The worker is excluded (benign error-level lines).
       - name: Fail on staging container errors
         run: |
+          # Fail on any pino error-level line (level:50) from api/redirect — EXCEPT
+          # the ONE known, tracked error the fuzz suite deliberately provokes and
+          # pins: issue #947 (PATCH /links/{id} with a routing-rule weight of the
+          # subnormal double 5e-324 passes RoutingRule's z.number().min(0).max(100)
+          # but is out of range for the Postgres `real` weight column, so it 500s
+          # through PostgresErrorFilter). The fuzz suite's EXPECTED_5XX test asserts
+          # that input STILL 500s, so this line is emitted on purpose every run; it
+          # is not a regression. The allow-list is anchored tightly — context +
+          # method + route + the exact out-of-range message must ALL be on the line
+          # — so every OTHER level:50 error still reds the gate (proven red-on-broken
+          # on a throwaway PR). WHEN #947 IS FIXED: its EXPECTED_5XX test flips red,
+          # the input stops 500ing, and this allow-list entry must be deleted.
           found=0
           for svc in api redirect; do
             logs="$(docker compose -f docker-compose.staging.yml logs --no-color "$svc" 2>&1)"
-            if echo "$logs" | grep -F '"level":50'; then
-              echo "::error::staging $svc logged a pino error-level line"
+            # All level:50 lines, minus the exact #947 signature (PostgresErrorFilter
+            # + PATCH + /links/ + the specific "real"-column out-of-range message, all
+            # on the same JSON line). grep -v drops only lines matching every token.
+            unexpected="$(echo "$logs" \
+              | grep -F '"level":50' \
+              | grep -vE '"context":"PostgresErrorFilter".*"method":"PATCH".*/api/v1/links/.*out of range for type real' \
+              || true)"
+            if [ -n "$unexpected" ]; then
+              echo "::error::staging $svc logged an unexpected pino error-level line"
+              echo "$unexpected"
               found=1
             fi
           done
