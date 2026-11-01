@@ -1071,9 +1071,36 @@ jobs:
         if: matrix.leg == 'aux'
         run: QA_PREBUILT_WEB=1 pnpm --filter snapurl-e2e test:dom-xss
 
+      # On the nightly `schedule`, widen the fuzz budget to FUZZ_RUNS=300 and
+      # key the fuzz seed to the run id (github.run_id) so a nightly failure is
+      # deterministically replayable; print that seed to the step summary before
+      # the suite runs so it survives even if the suite then reds (#893, spec
+      # api-stack-tests design §8). On PR/push neither FUZZ_ var is exported, so
+      # the suite's own defaults apply (FUZZ_RUNS=25, a fixed FUZZ_SEED) — a
+      # cheap, deterministic PR run. The vars are exported ONLY on the schedule
+      # path: the suite reads `Number(process.env.FUZZ_RUNS ?? 25)`, so an empty
+      # string would wrongly resolve to 0 — leaving them unset is what triggers
+      # the `?? 25` default. The fuzz suite also echoes the effective
+      # FUZZ_RUNS/FUZZ_SEED to its own stdout (fuzz.stack.test.ts).
       - name: API stack suite (aux)
         if: matrix.leg == 'aux'
-        run: STACK_API_URL=http://localhost:3001/api/v1 STACK_DATABASE_URL=postgres://snapurl:snapurl@localhost:5435/snapurl pnpm --filter @snapurl/api test:stack
+        env:
+          STACK_API_URL: http://localhost:3001/api/v1
+          STACK_DATABASE_URL: postgres://snapurl:snapurl@localhost:5435/snapurl
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ "$GH_EVENT_NAME" = "schedule" ]; then
+            export FUZZ_RUNS=300
+            export FUZZ_SEED="$GH_RUN_ID"
+            {
+              echo "### Real-stack fuzz (nightly)"
+              echo ""
+              echo "- \`FUZZ_RUNS\`: ${FUZZ_RUNS}"
+              echo "- \`FUZZ_SEED\`: ${FUZZ_SEED} (github.run_id — replay a failure with this seed)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          pnpm --filter @snapurl/api test:stack
 
       # Pino error-level gate (R7), copied from the integration job and pointed
       # at the staging compose logs. api/redirect only — a "level":50 line there
@@ -1081,11 +1108,43 @@ jobs:
       # assertions might miss. The worker is excluded (benign error-level lines).
       - name: Fail on staging container errors
         run: |
+          # Fail on any pino error-level line (level:50) from api/redirect — EXCEPT
+          # the ONE known, tracked error the fuzz suite deliberately provokes and
+          # pins: issue #947 (PATCH /links/{id} with a routing-rule weight of the
+          # subnormal double 5e-324 passes RoutingRule's z.number().min(0).max(100)
+          # but is out of range for the Postgres `real` weight column, so it 500s
+          # through PostgresErrorFilter). The fuzz suite's EXPECTED_5XX test asserts
+          # that input STILL 500s, so this line is emitted on purpose every run; it
+          # is not a regression. The allow-list is anchored tightly — context +
+          # method + route + the exact out-of-range message must ALL be on the line
+          # — so every OTHER level:50 error still reds the gate (proven red-on-broken
+          # on a throwaway PR). WHEN #947 IS FIXED: its EXPECTED_5XX test flips red,
+          # the input stops 500ing, and this allow-list entry must be deleted.
           found=0
           for svc in api redirect; do
             logs="$(docker compose -f docker-compose.staging.yml logs --no-color "$svc" 2>&1)"
-            if echo "$logs" | grep -F '"level":50'; then
-              echo "::error::staging $svc logged a pino error-level line"
+            # All level:50 lines, minus the exact #947 signature. The four anchor
+            # tokens (PostgresErrorFilter context, PATCH method, the /links/ route,
+            # the specific "real"-column out-of-range message) must ALL be present on
+            # the one line, but they appear in pino's field order (req/method/url
+            # before context before err), so match each token independently with a
+            # grep chain rather than one ordered regex — a line kept by ALL of these
+            # greps is the #947 signature and is dropped; any line missing even one
+            # (i.e. any other level:50) is NOT dropped and still reds the gate.
+            unexpected="$(echo "$logs" | grep -F '"level":50' || true)"
+            expected947="$(printf '%s\n' "$unexpected" \
+              | grep -F '"context":"PostgresErrorFilter"' \
+              | grep -F '"method":"PATCH"' \
+              | grep -F '/api/v1/links/' \
+              | grep -F 'out of range for type real' \
+              || true)"
+            # Drop the exact #947 lines from the level:50 set; whatever remains is unexpected.
+            if [ -n "$expected947" ]; then
+              unexpected="$(printf '%s\n' "$unexpected" | grep -Fvx -f <(printf '%s\n' "$expected947") || true)"
+            fi
+            if [ -n "$unexpected" ]; then
+              echo "::error::staging $svc logged an unexpected pino error-level line"
+              echo "$unexpected"
               found=1
             fi
           done

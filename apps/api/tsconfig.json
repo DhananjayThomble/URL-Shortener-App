@@ -16,7 +16,8 @@
   // so they must not land in the production build — excluded alongside the test
   // files (the matching *.test.ts are already covered by the glob):
   //   zod-arbitrary.ts (#889, fast-check), env.ts + principals.ts (#888 harness),
-  //   access-matrix.expected.ts (#891 oracle), resources.ts (#892 seeder).
+  //   access-matrix.expected.ts (#891 oracle), resources.ts (#892 seeder),
+  //   global-seed.ts (#893, the stack-suite vitest globalSetup).
   "exclude": [
     "node_modules",
     "dist",
@@ -25,6 +26,7 @@
     "src/stack/env.ts",
     "src/stack/principals.ts",
     "src/stack/access-matrix.expected.ts",
-    "src/stack/resources.ts"
+    "src/stack/resources.ts",
+    "src/stack/global-seed.ts"
   ]
 }

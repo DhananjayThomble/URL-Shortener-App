@@ -13,6 +13,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.stack.test.ts"],
+    // Seed the nine principals ONCE for the whole run (global-seed.ts) and hand
+    // them to every file via provide/inject. /auth/register is throttled 5/min
+    // per IP (not lifted by THROTTLE_LIMIT); seeding per file registered 5×3=15
+    // accounts on one IP and 429'd a later file's seed. Seeding once keeps it
+    // to 5. The setup no-ops when STACK_API_URL is unset. (#893.)
+    globalSetup: ["./src/stack/global-seed.ts"],
     // Seeding registers principals through the throttled auth routes with a
     // bounded back-off, so a single HTTP suite legitimately runs minutes.
     testTimeout: 120_000,
