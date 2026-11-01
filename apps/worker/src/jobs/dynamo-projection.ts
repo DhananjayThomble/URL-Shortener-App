@@ -552,6 +552,7 @@ export class DynamoProjection implements ProjectionTarget {
       hideReferrer: row.link.hideReferrer,
       publicPreview: row.link.publicPreview,
       archived: Boolean(row.link.archivedAt),
+      disabled: Boolean(row.link.disabledAt),
       safeBrowsingStatus: row.link.safeBrowsingStatus,
       utm: row.link.utm,
     };

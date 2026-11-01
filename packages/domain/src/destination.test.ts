@@ -336,6 +336,23 @@ describe("effectiveGate", () => {
     expect(effectiveGate({ archived: false, safeBrowsingStatus: "clean", expiresAt: past }, now)).toBe("expired");
     expect(effectiveGate({ archived: false, expiresAt: past }, now)).toBe("expired"); // safeBrowsingStatus omitted
   });
+
+  /* #971 — a platform-admin disable is the highest-precedence gate: it outranks
+     archived, flagged and every lifecycle state, so a disabled link reads as
+     "disabled" whatever else is true of it. */
+  it("reports disabled above everything, from either the boolean or the timestamp", () => {
+    expect(effectiveGate({ disabled: true, archived: false, safeBrowsingStatus: "clean" }, now)).toBe("disabled");
+    expect(effectiveGate({ disabledAt: past, archived: false }, now)).toBe("disabled");
+  });
+
+  it("reports disabled above archived and flagged and expired", () => {
+    expect(effectiveGate({ disabled: true, archived: true, safeBrowsingStatus: "flagged", expiresAt: past }, now)).toBe("disabled");
+  });
+
+  it("does not gate on disabled when the flag is false and the timestamp is null", () => {
+    expect(effectiveGate({ disabled: false, archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
+    expect(effectiveGate({ disabledAt: null, archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
+  });
 });
 
 describe("effectiveGateFromState", () => {
@@ -351,6 +368,15 @@ describe("effectiveGateFromState", () => {
     expect(effectiveGateFromState(false, "click_limit")).toBe("click_limit");
     expect(effectiveGateFromState(false, "active")).toBeNull();
     expect(effectiveGateFromState(false, null)).toBeNull();
+  });
+  it("disabled wins over archived and flagged (#971)", () => {
+    expect(effectiveGateFromState(true, "archived", true)).toBe("disabled");
+    expect(effectiveGateFromState(true, "expired", true)).toBe("disabled");
+    expect(effectiveGateFromState(false, "active", true)).toBe("disabled");
+  });
+  it("defaults disabled to false so an omitted argument keeps the old behaviour", () => {
+    expect(effectiveGateFromState(false, "archived")).toBe("archived");
+    expect(effectiveGateFromState(true, "active")).toBe("flagged");
   });
   it("agrees with effectiveGate for every flagged × lifecycle pair", () => {
     const now = new Date("2026-06-15T12:00:00Z");

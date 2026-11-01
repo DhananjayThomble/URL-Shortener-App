@@ -116,6 +116,11 @@ export interface ProjectedLink {
   hideReferrer: boolean;
   publicPreview: boolean;
   archived: boolean;
+  /** #971 — a platform admin disabled this link. A disabled link never
+   *  resolves: the edge fast path refuses it (isEdgeEligible) and the Lambda
+   *  gate stops it before any lifecycle check. Projected so the change reaches
+   *  the edge within the normal projection window. */
+  disabled: boolean;
   safeBrowsingStatus: string;
   utm: {
     source?: string | null;
@@ -156,6 +161,9 @@ export interface LinkItem {
   hideReferrer: boolean;
   publicPreview: boolean;
   archived: boolean;
+  /** #971 — see ProjectedLink.disabled. Stored on the LINK item so the edge and
+   *  the Lambda both see a disabled link as not resolvable. */
+  disabled: boolean;
   safeBrowsingStatus: string;
   utm: ProjectedLink["utm"];
 }
@@ -238,6 +246,7 @@ export function toLinkItem(link: ProjectedLink, host: string, slug: string): Lin
     hideReferrer: link.hideReferrer,
     publicPreview: link.publicPreview,
     archived: link.archived,
+    disabled: link.disabled,
     safeBrowsingStatus: link.safeBrowsingStatus,
     utm: link.utm ?? null,
   };
@@ -265,6 +274,12 @@ export function fromLinkItem(item: LinkItem): ProjectedLink {
     hideReferrer: item.hideReferrer,
     publicPreview: item.publicPreview,
     archived: item.archived,
+    /* `?? false`: a LINK item projected before #971 added this attribute has
+       no `disabled` field. Reviving it as false keeps a pre-existing link
+       resolving exactly as before — a missing attribute must never read as
+       "disabled" and silently take a live link off the air. The next upsert
+       writes the real value. */
+    disabled: item.disabled ?? false,
     safeBrowsingStatus: item.safeBrowsingStatus,
     utm: item.utm ?? null,
   };
@@ -362,6 +377,12 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
     link.expiresAt == null &&
     link.activatesAt == null &&
     link.archived === false &&
+    /* #971 — a disabled link is never edge-served: the CloudFront Function
+       cannot render the "link disabled" page, so a disabled link must fall
+       through to the Lambda, whose gate stops it. Omitting this would let the
+       KVS keep redirecting a link an admin just disabled until its entry aged
+       out. */
+    link.disabled === false &&
     link.safeBrowsingStatus === "clean" &&
     link.utm == null &&
     link.deepLink === false &&

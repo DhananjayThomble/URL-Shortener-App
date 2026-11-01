@@ -56,6 +56,10 @@ export interface ResolvedLink {
   hideReferrer: boolean;
   publicPreview: boolean;
   archived: boolean;
+  /** #971 — a platform admin disabled this link. When true the gate stops the
+   *  click before any lifecycle check and the visitor gets the "link disabled"
+   *  page. */
+  disabled: boolean;
   safeBrowsingStatus: string;
   utm: {
     source?: string | null;
@@ -155,6 +159,7 @@ export class PostgresLinkResolver implements LinkResolver {
       hideReferrer: row.link.hideReferrer,
       publicPreview: row.link.publicPreview,
       archived: Boolean(row.link.archivedAt),
+      disabled: Boolean(row.link.disabledAt),
       safeBrowsingStatus: row.link.safeBrowsingStatus,
       utm: row.link.utm,
     };
