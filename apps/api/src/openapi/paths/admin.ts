@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { IdParam, refs, route } from "../registry.js";
 
-/* #968 + #974 + #969 — platform-admin routes. #968 shipped GET /admin/me; #974
-   adds system health and operations; #969 adds the users-and-workspaces tools.
+/* #968 + #974 + #969 + #973 — platform-admin routes. #968 shipped GET /admin/me;
+   #974 adds system health and operations; #969 adds the users-and-workspaces
+   tools; #973 adds the platform-wide analytics read + its per-view CSV export.
    Later parts of the epic (#975) register their routes here as they land. Every
    route is behind AdminGuard (403 for a non-admin), so each entry documents the
    403 alongside its success shape. */
@@ -249,7 +250,6 @@ route({
   },
 });
 
-
 /* #971 — moderation and abuse. */
 
 route({
@@ -361,6 +361,37 @@ route({
   summary: "Every custom domain with its verification and SSL status",
   responses: {
     200: { description: "Custom domains and their status", schema: refs.AdminCustomDomains },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+/* ── platform-wide analytics (#973) ── */
+
+route({
+  method: "get",
+  path: "/admin/analytics",
+  tag: "Admin",
+  summary: "Platform-wide analytics (growth, usage, business, email, abuse)",
+  query: refs.AdminAnalyticsQuery,
+  responses: {
+    200: { description: "Platform analytics for the range", schema: refs.PlatformAnalytics },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/analytics/export/{view}",
+  tag: "Admin",
+  summary: "CSV export of one platform-analytics view",
+  params: z.object({
+    view: z
+      .enum(["growth", "usage", "business", "abuse", "topWorkspaces", "topLinks"])
+      .describe("Which view to export"),
+  }),
+  query: refs.AdminAnalyticsQuery,
+  responses: {
+    200: { description: "CSV export", contentType: "text/csv", schema: z.string() },
     403: { description: "The caller is not a platform admin" },
   },
 });

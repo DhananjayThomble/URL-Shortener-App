@@ -15,3 +15,4 @@ export * from "./form.js";
 export * from "./report.js";
 export * from "./friendly-errors.js";
 export * from "./admin.js";
+export * from "./admin-analytics.js";
