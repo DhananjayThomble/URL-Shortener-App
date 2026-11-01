@@ -163,7 +163,25 @@ export const ACCESS_MATRIX: Row[] = [
   // never an admin). `adminA` here is a WORKSPACE admin role, which is unrelated
   // to platform admin and correctly denied.
   { route: "GET /api/v1/admin/me", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #969 — the users-and-workspaces admin surface. Every route sits behind the
+  // same AdminGuard as GET /admin/me, so the oracle is identical for all of
+  // them: no matrix principal is a platform admin (empty allowlist in staging),
+  // so each authenticated principal is 403, anon is 401, and API keys are 403
+  // (no user behind the key). A write route (suspend/delete/etc.) never reaches
+  // its body for these principals — the guard denies before the handler runs.
+  { route: "GET /api/v1/admin/users", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/users/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/users/{id}/suspend", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/users/{id}/unsuspend", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/users/{id}/signout-everywhere", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/users/{id}/resend-verification", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "DELETE /api/v1/admin/users/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PATCH /api/v1/admin/workspaces/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/view-as", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
 ];
 
-// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me).
-export const EXPECTED_ROUTE_COUNT = 72;
+// Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
+// + 11 for #969's users-and-workspaces admin surface).
+export const EXPECTED_ROUTE_COUNT = 83;
