@@ -34,7 +34,9 @@ async function open(page: Page, plan: string) {
     "GET /members": { status: 200, body: [] },
   });
   await page.goto("/domains");
-  await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
+  // exact: on the Free path the upgrade card's "Custom domains are a paid
+  // feature" heading also contains "domains", so a substring match is ambiguous.
+  await expect(page.getByRole("heading", { name: "Domains", exact: true })).toBeVisible();
   return api;
 }
 
