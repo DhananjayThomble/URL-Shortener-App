@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  PlatformBanner,
   PublicLinkLock,
   PublicLinkPreview,
   SubmitReportResult,
@@ -11,6 +12,19 @@ import {
 } from "@snapurl/contract";
 import { request } from "../client";
 import { qk } from "./keys";
+
+/* #972 — the site-wide banner, read without auth so it shows for every user.
+   Polled on a slow interval so a banner an operator sets appears within about
+   a minute without a reload (matching the API's runtime cache window). An empty
+   `message` means no banner; the component renders nothing. */
+export function usePlatformBanner() {
+  return useQuery({
+    queryKey: qk.platformBanner,
+    queryFn: () => request("/public/platform/banner", PlatformBanner, { anonymous: true }),
+    refetchInterval: 60_000,
+    staleTime: 60_000,
+  });
+}
 
 /* #800 — the host the slug was resolved on, carried through from the redirect's
    /p/<slug>?host= bounce. One slug can live on several domains (uniqueness is

@@ -100,6 +100,9 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "POST /api/v1/public/forms/{slug}", expect: { any: "allow" }, status: "approved",
     note: "Observed 400 (validation) for a live-route body; @Public, reachable by anyone." },
   { route: "POST /api/v1/public/links/{slug}/report", expect: { any: "allow" }, status: "approved" },
+  // #972 — the site-wide banner, @Public so reachable by anyone (signed-in or
+  // not); it returns the public banner shape only, never anything gated.
+  { route: "GET /api/v1/public/platform/banner", expect: { any: "allow" }, status: "approved" },
   // ── health ──
   { route: "GET /api/v1/health", expect: { any: "allow" }, status: "approved" },
   // ── links ──
@@ -163,6 +166,11 @@ export const ACCESS_MATRIX: Row[] = [
   // never an admin). `adminA` here is a WORKSPACE admin role, which is unrelated
   // to platform admin and correctly denied.
   { route: "GET /api/v1/admin/me", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #972 — runtime platform settings. Same AdminGuard as every /admin/* route:
+  // no matrix principal is a platform admin, so each authed principal is 403,
+  // anon 401, API keys 403. The PATCH write never reaches its handler for these.
+  { route: "GET /api/v1/admin/settings", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PATCH /api/v1/admin/settings", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #974 — system health and operations. Same gate as every /admin/* route:
   // AdminGuard fails closed, so none of the matrix principals (none is a
   // platform admin) reaches any of these — anon 401, every authed principal
@@ -210,5 +218,6 @@ export const ACCESS_MATRIX: Row[] = [
 
 // Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
 // + 7 for #974's system-health routes + 11 for #969's users-and-workspaces
-// + 9 for #971's moderation routes).
-export const EXPECTED_ROUTE_COUNT = 99;
+// + 9 for #971's moderation routes + 2 for #972's admin settings routes
+// + 1 for #972's public banner route).
+export const EXPECTED_ROUTE_COUNT = 102;

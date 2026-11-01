@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Sidebar, Topbar } from "@/components/app-shell";
 import { CreateLinkDrawer } from "@/components/links/create-link-drawer";
+import { PlatformBanner } from "@/components/platform-banner";
 import { ToastProvider } from "@/components/ui/toast";
 import { NEW_LINK_QUERY_PARAM } from "@/lib/hero-shorten";
 import { useBioPages, useDomains, useLinks, useMe, useMembers, useWorkspaceChangeGuard } from "@/lib/api/hooks";
@@ -94,6 +95,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
       <Sidebar onCreate={openCreate} counts={counts} />
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar counts={counts} onCreate={openCreate} />
+        {/* #972 — the operator's site-wide banner, shown to every signed-in
+            user above the page content. Renders nothing when none is set. */}
+        <PlatformBanner />
         {/* --toast-inset is the height of whatever toasts are showing (components/ui/toast.tsx), so the
             bottom of the page can always be scrolled clear of them. */}
         <main className="flex-1 px-[14px] sm:px-[22px] pt-[26px] pb-[calc(60px+var(--toast-inset,0px))]">{children}</main>

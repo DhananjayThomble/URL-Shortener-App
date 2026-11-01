@@ -20,12 +20,14 @@ import {
   AdminViewAsWorkspace,
   AdminWorkspaceDetail,
   AdminWorkspaceList,
+  PlatformSettings,
   type AdminAbuseQueueQuery,
   type AdminAbuseReportAction,
   type AdminAuditQuery,
   type AdminLinkDisableInput,
   type AdminLinkSearchQuery,
   type AdminUpdateWorkspaceInput,
+  type PlatformSettingsInput,
 } from "@snapurl/contract";
 import { z } from "zod";
 import { request } from "../client";
@@ -229,6 +231,36 @@ export function useRetryProjectionOutbox() {
 /** Re-queue every failed webhook delivery (audited). */
 export function useRetryWebhookDeliveries() {
   return useBacklogRetry("/admin/health/backlogs/webhook-deliveries/retry");
+}
+
+/* ============================================================
+   #972 — runtime platform settings.
+
+   GET /admin/settings returns the effective values, the defaults and the
+   per-setting "last changed by". PATCH applies a partial change and returns the
+   fresh state, which we write straight back into the cache so the page reflects
+   it without a refetch. A settings change can affect the rate limit and the
+   banner, so the mutation also drops the public banner query (read elsewhere).
+   ============================================================ */
+
+export function useAdminSettings() {
+  return useQuery({
+    queryKey: qk.adminSettings,
+    queryFn: () => request("/admin/settings", PlatformSettings),
+  });
+}
+
+export function useAdminUpdateSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: PlatformSettingsInput) =>
+      request("/admin/settings", PlatformSettings, { method: "PATCH", body: input }),
+    onSuccess: (settings) => {
+      qc.setQueryData(qk.adminSettings, settings);
+      qc.invalidateQueries({ queryKey: qk.platformBanner });
+      qc.invalidateQueries({ queryKey: qk.adminAudit() });
+    },
+  });
 }
 
 /** Release a stuck job lease by name (audited). */

@@ -21,6 +21,7 @@ const NAV: NavItem[] = [
   { href: "/admin/users", label: "Users" },
   { href: "/admin/workspaces", label: "Workspaces" },
   { href: "/admin/moderation", label: "Moderation" },
+  { href: "/admin/settings", label: "Settings" },
   { href: "/admin/health", label: "System health" },
 ];
 

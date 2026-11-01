@@ -7,6 +7,7 @@ import { zodBody } from "../common/zod.pipe.js";
 import type { RequestActor } from "../auth/auth.guard.js";
 import { LinksController } from "./links.controller.js";
 import { LinksService } from "./links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -83,7 +84,7 @@ describeDb("past expiry dates are refused on create, bulk create and edit (#754)
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub()));
     for (const w of [ws, other]) {
       const [row] = await db.insert(workspaces).values({ name: `past expiry ${w.domain}`, slug: `px-${w === ws ? "a" : "b"}-${stamp}` }).returning({ id: workspaces.id });
       w.id = row!.id;
