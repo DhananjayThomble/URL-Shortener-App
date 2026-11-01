@@ -13,6 +13,12 @@ export const qk = {
   adminWorkspaces: (q?: string) => ["admin-workspaces", q ?? "all"] as const,
   adminWorkspace: (id: string) => ["admin-workspace", id] as const,
   adminWorkspaceViewAs: (id: string) => ["admin-workspace", id, "view-as"] as const,
+  // #974 — admin system health and operations.
+  adminServices: ["admin-services"] as const,
+  adminBacklogs: ["admin-backlogs"] as const,
+  adminAudit: (filter?: string) => ["admin-audit", filter ?? "all"] as const,
+  adminWorkspaceAudit: (workspaceId: string, filter?: string) =>
+    ["admin-workspace-audit", workspaceId, filter ?? "all"] as const,
   workspace: ["workspace"] as const,
   myWorkspaces: ["my-workspaces"] as const,
   links: (filter?: string) => ["links", filter ?? "all"] as const,
