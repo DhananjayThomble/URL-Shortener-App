@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
-import { and, domainProjectionOp, domains, eq, isNull, links, normaliseHost, projectionOutbox, sql, type Database } from "@snapurl/database";
+import { and, domainProjectionOp, domains, eq, isNull, links, normaliseHost, projectionOutbox, sql, workspaces, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain, UpdateDomainInput } from "@snapurl/contract";
+import { entitlementsFor } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { auditInTransaction, recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
@@ -131,6 +132,45 @@ export class DomainsService {
 
   async add(workspaceId: string, input: AddDomainInput, actor: Actor): Promise<Domain> {
     const domain = input.domain.toLowerCase().trim();
+
+    /* Plan gate (#966). Custom domains are a paid-plan feature; a Free
+       workspace uses the shared snapurl.in domain. The entitlements live in
+       ONE place — @snapurl/contract's `entitlementsFor` — so the API and the
+       web Domains page can never disagree, and #970 (editable plans) can swap
+       that lookup for a stored table without touching this call site.
+
+       This gate is on `add` alone: an existing custom domain on a workspace
+       whose plan is (or became) Free is never removed — list/verify/update/
+       remove all keep working. Only connecting a NEW one is refused. */
+    const [workspace] = await this.db
+      .select({ plan: workspaces.plan })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    if (!workspace) throw new NotFoundException("That workspace doesn't exist.");
+
+    const entitlements = entitlementsFor(workspace.plan);
+    if (!entitlements.customDomains) {
+      throw new ForbiddenException(
+        "Custom domains are a paid-plan feature. Your workspace is on the Free plan, which uses the shared snapurl.in domain. Upgrade to connect your own domain.",
+      );
+    }
+
+    /* Even on a paid plan, cap how many custom domains one workspace can hold
+       at once (the shared system domain is never counted — it belongs to no
+       workspace). A plan with a non-zero cap that is already at it is told how
+       many it may have, rather than silently refused. */
+    const [owned] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(domains)
+      .where(and(eq(domains.workspaceId, workspaceId), eq(domains.isSystem, false)));
+    if ((owned?.n ?? 0) >= entitlements.maxCustomDomains) {
+      throw new ForbiddenException(
+        `Your plan allows up to ${entitlements.maxCustomDomains} custom domain${
+          entitlements.maxCustomDomains === 1 ? "" : "s"
+        }. Remove one before connecting another, or upgrade for more.`,
+      );
+    }
 
     /* Globally unique, not per-workspace. Two workspaces both claiming snap.to
        would make (host, slug) ambiguous on the redirect path, which is the one
