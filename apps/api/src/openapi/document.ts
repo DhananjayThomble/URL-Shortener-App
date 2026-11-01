@@ -17,6 +17,7 @@ import "./paths/workspaces.js";
 import "./paths/public.js";
 import "./paths/health.js";
 import "./paths/admin.js";
+import "./paths/billing.js";
 
 /** Built once at boot, from the same env the rest of the app already
  *  validated — this doc's `servers` entry has to match wherever this

@@ -27,6 +27,7 @@ import {
   __resetSecretCacheForTests,
   resolveDatabaseUrl,
   resolveJwtSecret,
+  resolveRazorpaySecrets,
   resolveSafeBrowsingApiKey,
   resolveSecrets,
 } from "./secrets.js";
@@ -247,5 +248,59 @@ describe("resolveSafeBrowsingApiKey", () => {
     const result = await resolveSafeBrowsingApiKey({ GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: SB_ARN });
     expect(result.apiKey).toBeUndefined();
     expect(result.error?.message).toMatch(/ResourceNotFoundException/);
+  });
+});
+
+
+describe("resolveRazorpaySecrets (#986)", () => {
+  const RZP_ARN = "snapurl/test/razorpay";
+
+  beforeEach(() => {
+    __resetSecretCacheForTests();
+    send.mockReset();
+  });
+
+  it("escape hatch: returns the plain env secrets and makes NO SDK call when the ARN is unset", async () => {
+    const result = await resolveRazorpaySecrets({
+      RAZORPAY_KEY_SECRET: "plain-key-secret",
+      RAZORPAY_WEBHOOK_SECRET: "plain-webhook-secret",
+    });
+    expect(result).toEqual({ keySecret: "plain-key-secret", webhookSecret: "plain-webhook-secret" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns both undefined and no error when nothing is set (billing off)", async () => {
+    expect(await resolveRazorpaySecrets({})).toEqual({ keySecret: undefined, webhookSecret: undefined });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("reads keySecret and webhookSecret out of the JSON secret", async () => {
+    respondWith({ [RZP_ARN]: JSON.stringify({ keySecret: "k-from-sm", webhookSecret: "w-from-sm" }) });
+    const result = await resolveRazorpaySecrets({ RAZORPAY_SECRET_ARN: RZP_ARN });
+    expect(result).toEqual({ keySecret: "k-from-sm", webhookSecret: "w-from-sm" });
+  });
+
+  it("falls back to the plain env var for a field the JSON omits", async () => {
+    respondWith({ [RZP_ARN]: JSON.stringify({ keySecret: "k-from-sm" }) });
+    const result = await resolveRazorpaySecrets({ RAZORPAY_SECRET_ARN: RZP_ARN, RAZORPAY_WEBHOOK_SECRET: "w-from-env" });
+    expect(result).toEqual({ keySecret: "k-from-sm", webhookSecret: "w-from-env" });
+  });
+
+  /* Optional like Safe Browsing: a missing/unreadable secret must leave billing
+     off (both undefined) and report the error, never take the cold start down. */
+  it("never rejects: a failed fetch returns the error and both secrets undefined", async () => {
+    send.mockRejectedValue(new Error("ResourceNotFoundException: Secrets Manager can't find the specified secret."));
+    const result = await resolveRazorpaySecrets({ RAZORPAY_SECRET_ARN: RZP_ARN });
+    expect(result.keySecret).toBeUndefined();
+    expect(result.webhookSecret).toBeUndefined();
+    expect(result.error?.message).toMatch(/ResourceNotFoundException/);
+  });
+
+  it("never rejects: malformed JSON returns the error and both secrets undefined", async () => {
+    respondWith({ [RZP_ARN]: "{not json" });
+    const result = await resolveRazorpaySecrets({ RAZORPAY_SECRET_ARN: RZP_ARN });
+    expect(result.keySecret).toBeUndefined();
+    expect(result.webhookSecret).toBeUndefined();
+    expect(result.error).toBeInstanceOf(Error);
   });
 });

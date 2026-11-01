@@ -18,6 +18,7 @@ import { IS_PUBLIC, REQUIRED_ROLES, REQUIRED_SCOPE } from "../auth/auth.guard.js
 
 import { AdminController } from "../admin/admin.controller.js";
 import { AnalyticsController } from "../analytics/analytics.controller.js";
+import { BillingController } from "../billing/billing.controller.js";
 import { AuthController } from "../auth/auth.controller.js";
 import { BioPagesController } from "../bio-pages/bio-pages.controller.js";
 import { HealthController } from "../common/health.controller.js";
@@ -52,6 +53,7 @@ export interface RouteInfo {
 const CONTROLLERS = [
   AdminController,
   AnalyticsController,
+  BillingController,
   AuthController,
   BioPagesController,
   ConversionsController,
