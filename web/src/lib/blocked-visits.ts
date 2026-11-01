@@ -20,7 +20,7 @@ export const BLOCKED_REASON_TERMS = {
 
 export const BLOCKED_VISITS_LABEL = "Blocked visits";
 
-/** "Expired, scheduled, over limit, archived or unsafe" */
+/** "Expired, scheduled, over limit, archived, unsafe or disabled" */
 export const BLOCKED_VISITS_CAPTION = (() => {
   const terms = Object.values(BLOCKED_REASON_TERMS);
   return `${terms.slice(0, -1).join(", ")} or ${terms[terms.length - 1]}`;
