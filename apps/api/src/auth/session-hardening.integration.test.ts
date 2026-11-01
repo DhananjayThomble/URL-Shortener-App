@@ -22,6 +22,7 @@ import {
 import { AuthController } from "./auth.controller.js";
 import { IS_PUBLIC } from "./auth.guard.js";
 import { AuthService } from "./auth.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -174,7 +175,7 @@ describeDb("#699 — session revocation, membership drift, team scoping, accept 
     db = handle.db;
     tokens = new TokenService(db, env, new JwtService());
     mail = new FakeMail();
-    auth = new AuthService(db, env, tokens, {} as TotpService, {} as OAuthService, mail as unknown as MailService);
+    auth = new AuthService(db, env, tokens, {} as TotpService, {} as OAuthService, mail as unknown as MailService, openPlatformSettingsStub());
     members = new MembersService(db, db, mail as unknown as MailService);
     owner = await newUser("owner");
   });

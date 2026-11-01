@@ -23,6 +23,7 @@ import {
   validateSchedule,
 } from "@snapurl/domain";
 import { DB, READ_DB } from "../database/database.module.js";
+import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { ProjectionNudgeService } from "./projection-nudge.service.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -55,6 +56,7 @@ export class LinksService {
     private readonly safeBrowsing: SafeBrowsingService,
     private readonly projectionNudge: ProjectionNudgeService,
     private readonly cacheBust: LinkCacheBustService,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   private readonly logger = new Logger(LinksService.name);
@@ -653,6 +655,20 @@ export class LinksService {
    * resolved it to `passwordHash`, because a clone carries a hash forward and
    * has no plaintext to offer.
    */
+  /* #972 — refuse a back-half an operator has reserved at runtime from the
+     admin panel, in addition to the compiled-in RESERVED_SLUGS. The list is
+     compared case-insensitively (stored values are already trimmed/lower-cased
+     by the admin write), so "Admin" and "admin" are both blocked. Empty list
+     (the default) is a no-op, so this changes nothing until an operator sets it. */
+  private async assertSlugNotReserved(slug: string): Promise<void> {
+    const { reservedSlugs } = await this.settings.getValues();
+    if (reservedSlugs.length === 0) return;
+    const needle = slug.toLowerCase();
+    if (reservedSlugs.some((s) => s.toLowerCase() === needle)) {
+      throw new BadRequestException(`"${slug}" is reserved by SnapURL. Try another back-half.`);
+    }
+  }
+
   private async insert(
     workspaceId: string,
     actor: Actor,
@@ -678,6 +694,11 @@ export class LinksService {
     if (input.slug) {
       const shape = isSlugAvailableShape(input.slug);
       if (!shape.ok) throw new BadRequestException(shape.reason);
+      // #972 — the operator's runtime reserved-slug list, ON TOP OF the
+      // compiled-in RESERVED_SLUGS the shape check already enforces. Read
+      // through the settings cache (no per-request DB hit); matched
+      // case-insensitively, the same way the built-in list is.
+      await this.assertSlugNotReserved(input.slug);
     }
 
     /* HttpUrl already rejected a literal denied address; this resolves DNS to

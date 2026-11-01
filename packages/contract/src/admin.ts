@@ -494,3 +494,132 @@ export const AdminCustomDomains = z.object({
   rows: z.array(AdminCustomDomainRow),
 });
 export type AdminCustomDomains = z.infer<typeof AdminCustomDomains>;
+
+/* ============================================================
+   #972 — runtime platform settings (admin panel 5/7).
+
+   The settings an operator changes from the panel WITHOUT a redeploy: whether
+   signups are open, the request rate-limit values, the reserved slugs, feature
+   on/off switches, and a site-wide banner. The API reads them at runtime
+   through a short cache, so a change applies within about a minute without a
+   restart.
+
+   OUT OF SCOPE on purpose (issue #972): secrets, database and JWT config, and
+   AWS infrastructure. None of those is representable here — there is no schema
+   for them — so the admin surface physically cannot change them.
+
+   The shapes below are shared three ways: the API validates a PATCH body
+   against PlatformSettingsInput, stores each value as jsonb, and returns the
+   current state as PlatformSettings (every setting with its value, its default,
+   and who last changed it). PlatformBanner is the small public read the web app
+   polls so the banner shows for every user, not only admins.
+   ============================================================ */
+
+/** How new sign-ups are handled platform-wide.
+ *   - "open": anyone can register (the default, today's behaviour).
+ *   - "invite_only": registration is refused unless the person holds a
+ *     workspace invitation — the invite-accept path still works, the open
+ *     register and first-time OAuth paths do not.
+ *   - "closed": no new accounts at all, by any path.
+ *  Enforced on BOTH the password register and the OAuth first-sign-in path, so
+ *  a new Google user cannot slip past a closed/invite-only gate. */
+export const SignupMode = z.enum(["open", "invite_only", "closed"]);
+export type SignupMode = z.infer<typeof SignupMode>;
+
+/** The runtime rate-limit values the throttler reads per request. Both are
+ *  bounded: a zero or absurd limit would either lock everyone out or remove the
+ *  limit entirely, so the schema keeps them in a sane operating range. When a
+ *  field is unset the API falls back to the THROTTLE_LIMIT / THROTTLE_TTL_SECONDS
+ *  env values, so an empty store is exactly today's behaviour. */
+export const RateLimitSetting = z.object({
+  /** Requests allowed per window, per client IP. */
+  limit: z.number().int().min(1).max(100_000),
+  /** The window length in seconds. */
+  ttlSeconds: z.number().int().min(1).max(86_400),
+});
+export type RateLimitSetting = z.infer<typeof RateLimitSetting>;
+
+/** The site-wide banner. `message` empty (or the whole setting unset) means no
+ *  banner. `level` tints it. Shown to every user, so it is also readable
+ *  without admin auth through the public banner endpoint. */
+export const BannerSetting = z.object({
+  /** The banner text. Empty string = no banner shown. */
+  message: z.string().trim().max(500),
+  /** Visual severity, defaulting to an informational tint. */
+  level: z.enum(["info", "warning", "critical"]).default("info"),
+});
+export type BannerSetting = z.infer<typeof BannerSetting>;
+
+/** The PATCH /admin/settings body: every setting is optional so an admin can
+ *  change one without touching the rest, but the refine requires at least one,
+ *  so an empty body is a 400 rather than a silent no-op that still writes an
+ *  audit row.
+ *
+ *   - signupMode        — the sign-up gate (see SignupMode).
+ *   - rateLimit         — the runtime throttler values (see RateLimitSetting).
+ *   - reservedSlugs     — back-halves nobody may claim (lower-cased, de-duped
+ *                         and bounded by the API on write).
+ *   - featureFlags      — a map of feature key → on/off. Free-form keys so a
+ *                         new switch needs no contract change; values are
+ *                         strictly boolean.
+ *   - banner            — the site-wide banner (see BannerSetting). */
+export const PlatformSettingsInput = z
+  .object({
+    signupMode: SignupMode.optional(),
+    rateLimit: RateLimitSetting.optional(),
+    reservedSlugs: z.array(z.string().trim().min(1).max(64)).max(500).optional(),
+    featureFlags: z.record(z.string().min(1).max(64), z.boolean()).optional(),
+    banner: BannerSetting.optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: "Change at least one setting.",
+  });
+export type PlatformSettingsInput = z.infer<typeof PlatformSettingsInput>;
+
+/** The effective value of every setting — what the API actually uses right now,
+ *  env fallbacks already folded in. This is the shape the rest of the API reads
+ *  from the settings cache, and the `values` half of the admin read. */
+export const PlatformSettingsValues = z.object({
+  signupMode: SignupMode,
+  rateLimit: RateLimitSetting,
+  reservedSlugs: z.array(z.string()),
+  featureFlags: z.record(z.string(), z.boolean()),
+  banner: BannerSetting,
+});
+export type PlatformSettingsValues = z.infer<typeof PlatformSettingsValues>;
+
+/** Per-setting provenance for the admin UI: when it was last changed and by
+ *  whom, or null on both when the setting has never been written (it is running
+ *  on its default). One entry per setting key. */
+export const PlatformSettingMeta = z.object({
+  /** ISO-8601 instant of the last change, or null if never set. */
+  updatedAt: z.string().nullable(),
+  /** The admin's label (email) who last set it, or null if never set / the
+   *  admin's user row was later deleted. */
+  updatedBy: z.string().nullable(),
+});
+export type PlatformSettingMeta = z.infer<typeof PlatformSettingMeta>;
+
+/** GET /admin/settings — everything the settings page renders: the current
+ *  effective values, the compiled-in defaults (so the UI can show "default: X"
+ *  and offer a reset), and the per-setting "last changed by / at". */
+export const PlatformSettings = z.object({
+  /** The effective values in use right now. */
+  values: PlatformSettingsValues,
+  /** The compiled-in defaults, same shape, for the UI's "default" column. For
+   *  the rate limit these are the env-configured values the store falls back
+   *  to. */
+  defaults: PlatformSettingsValues,
+  /** Provenance per setting key, keyed by the same keys as `values`. */
+  meta: z.record(z.string(), PlatformSettingMeta),
+});
+export type PlatformSettings = z.infer<typeof PlatformSettings>;
+
+/** GET /public/platform/banner — the small unauthenticated read the web app
+ *  polls so the banner shows for every visitor. `message` empty means no banner
+ *  is currently set; the client renders nothing. */
+export const PlatformBanner = z.object({
+  message: z.string(),
+  level: z.enum(["info", "warning", "critical"]),
+});
+export type PlatformBanner = z.infer<typeof PlatformBanner>;
