@@ -43,6 +43,7 @@ const storedLink: ProjectedLink = {
   hideReferrer: false,
   publicPreview: true,
   archived: false,
+  disabled: false,
   safeBrowsingStatus: "safe",
   utm: null,
 };

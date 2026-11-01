@@ -118,6 +118,18 @@ export const links = pgTable(
     safeBrowsingStatus: varchar("safe_browsing_status", { length: 20 }).notNull().default("pending"),
     safeBrowsingCheckedAt: timestamp("safe_browsing_checked_at", { withTimezone: true }),
 
+    /* #971 — a platform admin disabled this link for abuse/moderation. Distinct
+       from archivedAt (an owner's own soft-delete) and from
+       safeBrowsingStatus='flagged' (a Safe Browsing / abuse-report flag that
+       bounces to the unsafe-warning page): a disabled link stops resolving
+       entirely and shows a "link disabled" page. Null means not disabled. The
+       redirect's effectiveGate reads it at the HIGHEST precedence (above
+       archived), and it is projected to the edge so the change applies within
+       the existing projection window, never serving a disabled link from the
+       KVS fast path. Set and cleared only through the admin moderation surface,
+       which audits every change. */
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+
     utm: jsonb("utm").$type<{
       source?: string | null;
       medium?: string | null;

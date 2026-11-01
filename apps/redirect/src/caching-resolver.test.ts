@@ -30,6 +30,7 @@ function makeLink(overrides: Partial<ResolvedLink> = {}): ResolvedLink {
     hideReferrer: false,
     publicPreview: false,
     archived: false,
+    disabled: false,
     safeBrowsingStatus: "clean",
     utm: null,
     ...overrides,

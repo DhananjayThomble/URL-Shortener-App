@@ -21,6 +21,8 @@ const NAV: NavItem[] = [
   // #969 — users and workspaces management.
   { href: "/admin/users", label: "Users" },
   { href: "/admin/workspaces", label: "Workspaces" },
+  // #971 — moderation and abuse.
+  { href: "/admin/moderation", label: "Moderation" },
   // #973 — platform-wide analytics.
   { href: "/admin/analytics", label: "Analytics" },
   // #974 — system health and operations.

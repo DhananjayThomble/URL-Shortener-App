@@ -524,3 +524,279 @@ describe("AdminAuditQuery — filters, coercion, bounds and defaults", () => {
     expect(parsed.offset).toBe(20);
   });
 });
+
+
+
+/* #971 — moderation and abuse shapes. */
+
+import {
+  AddBlockedDomainInput,
+  AdminAbuseQueuePage,
+  AdminAbuseQueueQuery,
+  AdminAbuseReportAction,
+  AdminAbuseReportRow,
+  AdminBlockedDomain,
+  AdminBlockedDomains,
+  AdminCustomDomainRow,
+  AdminCustomDomains,
+  AdminFlaggedLinkRow,
+  AdminFlaggedLinks,
+  AdminLinkDisableInput,
+  AdminLinkPage,
+  AdminLinkRow,
+  AdminLinkSearchQuery,
+} from "./admin.js";
+
+describe("AdminAbuseReportRow (#971)", () => {
+  const base = {
+    id: "r1",
+    slug: "spring",
+    reason: "phishing",
+    reporterContact: null,
+    status: "open" as const,
+    linkId: null,
+    destination: null,
+    workspaceId: null,
+    workspaceName: null,
+    linkDisabled: false,
+    createdAt: "2026-11-01T00:00:00.000Z",
+    updatedAt: "2026-11-01T00:00:00.000Z",
+  };
+
+  it("accepts an orphaned (no-workspace) report with null link context", () => {
+    const parsed = AdminAbuseReportRow.parse(base);
+    expect(parsed.workspaceId).toBeNull();
+    expect(parsed.linkId).toBeNull();
+    expect(parsed.linkDisabled).toBe(false);
+  });
+
+  it("accepts a resolved report with destination and workspace", () => {
+    const parsed = AdminAbuseReportRow.parse({
+      ...base,
+      linkId: "l1",
+      destination: "https://evil.test",
+      workspaceId: "w1",
+      workspaceName: "Acme",
+      status: "actioned",
+      linkDisabled: true,
+    });
+    expect(parsed.destination).toBe("https://evil.test");
+    expect(parsed.linkDisabled).toBe(true);
+  });
+
+  it("rejects an unknown status and a non-boolean linkDisabled", () => {
+    expect(AdminAbuseReportRow.safeParse({ ...base, status: "nope" }).success).toBe(false);
+    expect(AdminAbuseReportRow.safeParse({ ...base, linkDisabled: "yes" }).success).toBe(false);
+  });
+
+  it("requires linkDisabled and the id/slug/reason fields", () => {
+    const { linkDisabled: _omit, ...noFlag } = base;
+    expect(AdminAbuseReportRow.safeParse(noFlag).success).toBe(false);
+    const { slug: _s, ...noSlug } = base;
+    expect(AdminAbuseReportRow.safeParse(noSlug).success).toBe(false);
+  });
+});
+
+describe("AdminAbuseQueuePage (#971)", () => {
+  it("pages rows with a boolean hasMore", () => {
+    expect(AdminAbuseQueuePage.parse({ rows: [], hasMore: true }).hasMore).toBe(true);
+    expect(AdminAbuseQueuePage.safeParse({ rows: [] }).success).toBe(false);
+    expect(AdminAbuseQueuePage.safeParse({ rows: [], hasMore: "x" }).success).toBe(false);
+  });
+});
+
+describe("AdminAbuseQueueQuery (#971)", () => {
+  it("defaults limit to 50 and offset to 0, filters absent", () => {
+    const parsed = AdminAbuseQueueQuery.parse({});
+    expect(parsed.limit).toBe(50);
+    expect(parsed.offset).toBe(0);
+    expect(parsed.status).toBeUndefined();
+    expect(parsed.orphaned).toBeUndefined();
+  });
+
+  it("coerces orphaned (true AND false) and the numeric bounds", () => {
+    expect(AdminAbuseQueueQuery.parse({ orphaned: "true" }).orphaned).toBe(true);
+    // z.stringbool, not z.coerce.boolean: "false" must be false, not truthy.
+    expect(AdminAbuseQueueQuery.parse({ orphaned: "false" }).orphaned).toBe(false);
+    expect(AdminAbuseQueueQuery.parse({ limit: "10", offset: "5" })).toMatchObject({ limit: 10, offset: 5 });
+    expect(AdminAbuseQueueQuery.safeParse({ limit: 0 }).success).toBe(false);
+    expect(AdminAbuseQueueQuery.safeParse({ limit: 201 }).success).toBe(false);
+    expect(AdminAbuseQueueQuery.safeParse({ offset: -1 }).success).toBe(false);
+    expect(AdminAbuseQueueQuery.safeParse({ limit: 2.5 }).success).toBe(false);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(AdminAbuseQueueQuery.safeParse({ status: "actioned" }).success).toBe(true);
+    expect(AdminAbuseQueueQuery.safeParse({ status: "nope" }).success).toBe(false);
+  });
+});
+
+describe("AdminAbuseReportAction (#971)", () => {
+  it("accepts status alone, disableLink alone, both, and neither (service rejects neither)", () => {
+    expect(AdminAbuseReportAction.parse({ status: "dismissed" }).status).toBe("dismissed");
+    expect(AdminAbuseReportAction.parse({ disableLink: true }).disableLink).toBe(true);
+    expect(AdminAbuseReportAction.parse({ status: "actioned", disableLink: true })).toEqual({
+      status: "actioned",
+      disableLink: true,
+    });
+    // Shape-valid even when empty — the no-op rejection is the service's job.
+    expect(AdminAbuseReportAction.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects an unknown status and a non-boolean disableLink", () => {
+    expect(AdminAbuseReportAction.safeParse({ status: "nope" }).success).toBe(false);
+    expect(AdminAbuseReportAction.safeParse({ disableLink: "yes" }).success).toBe(false);
+  });
+});
+
+describe("AdminLinkRow / AdminLinkPage (#971)", () => {
+  const row = {
+    id: "l1",
+    slug: "promo",
+    domain: "snap.to",
+    destination: "https://example.com",
+    workspaceId: "w1",
+    workspaceName: null,
+    owner: null,
+    disabled: false,
+    safeBrowsingStatus: "clean",
+    createdAt: "2026-11-01T00:00:00.000Z",
+  };
+
+  it("accepts a link row with nullable owner/workspaceName", () => {
+    expect(AdminLinkRow.parse(row).owner).toBeNull();
+    expect(AdminLinkRow.parse({ ...row, owner: "a@x.com", workspaceName: "Acme" }).owner).toBe("a@x.com");
+  });
+
+  it("requires disabled to be a boolean and the id/slug/destination present", () => {
+    expect(AdminLinkRow.safeParse({ ...row, disabled: "no" }).success).toBe(false);
+    const { destination: _d, ...noDest } = row;
+    expect(AdminLinkRow.safeParse(noDest).success).toBe(false);
+  });
+
+  it("pages rows with hasMore", () => {
+    expect(AdminLinkPage.parse({ rows: [row], hasMore: false }).rows).toHaveLength(1);
+    expect(AdminLinkPage.safeParse({ rows: [row] }).success).toBe(false);
+  });
+});
+
+describe("AdminLinkSearchQuery (#971)", () => {
+  it("defaults limit/offset and leaves filters absent", () => {
+    const parsed = AdminLinkSearchQuery.parse({});
+    expect(parsed.limit).toBe(50);
+    expect(parsed.offset).toBe(0);
+    expect(parsed.q).toBeUndefined();
+    expect(parsed.disabled).toBeUndefined();
+  });
+
+  it("coerces disabled (true AND false) and bounds q length 1..255", () => {
+    // z.stringbool: "false" is false and "true" is true (a plain coerce.boolean
+    // would read "false" as truthy).
+    expect(AdminLinkSearchQuery.parse({ disabled: "false" }).disabled).toBe(false);
+    expect(AdminLinkSearchQuery.parse({ disabled: "true" }).disabled).toBe(true);
+    expect(AdminLinkSearchQuery.safeParse({ q: "" }).success).toBe(false);
+    expect(AdminLinkSearchQuery.safeParse({ q: "a".repeat(255) }).success).toBe(true);
+    expect(AdminLinkSearchQuery.safeParse({ q: "a".repeat(256) }).success).toBe(false);
+  });
+
+  it("enforces numeric bounds", () => {
+    expect(AdminLinkSearchQuery.safeParse({ limit: 0 }).success).toBe(false);
+    expect(AdminLinkSearchQuery.safeParse({ limit: 201 }).success).toBe(false);
+    expect(AdminLinkSearchQuery.safeParse({ offset: -1 }).success).toBe(false);
+  });
+});
+
+describe("AdminLinkDisableInput (#971)", () => {
+  it("requires the boolean disabled and bounds reason to 500", () => {
+    expect(AdminLinkDisableInput.parse({ disabled: true }).disabled).toBe(true);
+    expect(AdminLinkDisableInput.parse({ disabled: false, reason: "spam" }).reason).toBe("spam");
+    expect(AdminLinkDisableInput.safeParse({}).success).toBe(false); // disabled required
+    expect(AdminLinkDisableInput.safeParse({ disabled: "yes" }).success).toBe(false);
+    expect(AdminLinkDisableInput.safeParse({ disabled: true, reason: "a".repeat(501) }).success).toBe(false);
+  });
+});
+
+describe("AddBlockedDomainInput (#971)", () => {
+  it("accepts a bare host and an optional reason", () => {
+    expect(AddBlockedDomainInput.parse({ domain: "evil.example" }).domain).toBe("evil.example");
+    expect(AddBlockedDomainInput.parse({ domain: "evil.example", reason: "phishing" }).reason).toBe("phishing");
+  });
+
+  it("rejects an empty domain and one over 253 chars", () => {
+    expect(AddBlockedDomainInput.safeParse({ domain: "" }).success).toBe(false);
+    expect(AddBlockedDomainInput.safeParse({ domain: `${"a".repeat(254)}` }).success).toBe(false);
+  });
+
+  it("rejects a full URL, a scheme, a slash, a space or an @ (bare host only)", () => {
+    expect(AddBlockedDomainInput.safeParse({ domain: "https://evil.example" }).success).toBe(false);
+    expect(AddBlockedDomainInput.safeParse({ domain: "evil.example/path" }).success).toBe(false);
+    expect(AddBlockedDomainInput.safeParse({ domain: "evil example" }).success).toBe(false);
+    expect(AddBlockedDomainInput.safeParse({ domain: "user@evil.example" }).success).toBe(false);
+  });
+
+  it("bounds reason to 500 chars", () => {
+    expect(AddBlockedDomainInput.safeParse({ domain: "evil.example", reason: "a".repeat(501) }).success).toBe(false);
+  });
+});
+
+describe("AdminBlockedDomain / AdminBlockedDomains (#971)", () => {
+  const d = { id: "b1", domain: "evil.example", reason: null, addedBy: "a@x.com", createdAt: "2026-11-01T00:00:00.000Z" };
+  it("allows a null reason and requires the other fields", () => {
+    expect(AdminBlockedDomain.parse(d).reason).toBeNull();
+    expect(AdminBlockedDomain.parse({ ...d, reason: "phishing" }).reason).toBe("phishing");
+    const { addedBy: _a, ...noAdder } = d;
+    expect(AdminBlockedDomain.safeParse(noAdder).success).toBe(false);
+  });
+  it("wraps the array under domains", () => {
+    expect(AdminBlockedDomains.parse({ domains: [d] }).domains).toHaveLength(1);
+    expect(AdminBlockedDomains.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("AdminFlaggedLinkRow / AdminFlaggedLinks (#971)", () => {
+  const row = {
+    id: "l1",
+    slug: "promo",
+    domain: "snap.to",
+    destination: "https://evil.test",
+    workspaceId: "w1",
+    workspaceName: null,
+    safeBrowsingStatus: "flagged",
+    checkedAt: null,
+    disabled: false,
+  };
+  it("allows null checkedAt/workspaceName and requires disabled boolean", () => {
+    expect(AdminFlaggedLinkRow.parse(row).checkedAt).toBeNull();
+    expect(AdminFlaggedLinkRow.safeParse({ ...row, disabled: "no" }).success).toBe(false);
+  });
+  it("pages with hasMore", () => {
+    expect(AdminFlaggedLinks.parse({ rows: [row], hasMore: false }).hasMore).toBe(false);
+    expect(AdminFlaggedLinks.safeParse({ rows: [row] }).success).toBe(false);
+  });
+});
+
+describe("AdminCustomDomainRow / AdminCustomDomains (#971)", () => {
+  const row = {
+    id: "d1",
+    domain: "links.acme.test",
+    workspaceId: "w1",
+    workspaceName: "Acme",
+    status: "live",
+    ssl: "issued",
+    verifiedAt: "2026-10-01T00:00:00.000Z",
+    sslRenewsAt: null,
+    createdAt: "2026-11-01T00:00:00.000Z",
+  };
+  it("allows null workspace/verified/ssl-renews and requires status + ssl", () => {
+    expect(AdminCustomDomainRow.parse({ ...row, workspaceId: null, workspaceName: null }).workspaceId).toBeNull();
+    expect(AdminCustomDomainRow.parse(row).sslRenewsAt).toBeNull();
+    const { status: _st, ...noStatus } = row;
+    expect(AdminCustomDomainRow.safeParse(noStatus).success).toBe(false);
+    const { ssl: _ssl, ...noSsl } = row;
+    expect(AdminCustomDomainRow.safeParse(noSsl).success).toBe(false);
+  });
+  it("wraps the array under rows", () => {
+    expect(AdminCustomDomains.parse({ rows: [row] }).rows).toHaveLength(1);
+    expect(AdminCustomDomains.safeParse({}).success).toBe(false);
+  });
+});

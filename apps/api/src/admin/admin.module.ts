@@ -5,6 +5,7 @@ import { ENV, type Env } from "../config/env.js";
 import { AdminController } from "./admin.controller.js";
 import { AdminService } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
+import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminManagementService } from "./admin-management.service.js";
 import { AuthModule } from "../auth/auth.module.js";
@@ -21,14 +22,17 @@ import {
 
 /* #968 — the platform-admin module. AdminService resolves the role from the
    live user row + PLATFORM_ADMIN_EMAILS; AdminGuard enforces it on every route.
-   #969 adds AdminManagementService (users/workspaces tools), which reaches
-   TokenService (AuthModule) to revoke sessions and WorkspaceRemovalService
-   (WorkspacesModule) to delete a sole-owned workspace cleanly; MailService is
-   global. #974 adds AdminHealthService (system health, backlogs, audited
-   retries, audit viewers). #973 adds the platform-wide analytics: its reader
-   reads the daily summary tables off the read replica (same token+useFactory
-   seam as analytics.module and database.module), and the SES email figures sit
-   behind EmailStatsReader. DB and ENV come from the global
+   #974 adds AdminHealthService (system health, backlogs, audited retries, audit
+   viewers). #971 adds AdminModerationService (abuse queue, link search,
+   disable/enable, destination blocklist, flagged + custom-domain lists), using
+   the shared ProjectionNudge/LinkCacheBust services from the global
+   CommonModule. #969 adds AdminManagementService (users/workspaces tools),
+   which reaches TokenService (AuthModule) to revoke sessions and
+   WorkspaceRemovalService (WorkspacesModule) to delete a sole-owned workspace
+   cleanly; MailService is global. #973 adds the platform-wide analytics: its
+   reader reads the daily summary tables off the read replica (same
+   token+useFactory seam as analytics.module and database.module), and the SES
+   email figures sit behind EmailStatsReader. DB and ENV come from the global
    DatabaseModule/ConfigModule. */
 @Module({
   imports: [AuthModule, WorkspacesModule],
@@ -36,6 +40,7 @@ import {
   providers: [
     AdminService,
     AdminHealthService,
+    AdminModerationService,
     AdminGuard,
     AdminManagementService,
     AdminAnalyticsService,

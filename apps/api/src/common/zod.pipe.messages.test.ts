@@ -139,7 +139,13 @@ describe("validation errors reach people as plain sentences", () => {
    pipe never sees a bad row. Every row below fails validation before any
    query, so the database is a stub whose transaction has nothing to insert. */
 describe("LinksService.bulkCreate — per-row validation copy", () => {
-  const db = { transaction: async (fn: (tx: unknown) => unknown) => fn({}) };
+  // bulkCreate loads the destination blocklist once up front (#971); every row
+  // below still fails validation before any insert, so an empty blocklist is
+  // all the stub needs to return.
+  const db = {
+    transaction: async (fn: (tx: unknown) => unknown) => fn({}),
+    select: () => ({ from: async () => [] }),
+  };
   const service = new LinksService(db as never, db as never, {} as never, {} as never, {} as never);
   const actor = toActor({ userId: null, label: "test" });
   const row = (over: Record<string, unknown>) => ({ domain: "snap.example", ...over });

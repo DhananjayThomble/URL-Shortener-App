@@ -1,14 +1,25 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import {
+  AddBlockedDomainInput,
+  AdminAbuseQueueQuery,
+  AdminAbuseReportAction,
   AdminAnalyticsCsvView,
   AdminAnalyticsQuery,
   AdminAuditQuery,
+  AdminLinkDisableInput,
+  AdminLinkSearchQuery,
   AdminListQuery,
   AdminUpdateWorkspaceInput,
+  type AdminAbuseQueuePage,
   type AdminActionResult,
   type AdminAuditPage,
   type AdminBacklogs,
+  type AdminBlockedDomain,
+  type AdminBlockedDomains,
+  type AdminCustomDomains,
+  type AdminFlaggedLinks,
+  type AdminLinkPage,
   type AdminMe,
   type AdminRetryResult,
   type AdminServiceHealth,
@@ -23,26 +34,29 @@ import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { AdminGuard, Admin, AdminRequestIp } from "./admin.guard.js";
 import type { AdminIdentity } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
+import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 
 /* ============================================================
-   #968 + #974 + #969 — the platform-admin API surface (/api/v1/admin/*).
+   #968 + #974 + #969 + #971 + #973 — the platform-admin API surface (/api/v1/admin/*).
 
    Every route is behind AdminGuard, so reaching any handler already means the
    caller is a confirmed platform admin (verified allow-listed email + 2FA).
    #968 shipped GET /admin/me; #974 adds system health and operations; #969 adds
-   the users-and-workspaces tools; #973 adds the platform-wide analytics the
-   admin panel reads. Every WRITE (the #969 management actions, the #974
-   retries/release) records a row in the platform audit log through its service;
-   the analytics and health READ routes do not audit.
+   the users-and-workspaces tools; #971 adds moderation and abuse; #973 adds the
+   platform-wide analytics the admin panel reads. Every WRITE (the #969
+   management actions, the #974 retries/release, the #971 moderation actions)
+   records a row in the platform audit log through its service; the analytics
+   and health READ routes do not audit.
    ============================================================ */
 @Controller("admin")
 @UseGuards(AdminGuard)
 export class AdminController {
   constructor(
-    private readonly management: AdminManagementService,
     private readonly health: AdminHealthService,
+    private readonly moderation: AdminModerationService,
+    private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
   ) {}
 
@@ -208,6 +222,84 @@ export class AdminController {
     @Query(zodQuery(AdminAuditQuery)) q: AdminAuditQuery,
   ): Promise<AdminAuditPage> {
     return this.health.workspaceAudit(workspaceId, q);
+  }
+
+  /* ---- #971 moderation and abuse ---- */
+
+  /** The global abuse queue, including reports with no workspace. */
+  @Get("abuse-reports")
+  abuseQueue(@Query(zodQuery(AdminAbuseQueueQuery)) q: AdminAbuseQueueQuery): Promise<AdminAbuseQueuePage> {
+    return this.moderation.abuseQueue(q);
+  }
+
+  /** Act on one abuse report: move its status and/or disable its link. Audited. */
+  @Post("abuse-reports/:id/action")
+  @HttpCode(204)
+  actOnReport(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(AdminAbuseReportAction)) input: AdminAbuseReportAction,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<void> {
+    return this.moderation.actOnReport(id, input, admin, ip);
+  }
+
+  /** Platform link search — by slug, destination or owner. */
+  @Get("links")
+  searchLinks(@Query(zodQuery(AdminLinkSearchQuery)) q: AdminLinkSearchQuery): Promise<AdminLinkPage> {
+    return this.moderation.searchLinks(q);
+  }
+
+  /** Disable or re-enable a link platform-wide (stops/starts edge redirect). Audited. */
+  @Post("links/:id/disable")
+  @HttpCode(204)
+  disableLink(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(AdminLinkDisableInput)) input: AdminLinkDisableInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<void> {
+    return this.moderation.disableLink(id, input, admin, ip);
+  }
+
+  /** The destination blocklist. */
+  @Get("blocked-domains")
+  blockedDomains(): Promise<AdminBlockedDomains> {
+    return this.moderation.listBlockedDomains();
+  }
+
+  /** Add a destination host to the blocklist. Audited. */
+  @Post("blocked-domains")
+  @HttpCode(201)
+  addBlockedDomain(
+    @Body(zodBody(AddBlockedDomainInput)) input: AddBlockedDomainInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminBlockedDomain> {
+    return this.moderation.addBlockedDomain(input, admin, ip);
+  }
+
+  /** Remove a destination host from the blocklist. Audited. */
+  @Delete("blocked-domains/:id")
+  @HttpCode(204)
+  removeBlockedDomain(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<void> {
+    return this.moderation.removeBlockedDomain(id, admin, ip);
+  }
+
+  /** Links Safe Browsing has flagged, platform-wide. */
+  @Get("flagged-links")
+  flaggedLinks(): Promise<AdminFlaggedLinks> {
+    return this.moderation.flaggedLinks();
+  }
+
+  /** Every custom domain with its verification and SSL status. */
+  @Get("custom-domains")
+  customDomains(): Promise<AdminCustomDomains> {
+    return this.moderation.customDomains();
   }
 
   /* ---- #973 platform-wide analytics ---- */

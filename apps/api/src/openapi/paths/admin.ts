@@ -102,6 +102,7 @@ route({
   },
 });
 
+
 /* ── users (#969) ── */
 
 route({
@@ -246,6 +247,121 @@ route({
     200: { description: "A read-only workspace snapshot", schema: refs.AdminViewAsWorkspace },
     403: { description: "The caller is not a platform admin" },
     404: { description: "No such workspace" },
+  },
+});
+
+/* #971 — moderation and abuse. */
+
+route({
+  method: "get",
+  path: "/admin/abuse-reports",
+  tag: "Admin",
+  summary: "The global abuse queue, including reports with no workspace",
+  query: refs.AdminAbuseQueueQuery,
+  responses: {
+    200: { description: "A page of abuse-queue rows", schema: refs.AdminAbuseQueuePage },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/abuse-reports/{id}/action",
+  tag: "Admin",
+  summary: "Act on an abuse report: move its status and/or disable its link (audited)",
+  params: z.object({ id: z.string().describe("The abuse report id (UUID)") }),
+  body: refs.AdminAbuseReportAction,
+  responses: {
+    204: { description: "Applied" },
+    400: { description: "Neither a status nor disableLink was given" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such report" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/links",
+  tag: "Admin",
+  summary: "Platform link search — by slug, destination or owner",
+  query: refs.AdminLinkSearchQuery,
+  responses: {
+    200: { description: "A page of links across the platform", schema: refs.AdminLinkPage },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/links/{id}/disable",
+  tag: "Admin",
+  summary: "Disable or re-enable a link platform-wide (stops/starts edge redirect; audited)",
+  params: z.object({ id: z.string().describe("The link id (UUID)") }),
+  body: refs.AdminLinkDisableInput,
+  responses: {
+    204: { description: "Applied" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such link" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/blocked-domains",
+  tag: "Admin",
+  summary: "The destination blocklist",
+  responses: {
+    200: { description: "Every blocked destination host", schema: refs.AdminBlockedDomains },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/blocked-domains",
+  tag: "Admin",
+  summary: "Add a destination host to the blocklist (audited)",
+  body: refs.AddBlockedDomainInput,
+  responses: {
+    201: { description: "The blocked domain", schema: refs.AdminBlockedDomain },
+    400: { description: "The domain was empty or not a bare host" },
+    403: { description: "The caller is not a platform admin" },
+    409: { description: "The host is already blocked" },
+  },
+});
+
+route({
+  method: "delete",
+  path: "/admin/blocked-domains/{id}",
+  tag: "Admin",
+  summary: "Remove a destination host from the blocklist (audited)",
+  params: z.object({ id: z.string().describe("The blocked-domain id (UUID)") }),
+  responses: {
+    204: { description: "Removed" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such blocked domain" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/flagged-links",
+  tag: "Admin",
+  summary: "Links Safe Browsing has flagged, platform-wide",
+  responses: {
+    200: { description: "Flagged links", schema: refs.AdminFlaggedLinks },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/custom-domains",
+  tag: "Admin",
+  summary: "Every custom domain with its verification and SSL status",
+  responses: {
+    200: { description: "Custom domains and their status", schema: refs.AdminCustomDomains },
+    403: { description: "The caller is not a platform admin" },
   },
 });
 

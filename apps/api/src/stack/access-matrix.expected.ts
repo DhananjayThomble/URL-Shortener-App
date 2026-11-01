@@ -191,6 +191,20 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "GET /api/v1/admin/workspaces/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "PATCH /api/v1/admin/workspaces/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/workspaces/{id}/view-as", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #971 — moderation and abuse. Same AdminGuard fail-closed gate as every
+  // other /admin/* route: none of the matrix principals is a platform admin
+  // (PLATFORM_ADMIN_EMAILS is empty in the staging stack), so anon is 401,
+  // every authenticated principal is 403, and every API key is 403 (no user
+  // behind the key, so never an admin).
+  { route: "GET /api/v1/admin/abuse-reports", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/abuse-reports/{id}/action", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/links", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/links/{id}/disable", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/blocked-domains", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/blocked-domains", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "DELETE /api/v1/admin/blocked-domains/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/flagged-links", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/custom-domains", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #973 — platform-wide analytics + its CSV export. Same platform-admin gate:
   // AdminGuard fails closed, so every authenticated principal is 403, anon is
   // 401, and API keys are 403 (no user behind the key). The CSV export is a
@@ -201,5 +215,6 @@ export const ACCESS_MATRIX: Row[] = [
 
 // Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
 // + 7 for #974's system-health routes + 11 for #969's users-and-workspaces
-// + 2 for #973's GET /admin/analytics and its CSV export).
-export const EXPECTED_ROUTE_COUNT = 92;
+// + 9 for #971's moderation routes + 2 for #973's GET /admin/analytics and its
+// CSV export).
+export const EXPECTED_ROUTE_COUNT = 101;

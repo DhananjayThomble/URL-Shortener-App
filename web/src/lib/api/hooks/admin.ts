@@ -2,9 +2,16 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AddBlockedDomainInput,
+  AdminAbuseQueuePage,
   AdminActionResult,
   AdminAuditPage,
   AdminBacklogs,
+  AdminBlockedDomain,
+  AdminBlockedDomains,
+  AdminCustomDomains,
+  AdminFlaggedLinks,
+  AdminLinkPage,
   AdminMe,
   AdminRetryResult,
   AdminServiceHealth,
@@ -14,11 +21,16 @@ import {
   AdminWorkspaceDetail,
   AdminWorkspaceList,
   PlatformAnalytics,
+  type AdminAbuseQueueQuery,
+  type AdminAbuseReportAction,
   type AdminAnalyticsCsvView,
   type AdminAnalyticsRange,
   type AdminAuditQuery,
+  type AdminLinkDisableInput,
+  type AdminLinkSearchQuery,
   type AdminUpdateWorkspaceInput,
 } from "@snapurl/contract";
+import { z } from "zod";
 import { API_URL, ApiError, request, tokens } from "../client";
 import { qk } from "./keys";
 
@@ -288,4 +300,122 @@ export async function downloadAdminAnalyticsCsv(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/* ============================================================
+   #971 — moderation and abuse.
+
+   Same platform-admin gate as every /admin/* hook above. The abuse-queue,
+   link-search, disable and blocklist mutations invalidate the views they
+   change so the panel (and the admin audit log) reflect the action at once.
+   ============================================================ */
+
+/** The global abuse queue, including reports with no workspace. */
+export function useAdminAbuseQueue(q: Partial<AdminAbuseQueueQuery> = {}) {
+  const params = new URLSearchParams();
+  if (q.status) params.set("status", q.status);
+  if (q.orphaned != null) params.set("orphaned", String(q.orphaned));
+  if (q.limit != null) params.set("limit", String(q.limit));
+  if (q.offset != null) params.set("offset", String(q.offset));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return useQuery({
+    queryKey: qk.adminAbuseQueue(qs),
+    queryFn: () => request(`/admin/abuse-reports${qs}`, AdminAbuseQueuePage),
+  });
+}
+
+/** Act on one abuse report: move its status and/or disable its link. */
+export function useActOnAbuseReport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; input: AdminAbuseReportAction }) =>
+      request(`/admin/abuse-reports/${vars.id}/action`, z.undefined(), { method: "POST", body: vars.input }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.adminAbuseQueue() }),
+        qc.invalidateQueries({ queryKey: qk.adminLinkSearch() }),
+        qc.invalidateQueries({ queryKey: qk.adminAudit() }),
+      ]),
+  });
+}
+
+/** Platform link search — by slug, destination or owner. */
+export function useAdminLinkSearch(q: Partial<AdminLinkSearchQuery> = {}) {
+  const params = new URLSearchParams();
+  if (q.q) params.set("q", q.q);
+  if (q.disabled != null) params.set("disabled", String(q.disabled));
+  if (q.limit != null) params.set("limit", String(q.limit));
+  if (q.offset != null) params.set("offset", String(q.offset));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return useQuery({
+    queryKey: qk.adminLinkSearch(qs),
+    queryFn: () => request(`/admin/links${qs}`, AdminLinkPage),
+  });
+}
+
+/** Disable or re-enable a link platform-wide. */
+export function useAdminDisableLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; input: AdminLinkDisableInput }) =>
+      request(`/admin/links/${vars.id}/disable`, z.undefined(), { method: "POST", body: vars.input }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.adminLinkSearch() }),
+        qc.invalidateQueries({ queryKey: qk.adminAbuseQueue() }),
+        qc.invalidateQueries({ queryKey: qk.adminFlaggedLinks }),
+        qc.invalidateQueries({ queryKey: qk.adminAudit() }),
+      ]),
+  });
+}
+
+/** The destination blocklist. */
+export function useAdminBlockedDomains() {
+  return useQuery({
+    queryKey: qk.adminBlockedDomains,
+    queryFn: () => request("/admin/blocked-domains", AdminBlockedDomains),
+  });
+}
+
+/** Add a destination host to the blocklist. */
+export function useAddBlockedDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AddBlockedDomainInput) =>
+      request("/admin/blocked-domains", AdminBlockedDomain, { method: "POST", body: input }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.adminBlockedDomains }),
+        qc.invalidateQueries({ queryKey: qk.adminAudit() }),
+      ]),
+  });
+}
+
+/** Remove a destination host from the blocklist. */
+export function useRemoveBlockedDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request(`/admin/blocked-domains/${id}`, z.undefined(), { method: "DELETE" }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.adminBlockedDomains }),
+        qc.invalidateQueries({ queryKey: qk.adminAudit() }),
+      ]),
+  });
+}
+
+/** Links Safe Browsing has flagged, platform-wide. */
+export function useAdminFlaggedLinks() {
+  return useQuery({
+    queryKey: qk.adminFlaggedLinks,
+    queryFn: () => request("/admin/flagged-links", AdminFlaggedLinks),
+  });
+}
+
+/** Every custom domain with its verification and SSL status. */
+export function useAdminCustomDomains() {
+  return useQuery({
+    queryKey: qk.adminCustomDomains,
+    queryFn: () => request("/admin/custom-domains", AdminCustomDomains),
+  });
 }

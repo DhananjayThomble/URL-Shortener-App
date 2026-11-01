@@ -225,6 +225,15 @@ export function previewOutcome(
     return { ...none, gate, blocked: { heading: "This link is no longer active", icon: "⏸", where: "Nowhere. The owner has archived this link." } };
   }
 
+  /* #971 — a platform admin can disable a link. The public preview is never
+     asked about a disabled link (a disabled link stops resolving, so there is
+     nothing to preview), but effectiveGateFromState's result type now includes
+     "disabled", so this branch keeps the gate exhaustive and narrows it out
+     before the lifecycle handling below. */
+  if (gate === "disabled") {
+    return { ...none, gate, blocked: { heading: "This link has been disabled", icon: "⛔", where: "Nowhere. This link was disabled by the SnapURL team." } };
+  }
+
   if (gate === "flagged") {
     /* Flagged outranks every lifecycle gate and routing. Show the flagged
        heading (the caller renders it from `trust`, so blocked is null) and

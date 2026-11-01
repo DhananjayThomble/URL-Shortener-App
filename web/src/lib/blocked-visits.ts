@@ -13,11 +13,14 @@ export const BLOCKED_REASON_TERMS = {
   click_limit: "over limit",
   archived: "archived",
   flagged: "unsafe",
+  // #971 — a platform admin can disable a link for abuse; the redirect records
+  // the blocked visit like any other gate, so the tile counts it too.
+  disabled: "disabled",
 } as const;
 
 export const BLOCKED_VISITS_LABEL = "Blocked visits";
 
-/** "Expired, scheduled, over limit, archived or unsafe" */
+/** "Expired, scheduled, over limit, archived, unsafe or disabled" */
 export const BLOCKED_VISITS_CAPTION = (() => {
   const terms = Object.values(BLOCKED_REASON_TERMS);
   return `${terms.slice(0, -1).join(", ")} or ${terms[terms.length - 1]}`;
