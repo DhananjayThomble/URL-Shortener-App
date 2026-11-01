@@ -79,7 +79,9 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
     service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
     controller = new DomainsController(service);
 
-    await db.insert(workspaces).values({ id: own, name: "own", slug: `dom-own-${stamp}` });
+    // #966: add() now gates on the plan; a paid plan so the create-time tests
+    // below exercise connect/redirect behaviour, not the plan gate.
+    await db.insert(workspaces).values({ id: own, name: "own", slug: `dom-own-${stamp}`, plan: "Pro" });
     await db.insert(workspaces).values({ id: other, name: "other", slug: `dom-other-${stamp}` });
 
     const [d1] = await db

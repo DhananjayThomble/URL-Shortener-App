@@ -84,6 +84,18 @@ describe("the static table", () => {
     }
   });
 
+  it("the PlanEntitlements schema requires both fields with the right types", () => {
+    // Kills the schema → {} mutant: an empty-shape object schema would accept
+    // all of these.
+    expect(PlanEntitlements.safeParse({}).success).toBe(false);
+    expect(PlanEntitlements.safeParse({ customDomains: true }).success).toBe(false);
+    expect(PlanEntitlements.safeParse({ maxCustomDomains: 5 }).success).toBe(false);
+    expect(PlanEntitlements.safeParse({ customDomains: "yes", maxCustomDomains: 5 }).success).toBe(false);
+    expect(PlanEntitlements.safeParse({ customDomains: true, maxCustomDomains: 1.5 }).success).toBe(false);
+    expect(PlanEntitlements.safeParse({ customDomains: true, maxCustomDomains: -1 }).success).toBe(false);
+    expect(PlanEntitlements.safeParse({ customDomains: true, maxCustomDomains: 5 }).success).toBe(true);
+  });
+
   it("keeps the paid cap positive and the free cap zero", () => {
     expect(PAID_ENTITLEMENTS.maxCustomDomains).toBeGreaterThan(0);
     expect(FREE_ENTITLEMENTS.maxCustomDomains).toBe(0);
