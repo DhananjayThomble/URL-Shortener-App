@@ -18,6 +18,32 @@ route({
   },
 });
 
+/* ── runtime platform settings (#972) ── */
+
+route({
+  method: "get",
+  path: "/admin/settings",
+  tag: "Admin",
+  summary: "The platform settings, their defaults, and who last changed each",
+  responses: {
+    200: { description: "Effective values, defaults and per-setting provenance", schema: refs.PlatformSettings },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "patch",
+  path: "/admin/settings",
+  tag: "Admin",
+  summary: "Change one or more platform settings (audited, applies without a redeploy)",
+  body: refs.PlatformSettingsInput,
+  responses: {
+    200: { description: "The updated settings", schema: refs.PlatformSettings },
+    400: { description: "No setting was provided, or a value was out of range" },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
 /* ── system health and operations (#974) ── */
 
 route({

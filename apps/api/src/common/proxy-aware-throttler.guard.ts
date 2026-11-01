@@ -1,8 +1,14 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { ThrottlerGuard, ThrottlerModuleOptions, ThrottlerStorage } from "@nestjs/throttler";
+import {
+  ThrottlerGuard,
+  ThrottlerModuleOptions,
+  ThrottlerStorage,
+  type ThrottlerRequest,
+} from "@nestjs/throttler";
 import { clientIpFromXff } from "@snapurl/domain";
 import { ENV, type Env } from "../config/env.js";
+import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 
 /* @nestjs/throttler keys every limit on the value getTracker() returns, and the
    default returns req.ip. With Fastify's `trustProxy` that is the LEFTMOST
@@ -21,8 +27,29 @@ export class ProxyAwareThrottlerGuard extends ThrottlerGuard {
     storageService: ThrottlerStorage,
     reflector: Reflector,
     @Inject(ENV) private readonly env: Env,
+    private readonly settings: PlatformSettingsService,
   ) {
     super(options, storageService, reflector);
+  }
+
+  /* #972 — make the GLOBAL rate limit a runtime setting.
+
+     The module binds the throttler to the THROTTLE_* env values at startup, so
+     `requestProps.limit`/`.ttl` carry those static numbers. We override the
+     DEFAULT throttler's values per request with the cached platform setting
+     (which itself falls back to the same env values when unset), so an operator
+     can change the limit from the admin panel and it applies within the cache
+     window WITHOUT a restart. A route with its own @Throttle({ ... }) (e.g. the
+     5/min on /public/.../unlock, or /auth/login) carries a non-"default"
+     throttler name and is left exactly as declared — those tight,
+     security-specific limits are deliberate and not operator-tunable. The read
+     is a cached field access, not a DB query, so the hot path is unchanged. */
+  protected override async handleRequest(requestProps: ThrottlerRequest): Promise<boolean> {
+    if (requestProps.throttler.name !== "default") {
+      return super.handleRequest(requestProps);
+    }
+    const { limit, ttlSeconds } = (await this.settings.getValues()).rateLimit;
+    return super.handleRequest({ ...requestProps, limit, ttl: ttlSeconds * 1000 });
   }
 
   protected override async getTracker(req: Record<string, any>): Promise<string> {

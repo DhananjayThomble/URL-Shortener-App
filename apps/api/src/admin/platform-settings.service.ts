@@ -1,0 +1,239 @@
+import { Inject, Injectable } from "@nestjs/common";
+import {
+  BannerSetting,
+  PlatformBanner,
+  PlatformSettings,
+  PlatformSettingsInput,
+  PlatformSettingsValues,
+  RateLimitSetting,
+  SignupMode,
+  type PlatformSettingMeta,
+} from "@snapurl/contract";
+import { platformSettings, writeAdminAuditEntry, type Database } from "@snapurl/database";
+import { z } from "zod";
+import { DB } from "../database/database.module.js";
+import { ENV, type Env } from "../config/env.js";
+import type { AdminActor } from "./admin-management.service.js";
+
+/* ============================================================
+   #972 — the runtime platform-settings store (admin panel 5/7).
+
+   The API reads these settings on the hot path (every register, every
+   throttled request), so it must NOT hit the database per request, and it must
+   NOT freeze them at module init either — an operator who closes signups wants
+   it to take effect without a redeploy. The middle ground the issue asks for is
+   a SHORT in-process cache: read the whole store once, hold it for about a
+   minute, and reload on the next read after that. A change lands within the
+   cache window everywhere; an own write busts the cache immediately so the
+   admin who just changed a setting sees it at once.
+
+   One entry per setting KEY in the DB. A key with no row means "never set" and
+   the effective value falls back to the compiled-in default (and, for the rate
+   limit, to the THROTTLE_* env values) — so an empty table is byte-identical to
+   the behaviour before this store existed.
+
+   Every write goes through writeAdminAuditEntry with the before/after values,
+   in the same transaction as the upsert, so the audit trail can never miss a
+   settings change.
+   ============================================================ */
+
+/** The setting keys, as stored in platform_settings.key and surfaced in the
+ *  admin UI's per-setting "last changed by". Kept as a const tuple so the meta
+ *  map and the audit action keys stay in lock-step with the value shape. */
+export const SETTING_KEYS = ["signupMode", "rateLimit", "reservedSlugs", "featureFlags", "banner"] as const;
+export type SettingKey = (typeof SETTING_KEYS)[number];
+
+/** Per-key value schema, used to validate a jsonb row on read so a value that
+ *  was written by a newer/older deploy (or hand-edited in the DB) can never
+ *  crash the hot path — an unparseable row is ignored and the default used. */
+const KEY_SCHEMA: Record<SettingKey, z.ZodTypeAny> = {
+  signupMode: SignupMode,
+  rateLimit: RateLimitSetting,
+  reservedSlugs: z.array(z.string()),
+  featureFlags: z.record(z.string(), z.boolean()),
+  banner: BannerSetting,
+};
+
+/** How long a loaded snapshot is served before the next read reloads it. The
+ *  issue asks for "about a minute"; this is that window. Public so a test can
+ *  reason about the boundary without guessing. */
+export const SETTINGS_CACHE_TTL_MS = 60_000;
+
+interface Snapshot {
+  values: PlatformSettingsValues;
+  meta: Record<SettingKey, PlatformSettingMeta>;
+}
+
+@Injectable()
+export class PlatformSettingsService {
+  /** The compiled-in defaults, with the two rate-limit fields taken from the
+   *  configured env values so an empty store reproduces today's limits. */
+  private readonly defaults: PlatformSettingsValues;
+
+  private cache: Snapshot | null = null;
+  private loadedAtMs = 0;
+
+  constructor(
+    @Inject(DB) private readonly db: Database,
+    @Inject(ENV) env: Env,
+    /** Injectable clock so a test can drive the cache window deterministically.
+     *  Defaults to the real wall clock. */
+    private readonly now: () => number = Date.now,
+  ) {
+    this.defaults = {
+      signupMode: "open",
+      rateLimit: { limit: env.THROTTLE_LIMIT, ttlSeconds: env.THROTTLE_TTL_SECONDS },
+      reservedSlugs: [],
+      featureFlags: {},
+      banner: { message: "", level: "info" },
+    };
+  }
+
+  /**
+   * The effective values in use right now, through the short cache.
+   *
+   * Reloads from the database only when the cached snapshot is older than the
+   * TTL (or there is none yet), so the common case is a field read with no
+   * query. This is what the throttler and the auth paths call per request.
+   */
+  async getValues(): Promise<PlatformSettingsValues> {
+    return (await this.snapshot()).values;
+  }
+
+  /** The current banner, for the public (unauthenticated) read. Served through
+   *  the same cache as everything else. */
+  async getBanner(): Promise<PlatformBanner> {
+    const { message, level } = (await this.snapshot()).values.banner;
+    return { message, level };
+  }
+
+  /** The full admin view: effective values, the defaults column, and the
+   *  per-setting provenance. Always reads a FRESH snapshot (not the cache) so
+   *  an admin opening the page never sees a value up to a minute stale. */
+  async getForAdmin(): Promise<PlatformSettings> {
+    const snap = await this.load();
+    this.cache = snap;
+    this.loadedAtMs = this.now();
+    return { values: snap.values, defaults: this.defaults, meta: snap.meta };
+  }
+
+  /**
+   * Apply a settings change and record it.
+   *
+   * Each provided key is upserted into platform_settings, and ONE audit row is
+   * written per changed key with its before/after value, all inside a single
+   * transaction so the change and its record commit together. The in-process
+   * cache is cleared at the end so the next read reflects the write immediately
+   * on this instance; other instances pick it up within the cache window.
+   */
+  async update(input: PlatformSettingsInput, actor: AdminActor): Promise<PlatformSettings> {
+    // The before-state the audit rows compare against: the current effective
+    // values (defaults folded in), read fresh so a concurrent change is seen.
+    const before = (await this.load()).values;
+
+    const entries = SETTING_KEYS.filter((k) => input[k] !== undefined).map(
+      (k) => [k, input[k]] as [SettingKey, unknown],
+    );
+
+    await this.db.transaction(async (tx) => {
+      const nowDate = new Date();
+      for (const [key, value] of entries) {
+        await tx
+          .insert(platformSettings)
+          .values({
+            key,
+            value,
+            updatedById: actor.admin.id,
+            updatedByLabel: actor.admin.email,
+            updatedAt: nowDate,
+          })
+          .onConflictDoUpdate({
+            target: platformSettings.key,
+            set: {
+              value,
+              updatedById: actor.admin.id,
+              updatedByLabel: actor.admin.email,
+              updatedAt: nowDate,
+            },
+          });
+
+        await writeAdminAuditEntry(tx, {
+          actorId: actor.admin.id,
+          actorLabel: actor.admin.email,
+          action: `admin.settings.${key}`,
+          targetType: "platform_setting",
+          targetId: key,
+          before: { [key]: before[key] },
+          after: { [key]: value },
+          requestIp: actor.ip,
+        });
+      }
+    });
+
+    this.invalidate();
+    return this.getForAdmin();
+  }
+
+  /** Drop the cached snapshot so the next read reloads. Called after a write on
+   *  this instance; also useful to a test that wants a forced reload. */
+  invalidate(): void {
+    this.cache = null;
+    this.loadedAtMs = 0;
+  }
+
+  /* ── internals ── */
+
+  /** The cached snapshot, reloading when stale. */
+  private async snapshot(): Promise<Snapshot> {
+    if (this.cache && this.now() - this.loadedAtMs < SETTINGS_CACHE_TTL_MS) {
+      return this.cache;
+    }
+    const snap = await this.load();
+    this.cache = snap;
+    this.loadedAtMs = this.now();
+    return snap;
+  }
+
+  /** Read every row and fold it onto the defaults. A row that fails its key's
+   *  schema (a stale or hand-edited shape) is ignored so the hot path can never
+   *  throw on a bad value — the default stands and the admin page shows the
+   *  provenance so the operator can re-save it. */
+  private async load(): Promise<Snapshot> {
+    const rows = await this.db
+      .select({
+        key: platformSettings.key,
+        value: platformSettings.value,
+        updatedAt: platformSettings.updatedAt,
+        updatedByLabel: platformSettings.updatedByLabel,
+      })
+      .from(platformSettings);
+
+    const values: PlatformSettingsValues = {
+      signupMode: this.defaults.signupMode,
+      rateLimit: { ...this.defaults.rateLimit },
+      reservedSlugs: [...this.defaults.reservedSlugs],
+      featureFlags: { ...this.defaults.featureFlags },
+      banner: { ...this.defaults.banner },
+    };
+    const meta = Object.fromEntries(
+      SETTING_KEYS.map((k) => [k, { updatedAt: null, updatedBy: null } as PlatformSettingMeta]),
+    ) as Record<SettingKey, PlatformSettingMeta>;
+
+    for (const row of rows) {
+      if (!this.isSettingKey(row.key)) continue;
+      const parsed = KEY_SCHEMA[row.key].safeParse(row.value);
+      if (!parsed.success) continue; // ignore an unparseable row, keep the default
+      (values as Record<SettingKey, unknown>)[row.key] = parsed.data;
+      meta[row.key] = {
+        updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
+        updatedBy: row.updatedByLabel ?? null,
+      };
+    }
+
+    return { values, meta };
+  }
+
+  private isSettingKey(key: string): key is SettingKey {
+    return (SETTING_KEYS as readonly string[]).includes(key);
+  }
+}
