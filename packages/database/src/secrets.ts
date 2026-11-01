@@ -167,6 +167,29 @@ export async function resolveSafeBrowsingApiKey(
   }
 }
 
+/**
+ * Resolve the bot-protection (sign-up challenge) secret, never throwing (#993).
+ *
+ * Optional like the Safe Browsing key: the provider switch defaults to "none",
+ * so a deployment with no provider configured must cold-start cleanly with this
+ * unset. A missing or unreadable secret is returned as undefined (the error for
+ * the caller to log once a logger exists); the register path fails the challenge
+ * closed when a provider is on but the secret is missing.
+ *
+ * Escape hatch as above: with no BOT_PROTECTION_SECRET_ARN set, returns the
+ * plain BOT_PROTECTION_SECRET (possibly undefined) and makes no SDK call.
+ */
+export async function resolveBotProtectionSecret(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ secret: string | undefined; error?: Error }> {
+  try {
+    const secret = await resolveJwtSecret("BOT_PROTECTION_SECRET_ARN", "BOT_PROTECTION_SECRET", env);
+    return { secret: secret?.trim() || undefined };
+  } catch (err) {
+    return { secret: undefined, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
 /** Test-only: clears the module-level cache and lazily-created client so each
  *  unit test starts from a clean slate. Not part of the runtime contract. */
 export function __resetSecretCacheForTests(): void {

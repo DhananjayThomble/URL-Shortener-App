@@ -135,10 +135,21 @@ export const AdminUpdateWorkspaceInput = z
   .object({
     plan: z.string().trim().min(1).max(40).optional(),
     clicksIncluded: z.number().int().min(0).max(2_147_483_647).optional(),
+    /** #993 — lift (true) or re-apply (false) the brand-new-account link caps
+     *  for this workspace. true stamps workspaces.new_account_limits_lifted_at
+     *  so the per-day/per-hour link caps stop applying to a legitimate new
+     *  account that hit them; false clears the stamp so the caps apply again
+     *  (while the account is still inside its new-account window). Omitted
+     *  leaves the lift state unchanged. The change is audited. */
+    liftNewAccountLimits: z.boolean().optional(),
   })
-  .refine((v) => v.plan !== undefined || v.clicksIncluded !== undefined, {
-    message: "Change the plan, the included clicks, or both.",
-  });
+  .refine(
+    (v) =>
+      v.plan !== undefined || v.clicksIncluded !== undefined || v.liftNewAccountLimits !== undefined,
+    {
+      message: "Change the plan, the included clicks, or the new-account limits.",
+    },
+  );
 export type AdminUpdateWorkspaceInput = z.infer<typeof AdminUpdateWorkspaceInput>;
 
 /** A read-only snapshot of a workspace, assembled for the admin's "view as".

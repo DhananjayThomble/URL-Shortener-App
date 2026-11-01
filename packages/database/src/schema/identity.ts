@@ -148,6 +148,15 @@ export const workspaces = pgTable(
     /** G7 — reports have to say what currency they are in. */
     currency: varchar("currency", { length: 3 }).notNull().default("INR"),
 
+    /** #993 — when a platform admin lifted the brand-new-account link caps for
+     *  this workspace, or null when the caps still apply. The caps (a per-day
+     *  and per-hour link limit for a workspace's first few days, from platform
+     *  settings) are a launch-abuse brake; an admin clears them per workspace
+     *  from the admin panel for a legitimate new account that hits them, and
+     *  that action is audited. Null is the default, so every existing workspace
+     *  is unaffected and the caps are evaluated normally. */
+    newAccountLimitsLiftedAt: timestamp("new_account_limits_lifted_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

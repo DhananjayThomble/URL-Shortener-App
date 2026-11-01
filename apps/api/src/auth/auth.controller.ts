@@ -1,6 +1,8 @@
 import { Body, Controller, Get, HttpCode, Post, Req } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyRequest } from "fastify";
+import { Inject } from "@nestjs/common";
+import { clientIpFromXff } from "@snapurl/domain";
 import {
   AcceptInviteInput,
   LoginInput,
@@ -17,12 +19,29 @@ import {
   TotpVerifyInput,
 } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
+import { ENV, type Env } from "../config/env.js";
 import { AuthService } from "./auth.service.js";
 import { Actor, Public, type RequestActor } from "./auth.guard.js";
 
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    @Inject(ENV) private readonly env: Env,
+  ) {}
+
+  /* #993 — the spoof-proof client IP, derived the same way the throttler and
+     admin guard do (clientIpFromXff over the trusted-hops count), forwarded to
+     the bot-protection siteverify call and recorded on a refusal. */
+  private ipOf(req: FastifyRequest): string {
+    const anyReq = req as unknown as Record<string, any>;
+    const socketIp: string = anyReq?.raw?.socket?.remoteAddress ?? anyReq?.ip ?? "";
+    return clientIpFromXff({
+      xff: req.headers["x-forwarded-for"],
+      socketIp,
+      trustedHops: this.env.TRUSTED_PROXY_HOPS,
+    });
+  }
 
   /* 5/min per client IP, matching login. #658: register answers a duplicate
      email with a friendly 409 (deliberate — see the enumeration ADR in
@@ -36,7 +55,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post("register")
   register(@Body(zodBody(RegisterInput)) input: RegisterInput, @Req() req: FastifyRequest) {
-    return this.auth.register(input, req.headers["user-agent"]);
+    return this.auth.register(input, req.headers["user-agent"], this.ipOf(req));
   }
 
   /* 5/min per client IP, far tighter than the global 120/min. login hashes
@@ -59,7 +78,10 @@ export class AuthController {
   @Public()
   @Post("oauth")
   oauth(@Body(zodBody(OAuthSignInInput)) input: OAuthSignInInput, @Req() req: FastifyRequest) {
-    return this.auth.oauthSignIn(input.provider, input.idToken, input.nonce, req.headers["user-agent"]);
+    return this.auth.oauthSignIn(input.provider, input.idToken, input.nonce, req.headers["user-agent"], {
+      challengeToken: input.challengeToken,
+      remoteIp: this.ipOf(req),
+    });
   }
 
   @Public()

@@ -8,9 +8,11 @@ import {
   linkCounters,
   linkKey,
   links,
+  memberships,
   normaliseHost,
   routingRules,
   sql,
+  users,
   type Database,
   type DomainItem,
   type LinkItem,
@@ -60,6 +62,11 @@ export interface ResolvedLink {
    *  click before any lifecycle check and the visitor gets the "link disabled"
    *  page. */
   disabled: boolean;
+  /** #993 — the link's owner has not verified their email, so the link is held.
+   *  When true the gate stops the click before any lifecycle check and the
+   *  visitor gets the "link not active yet" page; it lifts when the owner
+   *  verifies. */
+  ownerUnverified: boolean;
   safeBrowsingStatus: string;
   utm: {
     source?: string | null;
@@ -98,7 +105,24 @@ export class PostgresLinkResolver implements LinkResolver {
        parallel query on the hot path. */
     const [[row], rules] = await Promise.all([
       this.db
-        .select({ link: links, domainId: domains.id, clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)` })
+        .select({
+          link: links,
+          domainId: domains.id,
+          clicks: sql<number>`coalesce(${linkCounters.clicks}, 0)`,
+          /* #993 — true when this link's workspace has an active OWNER whose
+             email is not yet verified, so the Postgres profile holds the link
+             exactly as the DynamoDB projection does. Correlated EXISTS, read
+             live on each resolve so verification lifts the hold with no extra
+             state. */
+          ownerUnverified: sql<boolean>`exists (
+            select 1 from ${memberships} m
+            join ${users} u on u.id = m.user_id
+            where m.workspace_id = ${links.workspaceId}
+              and m.role = 'owner'
+              and m.status = 'active'
+              and u.email_verified_at is null
+          )`,
+        })
         .from(links)
         .innerJoin(domains, eq(links.domainId, domains.id))
         .leftJoin(linkCounters, eq(linkCounters.linkId, links.id))
@@ -160,6 +184,7 @@ export class PostgresLinkResolver implements LinkResolver {
       publicPreview: row.link.publicPreview,
       archived: Boolean(row.link.archivedAt),
       disabled: Boolean(row.link.disabledAt),
+      ownerUnverified: Boolean(row.ownerUnverified),
       safeBrowsingStatus: row.link.safeBrowsingStatus,
       utm: row.link.utm,
     };
