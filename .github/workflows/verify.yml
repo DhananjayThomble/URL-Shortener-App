@@ -1123,13 +1123,25 @@ jobs:
           found=0
           for svc in api redirect; do
             logs="$(docker compose -f docker-compose.staging.yml logs --no-color "$svc" 2>&1)"
-            # All level:50 lines, minus the exact #947 signature (PostgresErrorFilter
-            # + PATCH + /links/ + the specific "real"-column out-of-range message, all
-            # on the same JSON line). grep -v drops only lines matching every token.
-            unexpected="$(echo "$logs" \
-              | grep -F '"level":50' \
-              | grep -vE '"context":"PostgresErrorFilter".*"method":"PATCH".*/api/v1/links/.*out of range for type real' \
+            # All level:50 lines, minus the exact #947 signature. The four anchor
+            # tokens (PostgresErrorFilter context, PATCH method, the /links/ route,
+            # the specific "real"-column out-of-range message) must ALL be present on
+            # the one line, but they appear in pino's field order (req/method/url
+            # before context before err), so match each token independently with a
+            # grep chain rather than one ordered regex — a line kept by ALL of these
+            # greps is the #947 signature and is dropped; any line missing even one
+            # (i.e. any other level:50) is NOT dropped and still reds the gate.
+            unexpected="$(echo "$logs" | grep -F '"level":50' || true)"
+            expected947="$(printf '%s\n' "$unexpected" \
+              | grep -F '"context":"PostgresErrorFilter"' \
+              | grep -F '"method":"PATCH"' \
+              | grep -F '/api/v1/links/' \
+              | grep -F 'out of range for type real' \
               || true)"
+            # Drop the exact #947 lines from the level:50 set; whatever remains is unexpected.
+            if [ -n "$expected947" ]; then
+              unexpected="$(printf '%s\n' "$unexpected" | grep -Fvx -f <(printf '%s\n' "$expected947") || true)"
+            fi
             if [ -n "$unexpected" ]; then
               echo "::error::staging $svc logged an unexpected pino error-level line"
               echo "$unexpected"
