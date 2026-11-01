@@ -135,3 +135,212 @@ export const AdminAuditQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type AdminAuditQuery = z.infer<typeof AdminAuditQuery>;
+
+
+
+/* ============================================================
+   #971 — platform moderation and abuse (admin panel 4/7).
+
+   The platform-admin surface for handling abuse across the WHOLE platform,
+   not one workspace:
+     • a global abuse queue, including reports whose slug resolved to no
+       workspace (which the workspace-scoped queue in report.ts can never show);
+     • platform link search (by slug, destination or owner);
+     • disable / enable a link (stops it redirecting at the edge);
+     • a destination blocklist, enforced on link create and update;
+     • the Safe Browsing flagged-link list and the custom-domain status list.
+
+   Every write behind these shapes goes through AdminGuard and is recorded in
+   the platform-admin audit trail. Additive to the #968/#974 shapes above.
+   ============================================================ */
+
+/* ---- global abuse queue ---- */
+
+/** One row of the GLOBAL abuse queue. Unlike report.ts's workspace-scoped
+ *  AbuseReport, this carries the resolved workspace/owner context an operator
+ *  needs to act platform-wide, and surfaces reports with NO workspace (an
+ *  unresolved slug) — which the workspace queue intentionally hides. */
+export const AdminAbuseReportRow = z.object({
+  id: z.string(),
+  slug: z.string(),
+  reason: z.string(),
+  reporterContact: z.string().nullable(),
+  status: z.enum(["open", "reviewed", "dismissed", "actioned"]),
+  /** The resolved link id, or null when the slug named nothing (or several). */
+  linkId: z.string().nullable(),
+  /** The link's current destination, when it resolved — so an operator can
+   *  judge the report without a second lookup. Null for an unresolved slug. */
+  destination: z.string().nullable(),
+  /** The owning workspace id, or null for a report that belongs to no
+   *  workspace. A null here is exactly the case the workspace queue drops. */
+  workspaceId: z.string().nullable(),
+  /** The owning workspace's name, when resolved. */
+  workspaceName: z.string().nullable(),
+  /** Whether the resolved link is currently disabled by an admin. */
+  linkDisabled: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AdminAbuseReportRow = z.infer<typeof AdminAbuseReportRow>;
+
+/** A page of global abuse-queue rows plus whether more exist. */
+export const AdminAbuseQueuePage = z.object({
+  rows: z.array(AdminAbuseReportRow),
+  hasMore: z.boolean(),
+});
+export type AdminAbuseQueuePage = z.infer<typeof AdminAbuseQueuePage>;
+
+/** Filters for the global abuse queue. `status` narrows by review state;
+ *  `orphaned=true` restricts to reports with no workspace (the ones nobody
+ *  else can see). */
+export const AdminAbuseQueueQuery = z.object({
+  status: z.enum(["open", "reviewed", "dismissed", "actioned"]).optional(),
+  /** When true, only reports whose slug resolved to no workspace. Parsed with
+   *  z.stringbool so "false" is false — a plain z.coerce.boolean() reads any
+   *  non-empty string, including "false", as true. */
+  orphaned: z.stringbool().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type AdminAbuseQueueQuery = z.infer<typeof AdminAbuseQueueQuery>;
+
+/** Act on one abuse report. `status` moves the report; `disableLink` disables
+ *  the link behind it (if it resolved) in the same action. A request with
+ *  neither is a no-op the service rejects. */
+export const AdminAbuseReportAction = z.object({
+  status: z.enum(["open", "reviewed", "dismissed", "actioned"]).optional(),
+  /** Disable the report's resolved link (stops it redirecting at the edge). */
+  disableLink: z.boolean().optional(),
+});
+export type AdminAbuseReportAction = z.infer<typeof AdminAbuseReportAction>;
+
+/* ---- platform link search + disable/enable ---- */
+
+/** One link in a platform-wide search or moderation result. */
+export const AdminLinkRow = z.object({
+  id: z.string(),
+  slug: z.string(),
+  domain: z.string(),
+  destination: z.string(),
+  workspaceId: z.string(),
+  workspaceName: z.string().nullable(),
+  /** The link owner's email/name, when known. */
+  owner: z.string().nullable(),
+  /** True once a platform admin has disabled the link. */
+  disabled: z.boolean(),
+  /** 'clean' | 'flagged' | 'pending' — the Safe Browsing state. */
+  safeBrowsingStatus: z.string(),
+  createdAt: z.string(),
+});
+export type AdminLinkRow = z.infer<typeof AdminLinkRow>;
+
+/** A page of platform link rows plus whether more exist. */
+export const AdminLinkPage = z.object({
+  rows: z.array(AdminLinkRow),
+  hasMore: z.boolean(),
+});
+export type AdminLinkPage = z.infer<typeof AdminLinkPage>;
+
+/** Platform link search. At least one of the term fields narrows the result;
+ *  with none it lists the most recent links across the platform. */
+export const AdminLinkSearchQuery = z.object({
+  /** Free-text match on slug, destination or owner. */
+  q: z.string().min(1).max(255).optional(),
+  /** Only disabled (true) or only enabled (false) links. Parsed with
+   *  z.stringbool so "false" is false (see AdminAbuseQueueQuery.orphaned). */
+  disabled: z.stringbool().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type AdminLinkSearchQuery = z.infer<typeof AdminLinkSearchQuery>;
+
+/** The disable/enable toggle for a link. `disabled: true` turns it off,
+ *  `false` turns it back on; `reason` is recorded in the audit trail. */
+export const AdminLinkDisableInput = z.object({
+  disabled: z.boolean(),
+  reason: z.string().max(500).optional(),
+});
+export type AdminLinkDisableInput = z.infer<typeof AdminLinkDisableInput>;
+
+/* ---- destination blocklist ---- */
+
+/** One blocked destination host. */
+export const AdminBlockedDomain = z.object({
+  id: z.string(),
+  domain: z.string(),
+  reason: z.string().nullable(),
+  /** The admin who added it (email label). */
+  addedBy: z.string(),
+  createdAt: z.string(),
+});
+export type AdminBlockedDomain = z.infer<typeof AdminBlockedDomain>;
+
+/** The whole blocklist. */
+export const AdminBlockedDomains = z.object({
+  domains: z.array(AdminBlockedDomain),
+});
+export type AdminBlockedDomains = z.infer<typeof AdminBlockedDomains>;
+
+/** Add a host to the blocklist. The host is a bare registrable name (no
+ *  scheme, no path): a link whose destination is this host or a sub-domain of
+ *  it is refused on create and update. */
+export const AddBlockedDomainInput = z.object({
+  domain: z
+    .string()
+    .min(1, "Enter a domain to block.")
+    .max(253)
+    // A bare host only — reject a scheme, a slash, a space or an @, so an admin
+    // cannot paste a full URL and silently block nothing it was meant to.
+    .refine((v) => !/[\s/@]/.test(v) && !v.includes("://"), {
+      error: "Enter a bare domain like evil.example, not a URL.",
+    }),
+  reason: z.string().max(500).optional(),
+});
+export type AddBlockedDomainInput = z.infer<typeof AddBlockedDomainInput>;
+
+/* ---- Safe Browsing flagged list ---- */
+
+/** One Safe-Browsing-flagged link, platform-wide. */
+export const AdminFlaggedLinkRow = z.object({
+  id: z.string(),
+  slug: z.string(),
+  domain: z.string(),
+  destination: z.string(),
+  workspaceId: z.string(),
+  workspaceName: z.string().nullable(),
+  safeBrowsingStatus: z.string(),
+  /** When Safe Browsing last checked it. */
+  checkedAt: z.string().nullable(),
+  /** Whether an admin has also disabled it. */
+  disabled: z.boolean(),
+});
+export type AdminFlaggedLinkRow = z.infer<typeof AdminFlaggedLinkRow>;
+
+export const AdminFlaggedLinks = z.object({
+  rows: z.array(AdminFlaggedLinkRow),
+  hasMore: z.boolean(),
+});
+export type AdminFlaggedLinks = z.infer<typeof AdminFlaggedLinks>;
+
+/* ---- custom-domain status list ---- */
+
+/** One custom domain with its verification and SSL state. */
+export const AdminCustomDomainRow = z.object({
+  id: z.string(),
+  domain: z.string(),
+  workspaceId: z.string().nullable(),
+  workspaceName: z.string().nullable(),
+  /** The verification state machine: "verifying" | "live" | … */
+  status: z.string(),
+  /** The certificate state machine: "pending" | "issued" | … */
+  ssl: z.string(),
+  verifiedAt: z.string().nullable(),
+  sslRenewsAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type AdminCustomDomainRow = z.infer<typeof AdminCustomDomainRow>;
+
+export const AdminCustomDomains = z.object({
+  rows: z.array(AdminCustomDomainRow),
+});
+export type AdminCustomDomains = z.infer<typeof AdminCustomDomains>;

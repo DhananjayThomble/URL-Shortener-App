@@ -89,7 +89,7 @@ describe("registry parity: the reflected inventory equals the OpenAPI registry",
     ).toEqual({ missingFromRegistry: [], missingFromControllers: [] });
   });
 
-  it("the inventory has the 79 routes the design records (design Appendix A + #968 GET /admin/me + #974 system-health)", () => {
-    expect(inventoryCount).toBe(79);
+  it("the inventory has the 88 routes the design records (design Appendix A + #968 GET /admin/me + #974 system-health + #971 moderation)", () => {
+    expect(inventoryCount).toBe(88);
   });
 });
