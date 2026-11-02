@@ -90,29 +90,111 @@ output will never be served to anyone." Never set it on a real deploy — it
 disables the only thing standing between a missing variable and a silently
 broken production site.
 
-### Continuous deployment, and what actually gates it
+### Continuous deployment: web and API ship together (#1026)
 
-The Vercel project is connected to the GitHub repository, so deploys are
-triggered by pushes, not by a workflow in this repo:
+Production web and API **always ship together, from the same commit, and only
+when an operator dispatches `deploy-aws.yml`.** This was not always true, and
+the drift was not theoretical: on 2026-11-02 a push to `main` shipped a web
+build that required `AuthUser.plan` (#966) while the API was still a release
+behind, and Google sign-in broke in production. The fix (#1026) stops `main`
+from deploying the web on its own and folds the web deploy into the AWS
+pipeline.
 
 | Trigger | Result |
 | --- | --- |
-| push to `main` | production deploy |
-| open/update a pull request | preview deploy on its own URL |
+| push to `main` | **no production deploy** — neither web nor API |
+| open/update a pull request | preview deploy on its own URL (unchanged) |
+| dispatch `deploy-aws.yml` | web **and** API deploy together, same commit |
 
-**Vercel does not wait for GitHub Actions.** A preview builds even when
-`verify.yml` is red — the two run in parallel and neither knows about the
-other. That is fine for previews and would be dangerous for production, which
-is why the gate is somewhere else: `main` is a protected branch requiring the
-`Type-check, build, test` check to pass before anything can merge. Nothing
-reaches `main` without CI, so nothing reaches production without CI.
+#### How `main` is stopped from deploying the web
 
-If that protection is ever removed, this becomes an unguarded pipeline. The
-branch rule *is* the deployment gate.
+Two independent mechanisms, belt and braces, because production is worth both:
 
-There is deliberately no `vercel deploy` step in `.github/workflows/`. Adding
-one alongside the Git integration would deploy every commit twice, and the
-second deploy would race the first.
+1. **In the repo** (version-controlled, reviewable): `web/vercel.json` carries
+
+   ```json
+   "git": { "deploymentEnabled": { "main": false } }
+   ```
+
+   so Vercel's Git integration creates no deployment for a push to `main`.
+   **Preview deployments for pull requests keep working** — this disables only
+   the `main` branch. This is the authoritative control: it lives in the repo,
+   so it cannot drift the way a dashboard toggle can.
+
+2. **In the Vercel dashboard** (defence in depth): the project's
+   **Auto-assign Custom Production Domains** setting is **OFF**. With it off,
+   even if a production build were somehow created, it would not take
+   `app.snapurl.in` — the domain is assigned only by the `vercel promote` step
+   in `deploy-aws.yml`. Because (1) already prevents the build, the dashboard's
+   old "Production Branch" setting no longer matters; this toggle is the
+   backstop, not the gate.
+
+#### How `deploy-aws.yml` ships the web with the API
+
+The pipeline is `plan → web-build → deploy → migrate → web-promote → smoke →
+release`. The web is woven through it so that it can only ship in lockstep with
+the API:
+
+- **`web-build` (before the API deploys).** Checks the Vercel credentials
+  first (see below) and fails the whole run if any is missing — before the API
+  is touched. Then `vercel pull --environment=production`, `vercel build --prod`
+  at the deploy ref, and `vercel deploy --prebuilt --prod --skip-domain`. The
+  build runs `web/package.json`'s `vercel-build` via the project's Root
+  Directory (`web`). **A web build that does not compile fails here, before the
+  `deploy` job runs**, so a broken dashboard can never ship an API ahead of it.
+  `--skip-domain` means the new build is uploaded to a unique URL but
+  production traffic still goes to the previous build.
+- **`deploy` → `migrate`.** The API deploys and migrations apply, exactly as
+  before. `deploy` has `web-build` in its `needs`, so it starts only once the
+  web build has succeeded and been uploaded.
+- **`web-promote` (after `deploy` and `migrate` succeed).** `vercel promote`
+  assigns the production domain to the already-uploaded build — no rebuild, the
+  exact validated artifact goes live. If the API deploy or the migration had
+  failed, this never runs and the previous web build, matched to the previous
+  API, stays live.
+- **`smoke` (after promote).** The post-deploy smoke gate runs against the real
+  web domain and the API together. If it fails, **no release is tagged**, and
+  the `smoke-failed` job writes the exact `vercel promote <previous-url>` /
+  `vercel rollback` commands and the previous production URL into the run
+  summary. Rollback is deliberately **manual**: an automatic web-only rollback
+  would put the old web back under the new API and recreate the very drift this
+  design removes.
+- **`release`.** Tags the release and shows the commit, the API version and the
+  web deployment URL side by side.
+
+The Vercel CLI version is pinned (`VERCEL_CLI_VERSION` in the workflow `env`),
+for the same reason every GitHub Action in this repo is pinned to a commit SHA:
+an unpinned `vercel@latest` could change deploy behaviour on an unrelated day.
+
+#### Vercel credentials — from GitHub only, never in code
+
+The web deploy needs three values, which live in GitHub and nowhere else. The
+operator sets them once (they are not in this repo and no code reads them from
+anywhere but the workflow env):
+
+```bash
+# 1. A Vercel access token — create at https://vercel.com/account/tokens
+#    (scope it to the "dhananjaythombles-projects" team). Store as a SECRET:
+gh secret set VERCEL_TOKEN --repo DhananjayThomble/URL-Shortener-App
+
+# 2. The org (team) and project ids — NON-secret, stored as VARIABLES.
+#    Read them from .vercel/project.json after `vercel link`, or from the
+#    Vercel project settings. Do NOT commit .vercel/.
+gh variable set VERCEL_ORG_ID     --repo DhananjayThomble/URL-Shortener-App --body '<team_...>'
+gh variable set VERCEL_PROJECT_ID --repo DhananjayThomble/URL-Shortener-App --body '<prj_...>'
+```
+
+`VERCEL_TOKEN` is a **secret**; `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are
+repository **variables** (they are identifiers, not credentials). If any is
+missing, `deploy-aws.yml`'s first web step fails fast, before the API deploy,
+naming what to set.
+
+**Previews are unchanged.** A pull request still gets its own preview URL from
+Vercel's Git integration, and a preview still builds even when `verify.yml` is
+red — the two run in parallel. That remains fine for previews. Production is no
+longer gated by the branch-protection rule alone: it is gated by being
+reachable only through `deploy-aws.yml`, whose own `smoke` step must pass before
+a release is tagged.
 
 ### Not deploying when nothing changed
 
@@ -154,9 +236,33 @@ simplest honest answer is to point previews at a staging API.
 
 1. Import the repository into Vercel and set **Root Directory to `web`**.
 2. Set `NEXT_PUBLIC_API_URL` to the deployed API's base URL.
-3. Deploy. If it fails, read the error — the guard names the exact variable.
-4. Set `WEB_ORIGIN` on the API to the Vercel URL, and restart the API.
-5. Sign in. If the dashboard renders but every panel is empty, it is CORS.
+3. Turn **Auto-assign Custom Production Domains OFF** in the Vercel project, and
+   confirm `web/vercel.json` has `git.deploymentEnabled.main = false`. Set the
+   three GitHub credentials (`VERCEL_TOKEN` secret, `VERCEL_ORG_ID` /
+   `VERCEL_PROJECT_ID` variables) — see "Vercel credentials" above.
+4. Set `WEB_ORIGIN` on the API to the production web URL.
+5. Dispatch `deploy-aws.yml`. It builds the web first (a broken build stops
+   before the API deploys), deploys the API, migrates, promotes the web onto
+   the domain, then smoke-tests both. If the web build fails, read the error —
+   the guard names the exact variable.
+6. Sign in. If the dashboard renders but every panel is empty, it is CORS.
+
+### Releasing (web + API together)
+
+A production release is a single dispatch of **`deploy-aws.yml`** — there is no
+separate "deploy the web" step and no push-to-`main` shortcut:
+
+1. Merge everything you intend to ship to `main` (CI green, as always).
+2. Dispatch `deploy-aws.yml` (Actions → Deploy (AWS) → Run workflow). Leave
+   `git_ref` blank to deploy the tip of the dispatched branch; leave `version`
+   blank for the next patch tag.
+3. The run builds + uploads the web, waits on the `production` environment's
+   required reviewer, deploys the API, migrates, promotes the web, and
+   smoke-tests both. Approve the deploy after reading the plan's `cdk diff`.
+4. On smoke failure nothing is tagged; the run summary carries the exact
+   `vercel promote` / `vercel rollback` and API-rollback commands. Roll back by
+   hand — see [ROLLBACK.md](./ROLLBACK.md) — never leave web and API on
+   different commits.
 
 ---
 

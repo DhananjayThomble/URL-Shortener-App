@@ -196,4 +196,113 @@ describeDb("#992 — CouponsService: validation + one-redemption-per-workspace",
       expect((err as CouponNotApplicableError).getStatus()).toBe(400);
     }
   });
+
+  /* ============================================================
+     #1024 — the cross-workspace cap holds under concurrency.
+
+     Oracle (the issue's acceptance): N parallel redemptions by DIFFERENT
+     workspaces against a cap-K coupon let EXACTLY K land, and the extra
+     concurrent redemptions are refused with the 400 "reached its redemption
+     limit". This is the bug: with a read-then-write cap, two different
+     workspaces could both read count < max and both insert, so coupon_redemptions
+     exceeded maxRedemptions.
+
+     Red-on-main: against origin/main (validate() SELECT-counts, recordRedemption
+     bare-INSERTs, no atomic guard) more than K redemptions land and this test
+     reds. The fix makes recordRedemption bump an authoritative redeemed_count
+     with a conditional UPDATE in the same transaction, so exactly K win.
+     ============================================================ */
+  it("enforces the cap under concurrency: N parallel redemptions across workspaces, exactly K land (#1024)", async () => {
+    const CAP = 3;
+    const N = 12;
+    const couponId = await seedCoupon("race1024", { maxRedemptions: CAP });
+
+    // N DIFFERENT workspaces, so the (coupon, workspace) unique index never
+    // fires — the only thing that may stop a redemption is the cross-workspace
+    // cap. That is exactly the gap the issue reports.
+    const wsIds = await Promise.all(
+      Array.from({ length: N }, (_, i) => seedWorkspace(`race1024-${i}`)),
+    );
+
+    const results = await Promise.allSettled(
+      wsIds.map((ws) => service.recordRedemption(couponId, ws, "pro", "monthly")),
+    );
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter(
+      (r): r is PromiseRejectedResult => r.status === "rejected",
+    );
+
+    // Exactly CAP succeed; the rest are refused.
+    expect(fulfilled).toHaveLength(CAP);
+    expect(rejected).toHaveLength(N - CAP);
+
+    // The refusals are the cap, surfaced as the 400 "reached its redemption
+    // limit" — not a crash, a 409, or anything else.
+    for (const r of rejected) {
+      expect(r.reason).toBeInstanceOf(CouponNotApplicableError);
+      expect((r.reason as CouponNotApplicableError).reason).toBe("max_redemptions_reached");
+      expect((r.reason as CouponNotApplicableError).getStatus()).toBe(400);
+    }
+
+    // The source of truth: real redemption rows never exceed the cap.
+    const rows = await db
+      .select()
+      .from(couponRedemptions)
+      .where(eq(couponRedemptions.couponId, couponId));
+    expect(rows).toHaveLength(CAP);
+
+    // A fresh workspace arriving after the race still sees the cap full.
+    const late = await seedWorkspace("race1024-late");
+    await expect(service.recordRedemption(couponId, late, "pro", "monthly")).rejects.toMatchObject({
+      reason: "max_redemptions_reached",
+    });
+  });
+
+  it("an unlimited coupon (no cap) still records every concurrent redemption (#1024)", async () => {
+    const N = 8;
+    const couponId = await seedCoupon("unl1024", { maxRedemptions: null });
+    const wsIds = await Promise.all(
+      Array.from({ length: N }, (_, i) => seedWorkspace(`unl1024-${i}`)),
+    );
+
+    const results = await Promise.allSettled(
+      wsIds.map((ws) => service.recordRedemption(couponId, ws, "pro", "monthly")),
+    );
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(couponRedemptions)
+      .where(eq(couponRedemptions.couponId, couponId));
+    expect(rows).toHaveLength(N);
+  });
+
+  it("a same-workspace double redemption is still refused with a 409, not a cap slot (#1024)", async () => {
+    // With the cap now atomic, the same-workspace guard must still hold AND must
+    // not leak a cap slot: the 409'd retry rolls back the counter bump.
+    const couponId = await seedCoupon("dbl1024", { maxRedemptions: 2 });
+    const ws = await seedWorkspace("dbl1024");
+
+    await service.recordRedemption(couponId, ws, "pro", "monthly");
+    await expect(service.recordRedemption(couponId, ws, "pro", "monthly")).rejects.toMatchObject({
+      status: 409,
+    });
+
+    // One row, and the second (coupon, workspace) slot is still open for a
+    // DIFFERENT workspace — the refused retry did not consume it.
+    const rows = await db
+      .select()
+      .from(couponRedemptions)
+      .where(eq(couponRedemptions.couponId, couponId));
+    expect(rows).toHaveLength(1);
+
+    const ws2 = await seedWorkspace("dbl1024-b");
+    await service.recordRedemption(couponId, ws2, "pro", "monthly");
+    const rows2 = await db
+      .select()
+      .from(couponRedemptions)
+      .where(eq(couponRedemptions.couponId, couponId));
+    expect(rows2).toHaveLength(2);
+  });
 });
