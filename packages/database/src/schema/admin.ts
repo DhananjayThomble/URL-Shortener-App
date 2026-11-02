@@ -1,4 +1,4 @@
-import { boolean, index, jsonb, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { users } from "./identity.js";
 
@@ -137,5 +137,55 @@ export const emailSendLog = pgTable(
   (t) => [
     // The cap counts rows newer than a cutoff, so index sent_at descending.
     index("email_send_log_sent_at_idx").on(t.sentAt.desc()),
+  ],
+);
+
+/* ============================================================
+   #1032 — the kill-switch REFUSAL aggregation window.
+
+   Every kill-switch refusal (a switched-off 503 or a cap-reached 403, on an API
+   route or in a worker job) records a row on admin_audit_log. A kill switch is
+   thrown at an abuse wave, and an abuse wave fires the most refusals — so one
+   audit row per refusal would let the very flood the switch is holding back
+   flood the audit table instead. This tiny table is the dedupe ledger that
+   stops that: ONE row per (switch, reason, subject) per minute, carrying a
+   COUNT of how many refusals it stands for.
+
+   The dedupe key is a deterministic string (see killSwitchRefusalDedupeKey in
+   @snapurl/contract) carrying the switch, the reason, the subject (workspace,
+   else actor, else "anon") and the minute bucket. An INSERT ... ON CONFLICT on
+   the key either creates the row (count 1 — the writer then appends the single
+   admin_audit_log row for the window) or bumps `count` and `last_at` and writes
+   NO audit row. The whole table is a rolling aggregation window, pruned by the
+   hourly maintenance job once a window is well past; nothing reads it except
+   the upsert and the pruner, so it never carries PII — only ids, the switch,
+   the reason and a count.
+   ============================================================ */
+export const killSwitchRefusalWindow = pgTable(
+  "kill_switch_refusal_window",
+  {
+    id: id(),
+    /** The deterministic (switch|reason|subject|windowStart) key. UNIQUE: the
+     *  upsert conflicts on it to collapse a window to one row. */
+    dedupeKey: varchar("dedupe_key", { length: 320 }).notNull().unique(),
+    /** The switch key refused (e.g. "billing.checkout"). */
+    switchKey: varchar("switch_key", { length: 64 }).notNull(),
+    /** The stable reason code: "feature_off" or "cap_reached". */
+    reason: varchar("reason", { length: 24 }).notNull(),
+    /** The workspace the refusal was attributed to, when known. */
+    workspaceId: uuid("workspace_id"),
+    /** The acting user id, when a request carried one. */
+    actorId: uuid("actor_id"),
+    /** How many refusals this window row stands for (>= 1). */
+    count: integer("count").notNull().default(1),
+    /** When the window opened (its first refusal). */
+    firstAt: timestamp("first_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When the most recent refusal in this window landed. */
+    lastAt: timestamp("last_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Pruned by a trailing cutoff on first_at, so index it ascending for the
+    // range delete the maintenance job runs.
+    index("kill_switch_refusal_window_first_at_idx").on(t.firstAt),
   ],
 );
