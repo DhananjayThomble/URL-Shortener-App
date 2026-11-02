@@ -16,6 +16,9 @@
     "install:chromium": "playwright install --with-deps chromium",
     "type-check": "tsc --noEmit"
   },
+  "dependencies": {
+    "@snapurl/database": "workspace:*"
+  },
   "devDependencies": {
     "@axe-core/playwright": "4.10.1",
     "@playwright/test": "1.63.0",

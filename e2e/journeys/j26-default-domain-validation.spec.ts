@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerPaidOwner, registerUser, type Session } from "./helpers";
 
 // Run SQL inside the staging Postgres container with `docker exec`, the pattern
 // j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
@@ -101,8 +101,12 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     mkdirSync(SHOTS, { recursive: true });
-    owner = await registerUser(makeEmail("j26-owner"));
-    stranger = await registerUser(makeEmail("j26-other"));
+    // #977 — both workspaces connect custom domains (owner: pending+verified;
+    // stranger: the foreign domain the leak checks use). Custom domains are a
+    // paid feature (#966), so seed both workspaces onto a paid plan or every
+    // POST /domains below 403s.
+    owner = await registerPaidOwner(makeEmail("j26-owner"));
+    stranger = await registerPaidOwner(makeEmail("j26-other"));
 
     base = await get();
 

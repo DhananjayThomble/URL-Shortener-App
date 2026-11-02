@@ -21,12 +21,19 @@
 
 import { randomBytes } from "node:crypto";
 import type { Page } from "@playwright/test";
+import { createDatabase, eq, workspaces } from "@snapurl/database";
 
 export const TOKEN_KEY = "snapurl.accessToken";
 export const REFRESH_KEY = "snapurl.refreshToken";
 
 export const API_URL = process.env.QA_API_URL ?? "http://localhost:3001/api/v1";
 export const REDIRECT_URL = process.env.QA_REDIRECT_URL ?? "http://localhost:3002";
+/* The staging Postgres, for the handful of seed steps HTTP cannot express
+   (#977: putting a journey workspace on a paid plan — see setWorkspacePlan).
+   Defaults to the compose-staging host port (5435), matching the port the
+   real-stack CI lane publishes and QA_API_URL targets. */
+export const QA_DATABASE_URL =
+  process.env.QA_DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5435/snapurl";
 
 /** Stable per-process run token. Same pattern as support/unique-identity.ts. */
 export const RUN_ID = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
@@ -213,6 +220,51 @@ export async function registerUser(email: string, password = RUN_PASSWORD): Prom
     userId: body.user?.id ?? payload.sub ?? "",
     workspaceId: payload.wid ?? "",
   };
+}
+
+/**
+ * Put a workspace on a paid plan so it may connect custom domains (#977).
+ *
+ * Why this exists. #966 made custom domains a paid-plan feature: `POST /domains`
+ * now 403s a workspace on the default "Free" plan (apps/api domains.service.ts,
+ * gated on @snapurl/contract's entitlementsFor). Journey accounts are created
+ * by registerUser() on "Free", so every custom-domain journey (j20/j23/j26/j782/
+ * j783/j784 …) started 403ing — a test-seed gap, not a product bug. The plan
+ * gate itself is proven by domains.plan-gate.integration.test.ts; these journeys
+ * exercise the domain UX on a workspace that is ENTITLED to it, so they must
+ * seed the entitlement rather than assert the gate.
+ *
+ * The seed is written exactly the way #966 put the HTTP stack principals on a
+ * paid plan (apps/api/src/stack/principals.ts): a direct UPDATE of the
+ * workspace's `plan` column — the one thing the public API cannot express
+ * (changing your own plan is a billing/webhook action, not a user route, and
+ * the admin route needs a 2FA'd platform-admin the staging stack has none of).
+ * "Enterprise" (the top tier) so the per-plan custom-domain cap is far clear of
+ * the several fixture domains these journeys mint without cleanup across a run.
+ * entitlementsFor treats any non-Free name as paid, so this unlocks the gate.
+ *
+ * Idempotent and safe to call right after registerUser(), before the first
+ * navigation. It opens a short-lived pool (max: 1) and closes it before
+ * returning, so a spec can call it per owner without leaking connections.
+ */
+export async function setWorkspacePlan(workspaceId: string, plan = "Enterprise"): Promise<void> {
+  const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
+  try {
+    await handle.db.update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Register a fresh owner whose workspace is already on a paid plan, so it can
+ * connect custom domains (#977). Convenience wrapper over registerUser() +
+ * setWorkspacePlan() for the custom-domain journeys.
+ */
+export async function registerPaidOwner(email: string, password = RUN_PASSWORD): Promise<Session> {
+  const session = await registerUser(email, password);
+  await setWorkspacePlan(session.workspaceId);
+  return session;
 }
 
 /**
