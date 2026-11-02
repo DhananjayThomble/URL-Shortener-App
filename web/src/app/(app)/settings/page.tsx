@@ -16,7 +16,9 @@ import { FOREVER_YEARS } from "@/lib/retention";
 import { retentionLoweringWarning, type RetentionWarning } from "@/lib/retention-change";
 import type { RedirectType, Workspace } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { BILLING_OFF, useSubscription } from "@/lib/api/hooks";
 import { TwoFactorCard } from "./two-factor-card";
+import { BillingCard } from "./billing-card";
 
 /* Retention is offered as three choices but stored as a number of years, so
    "Forever" has to land on something. 100 is the contract's maximum and is
@@ -52,6 +54,13 @@ export default function SettingsPage() {
   const appearance = useAppearance();
   const save = useUpdateWorkspace();
   const toast = useToast();
+  // #988 — when billing is ON for an owner, the Billing card replaces the
+  // "everything is free, no billing to manage" note below (which is only true
+  // on a `none` build). The query is owner-gated and 404→BILLING_OFF, so a
+  // non-owner or a billing-off deploy keeps the original free messaging.
+  const isOwner = me?.role === "owner";
+  const subscription = useSubscription({ enabled: isOwner });
+  const billingOn = isOwner && subscription.data !== undefined && subscription.data !== BILLING_OFF;
 
   /* Every control below used to be uncontrolled -- defaultValue with no
      onChange and no submit -- so each edit survived exactly until the next
@@ -390,6 +399,10 @@ export default function SettingsPage() {
         </div>
 
         <div className="flex flex-col gap-3.5">
+          {/* #988 — Billing. Self-hides when billing is off or the viewer is
+              not the workspace owner, so it adds nothing to a `none` build. */}
+          <BillingCard />
+
           <Card>
             <CardHeader title="Usage" right={<Chip tone="accent">{ws?.plan ?? "—"}</Chip>} />
             <CardBody className="flex flex-col gap-3.5">
@@ -412,18 +425,19 @@ export default function SettingsPage() {
                   </div>
                 ))}
               </div>
-              {/* The "Manage billing" button that used to sit here went
-                  nowhere: there is no payment integration, no entitlement
-                  enforcement and no upgrade path behind it. A control that
-                  does nothing is worse than an absent one, because someone
-                  eventually presses it. See docs/DECISIONS.md. */}
-              <div className="px-[13px] py-[11px] bg-wash-good rounded-[var(--radius-sm)] text-[12.5px] text-good leading-[1.5]">
-                <b>Everything is free while SnapURL is in development.</b>{" "}
-                <span className="text-ink-2">
-                  Nothing is metered and there is no billing to manage. Clicks are counted so you can see them, not
-                  to charge for them.
-                </span>
-              </div>
+              {/* #988 — this "everything is free, nothing to manage" note is
+                  true only on a build with billing OFF. When billing is on for
+                  an owner, the Billing card below is where the plan is managed,
+                  so the note is suppressed to avoid contradicting it. */}
+              {!billingOn ? (
+                <div className="px-[13px] py-[11px] bg-wash-good rounded-[var(--radius-sm)] text-[12.5px] text-good leading-[1.5]">
+                  <b>Everything is free while SnapURL is in development.</b>{" "}
+                  <span className="text-ink-2">
+                    Nothing is metered and there is no billing to manage. Clicks are counted so you can see them, not
+                    to charge for them.
+                  </span>
+                </div>
+              ) : null}
             </CardBody>
           </Card>
 
