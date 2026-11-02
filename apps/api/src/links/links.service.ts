@@ -32,6 +32,7 @@ import { recordActivity, type Actor } from "../common/activity.js";
 import { escapeLike } from "../common/sql-like.js";
 import { assertNoSsrfDnsTarget, resolvesToDeniedAddress } from "../common/ssrf-guard.js";
 import { matchBlockedDomain } from "../common/blocklist.js";
+import { matchRedirectChain, type ChainMatch } from "../common/shortener-chain.js";
 import {
   SPARKLINE_DAYS,
   buildSparkline,
@@ -302,6 +303,11 @@ export class LinksService {
        address below: it fails its own row and never 400s the batch. */
     const blocklist = await this.loadBlocklist();
 
+    /* #994 — our own short domains, read once for the whole batch, for the
+       redirect-chain / self-loop check. Same per-row treatment as the
+       blocklist. */
+    const selfHosts = await this.loadSelfHosts();
+
     /* One lookup per distinct domain rather than per row: a hundred links on
        the same domain is the normal shape of a batch. */
     const domainCache = new Map<string, { id: string; name: string } | string>();
@@ -372,6 +378,16 @@ export class LinksService {
         problems.push(`That destination points at ${blocked}, which an administrator has blocked.`);
       }
 
+      /* #994 — a redirect chain or a self-loop is a per-row problem too. */
+      const chain = matchRedirectChain(row.destination, selfHosts);
+      if (chain) {
+        problems.push(
+          chain.kind === "self"
+            ? `That destination points back at ${chain.host}, one of our own short domains. Use the final destination instead.`
+            : `That destination is a ${chain.host} short link. Use the final destination instead.`,
+        );
+      }
+
       for (const url of [row.destination, row.social?.image]) {
         if (url && (await resolvesToDeniedAddress(url))) {
           problems.push(`That host isn't allowed (it resolves to a private, loopback or link-local address): ${url}`);
@@ -385,6 +401,15 @@ export class LinksService {
         continue;
       }
 
+      /* #994 point 1 — scan before writing; a flagged destination fails its
+         own row (like the blocklist above), it is not created behind an
+         interstitial. "pending"/"clean" still write. */
+      const scan = await this.safeBrowsing.check(row.destination);
+      if (scan.status === "flagged") {
+        errors.set(index, "That destination was flagged as unsafe by Google Safe Browsing.");
+        continue;
+      }
+
       prepared.push({
         index,
         input: row,
@@ -392,7 +417,7 @@ export class LinksService {
         slug: row.slug || generateSlug(),
         generated: !row.slug,
         passwordHash: row.password ? await argon2.hash(row.password, ARGON_OPTIONS) : null,
-        scan: await this.safeBrowsing.check(row.destination),
+        scan,
       });
     }
 
@@ -711,7 +736,17 @@ export class LinksService {
        the SSRF check: authorization/validation before any write). */
     this.assertDestinationNotBlocked(input.destination, await this.loadBlocklist());
 
+    /* #994 — refuse a redirect chain or a self-referencing loop (a destination
+       on a known shortener, or on one of our own short domains). Same stage as
+       the blocklist: validation before any write. */
+    this.assertDestinationNotChained(input.destination, await this.loadSelfHosts());
+
     const scan = await this.safeBrowsing.check(input.destination);
+
+    /* #994 point 1 — a destination Safe Browsing flagged is REFUSED on create,
+       not created behind an interstitial. The interstitial stays for links
+       that turn flagged after creation (the rescan worker's job). */
+    this.assertScanNotFlagged(scan.status);
 
     /* An omitted redirect type means the workspace's setting (#753); an
        explicit one always wins. Resolved once, outside the retry loop. */
@@ -850,6 +885,10 @@ export class LinksService {
        unrelated edit fail. */
     if (input.destination !== undefined) {
       this.assertDestinationNotBlocked(input.destination, await this.loadBlocklist());
+      /* #994 — a CHANGED destination is also checked for a redirect chain /
+         self-loop, the same way create is. An omitted destination keeps the
+         row's existing one and is not re-judged. */
+      this.assertDestinationNotChained(input.destination, await this.loadSelfHosts());
     }
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
@@ -857,6 +896,9 @@ export class LinksService {
       patch.destination = input.destination;
       // A new destination has never been scanned, whatever the old one said.
       const scan = await this.safeBrowsing.check(input.destination);
+      /* #994 point 1 — refuse an edit that points the link at a flagged
+         destination, just like create. */
+      this.assertScanNotFlagged(scan.status);
       patch.safeBrowsingStatus = scan.status;
       patch.safeBrowsingCheckedAt = scan.checkedAt;
     }
@@ -1055,6 +1097,50 @@ export class LinksService {
     if (hit) {
       throw new BadRequestException(
         `That destination points at ${hit}, which an administrator has blocked. Use a different link destination.`,
+      );
+    }
+  }
+
+  /* #994 — SnapURL's own short domains, for the redirect-chain / loop check.
+
+     Every host in the `domains` table is one we resolve short links on — the
+     shared system domains and every custom domain a customer has connected. A
+     destination pointing at any of them would be a short link resolving to
+     another short link (a chain), or to itself (a loop), so it is refused on
+     create and update. Read once per write, like the blocklist — the table is
+     small and operator/customer-curated, not hot. */
+  private async loadSelfHosts(): Promise<string[]> {
+    const rows = await this.readDb.select({ domain: domains.domain }).from(domains);
+    return rows.map((r) => r.domain);
+  }
+
+  /** Throw a 400 if `destination` is a redirect chain or a self-referencing
+   *  loop (#994). `selfHosts` is the set of our own short domains, loaded once
+   *  by the caller. Known third-party shorteners come from the maintained list
+   *  in shortener-chain.ts. */
+  private assertDestinationNotChained(destination: string, selfHosts: string[]): void {
+    const hit: ChainMatch | null = matchRedirectChain(destination, selfHosts);
+    if (!hit) return;
+    if (hit.kind === "self") {
+      throw new BadRequestException(
+        `That destination points back at ${hit.host}, one of our own short domains. A short link can't point at another short link — use the final destination instead.`,
+      );
+    }
+    throw new BadRequestException(
+      `That destination is a ${hit.host} short link. A short link can't point at another URL shortener — use the final destination instead.`,
+    );
+  }
+
+  /** Throw a 400 when a fresh Safe Browsing scan flagged the destination
+   *  (#994, point 1). A flagged destination is refused on create and update
+   *  rather than created with an interstitial — the interstitial is only for
+   *  links that turn flagged AFTER creation. "pending" (scanner down or no key)
+   *  and "clean" both pass: an outage must not stop a legitimate link, and the
+   *  rescan worker re-checks a pending link within minutes. */
+  private assertScanNotFlagged(status: string): void {
+    if (status === "flagged") {
+      throw new BadRequestException(
+        "That destination was flagged as unsafe by Google Safe Browsing, so the link can't be created. If you believe this is wrong, contact support.",
       );
     }
   }

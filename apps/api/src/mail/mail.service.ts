@@ -92,6 +92,23 @@ export class MailService {
     });
   }
 
+  /* #994 point 3 — a link the owner created was auto-disabled after reaching
+     the abuse-report threshold, pending admin review. The owner is told which
+     link and why, and where to appeal — never the reporters' identities. */
+  async sendLinkQuarantined(opts: { to: string; shortUrl: string; destination: string }): Promise<void> {
+    await this.send({
+      to: opts.to,
+      subject: "A SnapURL link was disabled after abuse reports",
+      body:
+        `One of your SnapURL links has been automatically disabled after multiple abuse reports, ` +
+        `pending review by our team.\n\n` +
+        `Short link: ${opts.shortUrl}\n` +
+        `Destination: ${opts.destination}\n\n` +
+        `While disabled, the link stops redirecting and shows a "link disabled" page. ` +
+        `If you believe this was a mistake, reply to this email or contact support and we'll review it.`,
+    });
+  }
+
   /* P0 — email verification. Confirms the address at sign-up (and on resend). */
   async sendEmailVerification(opts: { to: string; token: string }): Promise<void> {
     const url = `${this.env.WEB_ORIGIN}/verify-email?token=${opts.token}`;
