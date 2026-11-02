@@ -4,6 +4,7 @@ import {
   PlanNotConfiguredError,
   RazorpayBillingProvider,
   statusForEvent,
+  trialStatusFromEntity,
   type RazorpayClient,
 } from "./razorpay.provider.js";
 import { parsePlanIds } from "./billing-plans.js";
@@ -151,6 +152,30 @@ describe("statusForEvent — event type → lifecycle status", () => {
   it("maps a payment-only / unknown event to null (moves no plan)", () => {
     expect(statusForEvent("payment.captured")).toBeNull();
     expect(statusForEvent("something.else")).toBeNull();
+  });
+});
+
+describe("#992 — trialStatusFromEntity: the provider's trial window → trialing", () => {
+  const now = new Date("2026-06-01T00:00:00.000Z");
+  const futureChargeAt = Math.floor(new Date("2026-06-15T00:00:00.000Z").getTime() / 1000);
+  const pastChargeAt = Math.floor(new Date("2026-05-15T00:00:00.000Z").getTime() / 1000);
+
+  it("is trialing when the entity is authenticated with a FUTURE first charge", () => {
+    expect(trialStatusFromEntity({ status: "authenticated", charge_at: futureChargeAt }, now)).toBe("trialing");
+  });
+
+  it("is NOT trialing once the first charge is in the past (trial ended)", () => {
+    expect(trialStatusFromEntity({ status: "authenticated", charge_at: pastChargeAt }, now)).toBeNull();
+  });
+
+  it("is NOT trialing for an active or non-authenticated entity", () => {
+    expect(trialStatusFromEntity({ status: "active", charge_at: futureChargeAt }, now)).toBeNull();
+    expect(trialStatusFromEntity({ status: "halted", charge_at: futureChargeAt }, now)).toBeNull();
+  });
+
+  it("is null without a charge_at, or for a null entity", () => {
+    expect(trialStatusFromEntity({ status: "authenticated" }, now)).toBeNull();
+    expect(trialStatusFromEntity(null, now)).toBeNull();
   });
 });
 

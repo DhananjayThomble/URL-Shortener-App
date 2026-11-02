@@ -131,6 +131,37 @@ export function statusForEvent(eventType: string): SubscriptionStatus | null {
   }
 }
 
+/** #992 — the trial window as the subscription ENTITY reports it, independent of
+ *  the event type.
+ *
+ *  Razorpay has no distinct `trialing` event or entity status: a subscription
+ *  created with a future `start_at` (a trial) is reported with entity status
+ *  `authenticated` and a `charge_at` in the future until the first charge, when
+ *  it flips to `active`. So the honest signal that a subscription is in its
+ *  trial is the ENTITY: status `authenticated` AND a future first charge.
+ *
+ *  When that holds, the subscription is entitled (the customer is using the
+ *  plan on trial) — which is exactly our `trialing` status, an entitled state.
+ *  That keeps the issue's rule intact: a trial grants the plan only through a
+ *  verified webhook (this one), never a local write, and the entitlement is the
+ *  provider's reported trial, not a locally-assumed one. Returns null when the
+ *  entity does not describe a trial, so the caller falls back to the event-type
+ *  status.
+ *
+ *  `now` is injected so the "future charge" test is deterministic. */
+export function trialStatusFromEntity(
+  entity: Record<string, unknown> | null,
+  now: Date,
+): SubscriptionStatus | null {
+  if (!entity) return null;
+  if (entity.status !== "authenticated") return null;
+  const chargeAt = entity.charge_at;
+  if (typeof chargeAt !== "number") return null;
+  // A first charge strictly in the future means the subscription is in its
+  // trial window right now.
+  return chargeAt * 1000 > now.getTime() ? "trialing" : null;
+}
+
 /** Pull a named entity (`subscription` / `payment`) out of a Razorpay event
  *  payload, tolerant of a shape that does not carry one. Razorpay nests every
  *  entity the same way: payload.<name>.entity. */
@@ -295,6 +326,13 @@ export class RazorpayBillingProvider implements BillingProvider {
     const currentEnd = entity?.current_end;
     const currentPeriodEnd = typeof currentEnd === "number" ? new Date(currentEnd * 1000) : null;
 
+    // #992 — a subscription in its trial window (entity authenticated + a future
+    // first charge) is `trialing`, an entitled state, regardless of the event
+    // type that carried it. Fall back to the event-type status otherwise. This
+    // is the ONLY place a trial becomes entitled — via a verified webhook, never
+    // a local write.
+    const status = trialStatusFromEntity(entity, new Date()) ?? statusForEvent(eventType);
+
     return {
       // Razorpay delivers the event id in the body's `id` and in the
       // x-razorpay-event-id header; the body id is the canonical one.
@@ -305,7 +343,7 @@ export class RazorpayBillingProvider implements BillingProvider {
       // service can confirm a requested plan change against the provider's own
       // view rather than trusting a locally-written target.
       providerPlanId: entity && typeof entity.plan_id === "string" ? entity.plan_id : null,
-      status: statusForEvent(eventType),
+      status,
       currentPeriodEnd,
       payment: readPayment(raw),
       raw,
