@@ -9,6 +9,7 @@ export * from "./link.js";
 export * from "./analytics.js";
 export * from "./workspace.js";
 export * from "./entitlements.js";
+export * from "./plans.js";
 export * from "./auth.js";
 export * from "./public.js";
 export * from "./form.js";

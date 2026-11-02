@@ -183,6 +183,13 @@
       "when": 1793564000000,
       "tag": "0025_platform_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793578559663,
+      "tag": "0026_plans_engine",
+      "breakpoints": true
     }
   ]
 }
