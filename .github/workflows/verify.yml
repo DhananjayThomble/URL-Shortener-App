@@ -503,6 +503,12 @@ jobs:
       REDIRECT_ORIGIN: http://localhost:3002
       MAIL_TRANSPORT: outbox
       THROTTLE_LIMIT: "100000"
+      # #993 — this job runs api/redirect/worker directly from node (not the
+      # compose stack), so the new-account link-cap window is set here (0 days =
+      # caps off) just as THROTTLE_LIMIT is raised above. The smoke-redirect
+      # script seeds many links through one account; production keeps the 7-day
+      # default, which the API integration tests cover.
+      NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
       # debug (not warn) FOR THIS JOB ONLY: the projection writer's failures are
       # logged by drainOutbox at info level (projectionFailures) and a swallowed
       # per-op error is logged by the worker at debug/error — at warn they are

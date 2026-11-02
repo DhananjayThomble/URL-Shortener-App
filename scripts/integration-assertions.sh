@@ -74,6 +74,13 @@ S=$(curl -s -X POST "$API/auth/register" -H 'Content-Type: application/json' \
 ACCESS=$(echo "$S" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).accessToken||""')
 [ -n "$ACCESS" ] && ok "registered a workspace" || bad "register" "$S"
 
+# #993 — a brand-new account's links are HELD (they do not redirect) until the
+# owner verifies their email. This script follows the link below, so verify the
+# freshly-registered account first — the test-only way, straight in the DB via
+# the same dbq() helper used below (a real user would click the emailed link,
+# but there is no inbox here).
+dbq "UPDATE users SET email_verified_at = now() WHERE lower(email) = lower('$EMAIL')" >/dev/null 2>&1 || true
+
 curl -s -X POST "$API/links" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
   -d "{\"destination\":\"https://example.com/rollup\",\"domain\":\"localhost:3002\",\"slug\":\"$SLUG\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}" >/dev/null
 ok "created a plain 302 link"
