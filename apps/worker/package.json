@@ -21,7 +21,8 @@
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "razorpay": "2.9.6"
   },
   "devDependencies": {
     "@types/node": "^22",

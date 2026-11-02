@@ -18,7 +18,12 @@ import type { AdminActor } from "../admin/admin-management.service.js";
 import { BillingService } from "../billing/billing.service.js";
 import { RazorpayBillingProvider, type RazorpayClient } from "../billing/razorpay.provider.js";
 import { parsePlanIds } from "../billing/billing-plans.js";
+import type { MailService } from "../mail/mail.service.js";
 import type { PaidPlanKey } from "@snapurl/contract";
+
+/* #989 — BillingService gained a MailService dependency (failed-payment notice).
+ *  This price test never drives a failed payment, so a no-op stub suffices. */
+const noopMail = { async sendPaymentFailed() {} } as unknown as MailService;
 
 /* ============================================================
    #987 — admin-editable plan prices, asserted on the rows this test seeds
@@ -102,7 +107,7 @@ describeDb("#987 — admin-editable plan prices", () => {
     provider.syncPlanPrice = syncPlanPrice;
 
     admin = new PlansAdminService(db, plansRead, provider);
-    billing = new BillingService(db, provider, plansRead);
+    billing = new BillingService(db, provider, plansRead, noopMail);
 
     const [u] = await db
       .insert(users)

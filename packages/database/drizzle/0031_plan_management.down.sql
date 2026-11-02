@@ -8,9 +8,9 @@
 -- leaves the schema byte-identical to before. Their indexes and foreign keys
 -- drop with the tables.
 --
--- Takes slot 0031: 0029 = #987 plan-prices backfill (on main), 0030 = #989
--- subscription grace (open PR #1010). Renumber again if the conductor says the
--- slot moved on rebase.
+-- Takes slot 0031: 0029 = #987 plan-prices backfill, 0030 = #989 subscription
+-- grace (both merged to main). Renumber again if the conductor says the slot
+-- moved on rebase.
 --
 -- To roll back by hand: delete the 0031 row from __drizzle_migrations and run
 -- the statements below.

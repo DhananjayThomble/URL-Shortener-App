@@ -67,6 +67,13 @@ export const subscriptions = pgTable(
      *  currentPeriodEnd, then lapses to free. */
     cancelAtPeriodEnd: timestamp("cancel_at_period_end", { withTimezone: true }),
 
+    /** #989 — when a failed payment opened a grace window, the instant it
+     *  lapses: the plan stays ENTITLED (data and links kept, paid features on)
+     *  until this moment, then reverts to free. Null when the subscription is
+     *  not in a failed-payment grace window. Set when a halted/past_due webhook
+     *  arrives, cleared when a later charge re-activates the subscription. */
+    graceEndsAt: timestamp("grace_ends_at", { withTimezone: true }),
+
     /* ── Forward-compat columns for the later SaaS plan-management work. Added
          now, nullable and unused in #986, so #992 / #970 extend behaviour
          without a schema migration. #986 writes none of them. ── */

@@ -96,5 +96,21 @@ export const WorkspaceSubscription = z.object({
   /** True once a cancellation is scheduled for the period end but the plan is
    *  still active until then. */
   cancelAtPeriodEnd: z.boolean(),
+  /** #989 — the in-app notice a client renders. Non-null only when the
+   *  subscription needs the owner's attention: a failed payment has opened a
+   *  grace window the plan survives until, or a scheduled cancellation will end
+   *  the plan at the period end. Null when nothing is wrong, so a client shows a
+   *  banner iff this is present. The plan stays entitled for the whole grace
+   *  window; it lapses to free only once `graceEndsAt` passes. */
+  notice: z
+    .object({
+      /** Which situation the notice is about. */
+      kind: z.enum(["payment_failed", "cancellation_scheduled"]),
+      /** ISO-8601 instant the plan reverts to free if nothing changes — the end
+       *  of the grace window for a failed payment, or the period end for a
+       *  scheduled cancellation. */
+      revertsAt: z.string().nullable(),
+    })
+    .nullable(),
 });
 export type WorkspaceSubscription = z.infer<typeof WorkspaceSubscription>;

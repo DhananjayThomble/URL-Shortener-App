@@ -10,9 +10,14 @@ import {
   AdminLinkDisableInput,
   AdminLinkSearchQuery,
   AdminListQuery,
+  AdminRefundInput,
   AdminUpdateWorkspaceInput,
   PlatformSettingsInput,
   type AdminAbuseQueuePage,
+  type AdminRefundResult,
+  type AdminRevenue,
+  type AdminSubscriptionList,
+  type AdminWorkspaceBillingEvents,
   type AdminActionResult,
   type AdminAuditPage,
   type AdminBacklogs,
@@ -39,6 +44,7 @@ import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
+import { AdminBillingService } from "./billing/admin-billing.service.js";
 import { PlatformSettingsService } from "./platform-settings.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
 import {
@@ -77,6 +83,7 @@ export class AdminController {
     private readonly moderation: AdminModerationService,
     private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
+    private readonly adminBilling: AdminBillingService,
     private readonly settings: PlatformSettingsService,
     private readonly plansAdmin: PlansAdminService,
     private readonly planManagement: PlanManagementService,
@@ -501,6 +508,41 @@ export class AdminController {
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", `attachment; filename="snapurl-admin-${parsed}-${query.range}.csv"`);
     return this.adminAnalytics.csv(query, parsed);
+  }
+
+  /* ---- #989 billing views + admin refund ---- */
+
+  /** Every subscription with its workspace, plan and lifecycle state. A read
+   *  (no audit). */
+  @Get("subscriptions")
+  subscriptions(): Promise<AdminSubscriptionList> {
+    return this.adminBilling.subscriptions();
+  }
+
+  /** The revenue headline: MRR, active subscribers by plan, churn, failed
+   *  payments, subscriptions in grace. A read (no audit). */
+  @Get("revenue")
+  revenue(): Promise<AdminRevenue> {
+    return this.adminBilling.revenue();
+  }
+
+  /** One workspace's billing-event history, newest first. A read (no audit). */
+  @Get("workspaces/:id/billing-events")
+  workspaceBillingEvents(@Param("id", ParseUUIDPipe) id: string): Promise<AdminWorkspaceBillingEvents> {
+    return this.adminBilling.workspaceEvents(id);
+  }
+
+  /** Refund a payment through the provider's refund API, with a required
+   *  reason. Admin-only (guard) and AUDITED — there is no self-serve refund. */
+  @Post("payments/:id/refund")
+  @HttpCode(200)
+  refundPayment(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(AdminRefundInput)) input: AdminRefundInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminRefundResult> {
+    return this.adminBilling.refund(id, input.reason, actor(admin, ip));
   }
 }
 

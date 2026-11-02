@@ -1,6 +1,6 @@
 {
-  "id": "e6e0873c-9482-48c3-a10b-1540f52a772b",
-  "prevId": "861ae43b-8bde-4e57-aa56-8d56e81ec80d",
+  "id": "bb56b6c2-fe9b-4ecd-99e6-bab5d0dc6d5a",
+  "prevId": "c33d7cad-1242-4c6e-8886-5e8fabfe028d",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4481,6 +4481,12 @@
         },
         "cancel_at_period_end": {
           "name": "cancel_at_period_end",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "grace_ends_at": {
+          "name": "grace_ends_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

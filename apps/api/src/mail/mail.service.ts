@@ -109,6 +109,24 @@ export class MailService {
     });
   }
 
+  /* #989 — a subscription charge failed. The plan stays active through a grace
+     window; the owner is told when it lapses and where to fix their card. No
+     amounts or card details — that data never touches SnapURL. */
+  async sendPaymentFailed(opts: { to: string; graceEndsAt: Date }): Promise<void> {
+    const when = opts.graceEndsAt.toISOString().slice(0, 10);
+    const url = `${this.env.WEB_ORIGIN}/settings/billing`;
+    await this.send({
+      to: opts.to,
+      subject: "Your SnapURL payment failed — action needed",
+      body:
+        `We couldn't process the latest payment for your SnapURL subscription.\n\n` +
+        `Your paid plan stays active until ${when}. Update your payment method before then to keep it — ` +
+        `after that date the workspace moves to the Free plan. Your links and data are kept either way; ` +
+        `only paid features pause.\n\n` +
+        `Update your payment method:\n${url}`,
+    });
+  }
+
   /* P0 — email verification. Confirms the address at sign-up (and on resend). */
   async sendEmailVerification(opts: { to: string; token: string }): Promise<void> {
     const url = `${this.env.WEB_ORIGIN}/verify-email?token=${opts.token}`;

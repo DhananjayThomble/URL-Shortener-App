@@ -1,9 +1,8 @@
 -- #992 — plan-management (billing 6/6). Additive: two new tables
 -- (plan_change_requests, workspace_plan_history) and their indexes/FKs. No
 -- change to any existing table, so existing rows are untouched. Takes slot
--- 0031: 0029 = #987 plan-prices backfill (merged), 0030 = #989 subscription
--- grace (open PR #1010) — so #992 takes 0031 to avoid a merge-train collision.
--- Renumber again if the conductor says it moved.
+-- 0031 after #989's 0030 (grace) merged to main. Renumber again if the
+-- conductor says it moved.
 CREATE TABLE "plan_change_requests" (
 	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
 	"workspace_id" uuid NOT NULL,
