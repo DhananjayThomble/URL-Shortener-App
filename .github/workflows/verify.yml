@@ -14,10 +14,17 @@ on:
   schedule:
     - cron: "17 4 * * *"
 
-# A new push to the same branch makes the previous run irrelevant.
+# A new push to the same PULL-REQUEST branch makes the previous run irrelevant,
+# so superseding it saves CI minutes. But on push to `main` the run must NOT be
+# cancelled: the heavy report-only real-stack legs (j1/j2/j3) take long enough
+# that the next hourly merge to main would cancel the previous run mid-leg,
+# leaving every j-shard `cancelled` on every main run — so main never got a real
+# pass/fail baseline (#977). Scoping cancel-in-progress to pull_request events
+# keeps PR-branch superseding while letting every main run finish. The group key
+# still includes github.ref, so two different refs never cancel each other.
 concurrency:
   group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
