@@ -22,6 +22,26 @@ const need = (b: Box | null): Box => {
 };
 const centre = (b: Box) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
 
+/* Read a locator's bounding box only once it has SETTLED: after a role change
+   the row re-renders (PATCH resolves, the chip bolds, aria-pressed flips, the
+   below-table live region mounts its text), and measuring mid-relayout caught a
+   transient position that drifted the row several-to-17px vertically on desktop
+   — a flake, not the steady state (#977). Poll until two consecutive reads
+   agree, so the geometry assertions compare the settled layout. This does NOT
+   loosen the 1px contract: a genuine steady-state shift still fails. */
+async function stableBox(locator: import("@playwright/test").Locator): Promise<Box> {
+  let prev = need(await locator.boundingBox());
+  for (let i = 0; i < 20; i++) {
+    await locator.page().waitForTimeout(100);
+    const cur = need(await locator.boundingBox());
+    if (Math.abs(cur.x - prev.x) < 0.5 && Math.abs(cur.y - prev.y) < 0.5 && Math.abs(cur.width - prev.width) < 0.5 && Math.abs(cur.height - prev.height) < 0.5) {
+      return cur;
+    }
+    prev = cur;
+  }
+  return prev;
+}
+
 async function buttonAt(page: Page, p: { x: number; y: number }): Promise<string | null> {
   return page.evaluate(({ x, y }) => {
     const el = document.elementFromPoint(x, y)?.closest("button");
@@ -76,27 +96,21 @@ test.describe("Journey 781 — /team role editor layout (#781) @mobile", () => {
     await expect(done).toBeVisible();
     await expect(row.getByRole("button", { name: "Remove" })).toHaveCount(0);
     for (const [was, now] of [
-      [doneBefore, need(await done.boundingBox())],
-      [rowBefore, need(await row.boundingBox())],
+      [doneBefore, await stableBox(done)],
+      [rowBefore, await stableBox(row)],
     ] as const) {
-      /* Selecting a role makes its chip label bold, which reflows the row's
-         text metrics: the column nudges horizontally by the "Editor" -> "Admin"
-         width difference AND vertically by the bold-weight line-box change — a
-         couple of sub-pixel px either way (observed 2.25px vertical on desktop).
-         What the test actually guards is that nothing MEANINGFULLY moved under
-         the old controls — proven below by buttonAt() still finding the same
-         button at the old centre — so allow the same few-px reflow tolerance on
-         both axes rather than asserting a vertical 1px that the bold reflow
-         legitimately exceeds. */
+      /* Horizontally, auto table layout can nudge a column by the width
+         difference of the role chip text ("Editor" -> "Admin"), a few px at most;
+         vertically nothing may move. */
       expect(Math.abs(was.x - now.x)).toBeLessThanOrEqual(6);
-      expect(Math.abs(was.y - now.y)).toBeLessThanOrEqual(6);
+      expect(Math.abs(was.y - now.y)).toBeLessThanOrEqual(1);
       expect(Math.abs(was.width - now.width)).toBeLessThanOrEqual(6);
     }
     /* The options sit in a flex-1 group whose active label is bold, so choosing
        one can nudge its neighbours by a few px. What matters is that the old
        spot is still a role option, not a different control. */
-    const adminNow = need(await admin.boundingBox());
-    expect(Math.abs(adminBefore.y - adminNow.y)).toBeLessThanOrEqual(6);
+    const adminNow = await stableBox(admin);
+    expect(Math.abs(adminBefore.y - adminNow.y)).toBeLessThanOrEqual(1);
     expect(await buttonAt(page, centre(adminBefore))).toBe("Admin");
     expect(await buttonAt(page, centre(doneBefore))).toBe("Done");
     await page.screenshot({ path: `.qa-runs/781/${info.project.name}-2-after-role-change.png` });
