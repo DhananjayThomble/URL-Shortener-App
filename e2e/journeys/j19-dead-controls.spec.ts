@@ -25,7 +25,7 @@
  */
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { RUN_PASSWORD, createLink, makeEmail, registerUser } from "./helpers";
+import { createLink, makeEmail, registerUser, signInViaSeed } from "./helpers";
 
 const REMOVED_BUTTONS = [
   "Schedule report",
@@ -62,11 +62,8 @@ test.describe("Journey 19 — dead controls (#661)", () => {
       acceptDownloads: true,
     });
     page = await context.newPage();
-    await page.goto("/login");
-    await page.getByPlaceholder("you@company.com").fill(email);
-    await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/links$/, { timeout: 20_000 });
+    // #977 Option A: seed the real session instead of a UI /auth/login (5/min/IP).
+    await signInViaSeed(page, session);
   });
 
   test.afterAll(async () => {

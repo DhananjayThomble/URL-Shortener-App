@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerPaidOwner, registerUser, type Session } from "./helpers";
+import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerPaidOwner, registerUser, signInViaSeed, type Session } from "./helpers";
 
 // Run SQL inside the staging Postgres container with `docker exec`, the pattern
 // j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
@@ -79,12 +79,9 @@ function psql(sql: string) {
   );
 }
 
-async function signIn(page: Page, email: string) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+async function signIn(page: Page, session: Session) {
+  // #977 Option A: seed the real session instead of a UI /auth/login (5/min/IP).
+  await signInViaSeed(page, session);
 }
 
 test.describe("Journey 26 — default domain validation (#779)", () => {
@@ -188,7 +185,7 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
         await page.setViewportSize(vp.size);
         await page.emulateMedia({ colorScheme: scheme });
         if (!page.url().includes("/settings") && !(await page.evaluate(() => !!window.localStorage.getItem("snapurl.accessToken")).catch(() => false))) {
-          await signIn(page, owner.email);
+          await signIn(page, owner);
         }
         await page.goto("/settings");
         const select = page.getByLabel("Default domain");
@@ -243,20 +240,23 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
 
   test("(g) a viewer sees the control disabled with the reason, and the API answers 403", async ({ browser }) => {
     const viewerEmail = makeEmail("j26-viewer");
-    await registerUser(viewerEmail);
+    const viewer = await registerUser(viewerEmail);
     psql(`update memberships set role='viewer' where lower(email)=lower('${viewerEmail}')`);
+    // One API login (the role just changed, so a fresh token is needed to carry
+    // the viewer role). #977 Option A: reuse THIS login's tokens to seed the
+    // browser session below instead of driving a second UI /auth/login.
     const login = await fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: viewerEmail, password: RUN_PASSWORD }),
     });
-    const viewerToken = ((await login.json()) as { accessToken: string }).accessToken;
-    const denied = await call(viewerToken, "PATCH", "/workspaces/current", { defaultDomain: "not-mine.example" });
+    const viewerSession = (await login.json()) as { accessToken: string; refreshToken: string };
+    const denied = await call(viewerSession.accessToken, "PATCH", "/workspaces/current", { defaultDomain: "not-mine.example" });
     expect(denied.status).toBe(403);
 
     const vp = await browser.newPage();
     try {
-      await signIn(vp, viewerEmail);
+      await signIn(vp, { ...viewer, accessToken: viewerSession.accessToken, refreshToken: viewerSession.refreshToken });
       await vp.goto("/settings");
       const select = vp.getByLabel("Default domain");
       await expect(select).toBeVisible({ timeout: 20_000 });

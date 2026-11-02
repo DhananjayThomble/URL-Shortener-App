@@ -23,7 +23,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, registerUser, type Session, signInViaSeed } from "./helpers";
 
 const TZ = "Asia/Kolkata";
 const DAY = 86_400_000;
@@ -35,11 +35,10 @@ const dayIn = (at: number) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ })
 const auth = (s: Session) => ({ authorization: `Bearer ${s.accessToken}`, "content-type": "application/json" });
 
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function api(session: Session, method: string, path: string, body?: object) {

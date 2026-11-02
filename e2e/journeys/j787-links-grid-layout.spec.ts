@@ -16,17 +16,16 @@
 
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
 
 const SHOTS = process.env.QA_787_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/787");
 const LONG_PATH = `/products/category/very-long-product-name-that-goes-on/and-on?utm_source=newsletter&utm_medium=email&utm_campaign=spring-sale-${"x".repeat(40)}`;
 
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function create(session: Session, domain: string, slug: string, destination: string) {

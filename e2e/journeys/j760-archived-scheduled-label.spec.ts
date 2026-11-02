@@ -22,17 +22,16 @@
 
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j760-destination";
 const SHOTS = process.env.QA_760_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/760");
 
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function createScheduled(session: Session, activatesAt: string) {

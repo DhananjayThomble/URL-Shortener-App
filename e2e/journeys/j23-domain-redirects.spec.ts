@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, reserveLoginSlots, setWorkspacePlan } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, registerUser, setWorkspacePlan, signInViaSeed } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -119,17 +119,11 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
 
     context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 1280, height: 800 } });
     page = await context.newPage();
-    await page.goto("/login");
-    await page.getByPlaceholder("you@company.com").fill(email);
-    await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-    // Browser-driven /auth/login (5/min-per-IP, #977). This beforeAll runs
-    // after register/login-heavy sibling specs on the one shard IP, so without
-    // pacing the sign-in 429s and the beforeAll fails (reported as a 0 ms fail
-    // on the first test — it passed on the shard where the window was fresh and
-    // failed where it was drained). Reserve a login slot first.
-    await reserveLoginSlots(1);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/links$/, { timeout: 20_000 });
+    // #977 Option A: seed the real session instead of a UI /auth/login. This
+    // spec's subject is custom-domain root/404 redirects, not the login form,
+    // and a UI login here 429'd under shard load (the earlier 0 ms beforeAll
+    // fail). seedAccount uses the tokens registerUser already issued — no login.
+    await signInViaSeed(page, session);
   });
 
   test.afterAll(async () => {

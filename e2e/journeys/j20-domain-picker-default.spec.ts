@@ -27,7 +27,7 @@
 
 import { execFileSync } from "node:child_process";
 import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerPaidOwner, type Session } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, registerPaidOwner, RUN_ID, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j20-destination";
 const slugFor = (tag: string) => `j20-${tag}-${Math.random().toString(36).slice(2, 8)}`;
@@ -64,11 +64,10 @@ async function api<T>(session: Session, path: string, init?: RequestInit): Promi
 
 /** Real sign-in through the login form, as a user would. */
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function visit(host: string | null, slug: string) {

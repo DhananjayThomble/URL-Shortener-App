@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_PASSWORD, RUN_ID, createLink, makeEmail, registerUser } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, createLink, makeEmail, registerUser, signInViaSeed } from "./helpers";
 
 const DASH = "—";
 
@@ -67,12 +67,11 @@ test.describe("Journey 18 — Conversions page (#662)", () => {
     }
     expect(clicks, "rollup should have counted the 3 driven clicks").toBeGreaterThanOrEqual(3);
 
-    /* ---- 1. Sign in through the real form, open /conversions ---- */
-    await page.goto("/login");
-    await page.getByPlaceholder("you@company.com").fill(email);
-    await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/links$/, { timeout: 20_000 });
+    /* ---- 1. Establish the session, open /conversions ---- */
+    // #977 Option A: seed the real session instead of a UI /auth/login (that
+    // route is 5/min-per-IP and a full shard overruns it). This spec's subject
+    // is the conversions page, not the login form.
+    await signInViaSeed(page, session);
 
     await page.goto("/conversions");
     const main = page.locator("main");

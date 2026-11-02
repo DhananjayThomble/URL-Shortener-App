@@ -26,19 +26,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, seedAccount } from "./helpers";
+import { API_URL, RUN_ID, makeEmail, registerUser, seedAccount, signInViaSeed, type Session } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
 
 const json = { "content-type": "application/json" };
 
-async function signIn(page: Page, email: string) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/links$/, { timeout: 20_000 });
+async function signIn(page: Page, session: Session) {
+  // #977 Option A: seed the real session instead of a UI /auth/login (5/min/IP).
+  await signInViaSeed(page, session);
 }
 
 async function createKey(token: string): Promise<string> {
@@ -75,7 +72,7 @@ test.describe("Journey 24 — conversion currency visibility (#654)", () => {
     const key = await createKey(session.accessToken);
 
     /* ---- 0. A fresh workspace with no conversions: no notice at all ---- */
-    await signIn(page, email);
+    await signIn(page, session);
     await page.goto("/conversions");
     const main = page.locator("main");
     await expect(main.getByText("Funnel", { exact: true })).toBeVisible({ timeout: 15_000 });
