@@ -11,6 +11,21 @@ import {
 } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { PlatformSettingsService, SETTINGS_CACHE_TTL_MS } from "./platform-settings.service.js";
+import { telemetry } from "../common/telemetry.js";
+
+/** How the kill switches reach error-tracking. #995's SamplingController exposes
+ *  setRuntimeControls({enabled, sampleRateCap}); this is the shape we push. A
+ *  seam so a unit test can supply a spy instead of the live telemetry handle. */
+export type ErrorTrackingSync = (controls: { enabled: boolean; sampleRateCap: number }) => void;
+
+/** The production sync: push the errorTracking switch + cap into the live
+ *  telemetry SamplingController (#995). OFF sets enabled:false so shouldSend()
+ *  returns false and no event is sent; the cap lowers the effective sample rate
+ *  (never above the env ceiling). Reaches the module-level singleton, so it is
+ *  a no-op disabled handle before bootstrap and whenever no DSN is configured. */
+const liveErrorTrackingSync: ErrorTrackingSync = (controls) => {
+  telemetry().sampling.setRuntimeControls(controls);
+};
 
 /* ============================================================
    #1020 — the enforcement engine for the typed kill-switch set.
@@ -70,6 +85,9 @@ export class KillSwitchService {
   constructor(
     private readonly settings: PlatformSettingsService,
     @Inject(DB) private readonly db: Database,
+    /** #1020↔#995 — how the errorTracking switch reaches the telemetry sampling
+     *  controller. Defaults to the live push; a unit test injects a spy. */
+    private readonly errorTrackingSync: ErrorTrackingSync = liveErrorTrackingSync,
   ) {}
 
   /** The runtime cache window in ms, surfaced so the admin view can show the
@@ -83,13 +101,36 @@ export class KillSwitchService {
    * CLOSED. A read that throws (DB unreachable) resolves to
    * failClosedKillSwitches() — every paid switch OFF — rather than propagating.
    * This is the one read every check and consumer goes through.
+   *
+   * Every read also pushes the errorTracking switch + sample-rate cap into the
+   * telemetry SamplingController (#995 seam), so a change takes effect within
+   * the settings-cache window with no re-init: OFF stops every event, the cap
+   * bounds the rate. The push is cheap and idempotent (setRuntimeControls just
+   * stores the values), and it runs on the fail-closed path too so an
+   * unreadable store leaves error tracking on its shipped default rather than
+   * silently stale.
    */
   async current(): Promise<KillSwitchesSetting> {
+    let switches: KillSwitchesSetting;
     try {
-      return await this.settings.getKillSwitches();
+      switches = await this.settings.getKillSwitches();
     } catch (err) {
       this.logger.error({ err }, "kill-switch read failed — failing closed (paid switches OFF)");
-      return failClosedKillSwitches();
+      switches = failClosedKillSwitches();
+    }
+    this.pushErrorTracking(switches);
+    return switches;
+  }
+
+  /** Push the current errorTracking switch + cap into the telemetry sampling
+   *  controller. Best-effort: a telemetry failure never breaks a settings read. */
+  private pushErrorTracking(switches: KillSwitchesSetting): void {
+    const state = switches.errorTracking;
+    const cap = state.errorCaps ?? DEFAULT_KILL_SWITCHES.errorTracking.errorCaps!;
+    try {
+      this.errorTrackingSync({ enabled: state.on, sampleRateCap: cap.sampleRate });
+    } catch (err) {
+      this.logger.warn({ err }, "could not sync errorTracking kill switch to telemetry");
     }
   }
 

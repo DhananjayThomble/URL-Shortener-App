@@ -197,3 +197,68 @@ describe("isOn + cacheTtlMs", () => {
     spy.mockRestore();
   });
 });
+
+
+/* #1020 ↔ #995 — the errorTracking switch drives the telemetry SamplingController.
+   current() pushes { enabled, sampleRateCap } into the controller every read, so
+   OFF stops every event and the cap bounds the effective sample rate. These wire
+   KillSwitchService to a REAL SamplingController (env ceiling 1.0, DSN configured)
+   through the injectable errorTrackingSync seam. */
+import { SamplingController } from "@snapurl/telemetry";
+
+describe("errorTracking → telemetry SamplingController", () => {
+  function wire(switches: KillSwitchesSetting) {
+    const controller = new SamplingController({
+      dsnConfigured: true,
+      errorsSampleRate: 1, // env ceiling: a cap can only lower this
+      tracesSampleRate: 0,
+    });
+    const svc = new KillSwitchService(settingsStub({ switches }), dbStub(0), (controls) =>
+      controller.setRuntimeControls(controls),
+    );
+    return { controller, svc };
+  }
+
+  it("OFF stops every event (shouldSend() false, sampleRate() 0)", async () => {
+    const switches = structuredClone(DEFAULT_KILL_SWITCHES);
+    switches.errorTracking = { on: false, errorCaps: { sampleRate: 1 } };
+    const { controller, svc } = wire(switches);
+    // Before any read the controller is on (DSN configured, no controls yet).
+    expect(controller.shouldSend()).toBe(true);
+    await svc.current();
+    // The OFF switch flipped it off: no event is sent.
+    expect(controller.shouldSend()).toBe(false);
+    expect(controller.sampleRate()).toBe(0);
+  });
+
+  it("the cap bounds the effective sample rate (never above the env ceiling)", async () => {
+    const switches = structuredClone(DEFAULT_KILL_SWITCHES);
+    switches.errorTracking = { on: true, errorCaps: { sampleRate: 0.1 } };
+    const { controller, svc } = wire(switches);
+    await svc.current();
+    expect(controller.shouldSend()).toBe(true);
+    // env rate 1.0, cap 0.1 => effective min(1, 0.1) = 0.1.
+    expect(controller.sampleRate()).toBeCloseTo(0.1, 10);
+  });
+
+  it("a cap above the env ceiling cannot raise the rate", async () => {
+    const switches = structuredClone(DEFAULT_KILL_SWITCHES);
+    switches.errorTracking = { on: true, errorCaps: { sampleRate: 1 } };
+    const controller = new SamplingController({ dsnConfigured: true, errorsSampleRate: 0.3, tracesSampleRate: 0 });
+    const svc = new KillSwitchService(settingsStub({ switches }), dbStub(0), (c) =>
+      controller.setRuntimeControls(c),
+    );
+    await svc.current();
+    // env 0.3, cap 1 => min(0.3, 1) = 0.3, not raised.
+    expect(controller.sampleRate()).toBeCloseTo(0.3, 10);
+  });
+
+  it("a telemetry sync failure never breaks a settings read", async () => {
+    const svc = new KillSwitchService(settingsStub({}), dbStub(0), () => {
+      throw new Error("telemetry down");
+    });
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(svc.current()).resolves.toBeDefined();
+    spy.mockRestore();
+  });
+});
