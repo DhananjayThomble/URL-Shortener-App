@@ -6,15 +6,29 @@ import {
   createDatabase,
   eq,
   memberships,
+  payments,
   subscriptions,
   users,
   workspaces,
   type Database,
 } from "@snapurl/database";
+import type { MailService } from "../mail/mail.service.js";
 import { BillingService } from "./billing.service.js";
 import { RazorpayBillingProvider, type RazorpayClient } from "./razorpay.provider.js";
 import { NoneBillingProvider } from "./none-billing.provider.js";
 import { parsePlanIds } from "./billing-plans.js";
+import { GRACE_PERIOD_DAYS } from "./billing-lifecycle.js";
+
+/** Records the payment-failed notices the service sends, so the grace test can
+ *  assert the owner was emailed. Only the one method the billing service calls
+ *  is implemented; the cast covers the rest of MailService, which it never
+ *  touches. */
+class FakeMail {
+  readonly paymentFailed: Array<{ to: string; graceEndsAt: Date }> = [];
+  async sendPaymentFailed(opts: { to: string; graceEndsAt: Date }): Promise<void> {
+    this.paymentFailed.push(opts);
+  }
+}
 
 /* ============================================================
    #986 — the webhook-moves-the-plan invariant, end to end, against the real DB.
@@ -57,6 +71,7 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
   let db: Database;
   let service: BillingService;
   let fakeClient: RazorpayClient;
+  let mail: FakeMail;
 
   const stamp = `${Date.now().toString(36)}${Math.random().toString(16).slice(2, 6)}`;
   const workspaceIds: string[] = [];
@@ -80,6 +95,44 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     });
   }
 
+  /** A lifecycle event (halted / cancelled / activated …) with an optional
+   *  current_end. #989 uses these to exercise grace and cancellation. */
+  function lifecycleEvent(eventId: string, type: string, subId: string, currentEnd?: number) {
+    return JSON.stringify({
+      id: eventId,
+      event: type,
+      payload: { subscription: { entity: { id: subId, ...(currentEnd !== undefined ? { current_end: currentEnd } : {}) } } },
+    });
+  }
+
+  /** A payment event carrying a payment entity, for the revenue views. */
+  function paymentEvent(eventId: string, type: string, subId: string, payId: string, status: string, amount = 49900) {
+    return JSON.stringify({
+      id: eventId,
+      event: type,
+      payload: {
+        subscription: { entity: { id: subId } },
+        payment: { entity: { id: payId, amount, currency: "INR", status } },
+      },
+    });
+  }
+
+  /** Verify + handle a signed event body in one step. */
+  async function deliver(body: string) {
+    const event = service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET));
+    expect(event).not.toBeNull();
+    return service.handleWebhook(event!);
+  }
+
+  /** Put a workspace on an ACTIVE pro subscription via a verified charge, the
+   *  starting point for the grace / cancel lifecycle tests. */
+  async function activate(tag: string) {
+    const { workspaceId, email } = await seedWorkspace(tag);
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    await deliver(chargedEvent(`evt_${stamp}_${tag}_charge`, session.subscriptionId));
+    return { workspaceId, email, subscriptionId: session.subscriptionId };
+  }
+
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 4 });
     db = handle.db;
@@ -100,18 +153,23 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
       },
       fakeClient,
     );
-    service = new BillingService(db, provider);
+    mail = new FakeMail();
+    service = new BillingService(db, provider, mail as unknown as MailService);
   });
 
   afterAll(async () => {
     if (!db) return;
-    // billing_events and subscriptions cascade on workspace delete; delete the
-    // seeded workspaces and users explicitly (billing_events.workspace_id is
-    // SET NULL, so clear those rows by the per-run stamp first).
-    await db.delete(billingEvents).where(eq(billingEvents.providerEventId, `evt_${stamp}_charged`));
-    await db.delete(billingEvents).where(eq(billingEvents.providerEventId, `evt_${stamp}_second`));
+    // payments and subscriptions cascade on workspace delete; billing_events
+    // .workspace_id is SET NULL, so those rows survive the workspace delete and
+    // must be cleared by the per-run stamp. Deleting the workspaces removes
+    // payments + subscriptions with them.
     for (const id of workspaceIds) await db.delete(workspaces).where(eq(workspaces.id, id));
     for (const id of userIds) await db.delete(users).where(eq(users.id, id));
+    // billing_events for this run (stamped event ids), orphaned by the SET NULL.
+    const evRows = await db.select({ id: billingEvents.id, pid: billingEvents.providerEventId }).from(billingEvents);
+    for (const r of evRows) {
+      if (r.pid.includes(stamp)) await db.delete(billingEvents).where(eq(billingEvents.id, r.id));
+    }
     await handle.close();
   });
 
@@ -199,8 +257,121 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     expect(forgedRows.length).toBe(0); // a forged event is stored nowhere
   });
 
+  /* ── #989 lifecycle ── */
+
+  it("a failed payment opens a 7-day grace window: plan stays entitled, owner emailed, in-app notice present", async () => {
+    const { workspaceId, subscriptionId, email } = await activate("grace");
+    const before = mail.paymentFailed.length;
+
+    // subscription.halted — retries exhausted, the charge failed.
+    const outcome = await deliver(lifecycleEvent(`evt_${stamp}_grace_halt`, "subscription.halted", subscriptionId));
+    expect(outcome).toBe("processed");
+
+    // Still entitled (plan kept) DURING grace, and the row carries a grace end
+    // ~7 days out.
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.status).toBe("halted");
+    expect(row!.graceEndsAt).not.toBeNull();
+    const daysOut = (row!.graceEndsAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    expect(daysOut).toBeGreaterThan(GRACE_PERIOD_DAYS - 0.1);
+    expect(daysOut).toBeLessThan(GRACE_PERIOD_DAYS + 0.1);
+
+    // workspaces.plan is STILL the paid plan — data and paid features kept.
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    expect(ws!.plan).toBe("Pro");
+
+    // The read path reports the plan as still Pro with a payment_failed notice.
+    const sub = await service.currentSubscription(workspaceId);
+    expect(sub.planKey).toBe("pro");
+    expect(sub.notice).toEqual({ kind: "payment_failed", revertsAt: row!.graceEndsAt!.toISOString() });
+
+    // The owner was emailed exactly once about the failure.
+    expect(mail.paymentFailed.length).toBe(before + 1);
+    expect(mail.paymentFailed.at(-1)!.to).toBe(email);
+  });
+
+  it("grace EXPIRY lapses the plan to free (data kept), with no further email", async () => {
+    const { workspaceId, subscriptionId } = await activate("graceexp");
+    await deliver(lifecycleEvent(`evt_${stamp}_graceexp_halt`, "subscription.halted", subscriptionId));
+
+    // Force the grace window into the past, as the clock would after 7 days.
+    await db
+      .update(subscriptions)
+      .set({ graceEndsAt: new Date(Date.now() - 60_000) })
+      .where(eq(subscriptions.workspaceId, workspaceId));
+
+    // Reading now (grace elapsed) reports FREE and no notice.
+    const sub = await service.currentSubscription(workspaceId);
+    expect(sub.planKey).toBe("free");
+    expect(sub.notice).toBeNull();
+
+    // The links/workspace row is untouched — only the plan label changes on the
+    // next lifecycle event; the data is kept regardless.
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    expect(ws).toBeDefined();
+  });
+
+  it("a repeat failure while already in grace keeps the ORIGINAL window and does not re-email", async () => {
+    const { workspaceId, subscriptionId } = await activate("graceretry");
+    await deliver(lifecycleEvent(`evt_${stamp}_graceretry_h1`, "subscription.halted", subscriptionId));
+    const [first] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    const emailsAfterFirst = mail.paymentFailed.length;
+
+    // A second failed-payment event (e.g. a scheduled retry also failed).
+    await deliver(lifecycleEvent(`evt_${stamp}_graceretry_h2`, "subscription.pending", subscriptionId));
+    const [second] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+
+    expect(second!.graceEndsAt!.getTime()).toBe(first!.graceEndsAt!.getTime()); // window NOT extended
+    expect(mail.paymentFailed.length).toBe(emailsAfterFirst); // emailed only when the window opened
+  });
+
+  it("a later successful charge CLEARS the grace window and re-activates the plan", async () => {
+    const { workspaceId, subscriptionId } = await activate("recover");
+    await deliver(lifecycleEvent(`evt_${stamp}_recover_halt`, "subscription.halted", subscriptionId));
+    await deliver(chargedEvent(`evt_${stamp}_recover_recharge`, subscriptionId));
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.status).toBe("active");
+    expect(row!.graceEndsAt).toBeNull(); // window cleared
+    const sub = await service.currentSubscription(workspaceId);
+    expect(sub.planKey).toBe("pro");
+    expect(sub.notice).toBeNull();
+  });
+
+  it("cancellation keeps the plan until the period end, then lapses to free", async () => {
+    const { workspaceId, subscriptionId } = await activate("cancel");
+    // Cancel with a period end in the future.
+    const futureEnd = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60;
+    await deliver(lifecycleEvent(`evt_${stamp}_cancel_c`, "subscription.cancelled", subscriptionId, futureEnd));
+
+    // Still entitled until the period end, with a cancellation notice.
+    const during = await service.currentSubscription(workspaceId);
+    expect(during.planKey).toBe("pro");
+    expect(during.notice).toEqual({ kind: "cancellation_scheduled", revertsAt: new Date(futureEnd * 1000).toISOString() });
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.cancelAtPeriodEnd).not.toBeNull();
+
+    // Reading AFTER the period end reports free.
+    const after = await service.currentSubscription(workspaceId, new Date((futureEnd + 1) * 1000));
+    expect(after.planKey).toBe("free");
+    expect(after.notice).toBeNull();
+  });
+
+  it("records captured and FAILED payments for the revenue views", async () => {
+    const { workspaceId, subscriptionId } = await activate("pay");
+    await deliver(paymentEvent(`evt_${stamp}_pay_cap`, "payment.captured", subscriptionId, `pay_${stamp}_cap`, "captured"));
+    await deliver(paymentEvent(`evt_${stamp}_pay_fail`, "payment.failed", subscriptionId, `pay_${stamp}_fail`, "failed"));
+
+    const rows = await db.select().from(payments).where(eq(payments.workspaceId, workspaceId));
+    const byStatus = Object.fromEntries(rows.map((r) => [r.status, r]));
+    expect(byStatus.captured).toBeDefined();
+    expect(byStatus.failed).toBeDefined();
+    expect(byStatus.captured!.amount).toBe("49900");
+    expect(byStatus.captured!.currency).toBe("INR");
+  });
+
   it("the none provider reports the surface unreachable", () => {
-    const off = new BillingService(db, new NoneBillingProvider());
+    const off = new BillingService(db, new NoneBillingProvider(), mail as unknown as MailService);
     expect(off.enabled).toBe(false);
     expect(off.verifyWebhook("{}", "x")).toBeNull();
   });
