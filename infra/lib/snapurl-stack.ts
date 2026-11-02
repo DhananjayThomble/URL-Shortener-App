@@ -218,6 +218,22 @@ export interface SnapUrlStackProps extends StackProps {
    * resolves the secret at cold start and calls Google over the internet.
    */
   safeBrowsingSecretName?: string;
+  /**
+   * NAME of an operator-created Secrets Manager secret holding the Razorpay
+   * billing secrets as JSON (`{ "keySecret": "...", "webhookSecret": "..." }`),
+   * e.g. `snapurl/prod/razorpay`. Optional and opt-in, exactly like
+   * {@link safeBrowsingSecretName}: unset means billing stays OFF
+   * (BILLING_PROVIDER defaults to none) and the stack is unchanged (#986).
+   *
+   * Referenced by name, not created here: the operator creates the secret with
+   * the real test/live values first, then deploys. Only the API reads it, and
+   * only when it actually resolves it at cold start. The public key id is NOT a
+   * secret — it is passed as a plain env var, not through here.
+   *
+   * Only meaningful with egress (`natStrategy` not `'none'`): the API resolves
+   * it from Secrets Manager at cold start, which needs a route out.
+   */
+  razorpaySecretName?: string;
 }
 
 /**
@@ -681,6 +697,20 @@ export class SnapUrlStack extends Stack {
         ? secretsmanager.Secret.fromSecretNameV2(this, "SafeBrowsingApiKey", props.safeBrowsingSecretName)
         : undefined;
 
+    /* #986 — the Razorpay billing secret, opt-in the same way. Under 'none'
+       there is no route to Secrets Manager, so the setting is ignored with a
+       warning rather than wired to a lookup that could only ever fail. */
+    if (props.razorpaySecretName && !hasEgress) {
+      Annotations.of(this).addWarningV2(
+        "snapurl:razorpayNoEgress",
+        "razorpaySecretName is ignored under natStrategy 'none': the API cannot reach Secrets Manager to resolve it.",
+      );
+    }
+    const razorpaySecret =
+      props.razorpaySecretName && hasEgress
+        ? secretsmanager.Secret.fromSecretNameV2(this, "RazorpaySecret", props.razorpaySecretName)
+        : undefined;
+
     /* 'none'-only fallback: no NAT, no route to Secrets Manager, so resolve the
        DB URL at synth time via unsafeUnwrap. This is the only path that still
        places the plaintext password in the template, by necessity. Left as a
@@ -926,6 +956,13 @@ export class SnapUrlStack extends Stack {
            apps/api/src/main.ts, non-fatally — a missing or unreadable secret
            logs a warning and leaves Safe Browsing off, never blocks the API. */
         ...(safeBrowsingSecret ? { GOOGLE_SAFE_BROWSING_API_KEY_SECRET_ARN: safeBrowsingSecret.secretName } : {}),
+        /* #986 — billing. Same spread-only-when-set rule, and a name not an
+           ARN (GetSecretValue accepts either). Only the API serves /billing, so
+           only the API gets this. Resolved at cold start in apps/api/src/main.ts,
+           non-fatally — a missing/unreadable secret leaves billing off and its
+           routes 404, never blocks the API. The public key id is a plain env
+           var, not a secret, so it is not wired here. */
+        ...(razorpaySecret ? { RAZORPAY_SECRET_ARN: razorpaySecret.secretName } : {}),
         /* #470/#426, closing the AWS-profile gap the reviewer found on
            PR #594: LinkCacheBustService.bust() (apps/api/src/common/) calls
            CacheStore.del(linkCacheKey(host, slug)) so the redirect's hot-cache
@@ -1467,6 +1504,9 @@ export class SnapUrlStack extends Stack {
       config.jwtRefreshSecret.grantRead(apiFn);
       // Only the API scans links, so only the API can read the key.
       safeBrowsingSecret?.grantRead(apiFn);
+      // #986 — only the API serves billing, so only the API can read the
+      // Razorpay secret. redirectFn and workerFn never get it.
+      razorpaySecret?.grantRead(apiFn);
     }
 
     /* ---------------------------------------------------------
