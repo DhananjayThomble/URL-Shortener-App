@@ -95,7 +95,12 @@ test.describe("Journey 784 — DNS setup instructions", () => {
 
     await seedAccount(page, b);
     await page.goto("/domains");
-    await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
+    // exact: the page title is the <h1>Domains</h1>. b is a Free workspace, so
+    // #966's "Custom domains are a paid feature" upgrade card is also on the
+    // page, and its <h3> contains the word "Domains" — a non-exact name match
+    // would resolve to both headings (strict-mode violation). Pin the page
+    // title exactly; it asserts the same thing (the Domains page rendered).
+    await expect(page.getByRole("heading", { name: "Domains", exact: true })).toBeVisible();
     await expect(page.getByText(hostA)).toHaveCount(0);
   });
 });
