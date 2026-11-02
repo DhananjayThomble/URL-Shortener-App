@@ -1,6 +1,6 @@
 {
   "id": "861ae43b-8bde-4e57-aa56-8d56e81ec80d",
-  "prevId": "a993f863-0bd1-4039-9da6-4a9785b96777",
+  "prevId": "4f1b50a1-10be-452e-9af5-c48e6a5710af",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -838,6 +838,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'INR'"
+        },
+        "new_account_limits_lifted_at": {
+          "name": "new_account_limits_lifted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",

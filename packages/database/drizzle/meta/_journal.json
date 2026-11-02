@@ -199,6 +199,13 @@
       "breakpoints": true
     },
     {
+      "idx": 28,
+      "version": "7",
+      "when": 1793595056653,
+      "tag": "0028_workspace_new_account_limits_lifted",
+      "breakpoints": true
+    },
+    {
       "idx": 29,
       "version": "7",
       "when": 1793660000000,

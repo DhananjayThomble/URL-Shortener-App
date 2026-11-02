@@ -14,8 +14,10 @@ import { and, asc, eq, isNull, sql } from "@snapurl/database";
 import {
   auditLog,
   domains,
+  links,
   memberships,
   oauthIdentities,
+  projectionOutbox,
   recoveryCodes,
   users,
   workspaces,
@@ -43,6 +45,10 @@ import { TotpService } from "./totp.service.js";
 import { OAuthService, type OAuthProvider } from "./oauth.service.js";
 import { MailService } from "../mail/mail.service.js";
 import { PlatformSettingsService } from "../admin/platform-settings.service.js";
+import { BotProtectionService } from "./bot-protection.service.js";
+import { SignupRefusalService } from "./signup-refusal.service.js";
+import { isDisposableEmail } from "../common/disposable-email.js";
+import { VENDORED_DISPOSABLE_EMAIL_DOMAINS } from "../common/disposable-email-domains.js";
 
 /** "Dhananjay Thomble" → "DT". The UI renders these in avatars. The rule lives in
  *  @snapurl/domain so the web editor's live preview computes the identical value
@@ -84,9 +90,48 @@ export class AuthService {
     private readonly oauth: OAuthService,
     private readonly mail: MailService,
     private readonly settings: PlatformSettingsService,
+    private readonly botProtection: BotProtectionService,
+    private readonly refusals: SignupRefusalService,
   ) {}
 
-  async register(input: RegisterInput, userAgent?: string): Promise<AuthSession> {
+  /* #993 — the two new-account admission checks shared by the password register
+     and the OAuth first-sign-in path: a bot-protection challenge and a
+     disposable-email refusal. Run AFTER the signup-gate check and BEFORE any
+     write, so a refused sign-up never creates a row. Each refusal is recorded
+     with its reason code (SignupRefusalService) for the admin panel.
+
+     `email` is the already-normalised (lower-cased, trimmed) address.
+     `challengeToken` is the optional bot-protection token from the request.
+     `remoteIp` is the caller's resolved IP, forwarded to siteverify. */
+  private async assertNewAccountAllowed(
+    email: string,
+    challengeToken: string | undefined,
+    remoteIp?: string,
+  ): Promise<void> {
+    /* Bot protection first: it is the cheaper, stronger signal and a bot does
+       not deserve to learn whether its throwaway address was also on the list. */
+    const check = await this.botProtection.verify(challengeToken, remoteIp);
+    if (!check.ok) {
+      const reason = check.reason === "missing" ? "bot_challenge_missing" : "bot_challenge_failed";
+      await this.refusals.record(reason, email, remoteIp ?? null);
+      throw new ForbiddenException(
+        "We couldn't verify you're human. Refresh the page and try again.",
+      );
+    }
+
+    /* Disposable-email refusal: the vendored list plus the operator's runtime
+       additions, matched case-insensitively and across sub-domains. */
+    const { disposableEmails } = await this.settings.getValues();
+    const domains = [...VENDORED_DISPOSABLE_EMAIL_DOMAINS, ...disposableEmails.extraDomains];
+    if (isDisposableEmail(email, domains)) {
+      await this.refusals.record("disposable_email", email, remoteIp ?? null);
+      throw new BadRequestException(
+        "That looks like a temporary email address. Sign up with a permanent email you can receive mail at.",
+      );
+    }
+  }
+
+  async register(input: RegisterInput, userAgent?: string, remoteIp?: string): Promise<AuthSession> {
     // #972 — the runtime signup gate. Open registration is a NEW-ACCOUNT path,
     // so it is refused whenever signups are not "open" (both "invite_only" and
     // "closed"): an invited person joins through /auth/invite/accept, which is
@@ -95,6 +140,12 @@ export class AuthService {
     await this.assertSignupsAllow("register");
 
     const email = input.email.toLowerCase().trim();
+
+    /* #993 — the abuse-control admission checks (bot challenge + disposable
+       email), after the signup gate and before any existence check or write.
+       Placed before the duplicate-email lookup on purpose: a refused sign-up
+       must not also become an enumeration oracle. */
+    await this.assertNewAccountAllowed(email, input.challengeToken, remoteIp);
 
     const [existing] = await this.db
       .select({ id: users.id })
@@ -145,10 +196,40 @@ export class AuthService {
      work happens only for an existing, still-unverified account. */
   async verifyEmail(token: string): Promise<void> {
     const userId = await this.tokens.consumeEmailVerificationToken(token);
-    await this.db
-      .update(users)
-      .set({ emailVerifiedAt: new Date(), updatedAt: new Date() })
-      .where(eq(users.id, userId));
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({ emailVerifiedAt: new Date(), updatedAt: new Date() })
+        .where(eq(users.id, userId));
+
+      /* #993 — the links this owner created while unverified were projected
+         with ownerUnverified=true and so do not redirect ("link not active
+         yet"). Verification lifts the hold, but the edge projection reflects
+         the owner's state only when a link is (re)projected — so enqueue an
+         upsert for every link in the workspaces this user owns, in the SAME
+         transaction as the flag flip. The worker re-reads the now-verified
+         owner and writes ownerUnverified=false, and the links go live within
+         the normal projection window. Idempotent: an already-live link simply
+         re-projects to the same value. Scoped to workspaces the user OWNS
+         (membership role 'owner'), which for every account includes the
+         personal workspace its links live in. */
+      await this.enqueueOwnerLinkReprojection(tx, userId);
+    });
+  }
+
+  /** Enqueue a projection upsert for every link owned by this user, so a change
+   *  in the owner's email-verification state reaches the edge (#993). One
+   *  outbox row per link; the worker drains them and re-reads the live owner
+   *  state. No-op when the user owns no links. */
+  private async enqueueOwnerLinkReprojection(tx: Executor, userId: string): Promise<void> {
+    const rows = await tx
+      .select({ id: links.id })
+      .from(links)
+      .innerJoin(memberships, eq(memberships.workspaceId, links.workspaceId))
+      .where(and(eq(memberships.userId, userId), eq(memberships.role, "owner"), eq(memberships.status, "active")));
+    for (const row of rows) {
+      await tx.insert(projectionOutbox).values({ linkId: row.id, operation: "upsert", payload: { linkId: row.id, operation: "upsert" } });
+    }
   }
 
   async resendEmailVerification(email: string): Promise<void> {
@@ -242,6 +323,10 @@ export class AuthService {
     idToken: string,
     nonce: string,
     userAgent?: string,
+    /* #993 — the abuse-control context, consulted only on the NEW-ACCOUNT
+       branch below. Optional and defaulted so existing callers (and the TOTP
+       continuation) are unaffected. */
+    signup: { challengeToken?: string; remoteIp?: string } = {},
   ): Promise<LoginResult> {
     const profile = await this.oauth.verify(provider, idToken, nonce);
 
@@ -278,6 +363,13 @@ export class AuthService {
         // two branches above (already-linked, email-matches-existing) are
         // sign-ins to accounts that already exist and are never gated.
         await this.assertSignupsAllow("oauth");
+
+        /* #993 — the same abuse-control admission checks as password register,
+           applied ONLY here on the new-account branch: an existing user signing
+           in with their provider is never challenged, but a first-time Google/
+           Apple account is a sign-up and goes through the gate. profile.email is
+           already lower-cased by OAuthService.verify. */
+        await this.assertNewAccountAllowed(profile.email, signup.challengeToken, signup.remoteIp);
 
         // Apple sends a name only on the very first authorisation, and may
         // send none at all, so the local-part is the fallback rather than an

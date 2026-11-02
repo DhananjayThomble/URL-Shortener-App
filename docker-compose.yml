@@ -63,6 +63,17 @@ services:
       DEFAULT_DOMAIN: localhost:3002
       REDIRECT_ORIGIN: http://localhost:3002
       MAIL_TRANSPORT: outbox
+      # #993 — a fixed outbox path (not the default os.tmpdir()/snapurl-outbox)
+      # so the smoke harness can read a freshly-registered account's
+      # verification token out of the container and verify its email the way a
+      # real user would. Dev/test only — real deploys use SES.
+      MAIL_OUTBOX_DIR: /tmp/snapurl-outbox
+      # #993 — turn the new-account link caps OFF in this local/compose test
+      # stack (window 0 days) so the smoke suite, which creates dozens of links
+      # through a single account, is not throttled. Production keeps the 7-day
+      # default (20/day, 10/hour); the caps are covered by the API integration
+      # tests, not the smoke harness.
+      NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
       LOG_LEVEL: info
     ports:
       - "3001:3001"

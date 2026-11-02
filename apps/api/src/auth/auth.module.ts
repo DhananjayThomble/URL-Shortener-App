@@ -5,14 +5,25 @@ import { AuthService } from "./auth.service.js";
 import { TokenService } from "./token.service.js";
 import { TotpService } from "./totp.service.js";
 import { OAuthService } from "./oauth.service.js";
+import { BotProtectionService } from "./bot-protection.service.js";
+import { SignupRefusalService } from "./signup-refusal.service.js";
 
 /* Global because AuthGuard is bound application-wide in app.module and needs
-   TokenService wherever it runs. */
+   TokenService wherever it runs. BotProtectionService and SignupRefusalService
+   (#993) are exported too: the links service reads the refusal log for the
+   new-account caps, and both are reused across the sign-up paths. */
 @Global()
 @Module({
   imports: [JwtModule.register({})],
   controllers: [AuthController],
-  providers: [AuthService, TokenService, TotpService, OAuthService],
-  exports: [AuthService, TokenService, TotpService, OAuthService],
+  providers: [AuthService, TokenService, TotpService, OAuthService, BotProtectionService, SignupRefusalService],
+  exports: [
+    AuthService,
+    TokenService,
+    TotpService,
+    OAuthService,
+    BotProtectionService,
+    SignupRefusalService,
+  ],
 })
 export class AuthModule {}

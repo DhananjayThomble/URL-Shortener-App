@@ -234,6 +234,16 @@ export function previewOutcome(
     return { ...none, gate, blocked: { heading: "This link has been disabled", icon: "⛔", where: "Nowhere. This link was disabled by the SnapURL team." } };
   }
 
+  /* #993 — a link whose owner has not verified their email is held: it does
+     not resolve (the redirect serves a "link not active yet" page), so the
+     public preview is never asked about one, exactly like "disabled" above.
+     effectiveGateFromState has no owner-unverified input and so never returns
+     "not_active", but EffectiveGate now includes it, so this branch keeps the
+     gate exhaustive and narrows it out before the lifecycle handling below. */
+  if (gate === "not_active") {
+    return { ...none, gate, blocked: { heading: "This link isn't active yet", icon: "⏳", where: "Nowhere yet. The owner needs to verify their email before this link works." } };
+  }
+
   if (gate === "flagged") {
     /* Flagged outranks every lifecycle gate and routing. Show the flagged
        heading (the caller renders it from `trust`, so blocked is null) and

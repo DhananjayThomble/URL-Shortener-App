@@ -374,6 +374,18 @@ app.get<{ Params: { slug: string } }>("/:slug", async (request, reply) => {
       return sendError(request, reply, "disabled", { host, slug: rawSlug, webOrigin: WEB_ORIGIN });
     }
 
+    /* #993 — the link's owner has not verified their email yet. The link exists
+       and is otherwise fine, it just does not redirect until the owner
+       verifies: the visitor gets the dedicated "link not active yet" page.
+       Checked here, before the expired/click-limit fallthrough, matching
+       effectiveGate's precedence (not_active ranks above archived/lifecycle, so
+       a held link that is also expired still reads as "not active yet"). A 404,
+       not 410: the link has not started, it is not gone (same reasoning as the
+       scheduled page below). */
+    if (blocked === "not_active") {
+      return sendError(request, reply, "not_active", { host, slug: rawSlug, webOrigin: WEB_ORIGIN });
+    }
+
     /* 404, not 410, and not 503.
        410 means "was here, is gone", which is the opposite of a link that has
        not started yet. 503 would invite crawlers to hammer it and reads as an
@@ -461,7 +473,7 @@ app.get("/", async (request, reply) => {
  *  dashboard says about a link and what a visitor to it experiences cannot
  *  disagree: a link that has already expired reports expired even if it also
  *  has an activation date still ahead of it. */
-function gateFor(link: ResolvedLink): "disabled" | "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
+function gateFor(link: ResolvedLink): "disabled" | "not_active" | "archived" | "expired" | "click_limit" | "scheduled" | "flagged" | null {
   /* The whole order — archived, flagged, then the lifecycle gates — lives in
      @snapurl/domain's effectiveGate so the public "+" preview reports the same
      verdict the redirect acts on, in the same precedence (#764). A flagged

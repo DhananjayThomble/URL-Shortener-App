@@ -237,10 +237,20 @@ jobs:
       DEFAULT_DOMAIN: localhost:3002
       REDIRECT_ORIGIN: http://localhost:3002
       MAIL_TRANSPORT: outbox
+      # #993 — the api runs here directly from `node dist` on the runner (not a
+      # container), so its mail outbox is a plain directory on the runner that
+      # smoke.sh can read to verify the smoke account's email (a new account's
+      # links are held until verified). Pin it to a known path.
+      MAIL_OUTBOX_DIR: /tmp/snapurl-outbox
       # The smoke suites make several hundred requests in a couple of minutes.
       # The production default of 120/min would throttle them and fail the run
       # for a reason that has nothing to do with the change under test.
       THROTTLE_LIMIT: "100000"
+      # #993 — turn the new-account link caps off for the smoke run (the suite
+      # creates many links through one account), exactly as THROTTLE_LIMIT is
+      # raised above. Production keeps the 7-day default; the caps are covered by
+      # the API integration tests.
+      NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
       LOG_LEVEL: warn
       # CI builds the frontend to prove it compiles, not to serve it. Without
       # this, next.config.ts correctly refuses to build without a real API URL.
@@ -510,6 +520,12 @@ jobs:
       REDIRECT_ORIGIN: http://localhost:3002
       MAIL_TRANSPORT: outbox
       THROTTLE_LIMIT: "100000"
+      # #993 — this job runs api/redirect/worker directly from node (not the
+      # compose stack), so the new-account link-cap window is set here (0 days =
+      # caps off) just as THROTTLE_LIMIT is raised above. The smoke-redirect
+      # script seeds many links through one account; production keeps the 7-day
+      # default, which the API integration tests cover.
+      NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
       # debug (not warn) FOR THIS JOB ONLY: the projection writer's failures are
       # logged by drainOutbox at info level (projectionFailures) and a swallowed
       # per-op error is logged by the worker at debug/error — at warn they are

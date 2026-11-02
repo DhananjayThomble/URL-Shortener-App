@@ -110,9 +110,14 @@ export function deriveStatus(link: {
 export type LifecycleGate = "archived" | "expired" | "click_limit" | "scheduled";
 
 /** Every gate the redirect applies before it will route a visitor, the admin
- *  disable and a Safe Browsing flag included. `null` means the link is live and
- *  a visitor reaches routing. */
-export type EffectiveGate = "disabled" | "archived" | "flagged" | LifecycleGate;
+ *  disable, a Safe Browsing flag, and the owner-unverified hold included.
+ *  `null` means the link is live and a visitor reaches routing.
+ *
+ *  `not_active` (#993) is the owner-email-not-yet-verified hold: a brand-new
+ *  account can create links, but they do not redirect until the owner verifies
+ *  their email. The visitor sees a "link not active yet" page, and the hold
+ *  lifts for every one of that owner's links the moment they verify. */
+export type EffectiveGate = "disabled" | "not_active" | "archived" | "flagged" | LifecycleGate;
 
 /**
  * The FULL gate order the redirect applies, disabled and flagged included — the
@@ -140,6 +145,9 @@ export function effectiveGate(
   link: {
     disabled?: boolean | null;
     disabledAt?: Date | string | null;
+    /** #993 — the owner's email is not yet verified, so the link is held. Read
+     *  loosely (a truthy flag) so the redirect's resolved link fits. */
+    ownerUnverified?: boolean | null;
     archived: boolean;
     safeBrowsingStatus?: string | null;
     expiresAt?: Date | string | null;
@@ -150,6 +158,11 @@ export function effectiveGate(
   now: Date = new Date(),
 ): EffectiveGate | null {
   if (link.disabled === true || link.disabledAt != null) return "disabled";
+  /* #993 — the owner-unverified hold ranks directly under an admin disable and
+     above everything the owner themselves set (archived, lifecycle). An admin
+     disable still wins — a disabled link reads as disabled even if its owner is
+     also unverified — because that is the stronger, moderation verdict. */
+  if (link.ownerUnverified === true) return "not_active";
   if (link.archived) return "archived";
   if (link.safeBrowsingStatus === "flagged") return "flagged";
   return lifecycleGate(link, now);

@@ -29,7 +29,7 @@ const common = {
   "GET /workspaces/current": { status: 200, body: MOCK_WORKSPACE },
 } as const;
 
-const CAPTION = "Expired, scheduled, over limit, archived, unsafe or disabled";
+const CAPTION = "Expired, scheduled, over limit, archived, unsafe, disabled or not active yet";
 
 for (const [name, use] of [
   [

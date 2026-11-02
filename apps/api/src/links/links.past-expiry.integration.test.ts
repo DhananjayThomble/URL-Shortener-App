@@ -8,6 +8,11 @@ import type { RequestActor } from "../auth/auth.guard.js";
 import { LinksController } from "./links.controller.js";
 import { LinksService } from "./links.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
+import { signupRefusalStub } from "../test/signup-controls.stub.js";
+
+/* #993 — these specs create several links per fresh workspace; this suite is
+   not about the new-account caps, so it turns them off (windowDays 0). */
+const noCaps = { newAccountLimits: { windowDays: 0, perDay: 20, perHour: 10 } };
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -84,7 +89,7 @@ describeDb("past expiry dates are refused on create, bulk create and edit (#754)
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub()));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub(noCaps), signupRefusalStub()));
     for (const w of [ws, other]) {
       const [row] = await db.insert(workspaces).values({ name: `past expiry ${w.domain}`, slug: `px-${w === ws ? "a" : "b"}-${stamp}` }).returning({ id: workspaces.id });
       w.id = row!.id;
