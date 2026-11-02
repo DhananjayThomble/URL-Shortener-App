@@ -22,9 +22,13 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, createLink, makeEmail, registerUser, totpCode } from "./helpers";
+import { API_URL, RUN_PASSWORD, createLink, makeEmail, registerUser, reserveLoginSlots, totpCode } from "./helpers";
 
 async function signIn(page: Page, email: string) {
+  // #977: reserve a slot on the shared 5/min-per-IP /auth/login window before
+  // driving the form, so this UI login is paced with every other login in the
+  // shard and does not 429 behind a sibling spec's logins.
+  await reserveLoginSlots(1);
   await page.getByPlaceholder(/you@company|email/i).fill(email);
   await page.getByPlaceholder(/password|••/i).first().fill(RUN_PASSWORD);
   await page.getByRole("button", { name: /sign in/i }).click();

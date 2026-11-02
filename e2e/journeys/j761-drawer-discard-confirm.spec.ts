@@ -18,7 +18,7 @@
 
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, createLink, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, REDIRECT_URL, createLink, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 const SHOTS = process.env.QA_761_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/761/shots");
 const shot = (page: Page, name: string) => page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: false });
@@ -58,7 +58,7 @@ for (const scheme of ["light", "dark"] as const) {
     /* One account per describe (and project): the register endpoint is throttled to 5/min. */
     let session: Session;
     test.beforeAll(async ({}, info) => {
-      session = await registerUser(makeEmail(`j761-${scheme}-${info.project.name}`));
+      session = await seedUser(makeEmail(`j761-${scheme}-${info.project.name}`));
     });
 
     test(`create: Esc asks, Keep editing keeps every value, Discard creates nothing, then the form can still be saved @mobile`, async ({ page }, info) => {

@@ -20,9 +20,11 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, makeEmail, registerUser, totpCode } from "./helpers";
+import { API_URL, RUN_PASSWORD, makeEmail, registerUser, reserveAuthSlots, reserveLoginSlots, totpCode } from "./helpers";
 
 async function signIn(page: Page, email: string) {
+  // #977: pace this UI /auth/login through the shared 5/min-per-IP window.
+  await reserveLoginSlots(1);
   await page.getByPlaceholder(/you@company|email/i).fill(email);
   await page.getByPlaceholder(/password|••/i).first().fill(RUN_PASSWORD);
   await page.getByRole("button", { name: /sign in/i }).click();
@@ -47,6 +49,7 @@ async function enable2fa(accessToken: string): Promise<string[]> {
 }
 
 async function apiChallenge(email: string): Promise<string> {
+  await reserveLoginSlots(1); // #977: /auth/login is 5/min per IP
   const res = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -58,12 +61,14 @@ async function apiChallenge(email: string): Promise<string> {
   return body.challengeToken!;
 }
 
-const apiVerify = (challengeToken: string, code: string) =>
-  fetch(`${API_URL}/auth/2fa/verify`, {
+const apiVerify = async (challengeToken: string, code: string) => {
+  await reserveAuthSlots("2fa/verify", 1); // #977: /auth/2fa/verify is 5/min per IP
+  return fetch(`${API_URL}/auth/2fa/verify`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ challengeToken, code }),
   });
+};
 
 test.describe("Journey 776 — recovery code at the 2FA step", () => {
   test("sign in with a recovery code typed on a phone keyboard; it cannot be used again @mobile", async ({ page, baseURL }, info) => {

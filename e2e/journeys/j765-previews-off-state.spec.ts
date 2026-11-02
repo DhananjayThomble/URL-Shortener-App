@@ -23,14 +23,14 @@
 
 import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, registerUser } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, seedUser } from "./helpers";
 
 test.describe("Journey 765 — previews off, link without a password @mobile", () => {
   test("the + page says previews are off, continues through the redirect, and recovers when previews are back on", async ({
     page,
   }, testInfo) => {
     /* ---- Setup: owner, previews off, two plain links ---- */
-    const session = await registerUser(makeEmail(`j765-${testInfo.project.name}`));
+    const session = await seedUser(makeEmail(`j765-${testInfo.project.name}`));
     const auth = { authorization: `Bearer ${session.accessToken}`, "content-type": "application/json" };
     const setPreviews = async (publicPreviews: boolean) => {
       const res = await fetch(`${API_URL}/workspaces/current`, {

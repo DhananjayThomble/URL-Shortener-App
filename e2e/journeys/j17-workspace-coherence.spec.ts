@@ -18,7 +18,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, TOKEN_KEY, REFRESH_KEY, makeEmail, type Session } from "./helpers";
+import { API_URL, RUN_ID, RUN_PASSWORD, TOKEN_KEY, REFRESH_KEY, makeEmail, reserveAuthSlots, reserveLoginSlots, type Session } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -28,10 +28,13 @@ const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
  * throttle (apps/api, @Throttle on the auth routes) that THROTTLE_LIMIT does
  * NOT lift — it is security behaviour (.kiro/specs/real-stack-ci/design.md §1
  * "Throttles"). This spec registers 8 accounts across its tests, so on a
- * single IP the 6th+ would 429. Back off and retry on a 429, the same pattern
- * j790-dead-ends.spec.ts uses, instead of failing the run.
+ * single IP the 6th+ would 429. Reserve a slot on the shared register window
+ * first (#977) so these registers are paced together with every other spec's
+ * on the one shard IP — the scattered per-spec back-offs raced each other and
+ * flaked under shard load. The 429 back-off below stays as a safety net.
  */
 async function register(name: string, email: string): Promise<Session> {
+  await reserveAuthSlots("register");
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${API_URL}/auth/register`, {
       method: "POST",
@@ -229,15 +232,54 @@ async function sessionIn(s: Session, workspaceId: string) {
 
 /** Create a link through the real drawer; returns the POST status. */
 async function createLinkInUi(page: Page, dest: string) {
+  const drawer = page.getByRole("dialog", { name: "Create a link" });
   await page.getByRole("button", { name: /New link/ }).first().click();
-  await page.getByLabel("Destination URL").fill(dest);
+  await expect(drawer).toBeVisible();
+
   // The drawer fills the short-link domain once the workspace's domains have
-  // loaded (they are refetched right after a workspace change); a person
-  // sees the empty select and waits, so do the same.
-  await expect(page.getByLabel("Short-link domain")).not.toHaveValue("", { timeout: 10_000 });
-  const created = page.waitForResponse((r) => /\/links$/.test(r.url()) && r.request().method() === "POST", { timeout: 10_000 });
-  await page.getByRole("button", { name: "Create link" }).click();
-  return (await created).status();
+  // loaded. Right after a workspace change the domains query is refetched, so
+  // the select flickers (populated -> blanked -> repopulated) and that refetch
+  // RE-RENDERS the form, clearing fields filled before it settles. Clicking
+  // Create then submits a blank Destination/domain -> 400, and the drawer stays
+  // open (the (w) flake). So first wait for the domain select to SETTLE
+  // (non-empty and unchanged across a sample), THEN fill Destination last, right
+  // before submit, so the re-render can't wipe it. Waits on actual UI state; no
+  // fixed timeout or retry.
+  const domainSelect = drawer.getByLabel("Short-link domain");
+  await expect(domainSelect).not.toHaveValue("");
+  await expect(async () => {
+    const first = await domainSelect.inputValue();
+    await page.waitForTimeout(100);
+    const second = await domainSelect.inputValue();
+    expect(first).not.toBe("");
+    expect(second).toBe(first);
+  }).toPass();
+  await drawer.getByLabel("Destination URL").fill(dest);
+  await expect(drawer.getByLabel("Destination URL")).toHaveValue(dest);
+
+  /* Capture the POST /links response as it arrives, but DON'T gate on a short
+     fixed network window (that 10s race flaked under CI load — #977). Register
+     the listener first, click Create, then wait on the ACTUAL UI outcome: the
+     drawer closes only after the create succeeds (201). Reading the captured
+     status after the drawer is hidden is deterministic — the response has
+     resolved by then — with no arbitrary per-request timeout and no retry. */
+  let status: number | null = null;
+  const onResponse = (r: import("@playwright/test").Response) => {
+    const req = r.request();
+    if (req.method() === "POST" && /\/links$/.test(r.url())) status = r.status();
+  };
+  page.on("response", onResponse);
+  try {
+    await drawer.getByRole("button", { name: "Create link" }).click();
+    // The real post-condition a person sees: the drawer closes on success.
+    await expect(drawer).toBeHidden();
+    // The drawer only hides after the 201 landed, so the status is captured;
+    // poll briefly to cover the gap between the UI update and the listener.
+    await expect.poll(() => status).not.toBeNull();
+    return status;
+  } finally {
+    page.off("response", onResponse);
+  }
 }
 
 async function linkLandedIn(token: string, dest: string) {
@@ -278,6 +320,10 @@ test("(x) sign-out + sign-in in tab 1 moves tab 2 off the old workspace; its wri
     await expect(tab1).toHaveURL(/\/login/, { timeout: 15_000 });
     await tab1.getByPlaceholder("you@company.com").fill(member.email);
     await tab1.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
+    // Browser-driven /auth/login (5/min-per-IP, #977): reserve a slot on the
+    // shared login window so this sign-in lands in a window with room rather
+    // than 429ing behind sibling specs' logins on the one shard IP.
+    await reserveLoginSlots(1);
     await tab1.getByRole("button", { name: "Sign in" }).click();
     await expect(tab1).toHaveURL(/\/links$/, { timeout: 20_000 });
     await expect(workspaceButton(tab1, memberWs)).toBeVisible({ timeout: 20_000 });

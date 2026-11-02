@@ -14,7 +14,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   API_URL,
   RUN_ID,
@@ -23,7 +23,7 @@ import {
 test.describe("Journey 7 — Form", () => {
   test("create a form, submit a response, read it in the dashboard", async ({ page }) => {
     /* ---- Setup ---- */
-    const session = await registerUser(makeEmail("j7"));
+    const session = await seedUser(makeEmail("j7"));
 
     /* ---- 1. Create a form via the API ---- */
     // Created via the API on purpose: this journey covers the public-submit

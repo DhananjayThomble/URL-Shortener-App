@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REFRESH_KEY, RUN_PASSWORD, TOKEN_KEY, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, REFRESH_KEY, RUN_PASSWORD, TOKEN_KEY, makeEmail, registerUser, reserveLoginSlots, seedAccount, seedUser, type Session } from "./helpers";
 
 const header = (page: Page) => page.locator("header").first();
 
@@ -60,8 +60,8 @@ test.describe("Journey 777 — signed-in marketing header + auth-page redirect",
   let dead: Session;
 
   test.beforeAll(async ({}, info) => {
-    live = await registerUser(makeEmail(`j777-live-${info.project.name}`));
-    dead = await registerUser(makeEmail(`j777-dead-${info.project.name}`));
+    live = await seedUser(makeEmail(`j777-live-${info.project.name}`));
+    dead = await seedUser(makeEmail(`j777-dead-${info.project.name}`));
     // Revoke the second account's refresh-token family on the real API, as a sign-out elsewhere would.
     const out = await fetch(`${API_URL}/auth/logout`, {
       method: "POST",
@@ -131,6 +131,7 @@ test.describe("Journey 777 — signed-in marketing header + auth-page redirect",
   test("sign in through the form, sign out, and the header follows without a reload @mobile", async ({ page, baseURL }) => {
     const email = makeEmail(`j777-ui-${test.info().project.name}`);
     await registerUser(email);
+    await reserveLoginSlots(1); // #977: pace this UI /auth/login (5/min per IP)
     await page.goto(`/login?next=${encodeURIComponent("/pricing")}`);
     await page.getByPlaceholder(/you@company|email/i).fill(email);
     await page.getByPlaceholder(/password|••/i).first().fill(RUN_PASSWORD);

@@ -22,7 +22,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { expect, test, type Locator } from "@playwright/test";
-import { API_URL, RUN_ID, makeEmail, registerUser, seedAccount } from "./helpers";
+import { API_URL, RUN_ID, makeEmail, seedUser, seedAccount } from "./helpers";
 
 const EVIDENCE = path.resolve(__dirname, "../../.qa-runs/788");
 
@@ -58,7 +58,7 @@ test.describe("Journey 788 — bio preview parity, initials, inline URL errors @
     const tag = testInfo.project.name;
 
     /* ---- Setup: a live page with a markup-looking name, via the real API ---- */
-    const session = await registerUser(makeEmail(`j788-${tag}`));
+    const session = await seedUser(makeEmail(`j788-${tag}`));
     const auth = { authorization: `Bearer ${session.accessToken}`, "content-type": "application/json" };
     const ws = (await (await fetch(`${API_URL}/workspaces/current`, { headers: auth })).json()) as { defaultDomain: string };
     const domain = ws.defaultDomain;

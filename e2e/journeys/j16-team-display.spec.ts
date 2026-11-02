@@ -19,7 +19,7 @@
 
 import { execFile } from "node:child_process";
 import { expect, test } from "@playwright/test";
-import { API_URL, TOKEN_KEY, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, TOKEN_KEY, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 const DB_CONTAINER = process.env.DB_CONTAINER ?? "snapurl-staging-postgres";
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
@@ -47,7 +47,7 @@ test.describe("Journey 16 — /team times and permissions (#669)", () => {
   const olderEmail = makeEmail("j16-older");
 
   test("a just-sent invite reads 'just now'; the matrix has no Billing row; no raw ISO anywhere", async ({ page }) => {
-    owner = await registerUser(makeEmail("j16-owner"));
+    owner = await seedUser(makeEmail("j16-owner"));
     await seedAccount(page, owner);
 
     await page.goto("/team");

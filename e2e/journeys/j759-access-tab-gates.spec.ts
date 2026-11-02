@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j759-destination";
 const slugFor = (tag: string) => `j759-${tag}-${Math.random().toString(36).slice(2, 8)}`;
@@ -35,11 +35,10 @@ function dateInput(days: number): string {
 }
 
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function api(session: Session, method: string, path: string, body?: object) {
@@ -81,7 +80,7 @@ async function setTheme(page: Page, mode: "light" | "dark") {
 
 test.describe("Journey 759 — Access tab gates", () => {
   test("create: every gated input starts disabled; the placeholders, typed verbatim, are accepted and drive the redirect @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j759a"));
+    const session = await seedUser(makeEmail("j759a"));
     await signIn(page, session);
     await page.goto("/links");
     await page.getByRole("button", { name: /New link|Create a link/ }).first().click();
@@ -149,7 +148,7 @@ test.describe("Journey 759 — Access tab gates", () => {
   });
 
   test("a scheme-less URL is refused while its switch is on, and stops mattering when the switch goes off", async ({ page }) => {
-    const session = await registerUser(makeEmail("j759b"));
+    const session = await seedUser(makeEmail("j759b"));
     await signIn(page, session);
     await page.goto("/links");
     await page.getByRole("button", { name: /New link|Create a link/ }).first().click();
@@ -186,7 +185,7 @@ test.describe("Journey 759 — Access tab gates", () => {
   });
 
   test("edit: switching the expiry off removes the date AND its landing URL; on again restores nothing new on its own", async ({ page }) => {
-    const session = await registerUser(makeEmail("j759c"));
+    const session = await seedUser(makeEmail("j759c"));
     const slug = slugFor("edit");
     const ws = await api(session, "GET", "/workspaces/current");
     const expiresAt = new Date(Date.now() + 20 * 864e5).toISOString();

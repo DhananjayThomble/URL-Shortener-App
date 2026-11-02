@@ -10,13 +10,13 @@
 
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { makeEmail, registerUser, seedAccount, createLink } from "./helpers";
+import { makeEmail, seedUser, seedAccount, createLink } from "./helpers";
 
 const JSQR_PATH = path.resolve(__dirname, "../node_modules/jsqr/dist/jsQR.js");
 
 test.describe("Journey 773 — QR export", () => {
   test("@mobile downloads decode to the short URL, with the logo and a 4-module quiet zone", async ({ page }) => {
-    const session = await registerUser(makeEmail("j773"));
+    const session = await seedUser(makeEmail("j773"));
     const link = await createLink(session.accessToken, { destination: "https://example.com/j773-qr-export" });
 
     await seedAccount(page, session);

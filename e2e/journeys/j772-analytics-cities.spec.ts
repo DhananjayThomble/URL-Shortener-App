@@ -26,7 +26,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { API_URL, createLink, makeEmail, REDIRECT_URL, registerUser, seedAccount } from "./helpers";
+import { API_URL, createLink, makeEmail, REDIRECT_URL, seedUser, seedAccount } from "./helpers";
 
 const BROWSER_UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -50,7 +50,7 @@ async function cities(token: string): Promise<Row[]> {
 test.describe("Journey — analytics Cities card (#772)", () => {
   test("@mobile a city header becomes a named city, small cities fold into Other cities", async ({ page }, testInfo) => {
     test.setTimeout(240_000);
-    const session = await registerUser(makeEmail("j772"));
+    const session = await seedUser(makeEmail("j772"));
     const token = session.accessToken;
     const link = await createLink(token, { destination: "https://example.com/j772" });
     const url = `${REDIRECT_URL}/${link.slug}`;

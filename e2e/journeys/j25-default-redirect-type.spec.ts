@@ -22,7 +22,7 @@
  */
 
 import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, seedUser, type Session, signInViaSeed } from "./helpers";
 
 interface LinkDto {
   id: string;
@@ -43,11 +43,10 @@ async function api<T>(session: Session, path: string, init?: RequestInit): Promi
 }
 
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 /** What a visitor gets: the redirect service's status for <host>/<slug>. */
@@ -86,7 +85,7 @@ test.describe("Journey 25 — workspace default redirect type applies to new lin
   let page: Page;
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
-    session = await registerUser(makeEmail("j25"));
+    session = await seedUser(makeEmail("j25"));
     const ws = await api<{ defaultRedirect: string }>(session, "/workspaces/current");
     expect(ws.defaultRedirect, "precondition: a new workspace starts on 302").toBe("302");
     // The project's device (desktop, or 390px mobile), which browser.newPage() would not apply.
