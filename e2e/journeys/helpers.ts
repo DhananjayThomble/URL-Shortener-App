@@ -225,27 +225,40 @@ export async function registerUser(email: string, password = RUN_PASSWORD): Prom
 /**
  * Put a workspace on a paid plan so it may connect custom domains (#977).
  *
- * Why this exists. #966 made custom domains a paid-plan feature: `POST /domains`
- * now 403s a workspace on the default "Free" plan (apps/api domains.service.ts,
- * gated on @snapurl/contract's entitlementsFor). Journey accounts are created
- * by registerUser() on "Free", so every custom-domain journey (j20/j23/j26/j782/
- * j783/j784 …) started 403ing — a test-seed gap, not a product bug. The plan
- * gate itself is proven by domains.plan-gate.integration.test.ts; these journeys
- * exercise the domain UX on a workspace that is ENTITLED to it, so they must
- * seed the entitlement rather than assert the gate.
+ * Why this exists. #966 made custom domains a paid-plan feature, and #970
+ * replaced the static table with a DB-backed plan catalogue: `POST /domains`
+ * now 403s a workspace on the default "Free" plan (apps/api domains.service.ts
+ * → EntitlementsService.hasFeature → PlansService.resolveForWorkspace over the
+ * plans table). Journey accounts are created by registerUser() on "Free", so
+ * every custom-domain journey (j20/j23/j26/j782/j783/j784 …) started 403ing — a
+ * test-seed gap, not a product bug. The plan gate itself is proven by
+ * domains.plan-gate.integration.test.ts; these journeys exercise the domain UX
+ * on a workspace that is ENTITLED to it, so they must seed the entitlement
+ * rather than assert the gate.
  *
- * The seed is written exactly the way #966 put the HTTP stack principals on a
- * paid plan (apps/api/src/stack/principals.ts): a direct UPDATE of the
- * workspace's `plan` column — the one thing the public API cannot express
- * (changing your own plan is a billing/webhook action, not a user route, and
- * the admin route needs a 2FA'd platform-admin the staging stack has none of).
- * "Enterprise" (the top tier) so the per-plan custom-domain cap is far clear of
- * the several fixture domains these journeys mint without cleanup across a run.
- * entitlementsFor treats any non-Free name as paid, so this unlocks the gate.
+ * The seed is written exactly the way the HTTP stack principals are put on a
+ * paid plan (apps/api/src/stack/principals.ts, still `.set({ plan: "Enterprise" })`
+ * on main under #970): a direct UPDATE of the workspace's `plan` column — the
+ * one thing the public API cannot express (changing your own plan is a
+ * billing/webhook action, not a user route, and the admin route needs a 2FA'd
+ * platform-admin the staging stack has none of). The engine then resolves the
+ * entitlement through EntitlementsService/the plans table; this only sets that
+ * engine's INPUT, it does not re-decide entitlements itself.
+ *
+ * Under #970 the plan string must be a REAL catalogue key: resolveForWorkspace
+ * lower-cases `workspaces.plan` and looks it up in the DB catalogue, with the
+ * compiled-in SEED_PLANS (apps/api/src/plans/plan-seed.ts) as the documented
+ * fallback for "a test that writes workspaces.plan directly"; an UNKNOWN key
+ * now fails closed to Free (the #970 behaviour change). "Enterprise" → the
+ * seeded `enterprise` plan (customDomains: true, a 1000 cap far clear of the
+ * fixture domains these journeys mint without cleanup across a run), so the gate
+ * opens; a made-up name would not. Keep this value a shipped SEED_PLANS key.
  *
  * Idempotent and safe to call right after registerUser(), before the first
- * navigation. It opens a short-lived pool (max: 1) and closes it before
- * returning, so a spec can call it per owner without leaking connections.
+ * navigation (per-workspace resolution is read fresh each request — only the
+ * catalogue is cached — so there is no stale-plan window). It opens a
+ * short-lived pool (max: 1) and closes it before returning, so a spec can call
+ * it per owner without leaking connections.
  */
 export async function setWorkspacePlan(workspaceId: string, plan = "Enterprise"): Promise<void> {
   const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
