@@ -19,3 +19,4 @@ export * from "./admin.js";
 export * from "./admin-analytics.js";
 export * from "./billing.js";
 export * from "./proration.js";
+export * from "./plan-management.js";
