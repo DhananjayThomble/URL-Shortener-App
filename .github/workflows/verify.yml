@@ -292,6 +292,14 @@ jobs:
           node --test scripts/check-selfhost-env.test.mjs
           pnpm check:selfhost-env
 
+      # #1025 — the web app's `vercel-build` must build every workspace package
+      # the web app depends on (Vercel runs it from a clean checkout with no
+      # prior `build:packages`). This unit test reds on a hand-kept list that
+      # misses a dep and on the live web/package.json if it regresses. Pure Node,
+      # no deps.
+      - name: Vercel-build builds every web workspace dep (#1025)
+        run: node --test scripts/vercel-build-deps.test.mjs
+
       - name: Start the API and redirect service
         run: |
           # PORT is set per-process, not on the step: a step-level PORT would
