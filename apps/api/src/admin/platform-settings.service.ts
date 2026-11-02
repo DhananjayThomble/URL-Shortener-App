@@ -109,8 +109,12 @@ export class PlatformSettingsService {
       /* #993 — the issue's suggested defaults: a brand-new account's links are
          capped for its first 7 days at 20/day and 10/hour. The gate is ON by
          default (an empty store reproduces these), because launch readiness is
-         the point; an operator loosens or lifts it from the panel. */
-      newAccountLimits: { windowDays: 7, perDay: 20, perHour: 10 },
+         the point; an operator loosens or lifts it from the panel. The window
+         comes from NEW_ACCOUNT_LINK_WINDOW_DAYS (default 7) so the compose/local
+         test environment can set it to 0 (caps off) without weakening the
+         production default — the smoke harness creates many links through one
+         account and must not be throttled. */
+      newAccountLimits: { windowDays: env.NEW_ACCOUNT_LINK_WINDOW_DAYS, perDay: 20, perHour: 10 },
       /* #993 — bot protection is OFF by default so a self-hoster needs no
          third-party provider to register. The operator turns on turnstile or
          hcaptcha from the panel once they have configured the secret. */

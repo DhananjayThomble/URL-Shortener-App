@@ -125,6 +125,17 @@ export const EnvSchema = z.object({
      auto-quarantine off entirely (reports still queue for manual review). */
   ABUSE_QUARANTINE_THRESHOLD: z.coerce.number().int().min(0).default(3),
 
+  /* #993 — the COMPILED-IN default for the new-account link-cap window, in
+     days. The caps (per-day / per-hour link limits for a workspace's first N
+     days) are a runtime platform setting; this env var is only the fallback
+     the settings store uses when no admin has set newAccountLimits. Production
+     leaves it at 7 (the brief's default). The compose/local test environment
+     sets it to 0 to turn the caps OFF, so the smoke harness — which creates
+     dozens of links through one account — is not throttled, WITHOUT weakening
+     the production default. The caps are proven by the API integration tests,
+     not the smoke suite. */
+  NEW_ACCOUNT_LINK_WINDOW_DAYS: z.coerce.number().int().min(0).max(365).default(7),
+
   /* Which CacheStore backs the rate-limit counters (and, in the redirect
      service, hot-link caching). 'memory' is the default: a per-instance
      in-memory counter, byte-for-byte the single-node/CI behaviour. 'redis'

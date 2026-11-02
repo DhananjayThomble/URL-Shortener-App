@@ -43,6 +43,30 @@ check "me returns the owner" '"role":"owner"' "$BODY"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/auth/me")
 status "me without a token is refused" "401" "$CODE" ""
 
+# #993 — verify the smoke account's email the way a real user would. A new
+# account's links are held (they do not redirect) until the owner verifies, so
+# the link + redirect checks below need a verified account. The verification
+# token lands in the API container's mail outbox (MAIL_OUTBOX_DIR); read it out
+# with `docker compose exec` and POST it to /auth/email/verify. This path is
+# dev/test only — a deployed smoke runs against real SES with no reachable
+# outbox, so it is guarded on docker compose being present and skipped there.
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  TOKEN_FILE=$(docker compose exec -T api sh -c 'ls -1t /tmp/snapurl-outbox/*'"$(echo "$EMAIL" | sed 's/[^a-z0-9]/_/gi')"'* 2>/dev/null | head -1' 2>/dev/null | tr -d '\r')
+  if [ -n "$TOKEN_FILE" ]; then
+    VERIFY_TOKEN=$(docker compose exec -T api sh -c "grep -o 'verify-email?token=[^ ]*' '$TOKEN_FILE' | head -1 | sed 's/verify-email?token=//'" 2>/dev/null | tr -d '\r')
+    if [ -n "$VERIFY_TOKEN" ]; then
+      CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/email/verify" -H 'Content-Type: application/json' -d "{\"token\":\"$VERIFY_TOKEN\"}")
+      status "email verification succeeds (so the account's links go live)" "200" "$CODE" ""
+    else
+      echo "  SKIP  email verify — no token found in outbox file"
+    fi
+  else
+    echo "  SKIP  email verify — outbox not reachable (deployed/SES smoke)"
+  fi
+else
+  echo "  SKIP  email verify — docker compose not available (deployed smoke)"
+fi
+
 BODY=$(curl -s -X POST "$API/auth/register" -H 'Content-Type: application/json' \
   -d "{\"name\":\"Dupe\",\"email\":\"$EMAIL\",\"password\":\"$PASS\"}")
 check "duplicate email is rejected" 'already exists' "$BODY"
