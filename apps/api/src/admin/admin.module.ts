@@ -8,6 +8,7 @@ import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminManagementService } from "./admin-management.service.js";
+import { PlansAdminService } from "../plans/plans-admin.service.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { WorkspacesModule } from "../workspaces/workspaces.module.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
@@ -43,6 +44,7 @@ import {
     AdminModerationService,
     AdminGuard,
     AdminManagementService,
+    PlansAdminService,
     AdminAnalyticsService,
     {
       provide: ADMIN_ANALYTICS_READER,

@@ -16,6 +16,7 @@ import type {
   WorkspaceSubscription,
 } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { PlansService } from "../plans/plans.service.js";
 import { BILLING_PROVIDER, type BillingProvider, type NormalizedBillingEvent } from "./billing-provider.js";
 
 /* ============================================================
@@ -33,13 +34,13 @@ import { BILLING_PROVIDER, type BillingProvider, type NormalizedBillingEvent } f
  *  subscription sits in one of these. Anything else lapses it back to free. */
 const ENTITLED_STATUSES = new Set(["active", "trialing"]);
 
-/* #988 — plan ranking, used ONLY to decide the TIMING of a change, not what a
-   plan is worth. A move to a higher-ranked plan is an upgrade (take effect now,
-   prorated); a move to a lower-ranked one is a downgrade (defer to the period
-   end so the owner keeps what they paid for). free is 0 so a move off free is
-   always an upgrade. This is intentionally hard-coded to the #986 key set;
-   #970's DB plans engine replaces it with a stored rank when it lands. */
-const PLAN_RANK: Record<PlanKey, number> = { free: 0, starter: 1, pro: 2, team: 3 };
+/* #988 / #970 — the TIMING of a plan change (upgrade now vs downgrade at cycle
+   end) is decided by the plan's `sortOrder` in the live DB catalogue, read
+   through PlansService — NOT a hard-coded rank. An admin can reorder or add
+   plans and the upgrade/downgrade direction stays correct. The fallback below
+   is only reached for a key that is in neither the DB catalogue nor the
+   compiled-in seed, which PlansService already resolves to `free`. */
+const UNKNOWN_PLAN_RANK = 0;
 
 /** Raised when a plan change targets the plan the workspace is already on. The
  *  controller maps it to a 400 — nothing to change, not a server fault. */
@@ -73,6 +74,7 @@ export class BillingService {
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
+    private readonly plans: PlansService,
   ) {}
 
   /** Whether the billing surface is reachable at all. The controller reads this
@@ -267,8 +269,14 @@ export class BillingService {
       throw new SamePlanError(planKey, interval);
     }
 
-    const when: "now" | "at_cycle_end" =
-      PLAN_RANK[planKey] > PLAN_RANK[row.planKey as PlanKey] ? "now" : "at_cycle_end";
+    // Upgrade (higher sortOrder in the live catalogue) takes effect now,
+    // prorated; a downgrade is deferred to the cycle end. Read the ranks from
+    // PlansService so an admin-edited catalogue stays authoritative.
+    const [targetRank, currentRank] = await Promise.all([
+      this.planRank(planKey),
+      this.planRank(row.planKey),
+    ]);
+    const when: "now" | "at_cycle_end" = targetRank > currentRank ? "now" : "at_cycle_end";
 
     await this.provider.updateSubscription({
       providerSubscriptionId: row.providerSubscriptionId,
@@ -377,5 +385,15 @@ export class BillingService {
       .update(billingEvents)
       .set({ processedAt: new Date() })
       .where(and(eq(billingEvents.provider, this.provider.name), eq(billingEvents.providerEventId, eventId)));
+  }
+
+  /** #970 — a plan key's rank from the live DB catalogue (its `sortOrder`),
+   *  used only to order a change as an upgrade or a downgrade. An unknown key
+   *  (not in the catalogue or the compiled-in seed) ranks lowest, so a move AWAY
+   *  from it reads as an upgrade and a move TO it as a downgrade — the safe
+   *  direction for an unrecognised plan. */
+  private async planRank(key: string): Promise<number> {
+    const plan = await this.plans.getByKey(key);
+    return plan ? plan.sortOrder : UNKNOWN_PLAN_RANK;
   }
 }

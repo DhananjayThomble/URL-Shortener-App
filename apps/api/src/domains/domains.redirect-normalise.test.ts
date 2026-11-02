@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@snapurl/database";
 import { DomainsService } from "./domains.service.js";
+import { openEntitlementsStub } from "../plans/entitlements.test-stub.js";
 
 /* ============================================================
    #713 item 1 — non-Latin-1 domain root / 404 redirects must be normalised at
@@ -146,7 +147,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
 
   it("add() persists new URL(value).href for a non-Latin-1 IDN host, not the raw string", async () => {
     const { db, inserted } = makeFakeDb("add");
-    const service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     const dto = await service.add("ws-1", { domain: "fresh.example", rootRedirect: idnHost }, actor);
 
@@ -158,7 +159,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
 
   it("add() percent-encodes a non-Latin-1 path/query (notFoundRedirect)", async () => {
     const { db, inserted } = makeFakeDb("add");
-    const service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     await service.add("ws-1", { domain: "fresh.example", notFoundRedirect: cjkPath }, actor);
 
@@ -168,7 +169,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
 
   it("update() persists new URL(value).href for non-Latin-1 redirects", async () => {
     const { db, updated } = makeFakeDb("update");
-    const service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     const dto = await service.update(
       "ws-1",
@@ -185,7 +186,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
 
   it("a plain ASCII redirect round-trips (equals new URL(value).href)", async () => {
     const { db, inserted } = makeFakeDb("add");
-    const service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     await service.add("ws-1", { domain: "fresh.example", rootRedirect: ascii }, actor);
 
@@ -194,7 +195,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
 
   it("clearing a redirect (null) still stores null", async () => {
     const { db, updated } = makeFakeDb("update");
-    const service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     await service.update(
       "ws-1",
@@ -208,7 +209,7 @@ describe("#713 item 1 — DomainsService normalises redirects to a header-safe h
 
   it("add() with no redirects writes null for both (no normalisation of absent fields)", async () => {
     const { db, inserted } = makeFakeDb("add");
-    const service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     await service.add("ws-1", { domain: "fresh.example" }, actor);
 

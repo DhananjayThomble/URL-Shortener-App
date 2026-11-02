@@ -47,7 +47,7 @@ async function main() {
 
     const [workspace] = await sql`
       insert into workspaces (name, slug, plan, clicks_included, retention_years, currency)
-      values ('Acme Growth', 'acme-growth', 'Growth', 1000000, 3, 'INR')
+      values ('Acme Growth', 'acme-growth', 'pro', 1000000, 3, 'INR')
       returning id`;
 
     await sql`

@@ -19,6 +19,7 @@ import { UpsertBioPageInput } from "@snapurl/contract";
 import type { Actor } from "../common/activity.js";
 import { MembersService } from "./members.service.js";
 import { DomainsService } from "../domains/domains.service.js";
+import { openEntitlementsStub } from "../plans/entitlements.test-stub.js";
 import { DevelopersService } from "../developers/developers.service.js";
 import { makeBioService } from "../bio-pages/bio-pages.test-harness.js";
 
@@ -69,7 +70,7 @@ describeDb("an audit insert that fails rolls its action back (#783)", () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
     members = new MembersService(db, db, { sendInvite: async () => undefined } as never);
-    domainsService = new DomainsService(db, { nudge: () => undefined } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    domainsService = new DomainsService(db, { nudge: () => undefined } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
     developers = new DevelopersService(db);
     bio = makeBioService(db);
 
