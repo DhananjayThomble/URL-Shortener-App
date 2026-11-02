@@ -535,7 +535,7 @@ export const FIXTURE_PASSWORD = "Fixture.pw-445";
 const SESSION: AuthSession = {
   accessToken: "fixture.access.token",
   refreshToken: "fixture.refresh.token",
-  user: { id: "u1", name: "Dhananjay Thomble", email: "dhananjay@acme.com", initials: "DT", role: "owner" },
+  user: { id: "u1", name: "Dhananjay Thomble", email: "dhananjay@acme.com", initials: "DT", role: "owner", plan: WORKSPACE.plan },
 };
 
 function previewFor(slug: string): PublicLinkPreview {

@@ -7,6 +7,7 @@ import { useAddDomain, useDeleteDomain, useDomains, useMe, useUpdateDomain, useV
 import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { full } from "@/lib/utils";
 import { canEditDomainRedirects, parseRedirectDraft, type RedirectErrors } from "@/lib/domain-redirects";
+import { canAddCustomDomain } from "@/lib/domain-entitlements";
 import { canDisconnectDomain, domainSslView, domainStatusView } from "@/lib/domain-state";
 import { dnsSteps } from "@/lib/domain-dns";
 import { DnsSetupCard } from "@/components/domains/dns-setup-card";
@@ -103,6 +104,10 @@ export default function DomainsPage() {
   const { data: me } = useMe();
   // The API refuses a redirect change below admin; don't offer it (#711 review).
   const canEditRedirects = canEditDomainRedirects(me?.role);
+  // #966: custom domains are a paid-plan feature. On Free the API 403s POST
+  // /domains, so offer an upgrade prompt instead of the add form rather than
+  // let the request fail. Mirrors the contract's entitlements exactly.
+  const canAddDomain = canAddCustomDomain(me?.plan);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -170,15 +175,28 @@ export default function DomainsPage() {
     <>
       <PageHead
         title="Domains"
-        sub="Bring your own domain. SSL is issued automatically and renews itself."
+        sub="Bring your own domain. We handle the SSL certificate for you once it's verified."
         actions={
-          <Button variant="primary" onClick={() => { setAdding((a) => !a); setProblem(null); }}>
-            {adding ? "Cancel" : "＋ Add domain"}
-          </Button>
+          canAddDomain ? (
+            <Button variant="primary" onClick={() => { setAdding((a) => !a); setProblem(null); }}>
+              {adding ? "Cancel" : "＋ Add domain"}
+            </Button>
+          ) : null
         }
       />
 
-      {adding ? (
+      {!canAddDomain ? (
+        <Card className="mb-3.5">
+          <CardHeader title="Custom domains are a paid feature" />
+          <CardBody className="text-[13px] text-ink-2 leading-[1.6]">
+            Your workspace is on the <b className="text-ink">Free</b> plan, which uses the shared{" "}
+            <span className="font-mono">snapurl.in</span> domain. Upgrade to a paid plan to connect your own domain.
+            Any custom domains you already have keep working.
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {canAddDomain && adding ? (
         <Card className="mb-3.5">
           <CardHeader title="Add a domain" />
           <CardBody className="flex flex-col gap-3">

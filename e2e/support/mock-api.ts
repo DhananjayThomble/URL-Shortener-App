@@ -36,6 +36,10 @@ export const MOCK_USER = {
   email: "owner@mock.test",
   initials: "MO",
   role: "owner",
+  // #966: the Domains page gates the add form on the plan's entitlements.
+  // A paid plan by default so existing specs keep the add affordance; specs
+  // that test the Free gate override `me` with `plan: "Free"`.
+  plan: "Growth",
 } as const;
 
 export const MOCK_WORKSPACE = {

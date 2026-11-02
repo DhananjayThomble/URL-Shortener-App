@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
@@ -22,17 +25,33 @@ describe("SnapUrlStack — uptime canary and CloudWatch alarms (#996)", () => {
   let template: Template;
 
   beforeAll(() => {
-    /* This file's stack synthesises the Synthetics canary, whose
-       Code.fromAsset runs an lstat-based asset validation that the repo's
-       asset-staging-disable test shim (#921, vitest.setup.ts) sends to a
-       malformed path. Re-enabling real asset staging for THIS synth sidesteps
-       that: the canary asset (a tiny functions/canary dir, not the monorepo
-       image root) stages in milliseconds, and fileParallelism is off with a
-       180s hook floor, so the one-off container-image fingerprint stays well
-       inside budget. No assertion here reads an asset hash. */
-    const prevCtx = process.env.CDK_CONTEXT_JSON;
-    process.env.CDK_CONTEXT_JSON = JSON.stringify({ "aws:cdk:disable-asset-staging": false });
-    const app = new App();
+    /* This file's stack synthesises the Synthetics canary. Two forces fight
+       here and this setup satisfies both:
+
+       1. The repo keeps asset staging DISABLED in tests (#921, vitest.setup.ts)
+          so the three monorepo Docker-image assets are not fingerprinted — that
+          walk is ~3 minutes now and blows any hook timeout. We keep it disabled,
+          so the synth runs in the fast ~15-20s path like every sibling.
+       2. But the Synthetics `Code.fromAsset` validation (aws-synthetics
+          code.js) computes `path.join(Stage.of(scope).outdir, asset.assetPath)`
+          and lstats it. With staging DISABLED `asset.assetPath` is the ABSOLUTE
+          canary source dir, so the join is `<outdir>/<abs path>` and the canary
+          construction throws ENOENT unless that path happens to exist.
+
+       We give the App a writable temp outdir and, inside it, recreate the
+       canary dir at the joined path as a symlink to the real one — so the single
+       lstat the validator does resolves to the real (existing) directory. This
+       touches only that one validation; no asset is written (staging is off) and
+       no assertion reads an asset hash. The temp dir is cleaned up after. */
+    const outdir = fs.mkdtempSync(path.join(os.tmpdir(), "snapurl-alarms-"));
+    const canaryDir = path.join(__dirname, "..", "functions", "canary");
+    // The validator lstats path.join(outdir, <abs canaryDir>) === outdir + canaryDir.
+    const joined = path.join(outdir, canaryDir);
+    fs.mkdirSync(path.dirname(joined), { recursive: true });
+    // A real directory copy, not a symlink: the validator does
+    // lstatSync(joined).isDirectory(), and lstat on a symlink is not a directory.
+    fs.cpSync(canaryDir, joined, { recursive: true });
+    const app = new App({ outdir });
     template = Template.fromStack(
       new SnapUrlStack(app, "TestStack", {
         env: { account: "111111111111", region: "us-east-1" },
@@ -51,9 +70,8 @@ describe("SnapUrlStack — uptime canary and CloudWatch alarms (#996)", () => {
         ),
       }),
     );
-    if (prevCtx === undefined) delete process.env.CDK_CONTEXT_JSON;
-    else process.env.CDK_CONTEXT_JSON = prevCtx;
-  }, 180_000);
+    fs.rmSync(outdir, { recursive: true, force: true });
+  }, 120_000);
 
   /** Assert exactly one alarm exists whose metric matches (namespace,
    *  metricName) and whose Threshold equals `threshold`. Matching on the metric

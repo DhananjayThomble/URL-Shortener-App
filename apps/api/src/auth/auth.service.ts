@@ -567,6 +567,7 @@ export class AuthService {
       email: user.email,
       initials: initialsOf(user.name),
       role: membership.role as AuthUser["role"],
+      plan: await this.planFor(membership.workspaceId),
     };
   }
 
@@ -799,6 +800,7 @@ export class AuthService {
         email: user.email,
         initials: initialsOf(user.name),
         role: accepted.role as AuthUser["role"],
+        plan: await this.planFor(accepted.workspaceId),
       },
     };
   }
@@ -841,8 +843,22 @@ export class AuthService {
         email: user.email,
         initials: initialsOf(user.name),
         role: role as AuthUser["role"],
+        plan: await this.planFor(workspaceId),
       },
     };
+  }
+
+  /* The plan of a workspace, for the AuthUser the web gates paid features on
+     (#966). A workspace that has vanished between the membership read and this
+     one defaults to the Free plan — the safe answer, which `entitlementsFor`
+     then resolves to no custom domains. */
+  private async planFor(workspaceId: string): Promise<string> {
+    const [workspace] = await this.db
+      .select({ plan: workspaces.plan })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    return workspace?.plan ?? "Free";
   }
 }
 

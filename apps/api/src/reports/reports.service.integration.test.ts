@@ -21,6 +21,12 @@ const describeDb = DATABASE_URL ? describe : describe.skip;
  *  called — a no-op stub is all the constructor needs. */
 const cacheBustStub = { bust: async () => {} } as unknown as LinkCacheBustService;
 const nudgeStub = { nudge: () => {} } as unknown as ProjectionNudgeService;
+/* These existing suites each file at most one or two reports per link, below
+   the default threshold, so auto-quarantine (#994) never triggers; a plain
+   env + a no-op mailer keep them byte-identical. The dedicated quarantine suite
+   lives in reports.quarantine.integration.test.ts. */
+const envStub = { ABUSE_QUARANTINE_THRESHOLD: 3 } as unknown as import("../config/env.js").Env;
+const mailStub = { sendLinkQuarantined: async () => {} } as unknown as import("../mail/mail.service.js").MailService;
 
 describeDb("ReportsService.submitReport", () => {
   let handle: ReturnType<typeof createDatabase>;
@@ -35,7 +41,7 @@ describeDb("ReportsService.submitReport", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new ReportsService(db, cacheBustStub, nudgeStub);
+    service = new ReportsService(db, envStub, cacheBustStub, nudgeStub, mailStub);
 
     const [ws] = await db
       .insert(workspaces)
@@ -138,7 +144,7 @@ describeDb("ReportsService.submitReport duplicate slug across domains (#738)", (
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new ReportsService(db, cacheBustStub, nudgeStub);
+    service = new ReportsService(db, envStub, cacheBustStub, nudgeStub, mailStub);
     for (const [i, host] of [hostA, hostB].entries()) {
       const [w] = await db
         .insert(workspaces)
@@ -246,8 +252,10 @@ describeDb("ReportsService.list / review", () => {
     projectionNudge = { nudge: vi.fn() };
     service = new ReportsService(
       db,
+      envStub,
       cacheBust as unknown as LinkCacheBustService,
       projectionNudge as unknown as ProjectionNudgeService,
+      mailStub,
     );
 
     // Two independent workspaces, each with a domain and a link.
