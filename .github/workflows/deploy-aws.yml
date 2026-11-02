@@ -132,6 +132,11 @@ env:
   # divergence class as the deployedGitSha gap the first real run exposed — and it
   # is exactly what would break first when a second stage is introduced.
   CONFIG_PREFIX: /snapurl/prod
+  # Pin the Vercel CLI. The web deploy below runs `vercel pull/build/deploy/
+  # promote`, and an unpinned `npx vercel@latest` lets a surprise CLI release
+  # change deploy behaviour on an unrelated day — the same reason every action
+  # above is pinned to a commit SHA. Bump this deliberately, in a reviewed PR.
+  VERCEL_CLI_VERSION: "65.9.0"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -406,11 +411,163 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # 2. DEPLOY — gated on the `production` environment's required reviewer.
+  # 2. WEB BUILD + UPLOAD — runs BEFORE the API deploys.
+  # ---------------------------------------------------------------------------
+  # #1026. Vercel's Git integration no longer deploys `main` to production
+  # (web/vercel.json sets git.deploymentEnabled.main=false), so production web
+  # ships from HERE, for the SAME ref this workflow deploys the API. Ordering is
+  # the whole point of the issue:
+  #
+  #   * This job BUILDS the web at the deploy ref and UPLOADS it as a production
+  #     deployment WITHOUT the domain (`--skip-domain`), so nothing visitor-
+  #     facing changes yet. A broken web build fails HERE, before `deploy`
+  #     touches AWS — the drift that broke Google sign-in on 2026-11-02 (web on
+  #     main needed AuthUser.plan while the API was a release behind) cannot
+  #     recur, because a web build that cannot even compile stops the API deploy.
+  #   * `web-promote` (after the API deploy AND migrations succeed) is what
+  #     actually puts app.snapurl.in on this build. If anything between here and
+  #     there fails, the previous web build is still live and matched to the
+  #     previous API — no automatic rollback, which would recreate the drift.
+  #
+  # It needs no AWS access and declares no `production` environment: it runs
+  # before the approval gate, exactly like `plan`, so a broken web build is
+  # caught before a human is ever asked to approve an AWS change.
+  web-build:
+    name: Build + upload web (Vercel)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      deployment_url: ${{ steps.deploy_web.outputs.deployment_url }}
+      previous_url: ${{ steps.previous.outputs.previous_url }}
+      sha: ${{ steps.rev.outputs.sha }}
+    steps:
+      # FAIL FAST on missing Vercel credentials — before the API deploy, as the
+      # issue requires. These come from GitHub only: VERCEL_TOKEN is a secret,
+      # VERCEL_ORG_ID / VERCEL_PROJECT_ID are repo variables. None is ever in
+      # code. A missing one here stops the whole run before `deploy`, with a
+      # message naming exactly what to set (see DEPLOYMENT.md for the commands).
+      - name: Require Vercel credentials
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${VERCEL_TOKEN}" ]      || missing+=("VERCEL_TOKEN (secret)")
+          [ -n "${VERCEL_ORG_ID}" ]     || missing+=("VERCEL_ORG_ID (variable)")
+          [ -n "${VERCEL_PROJECT_ID}" ] || missing+=("VERCEL_PROJECT_ID (variable)")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error title=Missing Vercel credentials::${missing[*]} — set them in GitHub (see docs/DEPLOYMENT.md). Refusing to deploy the API against an un-shippable web build."
+            exit 1
+          fi
+          echo "Vercel credentials present."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      # The SAME commit the API deploys. The web build and the API deploy must
+      # describe one ref, which is the invariant this whole issue restores.
+      - name: Resolve deployed commit
+        id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Record the CURRENT production deployment URL, BEFORE we change anything,
+      # so the smoke-failure summary can print the exact command to promote it
+      # back. Non-fatal: a first-ever deploy has no previous production URL, and
+      # that is not a reason to fail.
+      - name: Record previous production deployment
+        id: previous
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -uo pipefail
+          prev="$(pnpm dlx vercel@"${VERCEL_CLI_VERSION}" ls --prod --token "$VERCEL_TOKEN" 2>/dev/null \
+                  | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | head -1 || true)"
+          echo "previous_url=${prev}" >> "$GITHUB_OUTPUT"
+          echo "Previous production deployment: ${prev:-<none found>}"
+
+      # vercel pull writes the project settings for the production environment
+      # into .vercel/ (project linkage comes from VERCEL_ORG_ID/PROJECT_ID), so
+      # the subsequent build uses production settings. .vercel/ is scratch on
+      # the runner and is gitignored — it is never committed.
+      - name: vercel pull (production)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" pull --yes \
+            --environment=production --token "$VERCEL_TOKEN"
+
+      # THE GATE. A web build that does not compile fails here, before the API
+      # deploy. `vercel build --prod` runs the project's build (web/package.json
+      # vercel-build via Root Directory = web) at this ref and produces
+      # .vercel/output. No deployment is created by this step.
+      - name: vercel build (production)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" build --prod --token "$VERCEL_TOKEN"
+
+      # Upload the PREBUILT output as a production deployment but DO NOT assign
+      # the domain (`--skip-domain`): the build is now live at a unique URL,
+      # production traffic still goes to the previous build. Promotion happens
+      # only after the API deploy and migrations succeed (web-promote). Record
+      # the URL for that promote and for the job summary.
+      - name: vercel deploy --prebuilt --prod --skip-domain
+        id: deploy_web
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          url="$(pnpm dlx vercel@"${VERCEL_CLI_VERSION}" deploy --prebuilt --prod \
+                  --skip-domain --token "$VERCEL_TOKEN")"
+          if ! [[ "$url" =~ ^https://[A-Za-z0-9.-]+\.vercel\.app$ ]]; then
+            echo "::error title=Web deploy produced no URL::vercel deploy did not print a deployment URL. Output: $url"
+            exit 1
+          fi
+          echo "deployment_url=${url}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Web build uploaded (not yet promoted)"
+            echo
+            echo "Built and uploaded commit \`$(git rev-parse HEAD)\` to a production"
+            echo "deployment, domain NOT yet assigned:"
+            echo
+            echo "- New build: ${url}"
+            echo "- Current production (unchanged until promote): ${{ steps.previous.outputs.previous_url || '—' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 3. DEPLOY — gated on the `production` environment's required reviewer.
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy ${{ inputs.stack }}
-    needs: plan
+    needs: [plan, web-build]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     # The approval gate. Configure `production` with a required reviewer so this
@@ -542,7 +699,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
-  # 3. MIGRATE — unconditional, because a checkbox is a foot-gun.
+  # 4. MIGRATE — unconditional, because a checkbox is a foot-gun.
   # ---------------------------------------------------------------------------
   # This used to be an opt-in `run_migrations` input. That was wrong: it made
   # correctness depend on an operator remembering to tick a box, and forgetting
@@ -600,16 +757,59 @@ jobs:
             || { echo "::error title=Migration did not report applied::"; exit 1; }
 
   # ---------------------------------------------------------------------------
-  # 4. SMOKE — the gate that decides whether this deploy actually worked.
+  # 5. WEB PROMOTE — put app.snapurl.in on the new build, AFTER API + migrate.
   # ---------------------------------------------------------------------------
-  # Wired exactly as smoke-deployed.yml's own header prescribes. `needs` covers
-  # both prior jobs, so a failed migration blocks the gate rather than letting a
-  # half-migrated environment report a successful deploy. No `always()` is
-  # needed now that migrate is unconditional — the default "all needs
-  # succeeded" is exactly the requirement.
+  # #1026. Only now, with the API deployed and migrations applied, is it safe to
+  # point the production domain at the web build uploaded in `web-build`. Doing
+  # it here (not in web-build) is what keeps web and API shipping together: if
+  # the API deploy or the migration had failed, this job never runs and the
+  # previous web build — matched to the previous API — stays live.
+  web-promote:
+    name: Promote web to production
+    needs: [web-build, deploy, migrate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # vercel promote assigns the production domain to the already-uploaded
+      # deployment. No rebuild, no re-upload — the exact artifact validated in
+      # web-build is what goes live.
+      - name: vercel promote <new build>
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          DEPLOYMENT_URL: ${{ needs.web-build.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOYMENT_URL}" ]; then
+            echo "::error title=No web deployment to promote::web-build produced no deployment URL."
+            exit 1
+          fi
+          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" promote "${DEPLOYMENT_URL}" --token "$VERCEL_TOKEN"
+          echo "Promoted ${DEPLOYMENT_URL} to production."
+
+  # ---------------------------------------------------------------------------
+  # 6. SMOKE — the gate that decides whether this deploy actually worked.
+  # ---------------------------------------------------------------------------
+  # Wired exactly as smoke-deployed.yml's own header prescribes. `needs` now
+  # also covers web-promote, so the smoke runs against the REAL web domain and
+  # the API TOGETHER — only after the new web build is live on app.snapurl.in.
+  # A failed migration or a failed promote blocks the gate rather than letting a
+  # half-shipped environment report success. No `always()` is needed — the
+  # default "all needs succeeded" is exactly the requirement.
   smoke:
     name: Post-deploy smoke
-    needs: [deploy, migrate]
+    needs: [deploy, migrate, web-promote]
     if: ${{ !inputs.skip_smoke }}
     uses: ./.github/workflows/smoke-deployed.yml
     with:
@@ -617,24 +817,85 @@ jobs:
       api_base_url: ${{ needs.deploy.outputs.api_url }}
 
   # ---------------------------------------------------------------------------
-  # 5. RELEASE — only once the deploy has proved itself.
+  # 6b. SMOKE OUTCOME — on failure, print the exact rollback commands.
+  # ---------------------------------------------------------------------------
+  # #1026 requires: "If smoke fails, don't tag a release. The job summary prints
+  # the exact vercel rollback / promote commands and the previous production
+  # deployment URL. No automatic rollback, which would recreate the drift."
+  #
+  # `release` already refuses to run unless smoke succeeded, so the "don't tag"
+  # half is enforced there. This job is the OTHER half: it runs only when smoke
+  # actually failed and writes the operator's recovery runbook into the summary.
+  # It deliberately does NOT roll anything back — an automatic web rollback would
+  # put the OLD web build back while the NEW API is live, which is the very
+  # drift this issue exists to prevent. A human decides.
+  smoke-failed:
+    name: Smoke failed — rollback instructions
+    needs: [web-build, deploy, smoke]
+    if: ${{ always() && !inputs.skip_smoke && needs.smoke.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Print rollback commands
+        env:
+          NEW_URL: ${{ needs.web-build.outputs.deployment_url }}
+          PREV_URL: ${{ needs.web-build.outputs.previous_url }}
+          API_URL: ${{ needs.deploy.outputs.api_url }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### ⚠️ Post-deploy smoke FAILED — no release was tagged"
+            echo
+            echo "The web build \`${NEW_URL:-<unknown>}\` was promoted to production and the"
+            echo "API at \`${API_URL:-<unknown>}\` (commit \`${SHA:0:12}\`) is live, but the"
+            echo "core create-link-then-redirect journey did not pass. Nothing was rolled"
+            echo "back automatically — rolling only the web back would re-create the"
+            echo "web/API drift this pipeline exists to prevent. Decide and act by hand:"
+            echo
+            echo "**Roll the web back to the previous production build:**"
+            echo '```bash'
+            if [ -n "${PREV_URL}" ]; then
+              echo "vercel promote ${PREV_URL} --token \"\$VERCEL_TOKEN\""
+            else
+              echo "# No previous production URL was recorded (first deploy?). List and pick one:"
+              echo "vercel ls --prod --token \"\$VERCEL_TOKEN\""
+              echo "vercel promote <previous-url> --token \"\$VERCEL_TOKEN\""
+            fi
+            echo "# or, equivalently, the CLI's own rollback:"
+            echo "vercel rollback --token \"\$VERCEL_TOKEN\""
+            echo '```'
+            echo
+            echo "**Roll the API back** by re-dispatching this workflow with \`git_ref\`"
+            echo "set to the previous deployed commit and \`version\` left blank — read"
+            echo "docs/ROLLBACK.md first (a redeploy does NOT undo a DB migration)."
+            echo
+            echo "Then re-run the smoke gate against both once they agree again."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Smoke failed::No release tagged. Rollback commands written to the job summary."
+
+  # ---------------------------------------------------------------------------
+  # 7. RELEASE — only once the deploy has proved itself.
   # ---------------------------------------------------------------------------
   # Tags the commit that was ACTUALLY deployed (deploy's resolved sha, not
   # github.sha, which differs on a rollback) and creates the GitHub Release
   # with notes generated from the PRs merged since the previous tag. Runs only
   # if smoke passed, or was deliberately skipped, in which case the notes say
-  # so. A failed or cancelled deploy creates nothing, so "latest release"
-  # names what production runs, until a rollback (which creates no release)
-  # redeploys an older one. The version was validated in
-  # `plan`, before anything was applied.
+  # so. A failed or cancelled deploy — OR a web promote that did not succeed —
+  # creates nothing, so "latest release" names what production runs, until a
+  # rollback (which creates no release) redeploys an older one. The version was
+  # validated in `plan`, before anything was applied.
   release:
     name: GitHub Release
-    needs: [plan, deploy, migrate, smoke]
+    needs: [plan, web-build, deploy, migrate, web-promote, smoke]
     if: >-
       ${{ always()
           && needs.plan.outputs.version != ''
           && needs.deploy.result == 'success'
           && needs.migrate.result == 'success'
+          && needs.web-promote.result == 'success'
           && (needs.smoke.result == 'success'
               || (inputs.skip_smoke && needs.smoke.result == 'skipped')) }}
     runs-on: ubuntu-latest
@@ -644,6 +905,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      # #1026 requirement 4: the commit, the API version and the web deployment
+      # URL side by side, so a reader of the run sees at a glance what shipped
+      # and that web + API are the same release.
+      - name: Release summary (commit / API version / web URL)
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          API_URL: ${{ needs.deploy.outputs.api_url }}
+          WEB_URL: ${{ needs.web-build.outputs.deployment_url }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### Shipped together"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${SHA}\` |"
+            echo "| API version (release) | \`${VERSION}\` |"
+            echo "| API URL | \`${API_URL}\` |"
+            echo "| Web deployment | ${WEB_URL} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
