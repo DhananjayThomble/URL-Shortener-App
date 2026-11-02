@@ -41,6 +41,7 @@ import { emitBacklogMetrics } from "./jobs/backlog-metrics.js";
 import { applyDuePlanChanges } from "./jobs/plan-changes.js";
 import { resolveRazorpaySecrets } from "@snapurl/database";
 import { makeRazorpayStatusSource, reconcileBilling, type ProviderStatusSource } from "./jobs/billing-reconcile.js";
+import { initWorkerTelemetry, telemetry } from "./telemetry.js";
 
 /* ============================================================
    The worker.
@@ -105,6 +106,12 @@ export function initDb(): Promise<{ db: Database; close: () => Promise<void> }> 
   if (dbHandle) return Promise.resolve(dbHandle);
   if (!initPromise) {
     initPromise = (async () => {
+      /* #995 — initialise error tracking at cold start, alongside the db
+         handle, so every job failure captured below has a live handle. OFF
+         unless a DSN is set; never throws. Memoised itself, so this is cheap on
+         a warm invocation. */
+      const sentry = await initWorkerTelemetry();
+      if (!sentry.enabled) log.info("Error tracking is off (no SENTRY_DSN).");
       const url =
         (await resolveDatabaseUrl()) ?? "postgres://snapurl:snapurl@localhost:5433/snapurl";
       const handle = createDatabase({
@@ -673,6 +680,9 @@ function everyN(seconds: number, job: () => Promise<unknown>) {
       await job();
     } catch (err) {
       log.error({ err }, "job failed");
+      // #995 — a job that threw out of its own isolation is the kind of
+      // failure worth tracking. No-op when telemetry is off.
+      telemetry().captureException(err);
     } finally {
       running = false;
     }
@@ -731,6 +741,7 @@ async function main() {
 if (require.main === module) {
   main().catch((err) => {
     log.error({ err }, "worker failed to start");
+    telemetry().captureException(err);
     process.exit(1);
   });
 }

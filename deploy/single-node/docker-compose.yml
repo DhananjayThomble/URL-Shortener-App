@@ -95,6 +95,13 @@ services:
       TRUSTED_PROXY_HOPS: "1"
       MAIL_TRANSPORT: ${MAIL_TRANSPORT:-outbox}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Error tracking (#995). OFF unless SENTRY_DSN is set in .env — an empty
+      # value (the default) leaves it uninitialised with no network call.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      SENTRY_ERRORS_SAMPLE_RATE: ${SENTRY_ERRORS_SAMPLE_RATE:-1}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0}
     # No host port: only Caddy is public. The API is reached via caddy ->
     # api:3001 on the internal network.
     healthcheck:
@@ -127,6 +134,12 @@ services:
       CACHE_DRIVER: memory
       TRUSTED_PROXY_HOPS: "1"
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Error tracking (#995). OFF unless SENTRY_DSN is set in .env.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      SENTRY_ERRORS_SAMPLE_RATE: ${SENTRY_ERRORS_SAMPLE_RATE:-1}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0}
     # No host port: reached via caddy -> redirect:3002 on the internal network.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -150,6 +163,12 @@ services:
       # historical 3-year window, so these only need setting to change it.
       CLICK_EVENTS_RETENTION_YEARS: ${CLICK_EVENTS_RETENTION_YEARS:-3}
       CLICK_EVENTS_MAX_RETAINED_DAYS: ${CLICK_EVENTS_MAX_RETAINED_DAYS:-1100}
+      # Error tracking (#995). OFF unless SENTRY_DSN is set in .env.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      SENTRY_ERRORS_SAMPLE_RATE: ${SENTRY_ERRORS_SAMPLE_RATE:-1}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0}
     # No healthcheck and no ports: the worker serves no HTTP. It runs the
     # in-process rollup loop on timers; its liveness shows in the rollup tables.
 
