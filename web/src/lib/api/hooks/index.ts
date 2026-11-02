@@ -15,6 +15,7 @@ export { qk } from "./keys";
 
 export * from "./admin";
 export * from "./analytics";
+export * from "./feedback";
 export * from "./auth";
 export * from "./bio-pages";
 export * from "./developers";
