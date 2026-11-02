@@ -74,6 +74,10 @@ services:
       # default (20/day, 10/hour); the caps are covered by the API integration
       # tests, not the smoke harness.
       NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
+      # #1007 — disable the sign-up mail-domain (MX) check in the compose
+      # environment: the harness signs up at *.test domains with no real DNS,
+      # and the check's behaviour is proven by unit tests, not here.
+      MAIL_DOMAIN_CHECK_ENABLED: "false"
       LOG_LEVEL: info
     ports:
       - "3001:3001"

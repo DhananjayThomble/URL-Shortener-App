@@ -24,6 +24,38 @@ export interface CheckoutResult {
   subscriptionId: string;
   /** The PUBLIC key id (ships in the page). */
   keyId: string;
+  /** #992 — when the checkout started a trial, the instant the trial ends (the
+   *  provider's first-charge date), else null. The provider decides this from
+   *  the trial days passed in; SnapURL records it on the row and echoes it for
+   *  the confirmation screen, but entitlement still comes from the verified
+   *  `trialing` webhook, never from this value. */
+  trialEndsAt?: Date | null;
+}
+
+/* ============================================================
+   #988 — invoices.
+
+   An invoice is the provider's RECORD of a charge: the amount it raised, the
+   currency, and its own downloadable PDF link. SnapURL never generates a PDF
+   and never holds a card number — it lists what the provider already has. The
+   provider shape below carries only those facts; the controller/service maps it
+   onto the contract's BillingInvoice unchanged.
+   ============================================================ */
+
+/** One invoice as the provider reports it, before it is mapped to the wire
+ *  shape. `amount` is the currency's minor unit (paise / cents), untouched. */
+export interface ProviderInvoice {
+  id: string;
+  number: string | null;
+  /** The provider's invoice status, already normalised to the contract set. */
+  status: "paid" | "issued" | "partially_paid" | "cancelled" | "expired";
+  amount: number;
+  /** ISO-4217 code, upper-case. */
+  currency: string;
+  /** Epoch seconds the provider issued the invoice at. */
+  issuedAt: number;
+  /** The provider's own download link, or null when none is attached. */
+  pdfUrl: string | null;
 }
 
 /** A payment the event carried, normalised. #989 records these in the payments
@@ -51,6 +83,13 @@ export interface NormalizedBillingEvent {
   providerSubscriptionId: string | null;
   /** The subscription lifecycle status this event implies, when it maps to one. */
   status: SubscriptionStatus | null;
+  /** #988 — the provider plan id the subscription is on AS OF this event, when
+   *  the event carries it. Used to confirm a requested plan change: the change
+   *  is applied only once an entitled event reports the subscription on the
+   *  target's provider plan id — so an upgrade lands on the next charge and a
+   *  downgrade only once the provider actually switches it at the cycle end,
+   *  never early. Null for an event with no subscription plan id. */
+  providerPlanId: string | null;
   /** End of the current paid period the event reports, when present. */
   currentPeriodEnd: Date | null;
   /** The payment the event carried, when it carried one (a charge/failure), so
@@ -69,24 +108,31 @@ export interface CreateCheckoutParams {
   workspaceId: string;
   /** The billing owner's email, for the provider's customer record. */
   customerEmail: string;
-  /** #992 (forward-compat, unused in #986) — an optional offer/coupon id to
-   *  apply to the new subscription. Ignored by the #986 Razorpay implementation. */
+  /** #992 — an optional offer/coupon id to apply to the new subscription. The
+   *  provider applies the discount; SnapURL only validated + recorded the
+   *  redemption and passes the id here. Undefined = no coupon. */
   offerId?: string;
+  /** #992 — the plan's trial length in days (0 = no trial). When > 0 the
+   *  provider starts the subscription with a trial: the first charge is deferred
+   *  by this many days and the subscription reports `trialing` until then. */
+  trialDays?: number;
+  /** #992 — whether a card is required up front for the trial. Forwarded to the
+   *  provider's checkout so a no-card trial does not demand payment details. */
+  trialRequiresCard?: boolean;
 }
 
 /**
- * #992 (forward-compat, unused in #986) — WHEN a plan change takes effect:
- * immediately (prorated/charged now) or at the end of the current billing
- * cycle. An admin upgrade/downgrade in #992 chooses one; #986 never issues an
- * update, so this type is defined but not acted on here.
+ * WHEN a plan change takes effect: immediately (prorated / charged now, an
+ * upgrade) or at the end of the current billing cycle (a downgrade, so the
+ * owner keeps what they paid for). #988's changePlan derives this from the
+ * plan ranking rather than trusting the client.
  */
 export type ApplyTiming = "now" | "at_cycle_end";
 
 /**
- * #992 (forward-compat, unused in #986) — the shape of a subscription change
- * (upgrade/downgrade/retarget plan, apply or clear an offer). Defined so the
- * provider method below has a stable signature the later work implements; #986
- * ships no caller.
+ * The shape of a subscription change (upgrade/downgrade the plan, optionally
+ * apply or clear an offer). #988 issues upgrades and downgrades; the offer
+ * field stays forward-compatible for #992.
  */
 export interface UpdateSubscriptionParams {
   /** The provider subscription id to change. */
@@ -115,6 +161,34 @@ export interface SyncPlanPriceParams {
   amountMinor: number;
 }
 
+/**
+ * #992 §5 — the billing details attached to a provider customer so the
+ * invoices it raises carry them. Only the facts an invoice prints: the billing
+ * email, the company/legal name, the tax id (a GSTIN in India), and the
+ * address split into its lines. Every field is optional — the service passes
+ * whatever the owner has entered, and a provider fills in what it supports. No
+ * secret and no card data.
+ */
+export interface SyncBillingDetailsParams {
+  /** The provider's customer id for this workspace's subscription, when known.
+   *  Null when the workspace has no provider customer yet (nothing to sync). */
+  providerCustomerId: string | null;
+  /** The provider subscription id, so a provider that attaches details to the
+   *  subscription rather than the customer can resolve it. */
+  providerSubscriptionId: string | null;
+  billingEmail: string | null;
+  companyName: string | null;
+  taxId: string | null;
+  address: {
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+    country: string | null;
+  } | null;
+}
+
 export interface BillingProvider {
   /** Which provider this is. The core reads it to decide reachability and to
    *  stamp stored rows. */
@@ -133,12 +207,27 @@ export interface BillingProvider {
   cancel(providerSubscriptionId: string, atPeriodEnd: boolean): Promise<void>;
 
   /**
-   * #992 (forward-compat) — change a subscription's plan/offer, now or at cycle
-   * end. OPTIONAL on the interface so #986 need not implement it: the admin
-   * upgrade/downgrade + proration work adds the real behaviour. A provider that
-   * does not implement it simply omits the method.
+   * #988 — change a subscription's plan + interval at the provider, now (an
+   * upgrade, prorated) or at the end of the cycle (a downgrade). The plan does
+   * NOT move here — only the verified webhook that follows does that (#986).
    */
-  updateSubscription?(params: UpdateSubscriptionParams): Promise<void>;
+  updateSubscription(params: UpdateSubscriptionParams): Promise<void>;
+
+  /**
+   * #988 — the provider plan id a (plan key, interval) resolves to, or null when
+   * it is not configured. Used to CONFIRM a requested plan change: the service
+   * applies a pending change only once a verified webhook reports the
+   * subscription on this id, so an upgrade lands on the next charge and a
+   * downgrade only once the provider actually switches it — never early, never
+   * on an unrelated renewal of the old plan.
+   */
+  resolvePlanId(planKey: PaidPlanKey, interval: BillingInterval): string | null;
+
+  /**
+   * #988 — the provider's invoices for a subscription, newest first. Returns an
+   * empty list when the provider has none yet (a fresh checkout with no charge).
+   */
+  listInvoices(providerSubscriptionId: string): Promise<ProviderInvoice[]>;
 
   /**
    * #987 — sync a plan's price for a (key, interval, currency) to the provider
@@ -149,6 +238,16 @@ export interface BillingProvider {
    * provider plan id it created/updated, when it has one, for the caller to log.
    */
   syncPlanPrice?(params: SyncPlanPriceParams): Promise<{ providerPlanId: string } | void>;
+
+  /**
+   * #992 §5 — push the workspace's billing details (company, tax id, address,
+   * billing email) to the provider so its invoices/customer carry them.
+   * OPTIONAL on the interface, exactly like syncPlanPrice: a provider that
+   * cannot hold them simply omits it, and the owner's edit still lands in the
+   * SnapURL record — the provider sync is best-effort and never gates the DB
+   * write.
+   */
+  syncBillingDetails?(params: SyncBillingDetailsParams): Promise<void>;
 
   /** Refund a payment at the provider. */
   refund(providerPaymentId: string): Promise<void>;

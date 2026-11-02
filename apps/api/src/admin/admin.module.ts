@@ -6,9 +6,11 @@ import { AdminController } from "./admin.controller.js";
 import { AdminService } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
+import { AdminFeedbackService } from "./admin.feedback.service.js";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminManagementService } from "./admin-management.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
+import { PlanManagementService } from "../plans/plan-management.service.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { WorkspacesModule } from "../workspaces/workspaces.module.js";
 import { BillingModule } from "../billing/billing.module.js";
@@ -22,6 +24,7 @@ import {
   type EmailStatsReader,
 } from "./analytics/email-stats.reader.js";
 import { AdminBillingService } from "./billing/admin-billing.service.js";
+import { AdminCouponsService } from "./billing/admin-coupons.service.js";
 import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admin-billing.reader.js";
 
 /* #968 — the platform-admin module. AdminService resolves the role from the
@@ -49,11 +52,14 @@ import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admi
     AdminService,
     AdminHealthService,
     AdminModerationService,
+    AdminFeedbackService,
     AdminGuard,
     AdminManagementService,
     PlansAdminService,
+    PlanManagementService,
     AdminAnalyticsService,
     AdminBillingService,
+    AdminCouponsService,
     {
       provide: ADMIN_ANALYTICS_READER,
       inject: [READ_DB],

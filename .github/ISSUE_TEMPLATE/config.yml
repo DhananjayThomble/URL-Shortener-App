@@ -1,0 +1,13 @@
+# Require one of the structured forms; a blank issue is disabled so every
+# report arrives with the fields a maintainer needs.
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/DhananjayThomble/URL-Shortener-App/discussions
+    about: For usage questions, ideas, and open-ended discussion. Bugs and concrete feature requests belong in an issue.
+  - name: Self-hosting guide
+    url: https://github.com/DhananjayThomble/URL-Shortener-App/blob/main/SELF-HOSTING.md
+    about: Running your own instance — setup, upgrade, backups, and troubleshooting.
+  - name: Security report
+    url: https://github.com/DhananjayThomble/URL-Shortener-App/security/advisories/new
+    about: Report a security vulnerability privately. Please do NOT open a public issue for security problems.

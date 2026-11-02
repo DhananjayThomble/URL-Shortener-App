@@ -14,7 +14,7 @@ import {
 } from "@snapurl/database";
 import { AuthService } from "../auth/auth.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
-import { botProtectionStub, signupRefusalStub } from "../test/signup-controls.stub.js";
+import { botProtectionStub, mailDomainStub, signupRefusalStub } from "../test/signup-controls.stub.js";
 import { TokenService } from "../auth/token.service.js";
 import type { TotpService } from "../auth/totp.service.js";
 import type { OAuthService } from "../auth/oauth.service.js";
@@ -92,7 +92,7 @@ describeDb("#969 — suspension blocks sign-in and stops sessions", () => {
     db = handle.db;
     tokens = new TokenService(db, env, new JwtService());
     const mail = new FakeMail() as unknown as MailService;
-    auth = new AuthService(db, env, tokens, {} as TotpService, {} as OAuthService, mail, openPlatformSettingsStub(), botProtectionStub(), signupRefusalStub());
+    auth = new AuthService(db, env, tokens, {} as TotpService, {} as OAuthService, mail, openPlatformSettingsStub(), botProtectionStub(), signupRefusalStub(), mailDomainStub());
     admin = new AdminManagementService(
       db,
       tokens,

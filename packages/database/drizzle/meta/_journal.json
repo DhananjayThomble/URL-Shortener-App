@@ -218,6 +218,41 @@
       "when": 1793600313301,
       "tag": "0030_billing_grace",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793605002630,
+      "tag": "0031_billing_pending_change",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793611562199,
+      "tag": "0032_feedback",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793611622314,
+      "tag": "0033_plan_management",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793615605534,
+      "tag": "0034_trials_coupons",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793620763711,
+      "tag": "0035_billing_details",
+      "breakpoints": true
     }
   ]
 }

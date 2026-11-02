@@ -29,6 +29,72 @@ route({
 });
 
 route({
+  method: "get",
+  path: "/billing/invoices",
+  tag: "Billing",
+  summary: "The workspace's Razorpay-generated invoices (owner only)",
+  responses: {
+    200: { description: "Invoices, newest first (empty when none)", schema: refs.BillingInvoiceList },
+    403: { description: "Only the workspace owner can view billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/billing/cancel",
+  tag: "Billing",
+  summary: "Schedule the subscription to end (owner only)",
+  body: refs.CancelSubscriptionInput,
+  responses: {
+    200: { description: "The subscription with the pending cancellation reflected", schema: refs.WorkspaceSubscription },
+    400: { description: "No active subscription to cancel" },
+    403: { description: "Only the workspace owner can change billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/billing/change",
+  tag: "Billing",
+  summary: "Change between paid plans — upgrade now, downgrade at cycle end (owner only)",
+  body: refs.ChangePlanInput,
+  responses: {
+    200: { description: "The subscription; the plan moves on the verified webhook", schema: refs.WorkspaceSubscription },
+    400: { description: "Unconfigured plan, the same plan, or no active subscription" },
+    403: { description: "Only the workspace owner can change billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/billing/details",
+  tag: "Billing",
+  summary: "The workspace's billing details — company, tax id/GSTIN, address (owner only)",
+  responses: {
+    200: { description: "The billing details (all-null record when none set)", schema: refs.BillingDetails },
+    403: { description: "Only the workspace owner can view billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
+  method: "put",
+  path: "/billing/details",
+  tag: "Billing",
+  summary: "Set the workspace's billing details (owner only)",
+  body: refs.BillingDetailsInput,
+  responses: {
+    200: { description: "The saved billing details", schema: refs.BillingDetails },
+    400: { description: "Invalid billing details (e.g. a malformed Indian GSTIN)" },
+    403: { description: "Only the workspace owner can change billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
   method: "post",
   path: "/billing/webhook",
   tag: "Billing",

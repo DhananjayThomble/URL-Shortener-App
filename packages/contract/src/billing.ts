@@ -56,6 +56,12 @@ export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 export const StartCheckoutInput = z.object({
   planKey: z.enum(PAID_PLAN_KEYS),
   interval: z.enum(BILLING_INTERVALS),
+  /** #992 — an optional coupon code to apply at checkout. The server validates
+   *  it against the coupon's own rules (expiry, max redemptions, plan/interval
+   *  restriction, paused) and records the redemption; the DISCOUNT is applied by
+   *  the provider via the coupon's offer id. An absent or empty code is simply
+   *  no coupon. Trimmed and length-capped to the coupon code shape. */
+  couponCode: z.string().trim().min(1).max(40).optional(),
 });
 export type StartCheckoutInput = z.infer<typeof StartCheckoutInput>;
 
@@ -81,6 +87,23 @@ export const CheckoutSession = z.object({
    *  the confirmation screen, never a client-named amount. */
   amountMinor: z.number().int().min(0).nullable(),
   currency: z.string(),
+  /** #992 — the coupon that was applied at checkout, or null when none. The
+   *  `code` is echoed for the confirmation screen and `discountMinor` is the
+   *  preview discount off `amountMinor` (the provider applies the real discount
+   *  via the coupon's offer). Null when no coupon, or when the applied coupon
+   *  has no provider offer (nothing is discounted at the provider then). */
+  coupon: z
+    .object({
+      code: z.string(),
+      discountMinor: z.number().int().min(0),
+    })
+    .nullable()
+    .default(null),
+  /** #992 — when this checkout starts a free trial, the ISO instant the trial
+   *  ends (the first charge date), else null. Entitlement during the trial is
+   *  the provider's `trialing` status on the verified webhook, never a local
+   *  grant — this is for the confirmation screen only. */
+  trialEndsAt: z.string().datetime().nullable().default(null),
 });
 export type CheckoutSession = z.infer<typeof CheckoutSession>;
 
@@ -112,5 +135,111 @@ export const WorkspaceSubscription = z.object({
       revertsAt: z.string().nullable(),
     })
     .nullable(),
+  /** #988 — a REQUESTED paid-plan change the owner made that the provider has
+   *  not confirmed yet. Non-null between changePlan and the verified webhook
+   *  that applies it; the current plan (planKey above) is still what the
+   *  workspace is entitled to until then. The UI shows "pending change to X".
+   *  Null when no change is in flight. */
+  pendingChange: z
+    .object({
+      planKey: z.enum(PAID_PLAN_KEYS),
+      interval: z.enum(BILLING_INTERVALS),
+    })
+    .nullable(),
 });
 export type WorkspaceSubscription = z.infer<typeof WorkspaceSubscription>;
+
+/* ============================================================
+   #988 — the owner-facing billing surface (epic #991).
+
+   The workspace owner manages their own plan in the app: an upgrade flow, the
+   Settings → Billing page (plan, renewal, status, invoices, cancel at period
+   end), and a change between paid plans. Everything here is still reachable
+   only when BILLING_PROVIDER=razorpay — a self-hosted / `none` build 404s the
+   lot, exactly as #986.
+
+   The money still lives with Razorpay. An invoice is a RECORD of a charge the
+   provider raised: the amount, the currency and the provider's own downloadable
+   PDF link — SnapURL never generates a PDF and never holds a card number. And a
+   plan change still NEVER moves the plan on its own: changePlan asks the
+   provider, and the workspace's entitlement only moves when the resulting
+   webhook arrives verified (#986's invariant).
+   ============================================================ */
+
+/** The paid states a Razorpay invoice sits in. `paid` is the only one that
+ *  counts as money received; the others are shown honestly (an owner should see
+ *  a failed charge, not a gap). */
+export const INVOICE_STATUSES = ["paid", "issued", "partially_paid", "cancelled", "expired"] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+/** One Razorpay-generated invoice, as GET /billing/invoices returns it. The
+ *  amount is in the currency's MINOR unit (paise / cents) exactly as the
+ *  provider reports it — the UI formats it, nothing here rounds. `pdfUrl` is the
+ *  provider's own short-lived download link, or null when the provider has not
+ *  (yet) attached one; it is NEVER a SnapURL-hosted document. No card data, no
+ *  customer PII beyond what an invoice line already is. */
+export const BillingInvoice = z.object({
+  /** The provider's invoice id. */
+  id: z.string(),
+  /** The human invoice number the provider assigned, or null before one exists. */
+  number: z.string().nullable(),
+  status: z.enum(INVOICE_STATUSES),
+  /** Amount in the currency's minor unit (e.g. paise), as the provider reports. */
+  amount: z.number().int().nonnegative(),
+  /** ISO-4217 currency code, upper-case. */
+  currency: z.string().length(3),
+  /** ISO-8601 issue time. */
+  createdAt: z.string(),
+  /** The provider's downloadable PDF link, or null when none is attached. */
+  pdfUrl: z.string().url().nullable(),
+});
+export type BillingInvoice = z.infer<typeof BillingInvoice>;
+
+/** GET /billing/invoices — the workspace's invoices, newest first. */
+export const BillingInvoiceList = z.array(BillingInvoice);
+export type BillingInvoiceList = z.infer<typeof BillingInvoiceList>;
+
+/** Change the workspace between paid plans. The body names a plan by KEY, never
+ *  a price. `when` decides the timing: an UPGRADE takes effect `now` (prorated
+ *  by the provider, charged on the next cycle), a DOWNGRADE is `at_cycle_end` so
+ *  the owner keeps what they paid for until the period ends. The controller
+ *  derives `when` itself from the plan ranking — the client cannot ask for a
+ *  downgrade-now that would refund-churn, nor an upgrade deferred past a renewal
+ *  — but it is on the wire so the intent is explicit and testable. */
+export const ChangePlanInput = z.object({
+  planKey: z.enum(PAID_PLAN_KEYS),
+  interval: z.enum(BILLING_INTERVALS),
+});
+export type ChangePlanInput = z.infer<typeof ChangePlanInput>;
+
+/** #992 §6 — the fixed set of reasons a cancellation can cite, so the admin
+ *  panel groups them without parsing free text. `other` pairs with the optional
+ *  comment for anything not listed. */
+export const CANCELLATION_REASONS = [
+  "too_expensive",
+  "missing_features",
+  "switched_service",
+  "no_longer_needed",
+  "technical_issues",
+  "other",
+] as const;
+export const CancellationReason = z.enum(CANCELLATION_REASONS);
+export type CancellationReason = (typeof CANCELLATION_REASONS)[number];
+
+/** POST /billing/cancel — schedule the subscription to end. `atPeriodEnd` true
+ *  (the default the UI sends) keeps the plan live until the paid period ends;
+ *  false cancels immediately. Either way the plan only actually moves when the
+ *  provider's cancellation webhook arrives verified.
+ *
+ *  #992 §6 — an optional reason picker and free-text comment. Both are optional
+ *  so an existing caller (and a cancel with no survey) still works; when given,
+ *  they are recorded on the subscription and shown to the admin, who sees WHY a
+ *  workspace cancelled. */
+export const CancelSubscriptionInput = z.object({
+  atPeriodEnd: z.boolean().default(true),
+  /** Why the owner is cancelling, from the fixed set, or omitted. */
+  reason: CancellationReason.optional(),
+  /** An optional free-text comment (required nowhere; capped). */
+  comment: z.string().trim().max(1000).optional(),
+});
+export type CancelSubscriptionInput = z.infer<typeof CancelSubscriptionInput>;

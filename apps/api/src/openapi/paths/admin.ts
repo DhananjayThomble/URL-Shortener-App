@@ -554,6 +554,49 @@ route({
   },
 });
 
+/* #992 — admin plan change + per-workspace plan history. */
+
+route({
+  method: "post",
+  path: "/admin/workspaces/{id}/plan-change",
+  tag: "Admin",
+  summary:
+    "Change a workspace's plan: immediately (charge prorated difference or comp until a date) or at period end — reason required, audited, in plan history",
+  params: IdParam,
+  body: refs.AdminPlanChangeInput,
+  responses: {
+    200: { description: "What was applied (immediate comp) or scheduled (period end)", schema: refs.AdminPlanChangeResult },
+    400: { description: "An unknown plan, an invalid change, or a comp end date not in the future" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace" },
+    409: { description: "The workspace has an active provider subscription; it needs a provider-backed change" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/workspaces/{id}/plan-history",
+  tag: "Admin",
+  summary: "A workspace's plan history: every change, comp, payment, refund and cancellation, newest first",
+  params: IdParam,
+  responses: {
+    200: { description: "The workspace's plan history", schema: refs.PlanHistoryList },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/workspaces/{id}/billing-details",
+  tag: "Admin",
+  summary: "View a workspace's billing details — company, tax id/GSTIN, address (read-only)",
+  params: IdParam,
+  responses: {
+    200: { description: "The workspace's billing details (all-null when none set)", schema: refs.BillingDetails },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
 
 /* ── billing views + admin refund (#989) ── */
 
@@ -603,5 +646,116 @@ route({
     400: { description: "The payment cannot be refunded (not captured, or already refunded)" },
     403: { description: "The caller is not a platform admin" },
     404: { description: "No such payment" },
+  },
+});
+
+
+/* ── coupons (#992): create, list, pause/resume, delete, see redemptions ── */
+
+route({
+  method: "get",
+  path: "/admin/coupons",
+  tag: "Admin",
+  summary: "Every coupon, newest first, each with its live redemption count",
+  responses: {
+    200: { description: "The coupon catalogue", schema: refs.CouponList },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/coupons",
+  tag: "Admin",
+  summary: "Create a coupon (admin-only, audited)",
+  body: refs.CreateCouponInput,
+  responses: {
+    200: { description: "The created coupon", schema: refs.CouponView },
+    400: { description: "The coupon is invalid (e.g. percent over 100, fixed with no currency)" },
+    403: { description: "The caller is not a platform admin" },
+    409: { description: "A coupon with that code already exists" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/coupons/{id}/pause",
+  tag: "Admin",
+  summary: "Pause or resume a coupon — no new redemptions while paused (admin-only, audited)",
+  params: IdParam,
+  body: refs.SetCouponPausedInput,
+  responses: {
+    200: { description: "The updated coupon", schema: refs.CouponView },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such coupon" },
+  },
+});
+
+route({
+  method: "delete",
+  path: "/admin/coupons/{id}",
+  tag: "Admin",
+  summary: "Delete a coupon and its redemptions (admin-only, audited)",
+  params: IdParam,
+  responses: {
+    200: { description: "The coupon was deleted", schema: refs.AdminActionResult },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such coupon" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/coupons/{id}/redemptions",
+  tag: "Admin",
+  summary: "The redemptions of one coupon, newest first",
+  params: IdParam,
+  responses: {
+    200: { description: "The coupon's redemptions", schema: refs.CouponRedemptionList },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such coupon" },
+  },
+});
+
+
+/* #997 — the "Report a problem" feedback inbox. Behind AdminGuard like every
+   /admin/* route, so each entry documents the 403 alongside its success shape. */
+
+route({
+  method: "get",
+  path: "/admin/feedback",
+  tag: "Admin",
+  summary: "The in-app feedback inbox, newest first (optionally filtered by status)",
+  query: refs.FeedbackListQuery,
+  responses: {
+    200: { description: "A page of feedback reports (screenshot blob omitted; hasScreenshot only)", schema: refs.FeedbackPage },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/feedback/{id}",
+  tag: "Admin",
+  summary: "One feedback report in full, including its screenshot",
+  params: IdParam,
+  responses: {
+    200: { description: "The feedback report with its screenshot data URL", schema: refs.FeedbackDetail },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such report" },
+  },
+});
+
+route({
+  method: "patch",
+  path: "/admin/feedback/{id}",
+  tag: "Admin",
+  summary: "Move a report's status and/or set operator notes (audited)",
+  params: IdParam,
+  body: refs.UpdateFeedbackInput,
+  responses: {
+    200: { description: "The updated feedback report", schema: refs.FeedbackDetail },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such report" },
   },
 });

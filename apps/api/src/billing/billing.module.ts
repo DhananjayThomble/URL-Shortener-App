@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { ENV, type Env } from "../config/env.js";
 import { BillingController } from "./billing.controller.js";
 import { BillingService } from "./billing.service.js";
+import { BillingDetailsService } from "./billing-details.service.js";
+import { CouponsService } from "./coupons.service.js";
 import { BillingEnabledGuard } from "./billing-enabled.guard.js";
 import { BILLING_PROVIDER, type BillingProvider } from "./billing-provider.js";
 import { NoneBillingProvider } from "./none-billing.provider.js";
@@ -28,6 +30,8 @@ import { parsePlanIds } from "./billing-plans.js";
   controllers: [BillingController],
   providers: [
     BillingService,
+    BillingDetailsService,
+    CouponsService,
     BillingEnabledGuard,
     {
       provide: BILLING_PROVIDER,
@@ -51,6 +55,6 @@ import { parsePlanIds } from "./billing-plans.js";
   // #987 — export the resolved provider too, so PlansAdminService (admin module)
   // can push an edited price to it through the same seam, without re-resolving
   // the provider or reaching into billing internals.
-  exports: [BillingService, BILLING_PROVIDER],
+  exports: [BillingService, BillingDetailsService, CouponsService, BILLING_PROVIDER],
 })
 export class BillingModule {}

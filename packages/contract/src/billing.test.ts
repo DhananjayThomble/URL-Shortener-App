@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   BILLING_INTERVALS,
+  BillingInvoice,
+  BillingInvoiceList,
+  CancelSubscriptionInput,
+  ChangePlanInput,
   CheckoutSession,
+  INVOICE_STATUSES,
   PAID_PLAN_KEYS,
   PLAN_KEYS,
   StartCheckoutInput,
@@ -71,6 +76,19 @@ describe("StartCheckoutInput", () => {
     expect(StartCheckoutInput.safeParse({ planKey: "pro" }).success).toBe(false);
     expect(StartCheckoutInput.safeParse({ interval: "monthly" }).success).toBe(false);
   });
+
+  it("#992 — accepts an optional coupon code, trimmed and length-capped", () => {
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "WELCOME10" }).success).toBe(true);
+    // Trimmed to a non-empty value.
+    const r = StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "  SAVE  " });
+    expect(r.success && r.data.couponCode).toBe("SAVE");
+    // An all-whitespace code trims to empty and is rejected (min 1).
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "   " }).success).toBe(false);
+    // Over the 40-char cap.
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "x".repeat(41) }).success).toBe(false);
+    // Absent is fine (optional).
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly" }).success).toBe(true);
+  });
 });
 
 describe("CheckoutSession", () => {
@@ -113,6 +131,28 @@ describe("CheckoutSession", () => {
   it("rejects the free plan on a checkout session", () => {
     expect(CheckoutSession.safeParse({ ...valid, planKey: "free" }).success).toBe(false);
   });
+
+  it("#992 — coupon defaults to null and, when present, needs a code + non-negative discount", () => {
+    // Absent coupon defaults to null.
+    const r = CheckoutSession.safeParse(valid);
+    expect(r.success && r.data.coupon).toBe(null);
+    // A well-formed applied coupon.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: { code: "SAVE", discountMinor: 5000 } }).success).toBe(true);
+    // Explicit null is accepted.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: null }).success).toBe(true);
+    // A negative discount is rejected.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: { code: "SAVE", discountMinor: -1 } }).success).toBe(false);
+    // A coupon missing its code is rejected.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: { discountMinor: 1 } }).success).toBe(false);
+  });
+
+  it("#992 — trialEndsAt defaults to null and, when present, must be an ISO datetime", () => {
+    const r = CheckoutSession.safeParse(valid);
+    expect(r.success && r.data.trialEndsAt).toBe(null);
+    expect(CheckoutSession.safeParse({ ...valid, trialEndsAt: "2026-12-01T00:00:00.000Z" }).success).toBe(true);
+    expect(CheckoutSession.safeParse({ ...valid, trialEndsAt: null }).success).toBe(true);
+    expect(CheckoutSession.safeParse({ ...valid, trialEndsAt: "not-a-date" }).success).toBe(false);
+  });
 });
 
 describe("WorkspaceSubscription", () => {
@@ -123,6 +163,7 @@ describe("WorkspaceSubscription", () => {
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
     notice: null,
+    pendingChange: null,
   };
 
   it("accepts the unsubscribed (free) shape with null interval/status/period", () => {
@@ -137,6 +178,7 @@ describe("WorkspaceSubscription", () => {
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: true,
       notice: null,
+      pendingChange: null,
     };
     expect(WorkspaceSubscription.safeParse(active).success).toBe(true);
   });
@@ -205,5 +247,125 @@ describe("WorkspaceSubscription", () => {
 
   it("rejects an unknown notice kind", () => {
     expect(WorkspaceSubscription.safeParse({ ...free, notice: { kind: "upgraded", revertsAt: null } }).success).toBe(false);
+  });
+
+  /* #988 — pendingChange: a requested-but-unconfirmed paid-plan change. */
+  it("requires pendingChange to be PRESENT (nullable, not optional)", () => {
+    const { pendingChange: _drop, ...withoutPending } = free as typeof free & { pendingChange: unknown };
+    expect(WorkspaceSubscription.safeParse(withoutPending).success).toBe(false);
+  });
+
+  it("accepts a null pendingChange (no change in flight)", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: null }).success).toBe(true);
+  });
+
+  it("accepts a pendingChange naming a paid plan + interval", () => {
+    expect(
+      WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "team", interval: "yearly" } }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a pendingChange to the free plan or with a missing/unknown field", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "free", interval: "monthly" } }).success).toBe(false);
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "pro" } }).success).toBe(false);
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "pro", interval: "weekly" } }).success).toBe(false);
+  });
+});
+
+/* #988 — the owner billing surface shapes. */
+
+describe("INVOICE_STATUSES", () => {
+  it("is the five provider states we show, in order", () => {
+    expect(INVOICE_STATUSES).toEqual(["paid", "issued", "partially_paid", "cancelled", "expired"]);
+  });
+});
+
+describe("BillingInvoice", () => {
+  const valid = {
+    id: "inv_000",
+    number: "INV-0001",
+    status: "paid" as const,
+    amount: 99900,
+    currency: "INR",
+    createdAt: "2026-11-01T00:00:00.000Z",
+    pdfUrl: "https://rzp.example/invoices/inv_000.pdf",
+  };
+
+  it("accepts a well-formed invoice", () => {
+    expect(BillingInvoice.safeParse(valid).success).toBe(true);
+  });
+
+  it("accepts a null number and a null pdfUrl (not yet attached)", () => {
+    expect(BillingInvoice.safeParse({ ...valid, number: null, pdfUrl: null }).success).toBe(true);
+  });
+
+  it("requires number and pdfUrl to be PRESENT (nullable, not optional)", () => {
+    expect(BillingInvoice.safeParse({ ...valid, number: undefined }).success).toBe(false);
+    expect(BillingInvoice.safeParse({ ...valid, pdfUrl: undefined }).success).toBe(false);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(BillingInvoice.safeParse({ ...valid, status: "refunded" }).success).toBe(false);
+  });
+
+  it("rejects a negative or fractional amount", () => {
+    expect(BillingInvoice.safeParse({ ...valid, amount: -1 }).success).toBe(false);
+    expect(BillingInvoice.safeParse({ ...valid, amount: 99.5 }).success).toBe(false);
+  });
+
+  it("accepts a zero amount (a fully-discounted invoice)", () => {
+    expect(BillingInvoice.safeParse({ ...valid, amount: 0 }).success).toBe(true);
+  });
+
+  it("requires currency to be exactly three characters", () => {
+    expect(BillingInvoice.safeParse({ ...valid, currency: "INRR" }).success).toBe(false);
+    expect(BillingInvoice.safeParse({ ...valid, currency: "IN" }).success).toBe(false);
+  });
+
+  it("rejects a non-URL pdfUrl", () => {
+    expect(BillingInvoice.safeParse({ ...valid, pdfUrl: "not-a-url" }).success).toBe(false);
+  });
+
+  it("BillingInvoiceList accepts an array and rejects a bad element", () => {
+    expect(BillingInvoiceList.safeParse([valid, { ...valid, id: "inv_001" }]).success).toBe(true);
+    expect(BillingInvoiceList.safeParse([valid, { ...valid, amount: -5 }]).success).toBe(false);
+    expect(BillingInvoiceList.safeParse([]).success).toBe(true);
+  });
+});
+
+describe("ChangePlanInput", () => {
+  it("accepts each paid plan key with each interval", () => {
+    for (const planKey of PAID_PLAN_KEYS) {
+      for (const interval of BILLING_INTERVALS) {
+        expect(ChangePlanInput.safeParse({ planKey, interval }).success).toBe(true);
+      }
+    }
+  });
+
+  it("rejects the free plan and an unknown interval", () => {
+    expect(ChangePlanInput.safeParse({ planKey: "free", interval: "monthly" }).success).toBe(false);
+    expect(ChangePlanInput.safeParse({ planKey: "pro", interval: "weekly" }).success).toBe(false);
+  });
+
+  it("requires both fields", () => {
+    expect(ChangePlanInput.safeParse({ planKey: "pro" }).success).toBe(false);
+    expect(ChangePlanInput.safeParse({ interval: "monthly" }).success).toBe(false);
+  });
+});
+
+describe("CancelSubscriptionInput", () => {
+  it("defaults atPeriodEnd to true when omitted", () => {
+    const parsed = CancelSubscriptionInput.safeParse({});
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.atPeriodEnd).toBe(true);
+  });
+
+  it("accepts an explicit false", () => {
+    const parsed = CancelSubscriptionInput.safeParse({ atPeriodEnd: false });
+    expect(parsed.success && parsed.data.atPeriodEnd).toBe(false);
+  });
+
+  it("rejects a non-boolean atPeriodEnd", () => {
+    expect(CancelSubscriptionInput.safeParse({ atPeriodEnd: "yes" }).success).toBe(false);
   });
 });

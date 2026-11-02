@@ -93,6 +93,30 @@ export const subscriptions = pgTable(
      *  to this column. */
     planVersionId: uuid("plan_version_id"),
 
+    /* ── #988 — a REQUESTED paid-plan change, held until the provider confirms.
+         changePlan asks the provider to switch (upgrade now, downgrade at cycle
+         end) and records the target HERE, NOT on planKey/interval — those stay
+         the entitlement of record until a verified webhook whose provider
+         plan id matches this target applies the change and clears these fields.
+         Writing planKey directly would let the next ordinary entitled webhook
+         (an old-plan renewal) grant the new plan without payment confirmation,
+         and apply a downgrade before its cycle end. Null when no change is
+         pending. ── */
+    /** The plan KEY the owner asked to move to, awaiting the confirming webhook. */
+    pendingPlanKey: varchar("pending_plan_key", { length: 40 }),
+    /** The interval requested with the pending plan change. */
+    pendingInterval: varchar("pending_interval", { length: 10 }),
+
+    /* ── #992 §6 — the cancellation survey. When the owner cancels and picks a
+         reason (optionally with a comment), it is recorded HERE so the admin
+         panel can show WHY a workspace cancelled. Null when no cancellation
+         survey was submitted. These do not affect entitlement — the plan still
+         lapses only on the verified cancellation webhook. ── */
+    /** The fixed-set reason the owner gave for cancelling, or null. */
+    cancellationReason: varchar("cancellation_reason", { length: 24 }),
+    /** An optional free-text comment the owner left with the cancellation. */
+    cancellationComment: text("cancellation_comment"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -164,8 +188,51 @@ export const payments = pgTable(
   ],
 );
 
+/* ============================================================
+   #992 §5 — billing details.
+
+   One row per workspace: the company identity that goes on an invoice — a
+   billing email, a company (legal) name, a tax id (a GSTIN in India), and a
+   billing address. The workspace OWNER edits them; a platform ADMIN views them;
+   and the billing service attaches them to the provider's customer/invoice so
+   the provider's PDF carries them. No card data and no secret — the same facts
+   that already print on an invoice.
+   ============================================================ */
+export const workspaceBillingDetails = pgTable("workspace_billing_details", {
+  id: id(),
+  /** One row per workspace (the unique index below). */
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+
+  /** Where the invoice/receipt is emailed, independent of the login email. */
+  billingEmail: varchar("billing_email", { length: 255 }),
+  /** The legal/company name on the invoice. */
+  companyName: varchar("company_name", { length: 200 }),
+  /** The tax identifier (a GSTIN in India, a generic tax id elsewhere). */
+  taxId: varchar("tax_id", { length: 40 }),
+
+  /** The billing postal address, split into its lines. */
+  addressLine1: varchar("address_line1", { length: 200 }),
+  addressLine2: varchar("address_line2", { length: 200 }),
+  city: varchar("city", { length: 120 }),
+  state: varchar("state", { length: 120 }),
+  postalCode: varchar("postal_code", { length: 20 }),
+  /** ISO-3166-1 alpha-2 country code. */
+  country: varchar("country", { length: 2 }),
+
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("workspace_billing_details_workspace_key").on(t.workspaceId),
+]);
+
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
   workspace: one(workspaces, { fields: [subscriptions.workspaceId], references: [workspaces.id] }),
+}));
+
+export const workspaceBillingDetailsRelations = relations(workspaceBillingDetails, ({ one }) => ({
+  workspace: one(workspaces, { fields: [workspaceBillingDetails.workspaceId], references: [workspaces.id] }),
 }));
 
 export const paymentsRelations = relations(payments, ({ one }) => ({

@@ -39,9 +39,28 @@ export interface RazorpayClient {
     totalCount: number;
     notes: Record<string, string>;
     customerEmail: string;
+    /** #992 — an offer/coupon id the provider applies to the subscription, or
+     *  undefined for none. */
+    offerId?: string;
+    /** #992 — epoch SECONDS to defer the first charge to (a trial). Undefined
+     *  starts charging immediately (no trial). */
+    startAt?: number;
+    /** #992 — whether the checkout must collect a card up front. When false
+     *  (a no-card trial) Razorpay authenticates the mandate without an upfront
+     *  charge. */
+    requiresCard?: boolean;
   }): Promise<{ id: string }>;
   cancelSubscription(subscriptionId: string, cancelAtCycleEnd: boolean): Promise<void>;
   refundPayment(paymentId: string): Promise<void>;
+  /** #988 — move a subscription to a new plan id. `scheduleChangeAt` is
+   *  "now" (prorated upgrade) or "cycle_end" (deferred downgrade), the two
+   *  values Razorpay's subscription update accepts. */
+  updateSubscription(
+    subscriptionId: string,
+    params: { planId: string; scheduleChangeAt: "now" | "cycle_end" },
+  ): Promise<void>;
+  /** #988 — the subscription's invoices, as the provider's raw entities. */
+  listInvoices(subscriptionId: string): Promise<RazorpayInvoiceEntity[]>;
   /** #987 — create a Razorpay plan object for an edited price. Razorpay plans
    *  are immutable, so a price change is a NEW plan the next checkout uses;
    *  existing subscriptions keep the plan they were created against. Returns the
@@ -55,6 +74,31 @@ export interface RazorpayClient {
     name: string;
     notes: Record<string, string>;
   }): Promise<{ id: string }>;
+  /** #992 §5 — attach the workspace's billing details to the provider customer
+   *  (name, email, GSTIN, address) so the invoices it raises carry them.
+   *  Optional so a fake that does not exercise the sync need not implement it. */
+  updateCustomer?(params: {
+    customerId: string | null;
+    subscriptionId: string | null;
+    name: string | null;
+    email: string | null;
+    gstin: string | null;
+    address: Record<string, string | null> | null;
+  }): Promise<void>;
+}
+
+/** The subset of a Razorpay invoice entity #988 reads. Everything is optional
+ *  because the provider's shape is not ours to guarantee; the provider maps it
+ *  defensively to ProviderInvoice. */
+export interface RazorpayInvoiceEntity {
+  id?: string;
+  invoice_number?: string | null;
+  status?: string;
+  amount?: number;
+  currency?: string;
+  issued_at?: number | null;
+  date?: number | null;
+  short_url?: string | null;
 }
 
 export interface RazorpayProviderConfig {
@@ -68,6 +112,9 @@ export interface RazorpayProviderConfig {
  *  bounded total_count; 120 is ten years of monthly cycles — effectively
  *  open-ended for the product, renewed well before it lapses. */
 const TOTAL_CYCLES = 120;
+
+/** Milliseconds in a day, for computing a trial's end from its day length. */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Map a Razorpay webhook event type to the subscription status it implies.
  *  An event with no lifecycle meaning (a payment-only event) maps to null —
@@ -93,6 +140,37 @@ export function statusForEvent(eventType: string): SubscriptionStatus | null {
     default:
       return null;
   }
+}
+
+/** #992 — the trial window as the subscription ENTITY reports it, independent of
+ *  the event type.
+ *
+ *  Razorpay has no distinct `trialing` event or entity status: a subscription
+ *  created with a future `start_at` (a trial) is reported with entity status
+ *  `authenticated` and a `charge_at` in the future until the first charge, when
+ *  it flips to `active`. So the honest signal that a subscription is in its
+ *  trial is the ENTITY: status `authenticated` AND a future first charge.
+ *
+ *  When that holds, the subscription is entitled (the customer is using the
+ *  plan on trial) — which is exactly our `trialing` status, an entitled state.
+ *  That keeps the issue's rule intact: a trial grants the plan only through a
+ *  verified webhook (this one), never a local write, and the entitlement is the
+ *  provider's reported trial, not a locally-assumed one. Returns null when the
+ *  entity does not describe a trial, so the caller falls back to the event-type
+ *  status.
+ *
+ *  `now` is injected so the "future charge" test is deterministic. */
+export function trialStatusFromEntity(
+  entity: Record<string, unknown> | null,
+  now: Date,
+): SubscriptionStatus | null {
+  if (!entity) return null;
+  if (entity.status !== "authenticated") return null;
+  const chargeAt = entity.charge_at;
+  if (typeof chargeAt !== "number") return null;
+  // A first charge strictly in the future means the subscription is in its
+  // trial window right now.
+  return chargeAt * 1000 > now.getTime() ? "trialing" : null;
 }
 
 /** Pull a named entity (`subscription` / `payment`) out of a Razorpay event
@@ -144,6 +222,14 @@ export class RazorpayBillingProvider implements BillingProvider {
     if (!planId) {
       throw new PlanNotConfiguredError(params.planKey, params.interval);
     }
+
+    // #992 — a plan with trialDays > 0 starts the subscription with the first
+    // charge deferred: Razorpay's `start_at` (epoch seconds) pushes the first
+    // billing to that instant, and the subscription reports `trialing` until
+    // then. The trial end IS that start instant. 0 (or absent) = charge now.
+    const trialDays = params.trialDays ?? 0;
+    const trialEndsAt = trialDays > 0 ? new Date(Date.now() + trialDays * DAY_MS) : null;
+
     const subscription = await this.client.createSubscription({
       planId,
       totalCount: TOTAL_CYCLES,
@@ -151,18 +237,88 @@ export class RazorpayBillingProvider implements BillingProvider {
       // local row is written can still be tied back to the workspace.
       notes: { workspaceId: params.workspaceId, planKey: params.planKey, interval: params.interval },
       customerEmail: params.customerEmail,
+      // #992 — the coupon's provider offer, when a coupon was applied. The
+      // service only passes an id for a validated + recorded coupon.
+      offerId: params.offerId,
+      // #992 — defer the first charge for a trial; omit for an immediate charge.
+      startAt: trialEndsAt ? Math.floor(trialEndsAt.getTime() / 1000) : undefined,
+      requiresCard: params.trialRequiresCard,
     });
     // keyId is non-null here: enabled gates the route, so createCheckout is only
     // reached when all three credentials are present.
-    return { subscriptionId: subscription.id, keyId: this.config.keyId! };
+    return { subscriptionId: subscription.id, keyId: this.config.keyId!, trialEndsAt };
   }
 
   async cancel(providerSubscriptionId: string, atPeriodEnd: boolean): Promise<void> {
     await this.client.cancelSubscription(providerSubscriptionId, atPeriodEnd);
   }
 
+  /** #988 — the configured provider plan id for a (key, interval), or null. The
+   *  free identifier resolvePlanId is the billing-plans helper (imported); this
+   *  method is reached via the interface as `provider.resolvePlanId(...)`. */
+  resolvePlanId(
+    planKey: import("@snapurl/contract").PaidPlanKey,
+    interval: import("@snapurl/contract").BillingInterval,
+  ): string | null {
+    return resolvePlanId(this.config.planIds, planKey, interval) ?? null;
+  }
+
+  async updateSubscription(params: import("./billing-provider.js").UpdateSubscriptionParams): Promise<void> {
+    const planId = resolvePlanId(this.config.planIds, params.planKey, params.interval);
+    if (!planId) {
+      // The target plan has no configured provider id — same clean failure as
+      // a checkout for an unconfigured plan, not a provider error.
+      throw new PlanNotConfiguredError(params.planKey, params.interval);
+    }
+    await this.client.updateSubscription(params.providerSubscriptionId, {
+      planId,
+      // "now" prorates an upgrade; "cycle_end" defers a downgrade to the period
+      // boundary so the owner keeps what they paid for.
+      scheduleChangeAt: params.when === "now" ? "now" : "cycle_end",
+    });
+  }
+
+  async listInvoices(providerSubscriptionId: string): Promise<import("./billing-provider.js").ProviderInvoice[]> {
+    const raw = await this.client.listInvoices(providerSubscriptionId);
+    return raw.map(mapInvoice);
+  }
+
   async refund(providerPaymentId: string): Promise<void> {
     await this.client.refundPayment(providerPaymentId);
+  }
+
+  /**
+   * #992 §5 — push billing details to the Razorpay customer so its invoices
+   * carry the company name, GSTIN and address. Best-effort: a client that does
+   * not implement updateCustomer (or a workspace with no provider customer/
+   * subscription to attach to) is a no-op — the SnapURL record is already the
+   * source of truth and the owner's edit has already landed there.
+   */
+  async syncBillingDetails(
+    params: import("./billing-provider.js").SyncBillingDetailsParams,
+  ): Promise<void> {
+    if (!this.client.updateCustomer) return;
+    // Nothing to attach to: no provider customer and no subscription.
+    if (!params.providerCustomerId && !params.providerSubscriptionId) return;
+    await this.client.updateCustomer({
+      customerId: params.providerCustomerId,
+      subscriptionId: params.providerSubscriptionId,
+      name: params.companyName,
+      email: params.billingEmail,
+      // Razorpay carries an Indian business's GSTIN on the customer; a generic
+      // tax id goes in the same field for a non-Indian customer.
+      gstin: params.taxId,
+      address: params.address
+        ? {
+            line1: params.address.line1,
+            line2: params.address.line2,
+            city: params.address.city,
+            state: params.address.state,
+            zipcode: params.address.postalCode,
+            country: params.address.country,
+          }
+        : null,
+    });
   }
 
   /**
@@ -215,18 +371,66 @@ export class RazorpayBillingProvider implements BillingProvider {
     const currentEnd = entity?.current_end;
     const currentPeriodEnd = typeof currentEnd === "number" ? new Date(currentEnd * 1000) : null;
 
+    // #992 — a subscription in its trial window (entity authenticated + a future
+    // first charge) is `trialing`, an entitled state, regardless of the event
+    // type that carried it. Fall back to the event-type status otherwise. This
+    // is the ONLY place a trial becomes entitled — via a verified webhook, never
+    // a local write.
+    const status = trialStatusFromEntity(entity, new Date()) ?? statusForEvent(eventType);
+
     return {
       // Razorpay delivers the event id in the body's `id` and in the
       // x-razorpay-event-id header; the body id is the canonical one.
       eventId: readEventId(raw),
       eventType,
       providerSubscriptionId: entity && typeof entity.id === "string" ? entity.id : null,
-      status: statusForEvent(eventType),
+      // #988 — the plan id the subscription is on as of this event, so the
+      // service can confirm a requested plan change against the provider's own
+      // view rather than trusting a locally-written target.
+      providerPlanId: entity && typeof entity.plan_id === "string" ? entity.plan_id : null,
+      status,
       currentPeriodEnd,
       payment: readPayment(raw),
       raw,
     };
   }
+}
+
+/* #988 — normalise a Razorpay invoice status to the contract's closed set. The
+ *  provider reports a wider vocabulary; map the ones that carry money meaning
+ *  and fall back to `issued` (a raised-but-not-paid invoice) for anything we do
+ *  not specifically recognise, so an unexpected value is shown honestly rather
+ *  than dropped. */
+function normaliseInvoiceStatus(status: string | undefined): import("./billing-provider.js").ProviderInvoice["status"] {
+  switch (status) {
+    case "paid":
+      return "paid";
+    case "partially_paid":
+      return "partially_paid";
+    case "cancelled":
+      return "cancelled";
+    case "expired":
+      return "expired";
+    case "issued":
+    default:
+      return "issued";
+  }
+}
+
+/* #988 — map a raw Razorpay invoice entity to the provider-neutral shape,
+ *  defensively: a missing id becomes an empty string the service can skip, a
+ *  missing amount becomes 0, and the currency is upper-cased to the ISO form
+ *  the contract requires. `short_url` is the provider's download link. */
+function mapInvoice(e: RazorpayInvoiceEntity): import("./billing-provider.js").ProviderInvoice {
+  return {
+    id: typeof e.id === "string" ? e.id : "",
+    number: typeof e.invoice_number === "string" ? e.invoice_number : null,
+    status: normaliseInvoiceStatus(e.status),
+    amount: typeof e.amount === "number" && Number.isFinite(e.amount) ? Math.max(0, Math.trunc(e.amount)) : 0,
+    currency: typeof e.currency === "string" && e.currency !== "" ? e.currency.toUpperCase() : "INR",
+    issuedAt: typeof e.issued_at === "number" ? e.issued_at : typeof e.date === "number" ? e.date : 0,
+    pdfUrl: typeof e.short_url === "string" && e.short_url !== "" ? e.short_url : null,
+  };
 }
 
 /** The event's own id from the verified body, or a deterministic fallback so a

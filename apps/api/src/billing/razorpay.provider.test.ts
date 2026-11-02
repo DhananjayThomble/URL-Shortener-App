@@ -4,6 +4,7 @@ import {
   PlanNotConfiguredError,
   RazorpayBillingProvider,
   statusForEvent,
+  trialStatusFromEntity,
   type RazorpayClient,
 } from "./razorpay.provider.js";
 import { parsePlanIds } from "./billing-plans.js";
@@ -33,6 +34,8 @@ function makeProvider(client?: Partial<RazorpayClient>, planIds = "pro:monthly=p
   const fakeClient: RazorpayClient = {
     createSubscription: vi.fn(async () => ({ id: "sub_fake_created" })),
     cancelSubscription: vi.fn(async () => {}),
+    updateSubscription: vi.fn(async () => {}),
+    listInvoices: vi.fn(async () => []),
     refundPayment: vi.fn(async () => {}),
     ...client,
   };
@@ -152,6 +155,30 @@ describe("statusForEvent — event type → lifecycle status", () => {
   });
 });
 
+describe("#992 — trialStatusFromEntity: the provider's trial window → trialing", () => {
+  const now = new Date("2026-06-01T00:00:00.000Z");
+  const futureChargeAt = Math.floor(new Date("2026-06-15T00:00:00.000Z").getTime() / 1000);
+  const pastChargeAt = Math.floor(new Date("2026-05-15T00:00:00.000Z").getTime() / 1000);
+
+  it("is trialing when the entity is authenticated with a FUTURE first charge", () => {
+    expect(trialStatusFromEntity({ status: "authenticated", charge_at: futureChargeAt }, now)).toBe("trialing");
+  });
+
+  it("is NOT trialing once the first charge is in the past (trial ended)", () => {
+    expect(trialStatusFromEntity({ status: "authenticated", charge_at: pastChargeAt }, now)).toBeNull();
+  });
+
+  it("is NOT trialing for an active or non-authenticated entity", () => {
+    expect(trialStatusFromEntity({ status: "active", charge_at: futureChargeAt }, now)).toBeNull();
+    expect(trialStatusFromEntity({ status: "halted", charge_at: futureChargeAt }, now)).toBeNull();
+  });
+
+  it("is null without a charge_at, or for a null entity", () => {
+    expect(trialStatusFromEntity({ status: "authenticated" }, now)).toBeNull();
+    expect(trialStatusFromEntity(null, now)).toBeNull();
+  });
+});
+
 describe("RazorpayBillingProvider — checkout, enabled, and errors", () => {
   it("is enabled only when all three credentials are present", () => {
     const { provider } = makeProvider();
@@ -171,10 +198,49 @@ describe("RazorpayBillingProvider — checkout, enabled, and errors", () => {
       workspaceId: "ws_1",
       customerEmail: "owner@example.com",
     });
-    expect(result).toEqual({ subscriptionId: "sub_fake_created", keyId: FAKE_KEY_ID });
+    // #992 — a plain checkout (no trial) returns a null trialEndsAt and never
+    // passes start_at/offer_id to the client.
+    expect(result).toEqual({ subscriptionId: "sub_fake_created", keyId: FAKE_KEY_ID, trialEndsAt: null });
     expect(fakeClient.createSubscription).toHaveBeenCalledWith(
       expect.objectContaining({ planId: "plan_fake_pro_m", notes: expect.objectContaining({ workspaceId: "ws_1" }) }),
     );
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.startAt).toBeUndefined();
+    expect(call.offerId).toBeUndefined();
+  });
+
+  it("#992 — a trial plan defers the first charge: start_at ≈ now + trialDays and trialEndsAt returned", async () => {
+    const { provider, fakeClient } = makeProvider();
+    const before = Date.now();
+    const result = await provider.createCheckout({
+      planKey: "pro",
+      interval: "monthly",
+      workspaceId: "ws_1",
+      customerEmail: "owner@example.com",
+      trialDays: 14,
+      trialRequiresCard: false,
+    });
+    const after = Date.now();
+    // trialEndsAt is ~14 days out, and start_at (epoch seconds) matches it.
+    const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    const end = result.trialEndsAt!.getTime();
+    expect(end).toBeGreaterThanOrEqual(before + fourteenDaysMs);
+    expect(end).toBeLessThanOrEqual(after + fourteenDaysMs);
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.startAt).toBe(Math.floor(end / 1000));
+  });
+
+  it("#992 — passes the coupon's offer id to the client when one is given", async () => {
+    const { provider, fakeClient } = makeProvider();
+    await provider.createCheckout({
+      planKey: "pro",
+      interval: "monthly",
+      workspaceId: "ws_1",
+      customerEmail: "owner@example.com",
+      offerId: "offer_abc123",
+    });
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.offerId).toBe("offer_abc123");
   });
 
   it("throws PlanNotConfiguredError for a plan with no configured id", async () => {
@@ -193,6 +259,91 @@ describe("RazorpayBillingProvider — checkout, enabled, and errors", () => {
   });
 });
 
+describe("#988 RazorpayBillingProvider.updateSubscription — plan change at the provider", () => {
+  it("resolves the target plan id and passes schedule_change_at=now for an upgrade", async () => {
+    const { provider, fakeClient } = makeProvider();
+    await provider.updateSubscription({
+      providerSubscriptionId: "sub_fake_created",
+      planKey: "pro",
+      interval: "yearly",
+      when: "now",
+    });
+    expect(fakeClient.updateSubscription).toHaveBeenCalledWith("sub_fake_created", {
+      planId: "plan_fake_pro_y",
+      scheduleChangeAt: "now",
+    });
+  });
+
+  it("passes schedule_change_at=cycle_end for a deferred (at_cycle_end) change", async () => {
+    const { provider, fakeClient } = makeProvider();
+    await provider.updateSubscription({
+      providerSubscriptionId: "sub_fake_created",
+      planKey: "pro",
+      interval: "monthly",
+      when: "at_cycle_end",
+    });
+    expect(fakeClient.updateSubscription).toHaveBeenCalledWith("sub_fake_created", {
+      planId: "plan_fake_pro_m",
+      scheduleChangeAt: "cycle_end",
+    });
+  });
+
+  it("throws PlanNotConfiguredError when the target plan has no configured id", async () => {
+    const { provider } = makeProvider();
+    await expect(
+      provider.updateSubscription({ providerSubscriptionId: "sub_fake_created", planKey: "team", interval: "monthly", when: "now" }),
+    ).rejects.toBeInstanceOf(PlanNotConfiguredError);
+  });
+});
+
+describe("#988 RazorpayBillingProvider.listInvoices — mapping the provider entities", () => {
+  it("maps a full invoice entity: upper-cases currency, truncates the amount, maps status, keeps short_url", async () => {
+    const { provider } = makeProvider({
+      listInvoices: vi.fn(async () => [
+        { id: "inv_1", invoice_number: "INV-9", status: "paid", amount: 50000, currency: "usd", issued_at: 1_700_000_000, short_url: "https://rzp.example/i/inv_1.pdf" },
+      ]),
+    });
+    const [inv] = await provider.listInvoices("sub_fake_created");
+    expect(inv).toEqual({
+      id: "inv_1",
+      number: "INV-9",
+      status: "paid",
+      amount: 50000,
+      currency: "USD",
+      issuedAt: 1_700_000_000,
+      pdfUrl: "https://rzp.example/i/inv_1.pdf",
+    });
+  });
+
+  it("is defensive about a sparse entity: missing id → empty string, missing number/url → null, unknown status → issued, missing amount → 0, missing currency → INR", async () => {
+    const { provider } = makeProvider({
+      listInvoices: vi.fn(async () => [{ status: "something_new", date: 1_650_000_000 }]),
+    });
+    const [inv] = await provider.listInvoices("sub_fake_created");
+    expect(inv).toEqual({
+      id: "",
+      number: null,
+      status: "issued", // unknown provider status falls back to issued, not dropped
+      amount: 0,
+      currency: "INR",
+      issuedAt: 1_650_000_000, // read from `date` when `issued_at` is absent
+      pdfUrl: null,
+    });
+  });
+
+  it("maps each non-paid status to its own value", async () => {
+    const { provider } = makeProvider({
+      listInvoices: vi.fn(async () => [
+        { id: "a", status: "partially_paid", amount: 1, currency: "INR", issued_at: 1 },
+        { id: "b", status: "cancelled", amount: 1, currency: "INR", issued_at: 1 },
+        { id: "c", status: "expired", amount: 1, currency: "INR", issued_at: 1 },
+      ]),
+    });
+    const got = (await provider.listInvoices("sub_fake_created")).map((i) => i.status);
+    expect(got).toEqual(["partially_paid", "cancelled", "expired"]);
+  });
+});
+
 describe("NoneBillingProvider — billing off", () => {
   it("is disabled and verifies nothing", () => {
     const none = new NoneBillingProvider();
@@ -207,6 +358,14 @@ describe("NoneBillingProvider — billing off", () => {
       none.createCheckout({ planKey: "pro", interval: "monthly", workspaceId: "w", customerEmail: "e" }),
     ).rejects.toThrow();
     await expect(none.cancel("s", true)).rejects.toThrow();
+    await expect(
+      none.updateSubscription({ providerSubscriptionId: "s", planKey: "pro", interval: "monthly", when: "now" }),
+    ).rejects.toThrow();
     await expect(none.refund("p")).rejects.toThrow();
+  });
+
+  it("#988 lists no invoices when billing is off (returns [], never throws)", async () => {
+    const none = new NoneBillingProvider();
+    expect(await none.listInvoices("sub_x")).toEqual([]);
   });
 });

@@ -37,27 +37,48 @@ import {
   type PlatformAnalytics,
   type PlatformSettings,
 } from "@snapurl/contract";
+import {
+  FeedbackListQuery,
+  UpdateFeedbackInput,
+  type FeedbackDetail,
+  type FeedbackPage,
+} from "@snapurl/contract";
+import {
+  CreateCouponInput,
+  SetCouponPausedInput,
+  type CouponList,
+  type CouponRedemptionList,
+  type CouponView,
+} from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { AdminGuard, Admin, AdminRequestIp } from "./admin.guard.js";
 import type { AdminIdentity } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
+import { AdminFeedbackService } from "./admin.feedback.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { AdminBillingService } from "./billing/admin-billing.service.js";
+import { AdminCouponsService } from "./billing/admin-coupons.service.js";
 import { PlatformSettingsService } from "./platform-settings.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
 import {
+  AdminPlanChangeInput,
   CreatePlanInput,
   MigrateWorkspaceVersionInput,
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
   UpdatePlanPricesInput,
+  type AdminPlanChangeResult,
   type OverrideView,
+  type PlanHistoryList,
   type PlanList,
   type PlanView,
 } from "@snapurl/contract";
+import { PlanManagementService } from "../plans/plan-management.service.js";
+import { BillingDetailsService } from "../billing/billing-details.service.js";
+import type { BillingDetails } from "@snapurl/contract";
 
 /* ============================================================
    #968 + #974 + #969 + #971 + #973 — the platform-admin API surface (/api/v1/admin/*).
@@ -77,11 +98,15 @@ export class AdminController {
   constructor(
     private readonly health: AdminHealthService,
     private readonly moderation: AdminModerationService,
+    private readonly feedback: AdminFeedbackService,
     private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
     private readonly adminBilling: AdminBillingService,
+    private readonly adminCoupons: AdminCouponsService,
     private readonly settings: PlatformSettingsService,
     private readonly plansAdmin: PlansAdminService,
+    private readonly planManagement: PlanManagementService,
+    private readonly billingDetails: BillingDetailsService,
   ) {}
 
   /** Who the caller is, confirmed as a platform admin. The client uses a 200
@@ -310,6 +335,39 @@ export class AdminController {
     await this.plansAdmin.migrateWorkspaceVersion(id, input, actor(admin, ip));
   }
 
+  /* ── admin plan change + plan history (#992) ── */
+
+  /** #992 §1 (PR-A) — move a workspace's plan: immediately as a comp (grant
+   *  without payment, optional revert date) or at the end of the current period.
+   *  A reason is required; the change is audited and lands in the workspace's
+   *  plan history. Refused with 409 when a live provider subscription owns the
+   *  plan (needs the provider-backed path, PR-C). A real prorated charge is PR-C. */
+  @Post("workspaces/:id/plan-change")
+  changeWorkspacePlan(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(AdminPlanChangeInput)) input: AdminPlanChangeInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminPlanChangeResult> {
+    return this.planManagement.adminChangePlan(id, input, actor(admin, ip));
+  }
+
+  /** #992 §7 — a workspace's plan history: every change, comp, payment, refund
+   *  and cancellation, newest first. */
+  @Get("workspaces/:id/plan-history")
+  workspacePlanHistory(@Param("id", ParseUUIDPipe) id: string): Promise<PlanHistoryList> {
+    return this.planManagement.history(id);
+  }
+
+  /** #992 §5 — VIEW a workspace's billing details (company, tax id/GSTIN,
+   *  address, billing email). A read (no audit). The owner edits them through
+   *  the owner-facing billing surface; the admin only views. An all-null record
+   *  when the workspace has entered none. */
+  @Get("workspaces/:id/billing-details")
+  workspaceBillingDetails(@Param("id", ParseUUIDPipe) id: string): Promise<BillingDetails> {
+    return this.billingDetails.get(id);
+  }
+
   /* ── system health and operations (#974) ── */
 
   /** The state of the api, database, redirect edge and background worker. */
@@ -448,6 +506,33 @@ export class AdminController {
     return this.moderation.customDomains();
   }
 
+  /* ---- #997 "Report a problem" feedback inbox ---- */
+
+  /** The feedback inbox, newest first, optionally filtered by status. A read
+   *  (no audit). The list omits the screenshot blob and reports only whether
+   *  one is attached. */
+  @Get("feedback")
+  listFeedback(@Query(zodQuery(FeedbackListQuery)) q: FeedbackListQuery): Promise<FeedbackPage> {
+    return this.feedback.list(q);
+  }
+
+  /** One feedback report in full, including its screenshot data URL. A read. */
+  @Get("feedback/:id")
+  getFeedback(@Param("id", ParseUUIDPipe) id: string): Promise<FeedbackDetail> {
+    return this.feedback.get(id);
+  }
+
+  /** Move a report's status and/or set operator notes. Audited. */
+  @Patch("feedback/:id")
+  updateFeedback(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(UpdateFeedbackInput)) input: UpdateFeedbackInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<FeedbackDetail> {
+    return this.feedback.update(id, input, admin, ip);
+  }
+
   /* ---- #973 platform-wide analytics ---- */
 
   /** #973 — platform-wide analytics: growth, usage, business, email and abuse
@@ -515,6 +600,56 @@ export class AdminController {
     @AdminRequestIp() ip: string | null,
   ): Promise<AdminRefundResult> {
     return this.adminBilling.refund(id, input.reason, actor(admin, ip));
+  }
+
+  /* ---- #992 coupons: create, list, pause/resume, delete, redemptions ---- */
+
+  /** Every coupon, newest first, each with its live redemption count. A read
+   *  (no audit). */
+  @Get("coupons")
+  listCoupons(): Promise<CouponList> {
+    return this.adminCoupons.list();
+  }
+
+  /** Create a coupon. Admin-only (guard) and AUDITED. A duplicate code is a
+   *  409 (the unique index, mapped by the Postgres-error filter). */
+  @Post("coupons")
+  createCoupon(
+    @Body(zodBody(CreateCouponInput)) input: CreateCouponInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<CouponView> {
+    return this.adminCoupons.create(input, actor(admin, ip));
+  }
+
+  /** Pause or resume a coupon (no new redemptions while paused; past ones keep
+   *  running). Admin-only and AUDITED. */
+  @Post("coupons/:id/pause")
+  setCouponPaused(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(SetCouponPausedInput)) input: SetCouponPausedInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<CouponView> {
+    return this.adminCoupons.setPaused(id, input.paused, actor(admin, ip));
+  }
+
+  /** Delete a coupon (its redemptions cascade). Admin-only and AUDITED. */
+  @Delete("coupons/:id")
+  @HttpCode(200)
+  async deleteCoupon(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.adminCoupons.remove(id, actor(admin, ip));
+    return { id, action: "delete", ok: true };
+  }
+
+  /** The redemptions of one coupon, newest first. A read (no audit). */
+  @Get("coupons/:id/redemptions")
+  couponRedemptions(@Param("id", ParseUUIDPipe) id: string): Promise<CouponRedemptionList> {
+    return this.adminCoupons.redemptions(id);
   }
 }
 
