@@ -30,6 +30,7 @@ import { DynamoProjection } from "./jobs/dynamo-projection.js";
 import { KvsWriter } from "./jobs/kvs-projection.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 import { emitBacklogMetrics } from "./jobs/backlog-metrics.js";
+import { applyDuePlanChanges } from "./jobs/plan-changes.js";
 
 /* ============================================================
    The worker.
@@ -356,7 +357,7 @@ export async function runMaintenance(database: Database) {
   const failed: string[] = [];
   /** Kept next to the calls below so the all-failed check cannot drift from the
    *  number of jobs actually run. */
-  const MAINTENANCE_JOB_COUNT = 8;
+  const MAINTENANCE_JOB_COUNT = 9;
 
   /** Run one maintenance job without letting it take the others down.
    *
@@ -400,6 +401,13 @@ export async function runMaintenance(database: Database) {
   const outbox = await step("pruneOutbox", () => pruneOutbox(database), 0);
   const deliveries = await step("pruneDeliveries", () => pruneDeliveries(database), 0);
   const stuck = await step("stuckProjections", () => stuckProjections(database), 0);
+
+  /* #992 — apply plan changes whose effectiveAt has passed: period-end
+     downgrades/changes and comp reverts. Hourly is fine — these are dated to a
+     period end or a comp end date, not a per-second signal — and the sweep is
+     idempotent, so a missed pass simply applies on the next one. Isolated like
+     every sibling: a failure costs this job, not the privacy jobs. */
+  const planChanges = await step("applyDuePlanChanges", () => applyDuePlanChanges(database), 0);
 
   /* #996: lift the projection-outbox and webhook backlog ROW COUNTS out to
      CloudWatch as an EMF metric line, so the launch-readiness alarms can watch
@@ -468,6 +476,9 @@ export async function runMaintenance(database: Database) {
       ...(partitions.declined > 0 ? { partitionsDeclined: partitions.declined } : {}),
       outboxPruned: outbox,
       deliveriesPruned: deliveries,
+      /* #992: present only when a scheduled plan change actually applied, so an
+         ordinary pass with nothing due stays quiet. */
+      ...(planChanges > 0 ? { planChangesApplied: planChanges } : {}),
       /* #996: the backlog counts emitted to CloudWatch this pass, present only
          when the metric is actually being emitted (BACKLOG_METRICS_NAMESPACE
          set, i.e. the AWS worker). Null on every other profile, so the ordinary
@@ -521,7 +532,7 @@ export async function runMaintenance(database: Database) {
     );
   }
 
-  return { partitions, expired, salts, pruned, outbox, deliveries, stuck, backlog, failed };
+  return { partitions, expired, salts, pruned, outbox, deliveries, stuck, planChanges, backlog, failed };
 }
 
 /** Guard against a slow pass overlapping the next tick. */
