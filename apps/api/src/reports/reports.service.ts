@@ -1,9 +1,25 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { abuseReports, and, desc, domains, eq, links, projectionOutbox, sql, type Database } from "@snapurl/database";
+import {
+  abuseReports,
+  and,
+  desc,
+  domains,
+  eq,
+  links,
+  memberships,
+  projectionOutbox,
+  sql,
+  users,
+  workspaces,
+  writeAdminAuditEntry,
+  type Database,
+} from "@snapurl/database";
 import type { AbuseReport, SubmitReportInput, SubmitReportResult, UpdateAbuseReportInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { ENV, type Env } from "../config/env.js";
 import { recordActivity, type Actor } from "../common/activity.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
+import { MailService } from "../mail/mail.service.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
 
 type AbuseReportRow = typeof abuseReports.$inferSelect;
@@ -12,8 +28,10 @@ type AbuseReportRow = typeof abuseReports.$inferSelect;
 export class ReportsService {
   constructor(
     @Inject(DB) private readonly db: Database,
+    @Inject(ENV) private readonly env: Env,
     private readonly cacheBust: LinkCacheBustService,
     private readonly projectionNudge: ProjectionNudgeService,
+    private readonly mail: MailService,
   ) {}
   private readonly logger = new Logger(ReportsService.name);
 
@@ -73,7 +91,172 @@ export class ReportsService {
       status: "open",
     });
 
+    /* #994 point 3 — auto-quarantine. A report that resolved to a real link may
+       have just pushed it over the threshold; check and, if so, disable it.
+       Only resolved reports count — an unresolved slug has no link to disable.
+       Kept OUT of the insert's own path's response: the public endpoint still
+       answers { ok: true } unconditionally and never reveals whether the link
+       exists or was disabled (the non-oracle guarantee, #308). A failure here
+       must not fail the intake, so it is logged and swallowed. */
+    if (link) {
+      try {
+        await this.maybeQuarantine(link.id);
+      } catch (err) {
+        this.logger.error({ err, linkId: link.id }, "auto-quarantine check failed");
+      }
+    }
+
     return { ok: true };
+  }
+
+  /* #994 point 3 — the abuse-report threshold.
+
+     The number of DISTINCT abuse reports standing against a link that disable
+     it automatically. "Distinct" is two things: dismissed reports do not count
+     (an operator looked and said it was not abuse), and repeat reports from the
+     same contact collapse to one, so a single person cannot quarantine a link
+     by reporting it N times. Anonymous reports (no contact) each count as one —
+     we cannot tell them apart and must not assume they are the same person.
+
+     Set ABUSE_QUARANTINE_THRESHOLD=0 to turn this off: manual review via the
+     admin queue still works, nothing is auto-disabled. */
+  private async distinctReportCount(linkId: string): Promise<number> {
+    /* Distinct non-dismissed reporters: every anonymous report counts
+       individually (grouped by its own id), and reports sharing a lower-cased
+       contact collapse to one. COUNT(DISTINCT …) over that key. */
+    const [row] = await this.db
+      .select({
+        count: sql<number>`count(distinct coalesce(lower(${abuseReports.reporterContact}), ${abuseReports.id}::text))::int`,
+      })
+      .from(abuseReports)
+      .where(and(eq(abuseReports.linkId, linkId), sql`${abuseReports.status} <> 'dismissed'`));
+    return row?.count ?? 0;
+  }
+
+  /**
+   * Disable a link that has reached the abuse-report threshold, pending admin
+   * review (#994 point 3), and notify its owner.
+   *
+   * Idempotent and safe to call on every resolved report: it no-ops when
+   * auto-quarantine is off, when the link is below threshold, or when the link
+   * is already disabled (the UPDATE is guarded on disabled_at IS NULL, so a
+   * link disabled by an earlier report or by an admin is never re-disabled,
+   * re-audited or re-notified).
+   *
+   * The disable goes through the exact same path admin disable does (#971): set
+   * disabled_at, enqueue a projection 'upsert' in the SAME transaction and
+   * nudge the worker, then bust the redirect's hot cache after commit — so the
+   * link stops resolving at the edge within the projection window. A platform
+   * audit row is written in the transaction with a null actor (no human did
+   * this) and a system label, so the action is traceable.
+   */
+  private async maybeQuarantine(linkId: string): Promise<void> {
+    const threshold = this.env.ABUSE_QUARANTINE_THRESHOLD;
+    if (threshold <= 0) return;
+
+    const count = await this.distinctReportCount(linkId);
+    if (count < threshold) return;
+
+    const result = await this.db.transaction(async (tx) => {
+      // Guarded on disabled_at IS NULL: a link an admin or an earlier report
+      // already disabled matches zero rows, so everything below is skipped.
+      const disabled = await tx
+        .update(links)
+        .set({ disabledAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(links.id, linkId), sql`${links.disabledAt} is null`))
+        .returning({ id: links.id, slug: links.slug, domainId: links.domainId, destination: links.destination, workspaceId: links.workspaceId });
+      if (disabled.length === 0) return null;
+      const row = disabled[0]!;
+
+      await tx.insert(projectionOutbox).values({
+        linkId: row.id,
+        operation: "upsert",
+        payload: { linkId: row.id, operation: "upsert" },
+      });
+      this.projectionNudge.nudge();
+
+      const [domainRow] = await tx
+        .select({ domain: domains.domain })
+        .from(domains)
+        .where(eq(domains.id, row.domainId))
+        .limit(1);
+
+      await writeAdminAuditEntry(tx, {
+        // No human performed this — it is an automated policy action. A null
+        // actorId with a system label keeps the trail honest and searchable.
+        actorId: null,
+        actorLabel: "system:auto-quarantine",
+        action: "admin.link.disable",
+        targetType: "link",
+        targetId: row.id,
+        before: { disabled: false },
+        after: { disabled: true, reason: "auto-quarantine", distinctReports: count, threshold },
+        requestIp: null,
+      });
+
+      return { ...row, domain: domainRow?.domain ?? null };
+    });
+
+    if (!result) return;
+
+    // Edge + owner notification happen after commit, never inside the
+    // transaction — the link is disabled by now, so a slow cache bust or a mail
+    // failure must not undo it.
+    if (result.domain) {
+      await this.cacheBust.bust(result.domain, result.slug);
+    }
+    await this.notifyOwner(result.workspaceId, result.domain, result.slug, result.destination);
+  }
+
+  /* Tell the link's owner it was auto-disabled. The recipients are the
+     workspace's active OWNER members (every owner, so a shared workspace is
+     covered) falling back to the link's creator — resolved from the DB, never
+     from a reporter's contact. Best-effort: a missing address or a mail-send
+     failure is logged, not thrown, so it never fails the intake. */
+  private async notifyOwner(
+    workspaceId: string | null,
+    domain: string | null,
+    slug: string,
+    destination: string,
+  ): Promise<void> {
+    if (!workspaceId || !domain) return;
+
+    const owners = await this.db
+      .select({ email: memberships.email })
+      .from(memberships)
+      .where(
+        and(eq(memberships.workspaceId, workspaceId), eq(memberships.role, "owner"), eq(memberships.status, "active")),
+      );
+
+    const recipients = new Set(owners.map((o) => o.email.trim().toLowerCase()).filter(Boolean));
+
+    // Fall back to the link's creator when the workspace has no owner row
+    // (older data, or an owner that has not yet been materialised).
+    if (recipients.size === 0) {
+      const [creator] = await this.db
+        .select({ email: users.email })
+        .from(links)
+        .innerJoin(users, eq(links.createdBy, users.id))
+        .innerJoin(domains, eq(links.domainId, domains.id))
+        .where(
+          and(
+            eq(links.workspaceId, workspaceId),
+            sql`lower(${domains.domain}) = ${domain.toLowerCase()}`,
+            eq(links.slug, slug),
+          ),
+        )
+        .limit(1);
+      if (creator?.email) recipients.add(creator.email.trim().toLowerCase());
+    }
+
+    const shortUrl = `${domain}/${slug}`;
+    for (const to of recipients) {
+      try {
+        await this.mail.sendLinkQuarantined({ to, shortUrl, destination });
+      } catch (err) {
+        this.logger.error({ err, to, shortUrl }, "failed to notify owner of auto-quarantine");
+      }
+    }
   }
 
   /* ---------------- operator-side (authed, workspace-scoped) ---------------- */
