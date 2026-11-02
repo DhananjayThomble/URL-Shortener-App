@@ -82,13 +82,25 @@ export class KillSwitchCapError extends ForbiddenException {
 export class KillSwitchService {
   private readonly logger = new Logger(KillSwitchService.name);
 
+  /** #1020↔#995 — how the errorTracking switch reaches the telemetry sampling
+   *  controller. A plain FIELD with a default (NOT a constructor parameter):
+   *  under `nest build` (tsc + emitDecoratorMetadata) Nest resolves every ctor
+   *  param by its reflected type, and an ErrorTrackingSync is a Function, not a
+   *  provider — so making it a ctor param reds DI with UnknownDependencies at
+   *  app bootstrap (the compose/stack harness caught this). A test swaps it via
+   *  setErrorTrackingSyncForTesting. */
+  private errorTrackingSync: ErrorTrackingSync = liveErrorTrackingSync;
+
   constructor(
     private readonly settings: PlatformSettingsService,
     @Inject(DB) private readonly db: Database,
-    /** #1020↔#995 — how the errorTracking switch reaches the telemetry sampling
-     *  controller. Defaults to the live push; a unit test injects a spy. */
-    private readonly errorTrackingSync: ErrorTrackingSync = liveErrorTrackingSync,
   ) {}
+
+  /** Test-only: replace the telemetry sync so a test can assert what the
+   *  errorTracking switch pushes without the live telemetry singleton. */
+  setErrorTrackingSyncForTesting(sync: ErrorTrackingSync): void {
+    this.errorTrackingSync = sync;
+  }
 
   /** The runtime cache window in ms, surfaced so the admin view can show the
    *  effective state's TTL. */

@@ -213,9 +213,8 @@ describe("errorTracking → telemetry SamplingController", () => {
       errorsSampleRate: 1, // env ceiling: a cap can only lower this
       tracesSampleRate: 0,
     });
-    const svc = new KillSwitchService(settingsStub({ switches }), dbStub(0), (controls) =>
-      controller.setRuntimeControls(controls),
-    );
+    const svc = new KillSwitchService(settingsStub({ switches }), dbStub(0));
+    svc.setErrorTrackingSyncForTesting((controls) => controller.setRuntimeControls(controls));
     return { controller, svc };
   }
 
@@ -245,16 +244,16 @@ describe("errorTracking → telemetry SamplingController", () => {
     const switches = structuredClone(DEFAULT_KILL_SWITCHES);
     switches.errorTracking = { on: true, errorCaps: { sampleRate: 1 } };
     const controller = new SamplingController({ dsnConfigured: true, errorsSampleRate: 0.3, tracesSampleRate: 0 });
-    const svc = new KillSwitchService(settingsStub({ switches }), dbStub(0), (c) =>
-      controller.setRuntimeControls(c),
-    );
+    const svc = new KillSwitchService(settingsStub({ switches }), dbStub(0));
+    svc.setErrorTrackingSyncForTesting((c) => controller.setRuntimeControls(c));
     await svc.current();
     // env 0.3, cap 1 => min(0.3, 1) = 0.3, not raised.
     expect(controller.sampleRate()).toBeCloseTo(0.3, 10);
   });
 
   it("a telemetry sync failure never breaks a settings read", async () => {
-    const svc = new KillSwitchService(settingsStub({}), dbStub(0), () => {
+    const svc = new KillSwitchService(settingsStub({}), dbStub(0));
+    svc.setErrorTrackingSyncForTesting(() => {
       throw new Error("telemetry down");
     });
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
