@@ -109,6 +109,13 @@ export const EnvSchema = z.object({
       Optional so nothing else changes. */
   MAIL_OUTBOX_DIR: z.string().optional(),
   MAIL_FROM: z.string().default("SnapURL <no-reply@snapurl.local>"),
+  /* #997 — where the "Report a problem" operator email for each new feedback
+     report is sent. Optional: when unset the notification falls back to the
+     first PLATFORM_ADMIN_EMAILS entry, and if that is empty too no email is
+     sent (the row is still stored and shown in the admin inbox). An explicit
+     address here lets a deployment route feedback to a support inbox that is
+     not a platform-admin login. */
+  FEEDBACK_NOTIFY_EMAIL: z.string().optional(),
   /** The AWS region for SES calls (the platform-analytics email figures and,
       implicitly, SendEmail). On Lambda the runtime sets AWS_REGION and the SDK
       reads it by default; this lets the SES reader pin it explicitly (the stack

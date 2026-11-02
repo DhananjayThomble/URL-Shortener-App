@@ -1,11 +1,20 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Req } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { SubmitFormInput, SubmitReportInput, UnlockLinkInput, type PlatformBanner, type PricingTable } from "@snapurl/contract";
+import type { FastifyRequest } from "fastify";
+import {
+  SubmitFeedbackInput,
+  SubmitFormInput,
+  SubmitReportInput,
+  UnlockLinkInput,
+  type PlatformBanner,
+  type PricingTable,
+} from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Public } from "../auth/auth.guard.js";
 import { PublicService } from "./public.service.js";
 import { FormsService } from "../forms/forms.service.js";
 import { ReportsService } from "../reports/reports.service.js";
+import { FeedbackService } from "../feedback/feedback.service.js";
 import { BioPagesService } from "../bio-pages/bio-pages.service.js";
 import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 import { PlansService } from "../plans/plans.service.js";
@@ -19,6 +28,7 @@ export class PublicController {
     private readonly publicService: PublicService,
     private readonly forms: FormsService,
     private readonly reports: ReportsService,
+    private readonly feedback: FeedbackService,
     private readonly bio: BioPagesService,
     private readonly settings: PlatformSettingsService,
     private readonly plans: PlansService,
@@ -198,5 +208,28 @@ export class PublicController {
     @Query("host") host?: string,
   ) {
     return this.reports.submitReport(slug, input, host);
+  }
+
+  /* #997 — the in-app "Report a problem" intake. @Public, so it works for a
+     signed-out visitor on a public page (error pages, the unlock/preview pages)
+     exactly as the issue requires; a signed-in user's account context is
+     attached server-side from their session, never from the body (see
+     FeedbackService.resolveSubmitter).
+
+     10/min per trustworthy client IP — the same bound as the form-submit and
+     abuse-report writes above, and for the same reason: it is an
+     unauthenticated write, so an unlimited path is a spam-and-DB-bloat vector.
+     The body may carry a bounded screenshot (validated for type and size by the
+     contract and again stored as-is), so the payload is capped at the schema
+     level; ten a minute is far more than a person filing a report and far less
+     than a script is worth writing. */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post("feedback")
+  @HttpCode(200)
+  submitFeedback(@Body(zodBody(SubmitFeedbackInput)) input: SubmitFeedbackInput, @Req() req: FastifyRequest) {
+    const authorization = req.headers?.authorization;
+    const userAgent = typeof req.headers?.["user-agent"] === "string" ? req.headers["user-agent"] : undefined;
+    return this.feedback.submit(input, authorization, userAgent);
   }
 }
