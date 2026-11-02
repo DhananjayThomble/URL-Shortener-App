@@ -11,10 +11,17 @@ import {
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyRequest } from "fastify";
-import { StartCheckoutInput, type CheckoutSession, type WorkspaceSubscription } from "@snapurl/contract";
+import {
+  CancelSubscriptionInput,
+  ChangePlanInput,
+  StartCheckoutInput,
+  type BillingInvoice,
+  type CheckoutSession,
+  type WorkspaceSubscription,
+} from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
-import { Actor, Public, type RequestActor } from "../auth/auth.guard.js";
-import { BillingService } from "./billing.service.js";
+import { Actor, Public, Roles, type RequestActor } from "../auth/auth.guard.js";
+import { BillingService, NoActiveSubscriptionError, SamePlanError } from "./billing.service.js";
 import { BillingEnabledGuard } from "./billing-enabled.guard.js";
 import { PlanNotConfiguredError } from "./razorpay.provider.js";
 
@@ -43,6 +50,12 @@ declare module "fastify" {
    ============================================================ */
 @Controller("billing")
 @UseGuards(BillingEnabledGuard)
+// #988 — billing is the WORKSPACE OWNER's to manage. @Roles("owner") on the
+// controller makes every session route here owner-only (admin/editor/viewer →
+// 403), which is the issue's "only workspace owners can see or change billing"
+// enforced structurally rather than per-route. The @Public webhook is exempt
+// from role checks (it has no session), so it is unaffected.
+@Roles("owner")
 export class BillingController {
   constructor(private readonly billing: BillingService) {}
 
@@ -65,6 +78,59 @@ export class BillingController {
   @Get("subscription")
   async currentSubscription(@Actor() actor: RequestActor): Promise<WorkspaceSubscription> {
     return this.billing.currentSubscription(actor.workspaceId);
+  }
+
+  /**
+   * #988 — the workspace's Razorpay-generated invoices, newest first. The
+   * amounts and the downloadable PDF links come straight from the provider;
+   * SnapURL stores no invoice document and no card data.
+   */
+  @Get("invoices")
+  async invoices(@Actor() actor: RequestActor): Promise<BillingInvoice[]> {
+    return this.billing.listInvoices(actor.workspaceId);
+  }
+
+  /**
+   * #988 — schedule the workspace's subscription to end. The plan does NOT move
+   * here: the provider's cancellation webhook, verified, is what lapses the
+   * workspace back to free. A 400 when there is no active subscription to cancel.
+   */
+  @Post("cancel")
+  async cancel(
+    @Actor() actor: RequestActor,
+    @Body(zodBody(CancelSubscriptionInput)) input: CancelSubscriptionInput,
+  ): Promise<WorkspaceSubscription> {
+    try {
+      return await this.billing.cancelSubscription(actor.workspaceId, input.atPeriodEnd);
+    } catch (err) {
+      if (err instanceof NoActiveSubscriptionError) throw new BadRequestException(err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * #988 — change the workspace between paid plans. An upgrade applies now
+   * (prorated); a downgrade defers to the cycle end. The server derives the
+   * timing from the plan ranking. The plan moves only on the verified webhook
+   * that follows. 400 on an unconfigured plan, the same plan, or no active sub.
+   */
+  @Post("change")
+  async change(
+    @Actor() actor: RequestActor,
+    @Body(zodBody(ChangePlanInput)) input: ChangePlanInput,
+  ): Promise<WorkspaceSubscription> {
+    try {
+      return await this.billing.changePlan(actor.workspaceId, input.planKey, input.interval);
+    } catch (err) {
+      if (
+        err instanceof PlanNotConfiguredError ||
+        err instanceof SamePlanError ||
+        err instanceof NoActiveSubscriptionError
+      ) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
   }
 
   /**

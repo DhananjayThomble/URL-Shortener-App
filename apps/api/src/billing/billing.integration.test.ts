@@ -89,6 +89,29 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     fakeClient = {
       createSubscription: vi.fn(async () => ({ id: `sub_${stamp}_${subSeq++}` })),
       cancelSubscription: vi.fn(async () => {}),
+      updateSubscription: vi.fn(async () => {}),
+      // #988 — a fixed two-invoice list, newest second so the service's sort is
+      // exercised (it must return newest first).
+      listInvoices: vi.fn(async () => [
+        {
+          id: "inv_old",
+          invoice_number: "INV-1",
+          status: "paid",
+          amount: 99900,
+          currency: "inr",
+          issued_at: 1_700_000_000,
+          short_url: "https://rzp.example/i/inv_old.pdf",
+        },
+        {
+          id: "inv_new",
+          invoice_number: "INV-2",
+          status: "issued",
+          amount: 199900,
+          currency: "INR",
+          issued_at: 1_800_000_000,
+          short_url: null,
+        },
+      ]),
       refundPayment: vi.fn(async () => {}),
     };
     const provider = new RazorpayBillingProvider(
@@ -96,7 +119,9 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
         keyId: FAKE_KEY_ID,
         keySecret: FAKE_KEY_SECRET,
         webhookSecret: FAKE_WEBHOOK_SECRET,
-        planIds: parsePlanIds("pro:monthly=plan_fake_pro_m"),
+        planIds: parsePlanIds(
+          "pro:monthly=plan_fake_pro_m,pro:yearly=plan_fake_pro_y,team:monthly=plan_fake_team_m,starter:monthly=plan_fake_starter_m",
+        ),
       },
       fakeClient,
     );
@@ -108,8 +133,9 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     // billing_events and subscriptions cascade on workspace delete; delete the
     // seeded workspaces and users explicitly (billing_events.workspace_id is
     // SET NULL, so clear those rows by the per-run stamp first).
-    await db.delete(billingEvents).where(eq(billingEvents.providerEventId, `evt_${stamp}_charged`));
-    await db.delete(billingEvents).where(eq(billingEvents.providerEventId, `evt_${stamp}_second`));
+    for (const suffix of ["charged", "second", "cancel", "upgrade", "downgrade", "same"]) {
+      await db.delete(billingEvents).where(eq(billingEvents.providerEventId, `evt_${stamp}_${suffix}`));
+    }
     for (const id of workspaceIds) await db.delete(workspaces).where(eq(workspaces.id, id));
     for (const id of userIds) await db.delete(users).where(eq(users.id, id));
     await handle.close();
@@ -203,5 +229,105 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     const off = new BillingService(db, new NoneBillingProvider());
     expect(off.enabled).toBe(false);
     expect(off.verifyWebhook("{}", "x")).toBeNull();
+  });
+
+  /* #988 — the owner-facing surface: invoices, cancel, change. Oracles are the
+     issue's acceptance lines, not the implementation:
+       - invoices are the provider's records, newest first, mapped to the wire
+         shape (minor-unit amount untouched, currency upper-cased, epoch → ISO);
+       - cancel asks the provider and records the pending flag, but does NOT move
+         the plan — only the verified webhook does;
+       - change asks the provider with the right timing (upgrade now, downgrade
+         at cycle end) and records the target, but again does NOT move the plan;
+       - the same plan / no active subscription are refused. */
+
+  it("#988 listInvoices returns the provider's invoices newest first, mapped to the wire shape", async () => {
+    const { workspaceId, email } = await seedWorkspace("invoices");
+    await service.startCheckout(workspaceId, email, "pro", "monthly");
+
+    const invoices = await service.listInvoices(workspaceId);
+    expect(invoices.map((i) => i.id)).toEqual(["inv_new", "inv_old"]); // newest first
+    const paid = invoices.find((i) => i.id === "inv_old")!;
+    expect(paid.amount).toBe(99900); // minor unit, untouched
+    expect(paid.currency).toBe("INR"); // upper-cased from "inr"
+    expect(paid.status).toBe("paid");
+    expect(paid.pdfUrl).toBe("https://rzp.example/i/inv_old.pdf");
+    expect(paid.createdAt).toBe(new Date(1_700_000_000 * 1000).toISOString());
+    // The issued one has no PDF yet — null, not dropped.
+    expect(invoices.find((i) => i.id === "inv_new")!.pdfUrl).toBeNull();
+  });
+
+  it("#988 listInvoices is an empty list for a workspace with no subscription row", async () => {
+    const { workspaceId } = await seedWorkspace("noinvoices");
+    expect(await service.listInvoices(workspaceId)).toEqual([]);
+  });
+
+  it("#988 cancel asks the provider and sets cancelAtPeriodEnd, but does NOT lapse the plan", async () => {
+    const { workspaceId, email } = await seedWorkspace("cancel");
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    // Activate it via a verified webhook so there is an active sub to cancel.
+    const body = chargedEvent(`evt_${stamp}_cancel`, session.subscriptionId);
+    await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
+
+    const before = (fakeClient.cancelSubscription as ReturnType<typeof vi.fn>).mock.calls.length;
+    const sub = await service.cancelSubscription(workspaceId, true);
+    expect((fakeClient.cancelSubscription as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 1);
+    expect((fakeClient.cancelSubscription as ReturnType<typeof vi.fn>).mock.calls.at(-1)).toEqual([
+      session.subscriptionId,
+      true,
+    ]);
+    // Still entitled to the paid plan — only the verified webhook lapses it.
+    expect(sub.planKey).toBe("pro");
+    expect(sub.status).toBe("active");
+    expect(sub.cancelAtPeriodEnd).toBe(true);
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    expect(ws!.plan).toBe("Pro"); // unchanged
+  });
+
+  it("#988 cancel with no active subscription is refused", async () => {
+    const { workspaceId, email } = await seedWorkspace("cancel-none");
+    await service.startCheckout(workspaceId, email, "pro", "monthly"); // created, not active
+    await expect(service.cancelSubscription(workspaceId, true)).rejects.toThrow(/no active subscription/i);
+  });
+
+  it("#988 change to a higher plan is an upgrade applied NOW and records the target without moving the plan", async () => {
+    const { workspaceId, email } = await seedWorkspace("upgrade");
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    const body = chargedEvent(`evt_${stamp}_upgrade`, session.subscriptionId);
+    await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
+
+    const sub = await service.changePlan(workspaceId, "team", "monthly");
+    const lastUpdate = (fakeClient.updateSubscription as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(lastUpdate![0]).toBe(session.subscriptionId);
+    expect(lastUpdate![1]).toEqual({ planId: "plan_fake_team_m", scheduleChangeAt: "now" }); // upgrade → now
+    // The local row records the target, but the plan has NOT moved (still active
+    // on the old entitlement until the webhook confirms the switch).
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.planKey).toBe("team");
+    expect(sub.status).toBe("active");
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    expect(ws!.plan).toBe("Pro"); // workspaces.plan still the old label until the webhook
+  });
+
+  it("#988 change to a lower plan is a downgrade deferred to CYCLE END", async () => {
+    const { workspaceId, email } = await seedWorkspace("downgrade");
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    const body = chargedEvent(`evt_${stamp}_downgrade`, session.subscriptionId);
+    await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
+
+    await service.changePlan(workspaceId, "starter", "monthly");
+    const lastUpdate = (fakeClient.updateSubscription as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(lastUpdate![1]).toEqual({ planId: "plan_fake_starter_m", scheduleChangeAt: "cycle_end" }); // downgrade → deferred
+  });
+
+  it("#988 change to the SAME plan+interval is refused, and a plan with no provider id is refused", async () => {
+    const { workspaceId, email } = await seedWorkspace("samechange");
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    const body = chargedEvent(`evt_${stamp}_same`, session.subscriptionId);
+    await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
+
+    await expect(service.changePlan(workspaceId, "pro", "monthly")).rejects.toThrow(/already on/i);
+    // team:yearly has no configured plan id in this test's map → PlanNotConfigured.
+    await expect(service.changePlan(workspaceId, "team", "yearly")).rejects.toThrow(/No Razorpay plan is configured/i);
   });
 });

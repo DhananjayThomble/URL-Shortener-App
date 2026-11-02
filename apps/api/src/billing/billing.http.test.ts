@@ -71,6 +71,8 @@ function razorpayProvider(): RazorpayBillingProvider {
   const client: RazorpayClient = {
     createSubscription: async () => ({ id: "sub_fake" }),
     cancelSubscription: async () => {},
+    updateSubscription: async () => {},
+    listInvoices: async () => [],
     refundPayment: async () => {},
   };
   return new RazorpayBillingProvider(
@@ -103,6 +105,34 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       keyId: FAKE_KEY_ID,
       planKey: "pro" as const,
       interval: "monthly" as const,
+    }),
+    // #988 — the owner-facing routes. The HTTP test's StubAuthGuard injects an
+    // owner, so these are reachable here; the owner-only wiring is proved
+    // separately (billing-owner-only.test.ts) against the real role metadata.
+    listInvoices: async () => [
+      {
+        id: "inv_fake",
+        number: "INV-1",
+        status: "paid" as const,
+        amount: 99900,
+        currency: "INR",
+        createdAt: "2026-11-01T00:00:00.000Z",
+        pdfUrl: "https://rzp.example/i/inv_fake.pdf",
+      },
+    ],
+    cancelSubscription: async () => ({
+      planKey: "pro" as const,
+      interval: "monthly" as const,
+      status: "active" as const,
+      currentPeriodEnd: "2026-12-01T00:00:00.000Z",
+      cancelAtPeriodEnd: true,
+    }),
+    changePlan: async () => ({
+      planKey: "team" as const,
+      interval: "monthly" as const,
+      status: "active" as const,
+      currentPeriodEnd: "2026-12-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
     }),
   };
   return { svc: svc as unknown as BillingService, handled };
@@ -264,6 +294,50 @@ describe("#986 billing HTTP — billing ON (razorpay), real guard pipeline", () 
     expect(res.statusCode).toBe(200);
   });
 
+  it("#988 GET /billing/invoices is reachable and returns the provider's invoices", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/billing/invoices",
+      headers: { "x-forwarded-for": xff("203.0.113.6") },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; pdfUrl: string | null }>;
+    expect(body[0]!.id).toBe("inv_fake");
+    expect(body[0]!.pdfUrl).toBe("https://rzp.example/i/inv_fake.pdf");
+  });
+
+  it("#988 POST /billing/cancel with a valid body 200s and reflects the pending cancellation", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/cancel",
+      headers: { "content-type": "application/json", "x-forwarded-for": xff("203.0.113.7") },
+      payload: JSON.stringify({ atPeriodEnd: true }),
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { cancelAtPeriodEnd: boolean }).cancelAtPeriodEnd).toBe(true);
+  });
+
+  it("#988 POST /billing/change with a valid body 200s", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/change",
+      headers: { "content-type": "application/json", "x-forwarded-for": xff("203.0.113.8") },
+      payload: JSON.stringify({ planKey: "team", interval: "monthly" }),
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { planKey: string }).planKey).toBe("team");
+  });
+
+  it("#988 POST /billing/change with an invalid plan key → 400 (body pipe runs when billing is on)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/change",
+      headers: { "content-type": "application/json", "x-forwarded-for": xff("203.0.113.9") },
+      payload: JSON.stringify({ planKey: "enterprise", interval: "monthly" }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("the webhook's @Throttle is enforced by the real guard: the 61st call from one IP is 429", async () => {
     const ip = "203.0.113.99";
     const sig = sign(CHARGED, FAKE_WEBHOOK_SECRET);
@@ -301,6 +375,35 @@ describe("#986 billing HTTP — billing OFF (none) is unreachable before validat
       method: "GET",
       url: "/api/v1/billing/subscription",
       headers: { "x-forwarded-for": xff("203.0.113.4") },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("#988 GET /billing/invoices → 404 when billing is off", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/billing/invoices",
+      headers: { "x-forwarded-for": xff("203.0.113.41") },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("#988 POST /billing/change with an INVALID body → 404 (guard before the body pipe), not 400", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/change",
+      headers: { "content-type": "application/json", "x-forwarded-for": xff("203.0.113.42") },
+      payload: JSON.stringify({ planKey: "not-a-plan", interval: "never" }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("#988 POST /billing/cancel → 404 when billing is off", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/cancel",
+      headers: { "content-type": "application/json", "x-forwarded-for": xff("203.0.113.43") },
+      payload: JSON.stringify({ atPeriodEnd: true }),
     });
     expect(res.statusCode).toBe(404);
   });

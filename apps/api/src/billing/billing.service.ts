@@ -9,6 +9,7 @@ import {
 } from "@snapurl/database";
 import type {
   BillingInterval,
+  BillingInvoice,
   CheckoutSession,
   PaidPlanKey,
   PlanKey,
@@ -31,6 +32,32 @@ import { BILLING_PROVIDER, type BillingProvider, type NormalizedBillingEvent } f
 /** The paid states: a workspace is entitled to its plan key only while its
  *  subscription sits in one of these. Anything else lapses it back to free. */
 const ENTITLED_STATUSES = new Set(["active", "trialing"]);
+
+/* #988 — plan ranking, used ONLY to decide the TIMING of a change, not what a
+   plan is worth. A move to a higher-ranked plan is an upgrade (take effect now,
+   prorated); a move to a lower-ranked one is a downgrade (defer to the period
+   end so the owner keeps what they paid for). free is 0 so a move off free is
+   always an upgrade. This is intentionally hard-coded to the #986 key set;
+   #970's DB plans engine replaces it with a stored rank when it lands. */
+const PLAN_RANK: Record<PlanKey, number> = { free: 0, starter: 1, pro: 2, team: 3 };
+
+/** Raised when a plan change targets the plan the workspace is already on. The
+ *  controller maps it to a 400 — nothing to change, not a server fault. */
+export class SamePlanError extends Error {
+  constructor(planKey: string, interval: string) {
+    super(`The workspace is already on ${planKey} (${interval}).`);
+    this.name = "SamePlanError";
+  }
+}
+
+/** Raised when a plan change or cancel is asked for but the workspace has no
+ *  active paid subscription to change. The controller maps it to a 400. */
+export class NoActiveSubscriptionError extends Error {
+  constructor() {
+    super("The workspace has no active subscription to change. Start a checkout first.");
+    this.name = "NoActiveSubscriptionError";
+  }
+}
 
 /** Display label for the workspace's `plan` column, derived from the key. The
  *  entitlement of record is the subscription row's planKey; this keeps the
@@ -140,6 +167,126 @@ export class BillingService {
       currentPeriodEnd: row.currentPeriodEnd ? row.currentPeriodEnd.toISOString() : null,
       cancelAtPeriodEnd: Boolean(row.cancelAtPeriodEnd),
     };
+  }
+
+  /**
+   * #988 — the workspace's invoices, newest first. Reads the stored
+   * subscription row for the provider subscription id and asks the provider;
+   * a workspace with no provider subscription has no invoices (empty list), not
+   * an error. Maps the provider shape onto the contract's BillingInvoice; an
+   * invoice the provider returned with no id is dropped (it is not addressable).
+   */
+  async listInvoices(workspaceId: string): Promise<BillingInvoice[]> {
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+
+    if (!row?.providerSubscriptionId) return [];
+
+    const invoices = await this.provider.listInvoices(row.providerSubscriptionId);
+    return invoices
+      .filter((inv) => inv.id !== "")
+      .map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        status: inv.status,
+        amount: inv.amount,
+        currency: inv.currency,
+        createdAt: new Date(inv.issuedAt * 1000).toISOString(),
+        pdfUrl: inv.pdfUrl,
+      }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * #988 — schedule the workspace's subscription to end. `atPeriodEnd` true (the
+   * default the UI sends) keeps the plan live until the period ends; false
+   * cancels immediately. This asks the provider only — the plan does NOT move
+   * here. The provider's cancellation webhook, verified, is what lapses the
+   * workspace back to free (#986's invariant), so this writes
+   * `cancelAtPeriodEnd` locally for the UI to reflect the pending state and
+   * leaves the entitlement untouched until the webhook arrives.
+   */
+  async cancelSubscription(workspaceId: string, atPeriodEnd: boolean): Promise<WorkspaceSubscription> {
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+
+    if (!row?.providerSubscriptionId || !ENTITLED_STATUSES.has(row.status)) {
+      throw new NoActiveSubscriptionError();
+    }
+
+    await this.provider.cancel(row.providerSubscriptionId, atPeriodEnd);
+
+    // Reflect the pending cancellation for the UI. The plan key and entitled
+    // status are untouched — the workspace keeps its plan until the verified
+    // webhook lapses it. An immediate cancel (atPeriodEnd=false) still waits on
+    // the webhook to move the plan; cancel_at_period_end is a TIMESTAMP (the
+    // moment a cancellation was scheduled), not a boolean — the wire shape's
+    // boolean cancelAtPeriodEnd is derived from it being non-null
+    // (currentSubscription coerces it with Boolean(...)).
+    await this.db
+      .update(subscriptions)
+      .set({ cancelAtPeriodEnd: new Date(), updatedAt: new Date() })
+      .where(eq(subscriptions.id, row.id));
+
+    return this.currentSubscription(workspaceId);
+  }
+
+  /**
+   * #988 — change the workspace between paid plans. Derives the TIMING from the
+   * plan ranking rather than trusting the caller: a move to a higher plan is an
+   * upgrade applied now (prorated); a move to a lower plan is a downgrade
+   * deferred to the cycle end. Asks the provider only — as everywhere, the plan
+   * actually moves when the resulting verified webhook arrives. Returns the
+   * subscription as it stands (still the old plan until the webhook lands),
+   * with the new target recorded on the local row so the UI can show "changing
+   * to X".
+   */
+  async changePlan(
+    workspaceId: string,
+    planKey: PaidPlanKey,
+    interval: BillingInterval,
+  ): Promise<WorkspaceSubscription> {
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+
+    if (!row?.providerSubscriptionId || !ENTITLED_STATUSES.has(row.status)) {
+      throw new NoActiveSubscriptionError();
+    }
+
+    // Nothing to do when the target is the plan + interval already in force.
+    if (row.planKey === planKey && row.interval === interval) {
+      throw new SamePlanError(planKey, interval);
+    }
+
+    const when: "now" | "at_cycle_end" =
+      PLAN_RANK[planKey] > PLAN_RANK[row.planKey as PlanKey] ? "now" : "at_cycle_end";
+
+    await this.provider.updateSubscription({
+      providerSubscriptionId: row.providerSubscriptionId,
+      planKey,
+      interval,
+      when,
+    });
+
+    // Record the intended target locally. The entitled status is left as-is so
+    // the workspace keeps its current plan until the provider's webhook confirms
+    // the change; interval is updated to the target so the UI reflects the
+    // pending switch.
+    await this.db
+      .update(subscriptions)
+      .set({ planKey, interval, updatedAt: new Date() })
+      .where(eq(subscriptions.id, row.id));
+
+    return this.currentSubscription(workspaceId);
   }
 
   /**

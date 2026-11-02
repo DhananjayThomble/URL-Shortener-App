@@ -40,6 +40,29 @@ export interface RazorpayClient {
   }): Promise<{ id: string }>;
   cancelSubscription(subscriptionId: string, cancelAtCycleEnd: boolean): Promise<void>;
   refundPayment(paymentId: string): Promise<void>;
+  /** #988 — move a subscription to a new plan id. `scheduleChangeAt` is
+   *  "now" (prorated upgrade) or "cycle_end" (deferred downgrade), the two
+   *  values Razorpay's subscription update accepts. */
+  updateSubscription(
+    subscriptionId: string,
+    params: { planId: string; scheduleChangeAt: "now" | "cycle_end" },
+  ): Promise<void>;
+  /** #988 — the subscription's invoices, as the provider's raw entities. */
+  listInvoices(subscriptionId: string): Promise<RazorpayInvoiceEntity[]>;
+}
+
+/** The subset of a Razorpay invoice entity #988 reads. Everything is optional
+ *  because the provider's shape is not ours to guarantee; the provider maps it
+ *  defensively to ProviderInvoice. */
+export interface RazorpayInvoiceEntity {
+  id?: string;
+  invoice_number?: string | null;
+  status?: string;
+  amount?: number;
+  currency?: string;
+  issued_at?: number | null;
+  date?: number | null;
+  short_url?: string | null;
 }
 
 export interface RazorpayProviderConfig {
@@ -130,6 +153,26 @@ export class RazorpayBillingProvider implements BillingProvider {
     await this.client.cancelSubscription(providerSubscriptionId, atPeriodEnd);
   }
 
+  async updateSubscription(params: import("./billing-provider.js").UpdateSubscriptionParams): Promise<void> {
+    const planId = resolvePlanId(this.config.planIds, params.planKey, params.interval);
+    if (!planId) {
+      // The target plan has no configured provider id — same clean failure as
+      // a checkout for an unconfigured plan, not a provider error.
+      throw new PlanNotConfiguredError(params.planKey, params.interval);
+    }
+    await this.client.updateSubscription(params.providerSubscriptionId, {
+      planId,
+      // "now" prorates an upgrade; "cycle_end" defers a downgrade to the period
+      // boundary so the owner keeps what they paid for.
+      scheduleChangeAt: params.when === "now" ? "now" : "cycle_end",
+    });
+  }
+
+  async listInvoices(providerSubscriptionId: string): Promise<import("./billing-provider.js").ProviderInvoice[]> {
+    const raw = await this.client.listInvoices(providerSubscriptionId);
+    return raw.map(mapInvoice);
+  }
+
   async refund(providerPaymentId: string): Promise<void> {
     await this.client.refundPayment(providerPaymentId);
   }
@@ -172,6 +215,43 @@ export class RazorpayBillingProvider implements BillingProvider {
       raw,
     };
   }
+}
+
+/* #988 — normalise a Razorpay invoice status to the contract's closed set. The
+ *  provider reports a wider vocabulary; map the ones that carry money meaning
+ *  and fall back to `issued` (a raised-but-not-paid invoice) for anything we do
+ *  not specifically recognise, so an unexpected value is shown honestly rather
+ *  than dropped. */
+function normaliseInvoiceStatus(status: string | undefined): import("./billing-provider.js").ProviderInvoice["status"] {
+  switch (status) {
+    case "paid":
+      return "paid";
+    case "partially_paid":
+      return "partially_paid";
+    case "cancelled":
+      return "cancelled";
+    case "expired":
+      return "expired";
+    case "issued":
+    default:
+      return "issued";
+  }
+}
+
+/* #988 — map a raw Razorpay invoice entity to the provider-neutral shape,
+ *  defensively: a missing id becomes an empty string the service can skip, a
+ *  missing amount becomes 0, and the currency is upper-cased to the ISO form
+ *  the contract requires. `short_url` is the provider's download link. */
+function mapInvoice(e: RazorpayInvoiceEntity): import("./billing-provider.js").ProviderInvoice {
+  return {
+    id: typeof e.id === "string" ? e.id : "",
+    number: typeof e.invoice_number === "string" ? e.invoice_number : null,
+    status: normaliseInvoiceStatus(e.status),
+    amount: typeof e.amount === "number" && Number.isFinite(e.amount) ? Math.max(0, Math.trunc(e.amount)) : 0,
+    currency: typeof e.currency === "string" && e.currency !== "" ? e.currency.toUpperCase() : "INR",
+    issuedAt: typeof e.issued_at === "number" ? e.issued_at : typeof e.date === "number" ? e.date : 0,
+    pdfUrl: typeof e.short_url === "string" && e.short_url !== "" ? e.short_url : null,
+  };
 }
 
 /** The event's own id from the verified body, or a deterministic fallback so a
