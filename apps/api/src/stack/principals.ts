@@ -28,7 +28,7 @@ import {
   workspaces,
   type Database,
 } from "@snapurl/database";
-import { DEFAULT_KILL_SWITCHES } from "@snapurl/contract";
+
 
 export type PrincipalName =
   | "anon"
@@ -271,10 +271,26 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
        /domains routes ("allow"/404-when-off-handled-elsewhere) is what runs.
        The kill switches themselves are proven on/off in
        billing-kill-switches / domains-kill-switches / kill-switch.service tests. */
-    const allOn = structuredClone(DEFAULT_KILL_SWITCHES);
-    for (const key of Object.keys(allOn) as (keyof typeof allOn)[]) {
-      allOn[key] = { ...allOn[key], on: true };
-    }
+    // An INLINE plain literal, NOT imported from @snapurl/contract. A static
+    // `import { DEFAULT_KILL_SWITCHES } from "@snapurl/contract"` at the top of
+    // this file pulls contract's runtime zod into the stack suite's eager import
+    // graph (fuzz.stack.test.ts imports principals.ts) BEFORE its
+    // extendZodWithOpenApi runs — which breaks zod-to-openapi's .openapi()
+    // prototype patch and reds the fuzz + access-matrix suites with
+    // "zodSchema.openapi is not a function". Every switch ON with no caps is a
+    // valid KillSwitchState the API folds onto the shipped cap defaults on read.
+    const on = { on: true };
+    const allOn = {
+      "billing.checkout": on,
+      "billing.planChanges": on,
+      "billing.coupons": on,
+      "billing.trials": on,
+      "billing.refunds": on,
+      "customDomains.create": on,
+      "email.outbound": on,
+      errorTracking: on,
+      "linkScanning.rescans": on,
+    };
     await db
       .insert(platformSettings)
       .values({ key: "killSwitches", value: allOn, updatedAt: new Date() })
