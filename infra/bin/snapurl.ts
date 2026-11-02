@@ -123,6 +123,19 @@ new SnapUrlStack(app, "SnapUrl", {
      Browsing API key, created by the operator beforehand. Unset leaves Safe
      Browsing off. Set with `-c safeBrowsingSecretName=<name>`. */
   safeBrowsingSecretName: app.node.tryGetContext("safeBrowsingSecretName"),
+  /* #986 — optional: the NAME of a Secrets Manager secret holding the Razorpay
+     billing secrets as JSON. Unset keeps billing off. Set with
+     `-c razorpaySecretName=<name>`. */
+  razorpaySecretName: app.node.tryGetContext("razorpaySecretName"),
+  /* #995 — optional: the NAME of a Secrets Manager secret holding the Sentry
+     DSN for error tracking. Unset leaves error tracking off (no DSN resolves,
+     nothing initialises). Set with `-c sentryDsnSecretName=<name>`. Read by the
+     api, redirect and worker functions. */
+  sentryDsnSecretName: app.node.tryGetContext("sentryDsnSecretName"),
+  /* #995 — optional: the error-tracking release id tagged on every event,
+     typically the commit sha. Set by CI with `-c sentryRelease=<sha>`; omitted
+     leaves events untagged. */
+  sentryRelease: app.node.tryGetContext("sentryRelease") ?? app.node.tryGetContext("deployedGitSha"),
   /* The commit this deploy was built from, surfaced as the DeployedGitSha
      output. Set by CI (`-c deployedGitSha=<sha>`); omitted locally, in which
      case the output is simply not created. Answering "which commit is live?"
