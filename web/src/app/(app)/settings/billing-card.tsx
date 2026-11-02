@@ -155,6 +155,20 @@ export function BillingCard() {
           </div>
         ) : null}
 
+        {/* #988 — a requested plan change the provider has not confirmed yet.
+            The current plan above is still what the workspace is entitled to;
+            this only says a switch is in flight (it lands on the next charge
+            for an upgrade, or at the period end for a downgrade). */}
+        {sub.pendingChange ? (
+          <div
+            className="px-[13px] py-[9px] bg-accent-wash rounded-[var(--radius-sm)] text-[12.5px] text-accent leading-[1.5]"
+            data-testid="billing-pending-change"
+          >
+            Changing to <b>{planLabel(sub.pendingChange.planKey)}</b> ({sub.pendingChange.interval}). This takes effect
+            once your next payment confirms it.
+          </div>
+        ) : null}
+
         {problem ? (
           <p role="alert" className="m-0 text-[12.5px] text-bad">{problem}</p>
         ) : null}

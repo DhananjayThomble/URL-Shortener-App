@@ -41,8 +41,9 @@ const FREE_SUB = {
   status: null,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
-  // #989 added the required (nullable) notice field to WorkspaceSubscription.
+  // #989 added the required (nullable) notice field; #988 added pendingChange.
   notice: null,
+  pendingChange: null,
 };
 const ACTIVE_PRO = {
   planKey: "pro",
@@ -51,6 +52,7 @@ const ACTIVE_PRO = {
   currentPeriodEnd: "2026-12-01T00:00:00.000Z",
   cancelAtPeriodEnd: false,
   notice: null,
+  pendingChange: null,
 };
 const INVOICES = [
   {
@@ -239,16 +241,25 @@ test.describe("Settings > Billing (#988)", () => {
     await expect(page.getByText("Cancels at period end")).toBeVisible();
   });
 
-  test("change plan: a paid workspace changes to Team via POST /billing/change", async ({ page }) => {
+  test("change plan: a paid workspace requests a change to Team (pending until the webhook confirms)", async ({ page }) => {
     await seedMockSession(page);
+    // #988 round-2: the change is a REQUEST — the plan of record stays pro and
+    // the target rides in pendingChange until a verified webhook applies it. The
+    // mock reflects that: after the change POST, the subscription re-reads with
+    // planKey still pro and a pendingChange to team.
+    let changed = false;
+    const PENDING_PRO = { ...ACTIVE_PRO, pendingChange: { planKey: "team", interval: "monthly" } };
     const api = await mockApi(page, {
       "GET /auth/me": { status: 200, body: { ...MOCK_USER, role: "owner", plan: "Pro" } },
       "GET /workspaces/current": { status: 200, body: { ...MOCK_WORKSPACE, plan: "Pro" } },
       "GET /domains": { status: 200, body: [] },
       "GET /members": { status: 200, body: [] },
       "GET /billing/invoices": { status: 200, body: INVOICES },
-      "GET /billing/subscription": { status: 200, body: ACTIVE_PRO },
-      "POST /billing/change": { status: 200, body: { ...ACTIVE_PRO, planKey: "team" } },
+      "GET /billing/subscription": () => ({ status: 200, body: changed ? PENDING_PRO : ACTIVE_PRO }),
+      "POST /billing/change": () => {
+        changed = true;
+        return { status: 200, body: PENDING_PRO };
+      },
     });
     await page.goto("/settings");
     await expect(billingCard(page)).toBeVisible();
@@ -258,6 +269,9 @@ test.describe("Settings > Billing (#988)", () => {
 
     await expect.poll(() => api.callsTo("POST", "/billing/change").length).toBeGreaterThan(0);
     expect(api.callsTo("POST", "/billing/change")[0]!.body).toEqual({ planKey: "team", interval: "monthly" });
+    // The plan of record is unchanged and the pending change is shown.
+    await expect(page.getByTestId("billing-current-plan")).toHaveText(/Pro/);
+    await expect(page.getByTestId("billing-pending-change")).toContainText(/Changing to\s*Team/i);
   });
 
   test("invoices: a paid workspace shows its invoices with a working Download link", async ({ page }) => {

@@ -99,6 +99,7 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       currentPeriodEnd: null,
       cancelAtPeriodEnd: false,
       notice: null,
+      pendingChange: null,
     }),
     startCheckout: async () => ({
       provider: "razorpay" as const,
@@ -130,14 +131,17 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: true,
       notice: null,
+      pendingChange: null,
     }),
     changePlan: async () => ({
-      planKey: "team" as const,
+      planKey: "pro" as const,
       interval: "monthly" as const,
       status: "active" as const,
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: false,
       notice: null,
+      // #988 — a change request is now PENDING (not applied) until the webhook.
+      pendingChange: { planKey: "team" as const, interval: "monthly" as const },
     }),
   };
   return { svc: svc as unknown as BillingService, handled };
@@ -330,7 +334,11 @@ describe("#986 billing HTTP — billing ON (razorpay), real guard pipeline", () 
       payload: JSON.stringify({ planKey: "team", interval: "monthly" }),
     });
     expect(res.statusCode).toBe(201);
-    expect((res.json() as { planKey: string }).planKey).toBe("team");
+    // #988 — the change is now PENDING, not applied: the plan of record stays
+    // the current one and the requested target is surfaced in pendingChange.
+    const body = res.json() as { planKey: string; pendingChange: { planKey: string } | null };
+    expect(body.planKey).toBe("pro");
+    expect(body.pendingChange).toEqual({ planKey: "team", interval: "monthly" });
   });
 
   it("#988 POST /billing/change with an invalid plan key → 400 (body pipe runs when billing is on)", async () => {

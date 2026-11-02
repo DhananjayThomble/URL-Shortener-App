@@ -128,6 +128,7 @@ describe("WorkspaceSubscription", () => {
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
     notice: null,
+    pendingChange: null,
   };
 
   it("accepts the unsubscribed (free) shape with null interval/status/period", () => {
@@ -142,6 +143,7 @@ describe("WorkspaceSubscription", () => {
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: true,
       notice: null,
+      pendingChange: null,
     };
     expect(WorkspaceSubscription.safeParse(active).success).toBe(true);
   });
@@ -210,6 +212,28 @@ describe("WorkspaceSubscription", () => {
 
   it("rejects an unknown notice kind", () => {
     expect(WorkspaceSubscription.safeParse({ ...free, notice: { kind: "upgraded", revertsAt: null } }).success).toBe(false);
+  });
+
+  /* #988 — pendingChange: a requested-but-unconfirmed paid-plan change. */
+  it("requires pendingChange to be PRESENT (nullable, not optional)", () => {
+    const { pendingChange: _drop, ...withoutPending } = free as typeof free & { pendingChange: unknown };
+    expect(WorkspaceSubscription.safeParse(withoutPending).success).toBe(false);
+  });
+
+  it("accepts a null pendingChange (no change in flight)", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: null }).success).toBe(true);
+  });
+
+  it("accepts a pendingChange naming a paid plan + interval", () => {
+    expect(
+      WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "team", interval: "yearly" } }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a pendingChange to the free plan or with a missing/unknown field", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "free", interval: "monthly" } }).success).toBe(false);
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "pro" } }).success).toBe(false);
+    expect(WorkspaceSubscription.safeParse({ ...free, pendingChange: { planKey: "pro", interval: "weekly" } }).success).toBe(false);
   });
 });
 

@@ -34,6 +34,11 @@ export class NoneBillingProvider implements BillingProvider {
     throw new Error("Billing is disabled (BILLING_PROVIDER=none).");
   }
 
+  /** No catalogue when billing is off — nothing resolves. */
+  resolvePlanId(): string | null {
+    return null;
+  }
+
   async updateSubscription(_params: UpdateSubscriptionParams): Promise<void> {
     throw new Error("Billing is disabled (BILLING_PROVIDER=none).");
   }

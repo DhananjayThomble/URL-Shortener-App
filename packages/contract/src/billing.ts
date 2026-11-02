@@ -112,6 +112,17 @@ export const WorkspaceSubscription = z.object({
       revertsAt: z.string().nullable(),
     })
     .nullable(),
+  /** #988 — a REQUESTED paid-plan change the owner made that the provider has
+   *  not confirmed yet. Non-null between changePlan and the verified webhook
+   *  that applies it; the current plan (planKey above) is still what the
+   *  workspace is entitled to until then. The UI shows "pending change to X".
+   *  Null when no change is in flight. */
+  pendingChange: z
+    .object({
+      planKey: z.enum(PAID_PLAN_KEYS),
+      interval: z.enum(BILLING_INTERVALS),
+    })
+    .nullable(),
 });
 export type WorkspaceSubscription = z.infer<typeof WorkspaceSubscription>;
 

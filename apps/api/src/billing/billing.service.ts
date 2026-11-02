@@ -252,6 +252,8 @@ export class BillingService {
         currentPeriodEnd: row?.currentPeriodEnd ? row.currentPeriodEnd.toISOString() : null,
         cancelAtPeriodEnd: Boolean(row?.cancelAtPeriodEnd),
         notice: null,
+        // A lapsed/free workspace carries no in-flight plan change.
+        pendingChange: null,
       };
     }
 
@@ -263,6 +265,13 @@ export class BillingService {
       currentPeriodEnd: row.currentPeriodEnd ? row.currentPeriodEnd.toISOString() : null,
       cancelAtPeriodEnd: Boolean(row.cancelAtPeriodEnd),
       notice: notice ? { kind: notice.kind, revertsAt: notice.revertsAt ? notice.revertsAt.toISOString() : null } : null,
+      // #988 — surface a requested-but-unconfirmed plan change so the UI can
+      // show "pending change to X". The entitlement (planKey) is unchanged
+      // until the confirming webhook; this is only the request.
+      pendingChange:
+        row.pendingPlanKey && row.pendingInterval
+          ? { planKey: row.pendingPlanKey as PaidPlanKey, interval: row.pendingInterval as BillingInterval }
+          : null,
     };
   }
 
@@ -385,13 +394,18 @@ export class BillingService {
       when,
     });
 
-    // Record the intended target locally. The entitled status is left as-is so
-    // the workspace keeps its current plan until the provider's webhook confirms
-    // the change; interval is updated to the target so the UI reflects the
-    // pending switch.
+    // Record the REQUEST, not the entitlement. planKey/interval are the
+    // entitlement of record (handleWebhook mirrors planLabel(planKey) onto
+    // workspaces.plan on every entitled event), so writing them here would let
+    // the next ordinary entitled webhook — an old-plan renewal charge — grant
+    // the target plan with no payment confirmation, and apply a downgrade before
+    // its cycle end. Instead the target is held in pendingPlanKey/pendingInterval
+    // and applied ONLY when a verified webhook reports the subscription on the
+    // target's provider plan id (handleWebhook). The UI reads these to show a
+    // "pending change to X" line; entitlement is untouched until the webhook.
     await this.db
       .update(subscriptions)
-      .set({ planKey, interval, updatedAt: new Date() })
+      .set({ pendingPlanKey: planKey, pendingInterval: interval, updatedAt: new Date() })
       .where(eq(subscriptions.id, row.id));
 
     return this.currentSubscription(workspaceId);
@@ -500,6 +514,29 @@ export class BillingService {
       now,
     );
 
+    // #988 — APPLY A REQUESTED PLAN CHANGE, only when the provider confirms it.
+    // changePlan recorded the target in pendingPlanKey/pendingInterval without
+    // touching the entitlement. The change lands here, and ONLY here, when this
+    // verified+entitled event reports the subscription on the target's provider
+    // plan id. That is the single confirmation that holds for both directions:
+    // an upgrade is switched immediately so the next charge carries the new plan
+    // id; a downgrade is deferred by the provider, so its plan id only changes
+    // at the cycle end — the pending change is never applied early, and an
+    // unrelated renewal of the OLD plan never matches, so it never grants the
+    // target without payment. On a match the target becomes the plan of record
+    // and the pending fields clear; otherwise they are left for a later event.
+    const pendingTargetId =
+      entitled && sub.pendingPlanKey && sub.pendingInterval
+        ? this.provider.resolvePlanId(
+            sub.pendingPlanKey as PaidPlanKey,
+            sub.pendingInterval as BillingInterval,
+          )
+        : null;
+    const applyPending =
+      pendingTargetId !== null && event.providerPlanId !== null && event.providerPlanId === pendingTargetId;
+    const effectivePlanKey = applyPending ? (sub.pendingPlanKey as PlanKey) : (sub.planKey as PlanKey);
+    const effectiveInterval = applyPending ? sub.pendingInterval! : sub.interval;
+
     await this.db.transaction(async (tx) => {
       await tx
         .update(subscriptions)
@@ -508,17 +545,25 @@ export class BillingService {
           currentPeriodEnd,
           cancelAtPeriodEnd,
           graceEndsAt,
+          // Apply the confirmed plan change (and clear the request) only on a
+          // provider-confirmed match; otherwise leave planKey/interval and the
+          // pending request exactly as they were.
+          ...(applyPending
+            ? { planKey: effectivePlanKey, interval: effectiveInterval, pendingPlanKey: null, pendingInterval: null }
+            : {}),
           updatedAt: now,
         })
         .where(eq(subscriptions.id, sub.id));
 
       // Mirror the entitlement onto workspaces.plan for the existing settings
       // screen: the plan key's label while entitled, back to Free when lapsed.
-      // DATA IS KEPT either way — only the plan label (and the paid-feature
-      // gates that read it) change; nothing deletes the workspace's links.
+      // Uses the EFFECTIVE plan key, so a just-confirmed change is reflected and
+      // an unconfirmed one still shows the current plan. DATA IS KEPT either way
+      // — only the plan label (and the paid-feature gates that read it) change;
+      // nothing deletes the workspace's links.
       await tx
         .update(workspaces)
-        .set({ plan: entitled ? planLabel(sub.planKey as PlanKey) : "Free", updatedAt: now })
+        .set({ plan: entitled ? planLabel(effectivePlanKey) : "Free", updatedAt: now })
         .where(eq(workspaces.id, sub.workspaceId));
     });
 

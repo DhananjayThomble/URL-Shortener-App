@@ -88,11 +88,13 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     return { userId: u!.id, email, workspaceId: ws!.id };
   }
 
-  function chargedEvent(eventId: string, subId: string, currentEnd = 1_800_000_000) {
+  function chargedEvent(eventId: string, subId: string, currentEnd = 1_800_000_000, planId?: string) {
     return JSON.stringify({
       id: eventId,
       event: "subscription.charged",
-      payload: { subscription: { entity: { id: subId, current_end: currentEnd } } },
+      // #988 — plan_id lets a charge report which plan the subscription is on,
+      // so the confirming-webhook test can match it against the pending target.
+      payload: { subscription: { entity: { id: subId, current_end: currentEnd, ...(planId ? { plan_id: planId } : {}) } } },
     });
   }
 
@@ -472,40 +474,114 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     await expect(service.cancelSubscription(workspaceId, true)).rejects.toThrow(/no active subscription/i);
   });
 
-  it("#988 change to a higher plan is an upgrade applied NOW and records the target without moving the plan", async () => {
+  /* #988 round-2 — a plan change is a REQUEST, applied ONLY by a verified
+     webhook that reports the subscription on the target's provider plan id.
+     Oracles are the conductor's decision (a)-(d), not the implementation:
+       (a) changePlan leaves planKey, interval and workspaces.plan unchanged and
+           records the request in pendingPlanKey/pendingInterval;
+       (b) an unrelated renewal/charge of the OLD plan after changePlan does NOT
+           grant the target (no plan_id, or the old plan_id, never matches);
+       (c) the confirming webhook (charge carrying the target plan id) applies it
+           and clears the pending request;
+       (d) a downgrade is not applied before the period end — until the provider
+           actually switches the plan id (at cycle end), the charge still
+           reports the old plan id and the downgrade does not land.
+     The provider-call timing (upgrade=now, downgrade=cycle_end) is asserted too. */
+
+  it("#988 (a) changePlan records the request and does NOT move planKey/interval/workspaces.plan (upgrade issued NOW at the provider)", async () => {
     const { workspaceId, email } = await seedWorkspace("upgrade");
     const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
-    const body = chargedEvent(`evt_${stamp}_upgrade`, session.subscriptionId);
-    await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
+    await service.handleWebhook(service.verifyWebhook(chargedEvent(`evt_${stamp}_upgrade`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), sign(chargedEvent(`evt_${stamp}_upgrade`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), FAKE_WEBHOOK_SECRET))!);
 
     const sub = await service.changePlan(workspaceId, "team", "monthly");
+    // The provider was asked to switch NOW (an upgrade is a higher sortOrder).
     const lastUpdate = (fakeClient.updateSubscription as ReturnType<typeof vi.fn>).mock.calls.at(-1);
     expect(lastUpdate![0]).toBe(session.subscriptionId);
-    expect(lastUpdate![1]).toEqual({ planId: "plan_fake_team_m", scheduleChangeAt: "now" }); // upgrade → now
-    // The local row records the target, but the plan has NOT moved (still active
-    // on the old entitlement until the webhook confirms the switch).
+    expect(lastUpdate![1]).toEqual({ planId: "plan_fake_team_m", scheduleChangeAt: "now" });
+
+    // (a) The entitlement of record is UNCHANGED; only the request is recorded.
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
-    expect(row!.planKey).toBe("team");
-    expect(sub.status).toBe("active");
+    expect(row!.planKey).toBe("pro"); // NOT team
+    expect(row!.interval).toBe("monthly");
+    expect(row!.pendingPlanKey).toBe("team");
+    expect(row!.pendingInterval).toBe("monthly");
     const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
-    expect(ws!.plan).toBe("Pro"); // workspaces.plan still the old label until the webhook
+    expect(ws!.plan).toBe("Pro"); // workspaces.plan unchanged
+    // The response surfaces the request for the UI, current plan still pro.
+    expect(sub.planKey).toBe("pro");
+    expect(sub.pendingChange).toEqual({ planKey: "team", interval: "monthly" });
   });
 
-  it("#988 change to a lower plan is a downgrade deferred to CYCLE END", async () => {
+  it("#988 (b) an unrelated OLD-plan renewal after changePlan does NOT grant the target", async () => {
+    const { workspaceId, email } = await seedWorkspace("renewal");
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    await service.handleWebhook(service.verifyWebhook(chargedEvent(`evt_${stamp}_renewal_a`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), sign(chargedEvent(`evt_${stamp}_renewal_a`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), FAKE_WEBHOOK_SECRET))!);
+    await service.changePlan(workspaceId, "team", "monthly");
+
+    // The old plan's renewal charge arrives (still plan_fake_pro_m) — this is
+    // the exact event that used to wrongly grant the target. It must NOT.
+    const renew = chargedEvent(`evt_${stamp}_renewal_b`, session.subscriptionId, 1_830_000_000, "plan_fake_pro_m");
+    await service.handleWebhook(service.verifyWebhook(renew, sign(renew, FAKE_WEBHOOK_SECRET))!);
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.planKey).toBe("pro"); // still NOT team
+    expect(row!.pendingPlanKey).toBe("team"); // request still pending
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    expect(ws!.plan).toBe("Pro");
+  });
+
+  it("#988 (c) the CONFIRMING webhook (charge on the target plan id) applies the change and clears the request", async () => {
+    const { workspaceId, email } = await seedWorkspace("confirm");
+    const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
+    await service.handleWebhook(service.verifyWebhook(chargedEvent(`evt_${stamp}_confirm_a`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), sign(chargedEvent(`evt_${stamp}_confirm_a`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), FAKE_WEBHOOK_SECRET))!);
+    await service.changePlan(workspaceId, "team", "monthly");
+
+    // The provider has switched; the next charge reports the TARGET plan id.
+    const confirm = chargedEvent(`evt_${stamp}_confirm_b`, session.subscriptionId, 1_830_000_000, "plan_fake_team_m");
+    await service.handleWebhook(service.verifyWebhook(confirm, sign(confirm, FAKE_WEBHOOK_SECRET))!);
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.planKey).toBe("team"); // applied
+    expect(row!.interval).toBe("monthly");
+    expect(row!.pendingPlanKey).toBeNull(); // request cleared
+    expect(row!.pendingInterval).toBeNull();
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    expect(ws!.plan).toBe("Team"); // mirrored onto workspaces.plan
+    const sub = await service.currentSubscription(workspaceId);
+    expect(sub.planKey).toBe("team");
+    expect(sub.pendingChange).toBeNull();
+  });
+
+  it("#988 (d) a DOWNGRADE is deferred (cycle_end) and is NOT applied while the provider still reports the old plan id", async () => {
     const { workspaceId, email } = await seedWorkspace("downgrade");
     const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
-    const body = chargedEvent(`evt_${stamp}_downgrade`, session.subscriptionId);
-    await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
+    await service.handleWebhook(service.verifyWebhook(chargedEvent(`evt_${stamp}_downgrade`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), sign(chargedEvent(`evt_${stamp}_downgrade`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m"), FAKE_WEBHOOK_SECRET))!);
 
     await service.changePlan(workspaceId, "starter", "monthly");
+    // Downgrade → deferred at the provider.
     const lastUpdate = (fakeClient.updateSubscription as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(lastUpdate![1]).toEqual({ planId: "plan_fake_starter_m", scheduleChangeAt: "cycle_end" }); // downgrade → deferred
+    expect(lastUpdate![1]).toEqual({ planId: "plan_fake_starter_m", scheduleChangeAt: "cycle_end" });
+
+    // Before the period end the provider still charges the OLD plan — the
+    // downgrade must not apply early.
+    const midCycle = chargedEvent(`evt_${stamp}_downgrade_mid`, session.subscriptionId, 1_820_000_000, "plan_fake_pro_m");
+    await service.handleWebhook(service.verifyWebhook(midCycle, sign(midCycle, FAKE_WEBHOOK_SECRET))!);
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.planKey).toBe("pro"); // NOT starter yet
+    expect(row!.pendingPlanKey).toBe("starter"); // still pending
+
+    // At the cycle end the provider switches; the charge now reports starter.
+    const atCycleEnd = chargedEvent(`evt_${stamp}_downgrade_end`, session.subscriptionId, 1_850_000_000, "plan_fake_starter_m");
+    await service.handleWebhook(service.verifyWebhook(atCycleEnd, sign(atCycleEnd, FAKE_WEBHOOK_SECRET))!);
+    const [after] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(after!.planKey).toBe("starter"); // now applied
+    expect(after!.pendingPlanKey).toBeNull();
   });
 
   it("#988 change to the SAME plan+interval is refused, and a plan with no provider id is refused", async () => {
     const { workspaceId, email } = await seedWorkspace("samechange");
     const session = await service.startCheckout(workspaceId, email, "pro", "monthly");
-    const body = chargedEvent(`evt_${stamp}_same`, session.subscriptionId);
+    const body = chargedEvent(`evt_${stamp}_same`, session.subscriptionId, 1_800_000_000, "plan_fake_pro_m");
     await service.handleWebhook(service.verifyWebhook(body, sign(body, FAKE_WEBHOOK_SECRET))!);
 
     await expect(service.changePlan(workspaceId, "pro", "monthly")).rejects.toThrow(/already on/i);

@@ -77,6 +77,13 @@ export interface NormalizedBillingEvent {
   providerSubscriptionId: string | null;
   /** The subscription lifecycle status this event implies, when it maps to one. */
   status: SubscriptionStatus | null;
+  /** #988 — the provider plan id the subscription is on AS OF this event, when
+   *  the event carries it. Used to confirm a requested plan change: the change
+   *  is applied only once an entitled event reports the subscription on the
+   *  target's provider plan id — so an upgrade lands on the next charge and a
+   *  downgrade only once the provider actually switches it at the cycle end,
+   *  never early. Null for an event with no subscription plan id. */
+  providerPlanId: string | null;
   /** End of the current paid period the event reports, when present. */
   currentPeriodEnd: Date | null;
   /** The payment the event carried, when it carried one (a charge/failure), so
@@ -163,6 +170,16 @@ export interface BillingProvider {
    * NOT move here — only the verified webhook that follows does that (#986).
    */
   updateSubscription(params: UpdateSubscriptionParams): Promise<void>;
+
+  /**
+   * #988 — the provider plan id a (plan key, interval) resolves to, or null when
+   * it is not configured. Used to CONFIRM a requested plan change: the service
+   * applies a pending change only once a verified webhook reports the
+   * subscription on this id, so an upgrade lands on the next charge and a
+   * downgrade only once the provider actually switches it — never early, never
+   * on an unrelated renewal of the old plan.
+   */
+  resolvePlanId(planKey: PaidPlanKey, interval: BillingInterval): string | null;
 
   /**
    * #988 — the provider's invoices for a subscription, newest first. Returns an

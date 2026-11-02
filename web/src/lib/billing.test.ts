@@ -11,6 +11,7 @@ const free: WorkspaceSubscription = {
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
   notice: null,
+  pendingChange: null,
 };
 const activePro: WorkspaceSubscription = {
   planKey: "pro",
@@ -19,6 +20,7 @@ const activePro: WorkspaceSubscription = {
   currentPeriodEnd: "2026-12-01T00:00:00.000Z",
   cancelAtPeriodEnd: false,
   notice: null,
+  pendingChange: null,
 };
 
 describe("planLabel", () => {

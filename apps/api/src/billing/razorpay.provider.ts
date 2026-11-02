@@ -184,6 +184,16 @@ export class RazorpayBillingProvider implements BillingProvider {
     await this.client.cancelSubscription(providerSubscriptionId, atPeriodEnd);
   }
 
+  /** #988 — the configured provider plan id for a (key, interval), or null. The
+   *  free identifier resolvePlanId is the billing-plans helper (imported); this
+   *  method is reached via the interface as `provider.resolvePlanId(...)`. */
+  resolvePlanId(
+    planKey: import("@snapurl/contract").PaidPlanKey,
+    interval: import("@snapurl/contract").BillingInterval,
+  ): string | null {
+    return resolvePlanId(this.config.planIds, planKey, interval) ?? null;
+  }
+
   async updateSubscription(params: import("./billing-provider.js").UpdateSubscriptionParams): Promise<void> {
     const planId = resolvePlanId(this.config.planIds, params.planKey, params.interval);
     if (!planId) {
@@ -264,6 +274,10 @@ export class RazorpayBillingProvider implements BillingProvider {
       eventId: readEventId(raw),
       eventType,
       providerSubscriptionId: entity && typeof entity.id === "string" ? entity.id : null,
+      // #988 — the plan id the subscription is on as of this event, so the
+      // service can confirm a requested plan change against the provider's own
+      // view rather than trusting a locally-written target.
+      providerPlanId: entity && typeof entity.plan_id === "string" ? entity.plan_id : null,
       status: statusForEvent(eventType),
       currentPeriodEnd,
       payment: readPayment(raw),
