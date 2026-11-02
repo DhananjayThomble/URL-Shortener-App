@@ -1,6 +1,6 @@
 {
-  "id": "ac660ac7-1183-43bc-a4b7-7a8d52ce4442",
-  "prevId": "c33d7cad-1242-4c6e-8886-5e8fabfe028d",
+  "id": "704d89d0-89fa-4aa1-82ed-aa91d0f11dd6",
+  "prevId": "a2725ff4-6e42-4213-ac57-1efdd3b03d23",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4512,6 +4512,18 @@
         "plan_version_id": {
           "name": "plan_version_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_plan_key": {
+          "name": "pending_plan_key",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pending_interval": {
+          "name": "pending_interval",
+          "type": "varchar(10)",
           "primaryKey": false,
           "notNull": false
         },

@@ -4,6 +4,8 @@ import type {
   CheckoutResult,
   CreateCheckoutParams,
   NormalizedBillingEvent,
+  ProviderInvoice,
+  UpdateSubscriptionParams,
 } from "./billing-provider.js";
 
 /* ============================================================
@@ -30,6 +32,22 @@ export class NoneBillingProvider implements BillingProvider {
 
   async cancel(_providerSubscriptionId: string, _atPeriodEnd: boolean): Promise<void> {
     throw new Error("Billing is disabled (BILLING_PROVIDER=none).");
+  }
+
+  /** No catalogue when billing is off — nothing resolves. */
+  resolvePlanId(): string | null {
+    return null;
+  }
+
+  async updateSubscription(_params: UpdateSubscriptionParams): Promise<void> {
+    throw new Error("Billing is disabled (BILLING_PROVIDER=none).");
+  }
+
+  /** Always empty: with billing off there is no provider and no invoices. The
+   *  route 404s before this is reached, but it returns a list (never throws) so
+   *  any future caller gets the honest "no invoices" rather than an error. */
+  async listInvoices(_providerSubscriptionId: string): Promise<ProviderInvoice[]> {
+    return [];
   }
 
   async refund(_providerPaymentId: string): Promise<void> {
