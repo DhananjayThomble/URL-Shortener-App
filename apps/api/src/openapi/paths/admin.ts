@@ -421,3 +421,120 @@ route({
     403: { description: "The caller is not a platform admin" },
   },
 });
+
+
+/* ── plans, versions and per-workspace overrides (#970) ── */
+
+route({
+  method: "get",
+  path: "/admin/plans",
+  tag: "Admin",
+  summary: "Every plan with its current feature matrix and limits",
+  responses: {
+    200: { description: "The plan catalogue", schema: refs.PlanList },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/plans",
+  tag: "Admin",
+  summary: "Create a plan and its first version (audited)",
+  body: refs.CreatePlanInput,
+  responses: {
+    201: { description: "The created plan", schema: refs.PlanView },
+    400: { description: "The plan definition was invalid" },
+    403: { description: "The caller is not a platform admin" },
+    409: { description: "A plan with that key already exists" },
+  },
+});
+
+route({
+  method: "patch",
+  path: "/admin/plans/{id}",
+  tag: "Admin",
+  summary: "Edit a plan's metadata — name, description, badge, sort, visibility (audited)",
+  params: IdParam,
+  body: refs.UpdatePlanInput,
+  responses: {
+    200: { description: "The updated plan", schema: refs.PlanView },
+    400: { description: "The update was invalid" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such plan" },
+  },
+});
+
+route({
+  method: "put",
+  path: "/admin/plans/{id}/matrix",
+  tag: "Admin",
+  summary: "Edit a live plan's feature matrix / limits — creates a new version, grandfathering existing workspaces (audited)",
+  params: IdParam,
+  body: refs.UpdatePlanMatrixInput,
+  responses: {
+    200: { description: "The plan at its new version", schema: refs.PlanView },
+    400: { description: "The matrix was invalid" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such plan" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/workspaces/{id}/overrides",
+  tag: "Admin",
+  summary: "The per-workspace plan overrides on a workspace",
+  params: IdParam,
+  responses: {
+    200: { description: "The workspace's overrides", schema: refs.OverrideView.array() },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/workspaces/{id}/overrides",
+  tag: "Admin",
+  summary: "Set or replace a per-workspace feature/limit override, optionally with an expiry (audited)",
+  params: IdParam,
+  body: refs.SetOverrideInput,
+  responses: {
+    201: { description: "The override", schema: refs.OverrideView },
+    400: { description: "The override was invalid" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace" },
+  },
+});
+
+route({
+  method: "delete",
+  path: "/admin/workspaces/{id}/overrides/{overrideId}",
+  tag: "Admin",
+  summary: "Remove a per-workspace override (audited)",
+  params: z.object({
+    id: z.string().describe("Workspace id (UUID)"),
+    overrideId: z.string().describe("Override id (UUID)"),
+  }),
+  responses: {
+    204: { description: "The override was removed" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such override on this workspace" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/workspaces/{id}/migrate-version",
+  tag: "Admin",
+  summary: "Pin or unpin a workspace to a specific plan version — the grandfather migration control (audited)",
+  params: IdParam,
+  body: refs.MigrateWorkspaceVersionInput,
+  responses: {
+    204: { description: "The workspace's version pin was updated" },
+    400: { description: "The workspace's plan is not a known plan" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace or version" },
+  },
+});

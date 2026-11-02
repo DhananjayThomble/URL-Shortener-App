@@ -219,10 +219,24 @@ export const ACCESS_MATRIX: Row[] = [
   // read behind the same guard, so it shares the row shape.
   { route: "GET /api/v1/admin/analytics", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/analytics/export/{view}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #970 — plans, versions and per-workspace overrides. Same AdminGuard
+  // fail-closed gate as every other /admin/* route: none of the matrix
+  // principals is a platform admin (PLATFORM_ADMIN_EMAILS is empty in the
+  // staging stack), so anon is 401, every authenticated principal is 403, and
+  // every API key is 403 (no user behind the key, so never an admin).
+  { route: "GET /api/v1/admin/plans", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/plans", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PATCH /api/v1/admin/plans/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PUT /api/v1/admin/plans/{id}/matrix", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "DELETE /api/v1/admin/workspaces/{id}/overrides/{overrideId}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/workspaces/{id}/migrate-version", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
 ];
 
 // Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
 // + 7 for #974's system-health routes + 11 for #969's users-and-workspaces
 // + 9 for #971's moderation routes + 2 for #973's GET /admin/analytics and its
-// CSV export + 2 for #972's admin settings routes + 1 for #972's public banner route).
-export const EXPECTED_ROUTE_COUNT = 104;
+// CSV export + 2 for #972's admin settings routes + 1 for #972's public banner
+// route + 8 for #970's plans/versions/overrides admin routes).
+export const EXPECTED_ROUTE_COUNT = 112;
