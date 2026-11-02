@@ -235,14 +235,16 @@ async function createLinkInUi(page: Page, dest: string) {
   const drawer = page.getByRole("dialog", { name: "Create a link" });
   await page.getByRole("button", { name: /New link/ }).first().click();
   await expect(drawer).toBeVisible();
-  await drawer.getByLabel("Destination URL").fill(dest);
+
   // The drawer fills the short-link domain once the workspace's domains have
   // loaded. Right after a workspace change the domains query is refetched, so
-  // the select can flicker: populated -> blanked by the refetch -> repopulated.
-  // Clicking Create during that blank window 400s and leaves the drawer open
-  // (the (w) flake). Wait for the value to SETTLE — non-empty and unchanged
-  // across a sample — not merely non-empty once, so the submit always carries a
-  // real domain. This waits on actual UI state; no fixed timeout or retry.
+  // the select flickers (populated -> blanked -> repopulated) and that refetch
+  // RE-RENDERS the form, clearing fields filled before it settles. Clicking
+  // Create then submits a blank Destination/domain -> 400, and the drawer stays
+  // open (the (w) flake). So first wait for the domain select to SETTLE
+  // (non-empty and unchanged across a sample), THEN fill Destination last, right
+  // before submit, so the re-render can't wipe it. Waits on actual UI state; no
+  // fixed timeout or retry.
   const domainSelect = drawer.getByLabel("Short-link domain");
   await expect(domainSelect).not.toHaveValue("");
   await expect(async () => {
@@ -252,6 +254,8 @@ async function createLinkInUi(page: Page, dest: string) {
     expect(first).not.toBe("");
     expect(second).toBe(first);
   }).toPass();
+  await drawer.getByLabel("Destination URL").fill(dest);
+  await expect(drawer.getByLabel("Destination URL")).toHaveValue(dest);
 
   /* Capture the POST /links response as it arrives, but DON'T gate on a short
      fixed network window (that 10s race flaked under CI load — #977). Register
