@@ -240,6 +240,15 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "POST /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "DELETE /api/v1/admin/workspaces/{id}/overrides/{overrideId}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "POST /api/v1/admin/workspaces/{id}/migrate-version", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #989 — admin billing views + the admin refund. Same AdminGuard fail-closed
+  // gate: 401 anon (the auth guard runs before the admin guard), 403 for every
+  // authed non-platform-admin principal, 403 for API keys (no @Scope reaches an
+  // admin route). The refund {id} is a payment id; a non-admin is 403 before
+  // the body/param, so it is the same shape as the reads.
+  { route: "GET /api/v1/admin/subscriptions", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/revenue", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/billing-events", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/payments/{id}/refund", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #986 — billing (merged from main). OBSERVED with BILLING_PROVIDER unset in
   // the staging stack, i.e. the default `none`: the controller 404s EVERY
   // billing route for every caller, so the whole surface is unreachable. This
@@ -275,5 +284,6 @@ export const ACCESS_MATRIX: Row[] = [
 // route + 8 for #970's plans/versions/overrides admin routes + 2 for #970's
 // public /pricing and GET /workspaces/current/usage + 3 for #986's billing
 // checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
+// + 4 for #989's admin subscriptions/revenue/billing-events/refund
 // + 3 for #988's billing invoices/cancel/change).
-export const EXPECTED_ROUTE_COUNT = 121;
+export const EXPECTED_ROUTE_COUNT = 125;

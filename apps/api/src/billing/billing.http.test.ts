@@ -98,6 +98,7 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       status: null,
       currentPeriodEnd: null,
       cancelAtPeriodEnd: false,
+      notice: null,
     }),
     startCheckout: async () => ({
       provider: "razorpay" as const,
@@ -128,6 +129,7 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       status: "active" as const,
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: true,
+      notice: null,
     }),
     changePlan: async () => ({
       planKey: "team" as const,
@@ -135,6 +137,7 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       status: "active" as const,
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: false,
+      notice: null,
     }),
   };
   return { svc: svc as unknown as BillingService, handled };

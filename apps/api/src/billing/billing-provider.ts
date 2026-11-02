@@ -52,6 +52,20 @@ export interface ProviderInvoice {
   pdfUrl: string | null;
 }
 
+/** A payment the event carried, normalised. #989 records these in the payments
+ *  table so the admin revenue views can count captured and FAILED charges. */
+export interface NormalizedPayment {
+  /** The provider's payment id (Razorpay pay_...). */
+  providerPaymentId: string;
+  /** Smallest currency unit (paise for INR), as the provider reports it, kept
+   *  as a string so it never passes through a float. */
+  amount: string;
+  /** ISO 4217 currency code. */
+  currency: string;
+  /** "captured" | "failed" | "refunded", as the provider names it. */
+  status: string;
+}
+
 /** The provider-agnostic shape a verified webhook is normalised to before the
  *  service acts on it. Only the fields the service needs to move a plan. */
 export interface NormalizedBillingEvent {
@@ -65,6 +79,10 @@ export interface NormalizedBillingEvent {
   status: SubscriptionStatus | null;
   /** End of the current paid period the event reports, when present. */
   currentPeriodEnd: Date | null;
+  /** The payment the event carried, when it carried one (a charge/failure), so
+   *  #989's revenue views can count captured and failed payments. Null for a
+   *  pure lifecycle event with no payment entity. */
+  payment: NormalizedPayment | null;
   /** The full verified event body, stored raw. */
   raw: unknown;
 }

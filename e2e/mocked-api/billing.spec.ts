@@ -41,6 +41,8 @@ const FREE_SUB = {
   status: null,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
+  // #989 added the required (nullable) notice field to WorkspaceSubscription.
+  notice: null,
 };
 const ACTIVE_PRO = {
   planKey: "pro",
@@ -48,6 +50,7 @@ const ACTIVE_PRO = {
   status: "active",
   currentPeriodEnd: "2026-12-01T00:00:00.000Z",
   cancelAtPeriodEnd: false,
+  notice: null,
 };
 const INVOICES = [
   {
