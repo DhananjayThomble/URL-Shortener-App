@@ -62,8 +62,18 @@ export const coupons = pgTable(
      *  NEW redemptions. */
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     /** The most times this coupon may be redeemed across all workspaces, or null
-     *  for unlimited. Enforced against the live count of coupon_redemptions rows. */
+     *  for unlimited. Enforced atomically against `redeemedCount` below. */
     maxRedemptions: integer("max_redemptions"),
+
+    /** #1024 — the authoritative, atomically-incremented redemption counter for
+     *  the cross-workspace cap. recordRedemption bumps this with a conditional
+     *  `WHERE max_redemptions IS NULL OR redeemed_count < max_redemptions` in the
+     *  SAME transaction as the redemption INSERT, so N concurrent redemptions by
+     *  different workspaces can never push it past maxRedemptions — the DB, not a
+     *  read-then-write, is the arbiter. Stays in step with the real row count
+     *  (admin views still count rows); this column exists only to make the cap
+     *  check atomic. */
+    redeemedCount: integer("redeemed_count").notNull().default(0),
 
     /** When set, the coupon is paused: it stays in the catalogue and its past
      *  redemptions keep running, but no new redemption is allowed. Null = active. */

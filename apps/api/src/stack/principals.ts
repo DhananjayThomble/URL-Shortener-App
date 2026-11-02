@@ -277,17 +277,31 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
     // graph (fuzz.stack.test.ts imports principals.ts) BEFORE its
     // extendZodWithOpenApi runs — which breaks zod-to-openapi's .openapi()
     // prototype patch and reds the fuzz + access-matrix suites with
-    // "zodSchema.openapi is not a function". Every switch ON with no caps is a
-    // valid KillSwitchState the API folds onto the shipped cap defaults on read.
+    // "zodSchema.openapi is not a function". So the seed is a plain object the
+    // API validates and folds onto the shipped defaults on read.
     const on = { on: true };
+    // #1030: the shipped defaults are now conservative INITIAL HARD LIMITS
+    // (customDomains 25 total / 5 per day; email 200/h / 2000/day). This suite's
+    // seedResources + the M4/M5 "fresh target per mutation" probes mint far more
+    // than 5 domains in a run with no cleanup between them, so leaving the capped
+    // switches ON with no caps would fold onto the tight 5-per-day default and
+    // 403 "cap_reached" on the 6th create (it did — Real-stack aux reds here).
+    // Seed GENEROUS caps for the stack run only — the same way the switches are
+    // seeded ON above — so the harness is never the thing the cap refuses. The
+    // real caps are proven in domains-kill-switches / kill-switch.service tests,
+    // and the shipped production defaults stay 25/5 and 200/2000 (contract). The
+    // teardown drops the whole killSwitches row, so these generous caps never
+    // leak to another run.
+    const domainsOnGenerous = { on: true, domainCaps: { totalMax: 1_000_000, perDay: 1_000_000 } };
+    const emailOnGenerous = { on: true, emailCaps: { perHour: 1_000_000, perDay: 1_000_000 } };
     const allOn = {
       "billing.checkout": on,
       "billing.planChanges": on,
       "billing.coupons": on,
       "billing.trials": on,
       "billing.refunds": on,
-      "customDomains.create": on,
-      "email.outbound": on,
+      "customDomains.create": domainsOnGenerous,
+      "email.outbound": emailOnGenerous,
       errorTracking: on,
       "linkScanning.rescans": on,
     };

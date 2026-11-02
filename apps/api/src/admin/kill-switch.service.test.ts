@@ -30,20 +30,78 @@ function settingsStub(opts: { switches?: KillSwitchesSetting; throws?: boolean }
   } as unknown as PlatformSettingsService;
 }
 
-/** A DB fake whose email-count query returns a scripted number. countEmailsSince
- *  issues `db.select(...).from(...).where(...)` resolving to `[{ n }]`. */
-function dbStub(emailCount: number, throws = false): Database {
-  const chain = {
-    from: () => chain,
+/** What a captured refusal audit looks like, reconstructed from the fake DB's
+ *  recorded insert calls. */
+interface CapturedRefusal {
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  actorId: string | null;
+  actorLabel: string;
+  after: unknown;
+  requestIp: string | null;
+}
+
+/** A DB fake for KillSwitchService. It:
+ *   • answers the email-count query `select().from().where()` => `[{ n }]`;
+ *   • answers the refusal-window upsert
+ *     `insert().values(v).onConflictDoUpdate().returning()` with a scripted
+ *     window count (1 = fresh window => audit row written) and records the
+ *     attempted insert;
+ *   • answers the plain audit insert `insert().values(v)` (writeAdminAuditEntry)
+ *     and records it as a CapturedRefusal.
+ *
+ *  `windowCount` scripts what the upsert's RETURNING count is (default 1, the
+ *  first-in-window path). `insertThrows` makes EVERY insert throw, to prove the
+ *  service swallows an audit-write failure and still refuses. */
+function dbStub(
+  emailCount = 0,
+  opts: { countThrows?: boolean; windowCount?: number; insertThrows?: boolean } = {},
+): Database & { refusals: CapturedRefusal[]; upserts: Array<Record<string, unknown>> } {
+  const refusals: CapturedRefusal[] = [];
+  const upserts: Array<Record<string, unknown>> = [];
+  const selectChain = {
+    from: () => selectChain,
     where: async () => {
-      if (throws) throw new Error("count failed");
+      if (opts.countThrows) throw new Error("count failed");
       return [{ n: emailCount }];
     },
   };
-  return {
-    select: () => chain,
-    insert: () => ({ values: async () => undefined }),
-  } as unknown as Database;
+  const db = {
+    refusals,
+    upserts,
+    select: () => selectChain,
+    insert: () => ({
+      values: (v: Record<string, unknown>) => {
+        // The refusal-window upsert: values(...).onConflictDoUpdate(...).returning()
+        const builder = {
+          onConflictDoUpdate: () => builder,
+          returning: async () => {
+            if (opts.insertThrows) throw new Error("insert failed");
+            upserts.push(v);
+            return [{ count: opts.windowCount ?? 1 }];
+          },
+          // A bare `await insert().values(v)` (writeAdminAuditEntry) — a thenable
+          // so awaiting it resolves after recording the row.
+          then: (resolve: (value?: unknown) => void, reject: (reason?: unknown) => void) => {
+            if (opts.insertThrows) return reject(new Error("insert failed"));
+            refusals.push({
+              action: v.action as string,
+              targetType: (v.targetType ?? null) as string | null,
+              targetId: (v.targetId ?? null) as string | null,
+              actorId: (v.actorId ?? null) as string | null,
+              actorLabel: v.actorLabel as string,
+              after: v.after ?? null,
+              requestIp: (v.requestIp ?? null) as string | null,
+            });
+            return resolve(undefined);
+          },
+        };
+        return builder;
+      },
+    }),
+  };
+  return db as unknown as Database & { refusals: CapturedRefusal[]; upserts: Array<Record<string, unknown>> };
 }
 
 function on(key: keyof KillSwitchesSetting, value: boolean): KillSwitchesSetting {
@@ -102,13 +160,13 @@ describe("custom-domain caps", () => {
   const caps = structuredClone(DEFAULT_KILL_SWITCHES);
   caps["customDomains.create"].domainCaps = { totalMax: 2, perDay: 1 };
 
-  it("allows below both caps", () => {
-    expect(() => svc.assertCustomDomainUnderCaps(caps, 1, 0)).not.toThrow();
+  it("allows below both caps", async () => {
+    await expect(svc.assertCustomDomainUnderCaps(caps, 1, 0)).resolves.toBeUndefined();
   });
 
-  it("refuses the N+1th on the total cap", () => {
+  it("refuses the N+1th on the total cap", async () => {
     try {
-      svc.assertCustomDomainUnderCaps(caps, 2, 0);
+      await svc.assertCustomDomainUnderCaps(caps, 2, 0);
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(KillSwitchCapError);
@@ -118,8 +176,8 @@ describe("custom-domain caps", () => {
     }
   });
 
-  it("refuses the N+1th on the per-day cap even when total is fine", () => {
-    expect(() => svc.assertCustomDomainUnderCaps(caps, 0, 1)).toThrow(KillSwitchCapError);
+  it("refuses the N+1th on the per-day cap even when total is fine", async () => {
+    await expect(svc.assertCustomDomainUnderCaps(caps, 0, 1)).rejects.toBeInstanceOf(KillSwitchCapError);
   });
 });
 
@@ -150,7 +208,7 @@ describe("email gate", () => {
   });
 
   it("fails closed (refuses) when the cap count query throws", async () => {
-    const svc = new KillSwitchService(settingsStub({ switches: on("email.outbound", true) }), dbStub(0, true));
+    const svc = new KillSwitchService(settingsStub({ switches: on("email.outbound", true) }), dbStub(0, { countThrows: true }));
     await expect(svc.assertEmailAllowed(false)).rejects.toBeInstanceOf(KillSwitchCapError);
   });
 
@@ -258,6 +316,137 @@ describe("errorTracking → telemetry SamplingController", () => {
     });
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(svc.current()).resolves.toBeDefined();
+    spy.mockRestore();
+  });
+});
+
+
+
+/* #1032 — refusals are written to the platform audit trail.
+
+   RED ON MAIN: on origin/main the assert methods throw the typed error and
+   write NOTHING, so `db.refusals` stays empty — every "writes one audit row"
+   assertion below FAILS before this change and passes after it. That is the
+   bug the issue reports (admin.killswitch.refused never appears), proven at the
+   unit level; the DB integration test proves the dedupe counter against real
+   Postgres and the worker test proves a worker-job refusal is audited too.
+
+   The fake DB records (a) the refusal-window upsert values and (b) the
+   admin_audit_log row writeAdminAuditEntry inserts, so these assert both the
+   row's shape (action / target / reason / actor / workspace) AND that NO PII
+   beyond ids rides along. */
+describe("#1032 refusal audit", () => {
+  it("writes one admin.killswitch.refused row for a feature_off 503 (RED on main)", async () => {
+    const db = dbStub(0);
+    const svc = new KillSwitchService(settingsStub({ switches: on("billing.checkout", false) }), db);
+    await expect(svc.assertOn("billing.checkout", { workspaceId: "ws1", actorId: "u1" })).rejects.toBeInstanceOf(
+      KillSwitchOffError,
+    );
+    expect(db.refusals).toHaveLength(1);
+    const row = db.refusals[0];
+    expect(row.action).toBe("admin.killswitch.refused");
+    expect(row.targetType).toBe("kill_switch");
+    expect(row.targetId).toBe("billing.checkout");
+    expect(row.actorId).toBe("u1");
+    expect(row.after).toEqual({ reason: "feature_off", workspaceId: "ws1" });
+  });
+
+  it("writes a cap_reached row for a custom-domain total-cap 403 (RED on main)", async () => {
+    const db = dbStub(0);
+    const svc = new KillSwitchService(settingsStub({}), db);
+    const caps = structuredClone(DEFAULT_KILL_SWITCHES);
+    caps["customDomains.create"].domainCaps = { totalMax: 2, perDay: 100 };
+    await expect(svc.assertCustomDomainUnderCaps(caps, 2, 0, { workspaceId: "ws9" })).rejects.toBeInstanceOf(
+      KillSwitchCapError,
+    );
+    expect(db.refusals).toHaveLength(1);
+    expect(db.refusals[0].after).toEqual({ reason: "cap_reached", workspaceId: "ws9" });
+    expect(db.refusals[0].targetId).toBe("customDomains.create");
+  });
+
+  it("writes a cap_reached row for the per-day custom-domain cap too", async () => {
+    const db = dbStub(0);
+    const svc = new KillSwitchService(settingsStub({}), db);
+    const caps = structuredClone(DEFAULT_KILL_SWITCHES);
+    caps["customDomains.create"].domainCaps = { totalMax: 100, perDay: 1 };
+    await expect(svc.assertCustomDomainUnderCaps(caps, 0, 1)).rejects.toBeInstanceOf(KillSwitchCapError);
+    expect(db.refusals).toHaveLength(1);
+    expect(db.refusals[0].after).toMatchObject({ reason: "cap_reached" });
+  });
+
+  it("writes a feature_off row for an email.outbound OFF refusal", async () => {
+    const db = dbStub(0);
+    const svc = new KillSwitchService(settingsStub({ switches: on("email.outbound", false) }), db);
+    await expect(svc.assertEmailAllowed(false)).rejects.toBeInstanceOf(KillSwitchOffError);
+    expect(db.refusals).toHaveLength(1);
+    expect(db.refusals[0].targetId).toBe("email.outbound");
+    expect(db.refusals[0].after).toMatchObject({ reason: "feature_off" });
+  });
+
+  it("writes a cap_reached row for an email cap refusal", async () => {
+    const switches = structuredClone(DEFAULT_KILL_SWITCHES);
+    switches["email.outbound"] = { on: true, emailCaps: { perHour: 5, perDay: 100 } };
+    const db = dbStub(5);
+    const svc = new KillSwitchService(settingsStub({ switches }), db);
+    await expect(svc.assertEmailAllowed(false)).rejects.toBeInstanceOf(KillSwitchCapError);
+    expect(db.refusals).toHaveLength(1);
+    expect(db.refusals[0].after).toMatchObject({ reason: "cap_reached" });
+  });
+
+  it("writes a cap_reached row on the fail-closed email-count path", async () => {
+    const db = dbStub(0, { countThrows: true });
+    const svc = new KillSwitchService(settingsStub({ switches: on("email.outbound", true) }), db);
+    await expect(svc.assertEmailAllowed(false)).rejects.toBeInstanceOf(KillSwitchCapError);
+    expect(db.refusals).toHaveLength(1);
+    expect(db.refusals[0].after).toMatchObject({ reason: "cap_reached" });
+  });
+
+  it("labels the row by the switch when no actor/workspace is known (no PII)", async () => {
+    const db = dbStub(0);
+    const svc = new KillSwitchService(settingsStub({ switches: on("billing.refunds", false) }), db);
+    await expect(svc.assertOn("billing.refunds")).rejects.toBeInstanceOf(KillSwitchOffError);
+    const row = db.refusals[0];
+    expect(row.actorId).toBe(null);
+    expect(row.actorLabel).toBe("kill-switch:billing.refunds");
+    // No request body, email or IP — only ids + the reason context.
+    expect(row.requestIp).toBe(null);
+    expect(row.after).toEqual({ reason: "feature_off", workspaceId: null });
+  });
+
+  it("records exactly ONE audit row when the window already exists (dedupe)", async () => {
+    // windowCount 2 => the ON CONFLICT (bump) path: the window was already
+    // open, so NO new audit row is written — only the counter moved.
+    const db = dbStub(0, { windowCount: 2 });
+    const svc = new KillSwitchService(settingsStub({ switches: on("billing.checkout", false) }), db);
+    await expect(svc.assertOn("billing.checkout", { workspaceId: "ws1" })).rejects.toBeInstanceOf(KillSwitchOffError);
+    // The upsert still ran (the counter bumped) but no admin_audit_log row.
+    expect(db.upserts).toHaveLength(1);
+    expect(db.refusals).toHaveLength(0);
+  });
+
+  it("still refuses (does NOT turn 503 into 500 or success) when the audit write fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = dbStub(0, { insertThrows: true });
+    const svc = new KillSwitchService(settingsStub({ switches: on("billing.checkout", false) }), db);
+    // The refusal is still the named 503 — the swallowed audit failure never
+    // changes the thrown error's type or status.
+    await expect(svc.assertOn("billing.checkout", { workspaceId: "ws1" })).rejects.toBeInstanceOf(KillSwitchOffError);
+    try {
+      await svc.assertOn("billing.checkout", { workspaceId: "ws1" });
+    } catch (err) {
+      expect((err as KillSwitchOffError).getStatus()).toBe(503);
+    }
+    expect(db.refusals).toHaveLength(0); // nothing recorded, but still refused
+    spy.mockRestore();
+  });
+
+  it("still refuses a 403 cap when the audit write fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = dbStub(0, { insertThrows: true });
+    const svc = new KillSwitchService(settingsStub({}), db);
+    const caps = structuredClone(DEFAULT_KILL_SWITCHES);
+    caps["customDomains.create"].domainCaps = { totalMax: 1, perDay: 100 };
+    await expect(svc.assertCustomDomainUnderCaps(caps, 1, 0)).rejects.toBeInstanceOf(KillSwitchCapError);
     spy.mockRestore();
   });
 });

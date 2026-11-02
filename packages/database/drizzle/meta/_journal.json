@@ -1,265 +1,279 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1787833258694,
-      "tag": "0000_awesome_wallow",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1787847182548,
-      "tag": "0001_system_domains",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1787847648772,
-      "tag": "0002_rollup_marker",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1787931698295,
-      "tag": "0003_scheduled_activation",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1787989531374,
-      "tag": "0004_click_city",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1787990842083,
-      "tag": "0005_oauth_identities",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1787991450945,
-      "tag": "0006_forms",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1788019377532,
-      "tag": "0007_partition_click_events",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1788029831657,
-      "tag": "0008_hll_uniques",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1788032631179,
-      "tag": "0009_third_kang",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1788067972592,
-      "tag": "0010_ambitious_talos",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1788074200290,
-      "tag": "0011_illegal_kabuki",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1788102275275,
-      "tag": "0012_job_leases",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1788105600000,
-      "tag": "0013_drop_partition_checks_pending",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1788112800000,
-      "tag": "0014_retention_outcomes",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
-      "version": "7",
-      "when": 1788116400000,
-      "tag": "0015_click_events_backfill_days",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1788889530751,
-      "tag": "0016_nice_namora",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1788890802539,
-      "tag": "0017_sleepy_miss_america",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1791494187697,
-      "tag": "0018_membership_activity_invite_idx",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
-      "when": 1792250670188,
-      "tag": "0019_bio_managed_link",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1792476292491,
-      "tag": "0020_link_counters_reserved",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1793374485921,
-      "tag": "0021_link_delete_outbox_guard",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1793549941324,
-      "tag": "0022_admin_audit_log",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1793556414246,
-      "tag": "0023_user_suspended_at",
-      "breakpoints": true
-    },
-    {
-      "idx": 24,
-      "version": "7",
-      "when": 1793563756725,
-      "tag": "0024_link_disabled_blocked_domains",
-      "breakpoints": true
-    },
-    {
-      "idx": 25,
-      "version": "7",
-      "when": 1793564000000,
-      "tag": "0025_platform_settings",
-      "breakpoints": true
-    },
-    {
-      "idx": 26,
-      "version": "7",
-      "when": 1793574929193,
-      "tag": "0026_billing_core",
-      "breakpoints": true
-    },
-    {
-      "idx": 27,
-      "version": "7",
-      "when": 1793585828289,
-      "tag": "0027_plans_engine",
-      "breakpoints": true
-    },
-    {
-      "idx": 28,
-      "version": "7",
-      "when": 1793595056653,
-      "tag": "0028_workspace_new_account_limits_lifted",
-      "breakpoints": true
-    },
-    {
-      "idx": 29,
-      "version": "7",
-      "when": 1793660000000,
-      "tag": "0029_plan_prices_backfill",
-      "breakpoints": true
-    },
-    {
-      "idx": 30,
-      "version": "7",
-      "when": 1793600313301,
-      "tag": "0030_billing_grace",
-      "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "7",
-      "when": 1793605002630,
-      "tag": "0031_billing_pending_change",
-      "breakpoints": true
-    },
-    {
-      "idx": 32,
-      "version": "7",
-      "when": 1793611562199,
-      "tag": "0032_feedback",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "7",
-      "when": 1793611622314,
-      "tag": "0033_plan_management",
-      "breakpoints": true
-    },
-    {
-      "idx": 34,
-      "version": "7",
-      "when": 1793615605534,
-      "tag": "0034_trials_coupons",
-      "breakpoints": true
-    },
-    {
-      "idx": 35,
-      "version": "7",
-      "when": 1793620763711,
-      "tag": "0035_billing_details",
-      "breakpoints": true
-    },
-    {
-      "idx": 36,
-      "version": "7",
-      "when": 1793627136012,
-      "tag": "0036_kill_switches",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1787833258694,
+			"tag": "0000_awesome_wallow",
+			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "7",
+			"when": 1787847182548,
+			"tag": "0001_system_domains",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1787847648772,
+			"tag": "0002_rollup_marker",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1787931698295,
+			"tag": "0003_scheduled_activation",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1787989531374,
+			"tag": "0004_click_city",
+			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1787990842083,
+			"tag": "0005_oauth_identities",
+			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1787991450945,
+			"tag": "0006_forms",
+			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1788019377532,
+			"tag": "0007_partition_click_events",
+			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1788029831657,
+			"tag": "0008_hll_uniques",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1788032631179,
+			"tag": "0009_third_kang",
+			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1788067972592,
+			"tag": "0010_ambitious_talos",
+			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1788074200290,
+			"tag": "0011_illegal_kabuki",
+			"breakpoints": true
+		},
+		{
+			"idx": 12,
+			"version": "7",
+			"when": 1788102275275,
+			"tag": "0012_job_leases",
+			"breakpoints": true
+		},
+		{
+			"idx": 13,
+			"version": "7",
+			"when": 1788105600000,
+			"tag": "0013_drop_partition_checks_pending",
+			"breakpoints": true
+		},
+		{
+			"idx": 14,
+			"version": "7",
+			"when": 1788112800000,
+			"tag": "0014_retention_outcomes",
+			"breakpoints": true
+		},
+		{
+			"idx": 15,
+			"version": "7",
+			"when": 1788116400000,
+			"tag": "0015_click_events_backfill_days",
+			"breakpoints": true
+		},
+		{
+			"idx": 16,
+			"version": "7",
+			"when": 1788889530751,
+			"tag": "0016_nice_namora",
+			"breakpoints": true
+		},
+		{
+			"idx": 17,
+			"version": "7",
+			"when": 1788890802539,
+			"tag": "0017_sleepy_miss_america",
+			"breakpoints": true
+		},
+		{
+			"idx": 18,
+			"version": "7",
+			"when": 1791494187697,
+			"tag": "0018_membership_activity_invite_idx",
+			"breakpoints": true
+		},
+		{
+			"idx": 19,
+			"version": "7",
+			"when": 1792250670188,
+			"tag": "0019_bio_managed_link",
+			"breakpoints": true
+		},
+		{
+			"idx": 20,
+			"version": "7",
+			"when": 1792476292491,
+			"tag": "0020_link_counters_reserved",
+			"breakpoints": true
+		},
+		{
+			"idx": 21,
+			"version": "7",
+			"when": 1793374485921,
+			"tag": "0021_link_delete_outbox_guard",
+			"breakpoints": true
+		},
+		{
+			"idx": 22,
+			"version": "7",
+			"when": 1793549941324,
+			"tag": "0022_admin_audit_log",
+			"breakpoints": true
+		},
+		{
+			"idx": 23,
+			"version": "7",
+			"when": 1793556414246,
+			"tag": "0023_user_suspended_at",
+			"breakpoints": true
+		},
+		{
+			"idx": 24,
+			"version": "7",
+			"when": 1793563756725,
+			"tag": "0024_link_disabled_blocked_domains",
+			"breakpoints": true
+		},
+		{
+			"idx": 25,
+			"version": "7",
+			"when": 1793564000000,
+			"tag": "0025_platform_settings",
+			"breakpoints": true
+		},
+		{
+			"idx": 26,
+			"version": "7",
+			"when": 1793574929193,
+			"tag": "0026_billing_core",
+			"breakpoints": true
+		},
+		{
+			"idx": 27,
+			"version": "7",
+			"when": 1793585828289,
+			"tag": "0027_plans_engine",
+			"breakpoints": true
+		},
+		{
+			"idx": 28,
+			"version": "7",
+			"when": 1793595056653,
+			"tag": "0028_workspace_new_account_limits_lifted",
+			"breakpoints": true
+		},
+		{
+			"idx": 29,
+			"version": "7",
+			"when": 1793660000000,
+			"tag": "0029_plan_prices_backfill",
+			"breakpoints": true
+		},
+		{
+			"idx": 30,
+			"version": "7",
+			"when": 1793600313301,
+			"tag": "0030_billing_grace",
+			"breakpoints": true
+		},
+		{
+			"idx": 31,
+			"version": "7",
+			"when": 1793605002630,
+			"tag": "0031_billing_pending_change",
+			"breakpoints": true
+		},
+		{
+			"idx": 32,
+			"version": "7",
+			"when": 1793611562199,
+			"tag": "0032_feedback",
+			"breakpoints": true
+		},
+		{
+			"idx": 33,
+			"version": "7",
+			"when": 1793611622314,
+			"tag": "0033_plan_management",
+			"breakpoints": true
+		},
+		{
+			"idx": 34,
+			"version": "7",
+			"when": 1793615605534,
+			"tag": "0034_trials_coupons",
+			"breakpoints": true
+		},
+		{
+			"idx": 35,
+			"version": "7",
+			"when": 1793620763711,
+			"tag": "0035_billing_details",
+			"breakpoints": true
+		},
+		{
+			"idx": 36,
+			"version": "7",
+			"when": 1793627136012,
+			"tag": "0036_kill_switches",
+			"breakpoints": true
+		},
+		{
+			"idx": 37,
+			"version": "7",
+			"when": 1793639872949,
+			"tag": "0037_coupon_redeemed_count",
+			"breakpoints": true
+		},
+		{
+			"idx": 38,
+			"version": "7",
+			"when": 1793646868855,
+			"tag": "0038_killswitch_refusal_window",
+			"breakpoints": true
+		}
+	]
 }

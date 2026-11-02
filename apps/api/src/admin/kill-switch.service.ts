@@ -1,13 +1,15 @@
 import { ForbiddenException, Inject, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
-import { countEmailsSince, recordEmailSent, type Database } from "@snapurl/database";
+import { countEmailsSince, recordEmailSent, recordKillSwitchRefusal, type Database } from "@snapurl/database";
 import {
   DEFAULT_KILL_SWITCHES,
   KILL_SWITCH_LABELS,
   failClosedKillSwitches,
   foldKillSwitches,
+  killSwitchRefusalDedupeKey,
   type KillSwitchesSetting,
   type KillSwitchKey,
   type KillSwitchRefusalReason,
+  type KillSwitchRefusalSubject,
 } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { PlatformSettingsService, SETTINGS_CACHE_TTL_MS } from "./platform-settings.service.js";
@@ -157,10 +159,51 @@ export class KillSwitchService {
    * propagate; nothing it was about to do runs, so "a switched-off feature
    * refuses and changes nothing" holds by construction — the guard is BEFORE
    * the side effect.
+   *
+   * `subject` names the actor/workspace the refusal is for (#1032). It is
+   * OPTIONAL: a caller that has no principal to hand still refuses correctly;
+   * the refusal is then audited attributed to the switch alone. Passing it lets
+   * the audit row carry the actor and workspace ids so an operator can see WHO
+   * is hitting a switched-off feature.
    */
-  async assertOn(key: KillSwitchKey): Promise<void> {
+  async assertOn(key: KillSwitchKey, subject?: KillSwitchRefusalSubject): Promise<void> {
     if (!(await this.current())[key].on) {
+      await this.auditRefusal(key, "feature_off", subject);
       throw new KillSwitchOffError(key);
+    }
+  }
+
+  /**
+   * #1032 — record one kill-switch refusal on the platform audit trail, deduped
+   * to one row per (switch, reason, subject) per minute with a counter.
+   *
+   * FAIL SAFE BY DESIGN: this NEVER throws. A failed audit write is logged and
+   * swallowed, so it can never turn a refusal into a success and never turns
+   * the named 503/403 into a 500 — the caller throws the refusal regardless of
+   * what happens here. The audit is observability; the refusal is the contract.
+   *
+   * Called BEFORE the typed error is thrown, but it writes nothing the caller's
+   * action changed — the refusal already changed nothing — so ordering is safe.
+   */
+  private async auditRefusal(
+    key: KillSwitchKey,
+    reason: KillSwitchRefusalReason,
+    subject: KillSwitchRefusalSubject = {},
+  ): Promise<void> {
+    try {
+      const dedupeKey = killSwitchRefusalDedupeKey(key, reason, subject, Date.now());
+      await recordKillSwitchRefusal(this.db, {
+        dedupeKey,
+        switchKey: key,
+        reason,
+        actorId: subject.actorId ?? null,
+        actorLabel: subject.actorLabel ?? null,
+        workspaceId: subject.workspaceId ?? null,
+      });
+    } catch (err) {
+      // A refusal must still refuse even if the audit write fails. Log and
+      // move on; the caller throws the 503/403 next. Never rethrow.
+      this.logger.error({ err, key, reason }, "could not audit kill-switch refusal — refusing anyway");
     }
   }
 
@@ -171,16 +214,19 @@ export class KillSwitchService {
    * cap, a KillSwitchCapError. The switch's own ON/OFF is checked separately
    * via assertOn — this is only the cap, so a caller does both.
    */
-  assertCustomDomainUnderCaps(
+  async assertCustomDomainUnderCaps(
     switches: KillSwitchesSetting,
     currentTotal: number,
     addedToday: number,
-  ): void {
+    subject?: KillSwitchRefusalSubject,
+  ): Promise<void> {
     const caps = switches["customDomains.create"].domainCaps ?? DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps!;
     if (currentTotal >= caps.totalMax) {
+      await this.auditRefusal("customDomains.create", "cap_reached", subject);
       throw new KillSwitchCapError("customDomains.create", caps.totalMax, "total");
     }
     if (addedToday >= caps.perDay) {
+      await this.auditRefusal("customDomains.create", "cap_reached", subject);
       throw new KillSwitchCapError("customDomains.create", caps.perDay, "per-day");
     }
   }
@@ -198,7 +244,7 @@ export class KillSwitchService {
    * {@link recordSentEmail}. Throws KillSwitchOffError (non-auth-critical mail
    * while the switch is OFF) or KillSwitchCapError (either cap reached).
    */
-  async assertEmailAllowed(authCritical: boolean): Promise<void> {
+  async assertEmailAllowed(authCritical: boolean, subject?: KillSwitchRefusalSubject): Promise<void> {
     const switches = await this.current();
     const state = switches["email.outbound"];
 
@@ -206,6 +252,7 @@ export class KillSwitchService {
     // critical mail is allowed through the OFF switch (documented bypass) but
     // still falls through to the cap check below.
     if (!state.on && !authCritical) {
+      await this.auditRefusal("email.outbound", "feature_off", subject);
       throw new KillSwitchOffError("email.outbound");
     }
 
@@ -221,13 +268,16 @@ export class KillSwitchService {
       ]);
     } catch (err) {
       this.logger.error({ err }, "email cap count failed — refusing the send (fail closed)");
+      await this.auditRefusal("email.outbound", "cap_reached", subject);
       throw new KillSwitchCapError("email.outbound", caps.perHour, "per-hour");
     }
 
     if (sentHour >= caps.perHour) {
+      await this.auditRefusal("email.outbound", "cap_reached", subject);
       throw new KillSwitchCapError("email.outbound", caps.perHour, "per-hour");
     }
     if (sentDay >= caps.perDay) {
+      await this.auditRefusal("email.outbound", "cap_reached", subject);
       throw new KillSwitchCapError("email.outbound", caps.perDay, "per-day");
     }
   }
