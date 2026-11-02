@@ -4,6 +4,7 @@ import {
   PlanNotConfiguredError,
   RazorpayBillingProvider,
   statusForEvent,
+  trialStatusFromEntity,
   type RazorpayClient,
 } from "./razorpay.provider.js";
 import { parsePlanIds } from "./billing-plans.js";
@@ -154,6 +155,30 @@ describe("statusForEvent — event type → lifecycle status", () => {
   });
 });
 
+describe("#992 — trialStatusFromEntity: the provider's trial window → trialing", () => {
+  const now = new Date("2026-06-01T00:00:00.000Z");
+  const futureChargeAt = Math.floor(new Date("2026-06-15T00:00:00.000Z").getTime() / 1000);
+  const pastChargeAt = Math.floor(new Date("2026-05-15T00:00:00.000Z").getTime() / 1000);
+
+  it("is trialing when the entity is authenticated with a FUTURE first charge", () => {
+    expect(trialStatusFromEntity({ status: "authenticated", charge_at: futureChargeAt }, now)).toBe("trialing");
+  });
+
+  it("is NOT trialing once the first charge is in the past (trial ended)", () => {
+    expect(trialStatusFromEntity({ status: "authenticated", charge_at: pastChargeAt }, now)).toBeNull();
+  });
+
+  it("is NOT trialing for an active or non-authenticated entity", () => {
+    expect(trialStatusFromEntity({ status: "active", charge_at: futureChargeAt }, now)).toBeNull();
+    expect(trialStatusFromEntity({ status: "halted", charge_at: futureChargeAt }, now)).toBeNull();
+  });
+
+  it("is null without a charge_at, or for a null entity", () => {
+    expect(trialStatusFromEntity({ status: "authenticated" }, now)).toBeNull();
+    expect(trialStatusFromEntity(null, now)).toBeNull();
+  });
+});
+
 describe("RazorpayBillingProvider — checkout, enabled, and errors", () => {
   it("is enabled only when all three credentials are present", () => {
     const { provider } = makeProvider();
@@ -173,10 +198,49 @@ describe("RazorpayBillingProvider — checkout, enabled, and errors", () => {
       workspaceId: "ws_1",
       customerEmail: "owner@example.com",
     });
-    expect(result).toEqual({ subscriptionId: "sub_fake_created", keyId: FAKE_KEY_ID });
+    // #992 — a plain checkout (no trial) returns a null trialEndsAt and never
+    // passes start_at/offer_id to the client.
+    expect(result).toEqual({ subscriptionId: "sub_fake_created", keyId: FAKE_KEY_ID, trialEndsAt: null });
     expect(fakeClient.createSubscription).toHaveBeenCalledWith(
       expect.objectContaining({ planId: "plan_fake_pro_m", notes: expect.objectContaining({ workspaceId: "ws_1" }) }),
     );
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.startAt).toBeUndefined();
+    expect(call.offerId).toBeUndefined();
+  });
+
+  it("#992 — a trial plan defers the first charge: start_at ≈ now + trialDays and trialEndsAt returned", async () => {
+    const { provider, fakeClient } = makeProvider();
+    const before = Date.now();
+    const result = await provider.createCheckout({
+      planKey: "pro",
+      interval: "monthly",
+      workspaceId: "ws_1",
+      customerEmail: "owner@example.com",
+      trialDays: 14,
+      trialRequiresCard: false,
+    });
+    const after = Date.now();
+    // trialEndsAt is ~14 days out, and start_at (epoch seconds) matches it.
+    const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    const end = result.trialEndsAt!.getTime();
+    expect(end).toBeGreaterThanOrEqual(before + fourteenDaysMs);
+    expect(end).toBeLessThanOrEqual(after + fourteenDaysMs);
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.startAt).toBe(Math.floor(end / 1000));
+  });
+
+  it("#992 — passes the coupon's offer id to the client when one is given", async () => {
+    const { provider, fakeClient } = makeProvider();
+    await provider.createCheckout({
+      planKey: "pro",
+      interval: "monthly",
+      workspaceId: "ws_1",
+      customerEmail: "owner@example.com",
+      offerId: "offer_abc123",
+    });
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.offerId).toBe("offer_abc123");
   });
 
   it("throws PlanNotConfiguredError for a plan with no configured id", async () => {

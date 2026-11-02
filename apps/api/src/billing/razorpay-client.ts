@@ -16,12 +16,21 @@ export function makeRazorpayClient(keyId: string, keySecret: string): RazorpayCl
 
   return {
     async createSubscription(params) {
-      const sub = await rzp.subscriptions.create({
+      // #992 — offer_id applies a coupon; start_at (epoch seconds) defers the
+      // first charge for a trial. Both are set only when present, so a plain
+      // checkout body is unchanged from #986. The SDK typings lag these fields,
+      // so the body is assembled as the REST shape and the SDK call is cast.
+      const body: Record<string, unknown> = {
         plan_id: params.planId,
         total_count: params.totalCount,
         notes: params.notes,
         customer_notify: 1,
-      });
+      };
+      if (params.offerId) body.offer_id = params.offerId;
+      if (params.startAt !== undefined) body.start_at = params.startAt;
+      const sub = await (rzp.subscriptions as unknown as {
+        create(b: Record<string, unknown>): Promise<{ id: string }>;
+      }).create(body);
       return { id: sub.id };
     },
 

@@ -267,6 +267,11 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "GET /api/v1/admin/revenue", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/workspaces/{id}/billing-events", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "POST /api/v1/admin/payments/{id}/refund", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/coupons", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/coupons", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/coupons/{id}/pause", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "DELETE /api/v1/admin/coupons/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/coupons/{id}/redemptions", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #986 — billing (merged from main). OBSERVED with BILLING_PROVIDER unset in
   // the staging stack, i.e. the default `none`: the controller 404s EVERY
   // billing route for every caller, so the whole surface is unreachable. This
@@ -307,4 +312,4 @@ export const ACCESS_MATRIX: Row[] = [
 // + 2 for #992's admin plan-change and plan-history routes
 // + 1 for #997's public POST /public/feedback
 // + 3 for #997's admin feedback inbox (list, detail, status/notes update)).
-export const EXPECTED_ROUTE_COUNT = 131;
+export const EXPECTED_ROUTE_COUNT = 136;

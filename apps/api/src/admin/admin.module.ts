@@ -24,6 +24,7 @@ import {
   type EmailStatsReader,
 } from "./analytics/email-stats.reader.js";
 import { AdminBillingService } from "./billing/admin-billing.service.js";
+import { AdminCouponsService } from "./billing/admin-coupons.service.js";
 import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admin-billing.reader.js";
 
 /* #968 — the platform-admin module. AdminService resolves the role from the
@@ -58,6 +59,7 @@ import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admi
     PlanManagementService,
     AdminAnalyticsService,
     AdminBillingService,
+    AdminCouponsService,
     {
       provide: ADMIN_ANALYTICS_READER,
       inject: [READ_DB],

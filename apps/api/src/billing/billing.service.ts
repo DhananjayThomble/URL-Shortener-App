@@ -20,6 +20,7 @@ import type {
 import { DB } from "../database/database.module.js";
 import { PlansService } from "../plans/plans.service.js";
 import { MailService } from "../mail/mail.service.js";
+import { CouponsService } from "./coupons.service.js";
 import { BILLING_PROVIDER, type BillingProvider, type NormalizedBillingEvent } from "./billing-provider.js";
 import {
   graceEndFrom,
@@ -113,6 +114,10 @@ export class BillingService {
      *  both. */
     private readonly plans: PlansService,
     private readonly mail: MailService,
+    /** #992 — validates a coupon code and records its one-per-workspace
+     *  redemption at checkout; the discount itself is applied by the provider
+     *  via the coupon's offer id. */
+    private readonly coupons: CouponsService,
   ) {}
 
   /** Whether the billing surface is reachable at all. The controller reads this
@@ -176,14 +181,57 @@ export class BillingService {
     customerEmail: string,
     planKey: PaidPlanKey,
     interval: BillingInterval,
+    couponCode?: string,
   ): Promise<CheckoutSession> {
-    const result = await this.provider.createCheckout({ workspaceId, customerEmail, planKey, interval });
-
     // #987 — read the live price the catalogue holds for this plan RIGHT NOW,
     // so the confirmation reflects an admin's edit without a redeploy. The
     // provider's own plan id (resolved in createCheckout) is still what is
     // charged; this amount is informational for the confirmation screen.
     const amountMinor = await this.plans.livePriceMinor(planKey, interval);
+
+    // #992 — resolve the plan's trial config so the provider can start a trial
+    // subscription (first charge deferred). A plan with trialDays 0 (the
+    // default) starts charging immediately, exactly as before.
+    const plan = await this.plans.getByKey(planKey);
+    const trialDays = plan?.trialDays ?? 0;
+    const trialRequiresCard = plan?.trialRequiresCard ?? true;
+
+    // #992 — validate the coupon BEFORE creating the provider subscription, so
+    // an invalid code fails the checkout with a 400 and nothing is created. The
+    // discount preview is computed off the live price. Validation does not
+    // record a redemption — that is committed only after the subscription
+    // exists, below, so a provider failure leaves no phantom redemption.
+    const resolvedCoupon = couponCode
+      ? await this.coupons.validate(couponCode, planKey, interval, amountMinor ?? 0)
+      : null;
+
+    const result = await this.provider.createCheckout({
+      workspaceId,
+      customerEmail,
+      planKey,
+      interval,
+      // Only a coupon that resolved to a provider offer id discounts at the
+      // provider; a coupon with none still validates + records locally.
+      offerId: resolvedCoupon?.providerOfferId ?? undefined,
+      trialDays,
+      trialRequiresCard,
+    });
+
+    // #992 — record the redemption now the subscription exists. Atomic on the
+    // (coupon, workspace) unique index: a workspace cannot redeem the same
+    // coupon twice, and a race cannot exceed max_redemptions. A conflict here
+    // surfaces as a 409 to the caller — the subscription was created, but the
+    // coupon was already used by this workspace, so the customer retries
+    // without it.
+    if (resolvedCoupon) {
+      await this.coupons.recordRedemption(resolvedCoupon.couponId, workspaceId, planKey, interval);
+    }
+
+    // #992 — a trial defers the first charge; record when it ends so the UI can
+    // show it. Entitlement is NOT granted here — the subscription row is written
+    // "created" below and only the verified `trialing`/`active` webhook moves
+    // the plan.
+    const trialEndsAt = result.trialEndsAt ?? null;
 
     // Upsert the local row in a pending state. One row per workspace (unique
     // index), so a re-started checkout overwrites the pending handle rather
@@ -198,6 +246,7 @@ export class BillingService {
         provider: this.provider.name,
         providerSubscriptionId: result.subscriptionId,
         status: "created",
+        trialEndsAt,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -208,6 +257,7 @@ export class BillingService {
           provider: this.provider.name,
           providerSubscriptionId: result.subscriptionId,
           status: "created",
+          trialEndsAt,
           updatedAt: new Date(),
         },
       });
@@ -220,6 +270,14 @@ export class BillingService {
       interval,
       amountMinor,
       currency: "INR",
+      // #992 — the applied coupon (preview discount only; the provider applies
+      // the real discount via the offer). Null when no coupon, or a coupon with
+      // no provider offer — nothing is discounted at the provider then.
+      coupon:
+        resolvedCoupon && resolvedCoupon.providerOfferId
+          ? { code: resolvedCoupon.code, discountMinor: resolvedCoupon.discountMinor }
+          : null,
+      trialEndsAt: trialEndsAt ? trialEndsAt.toISOString() : null,
     };
   }
 

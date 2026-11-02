@@ -39,6 +39,16 @@ export interface RazorpayClient {
     totalCount: number;
     notes: Record<string, string>;
     customerEmail: string;
+    /** #992 — an offer/coupon id the provider applies to the subscription, or
+     *  undefined for none. */
+    offerId?: string;
+    /** #992 — epoch SECONDS to defer the first charge to (a trial). Undefined
+     *  starts charging immediately (no trial). */
+    startAt?: number;
+    /** #992 — whether the checkout must collect a card up front. When false
+     *  (a no-card trial) Razorpay authenticates the mandate without an upfront
+     *  charge. */
+    requiresCard?: boolean;
   }): Promise<{ id: string }>;
   cancelSubscription(subscriptionId: string, cancelAtCycleEnd: boolean): Promise<void>;
   refundPayment(paymentId: string): Promise<void>;
@@ -92,6 +102,9 @@ export interface RazorpayProviderConfig {
  *  open-ended for the product, renewed well before it lapses. */
 const TOTAL_CYCLES = 120;
 
+/** Milliseconds in a day, for computing a trial's end from its day length. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /** Map a Razorpay webhook event type to the subscription status it implies.
  *  An event with no lifecycle meaning (a payment-only event) maps to null —
  *  stored, but moving no plan on its own. */
@@ -116,6 +129,37 @@ export function statusForEvent(eventType: string): SubscriptionStatus | null {
     default:
       return null;
   }
+}
+
+/** #992 — the trial window as the subscription ENTITY reports it, independent of
+ *  the event type.
+ *
+ *  Razorpay has no distinct `trialing` event or entity status: a subscription
+ *  created with a future `start_at` (a trial) is reported with entity status
+ *  `authenticated` and a `charge_at` in the future until the first charge, when
+ *  it flips to `active`. So the honest signal that a subscription is in its
+ *  trial is the ENTITY: status `authenticated` AND a future first charge.
+ *
+ *  When that holds, the subscription is entitled (the customer is using the
+ *  plan on trial) — which is exactly our `trialing` status, an entitled state.
+ *  That keeps the issue's rule intact: a trial grants the plan only through a
+ *  verified webhook (this one), never a local write, and the entitlement is the
+ *  provider's reported trial, not a locally-assumed one. Returns null when the
+ *  entity does not describe a trial, so the caller falls back to the event-type
+ *  status.
+ *
+ *  `now` is injected so the "future charge" test is deterministic. */
+export function trialStatusFromEntity(
+  entity: Record<string, unknown> | null,
+  now: Date,
+): SubscriptionStatus | null {
+  if (!entity) return null;
+  if (entity.status !== "authenticated") return null;
+  const chargeAt = entity.charge_at;
+  if (typeof chargeAt !== "number") return null;
+  // A first charge strictly in the future means the subscription is in its
+  // trial window right now.
+  return chargeAt * 1000 > now.getTime() ? "trialing" : null;
 }
 
 /** Pull a named entity (`subscription` / `payment`) out of a Razorpay event
@@ -167,6 +211,14 @@ export class RazorpayBillingProvider implements BillingProvider {
     if (!planId) {
       throw new PlanNotConfiguredError(params.planKey, params.interval);
     }
+
+    // #992 — a plan with trialDays > 0 starts the subscription with the first
+    // charge deferred: Razorpay's `start_at` (epoch seconds) pushes the first
+    // billing to that instant, and the subscription reports `trialing` until
+    // then. The trial end IS that start instant. 0 (or absent) = charge now.
+    const trialDays = params.trialDays ?? 0;
+    const trialEndsAt = trialDays > 0 ? new Date(Date.now() + trialDays * DAY_MS) : null;
+
     const subscription = await this.client.createSubscription({
       planId,
       totalCount: TOTAL_CYCLES,
@@ -174,10 +226,16 @@ export class RazorpayBillingProvider implements BillingProvider {
       // local row is written can still be tied back to the workspace.
       notes: { workspaceId: params.workspaceId, planKey: params.planKey, interval: params.interval },
       customerEmail: params.customerEmail,
+      // #992 — the coupon's provider offer, when a coupon was applied. The
+      // service only passes an id for a validated + recorded coupon.
+      offerId: params.offerId,
+      // #992 — defer the first charge for a trial; omit for an immediate charge.
+      startAt: trialEndsAt ? Math.floor(trialEndsAt.getTime() / 1000) : undefined,
+      requiresCard: params.trialRequiresCard,
     });
     // keyId is non-null here: enabled gates the route, so createCheckout is only
     // reached when all three credentials are present.
-    return { subscriptionId: subscription.id, keyId: this.config.keyId! };
+    return { subscriptionId: subscription.id, keyId: this.config.keyId!, trialEndsAt };
   }
 
   async cancel(providerSubscriptionId: string, atPeriodEnd: boolean): Promise<void> {
@@ -268,6 +326,13 @@ export class RazorpayBillingProvider implements BillingProvider {
     const currentEnd = entity?.current_end;
     const currentPeriodEnd = typeof currentEnd === "number" ? new Date(currentEnd * 1000) : null;
 
+    // #992 — a subscription in its trial window (entity authenticated + a future
+    // first charge) is `trialing`, an entitled state, regardless of the event
+    // type that carried it. Fall back to the event-type status otherwise. This
+    // is the ONLY place a trial becomes entitled — via a verified webhook, never
+    // a local write.
+    const status = trialStatusFromEntity(entity, new Date()) ?? statusForEvent(eventType);
+
     return {
       // Razorpay delivers the event id in the body's `id` and in the
       // x-razorpay-event-id header; the body id is the canonical one.
@@ -278,7 +343,7 @@ export class RazorpayBillingProvider implements BillingProvider {
       // service can confirm a requested plan change against the provider's own
       // view rather than trusting a locally-written target.
       providerPlanId: entity && typeof entity.plan_id === "string" ? entity.plan_id : null,
-      status: statusForEvent(eventType),
+      status,
       currentPeriodEnd,
       payment: readPayment(raw),
       raw,

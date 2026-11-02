@@ -75,7 +75,13 @@ export class BillingController {
   ): Promise<CheckoutSession> {
     assertOwner(actor);
     try {
-      return await this.billing.startCheckout(actor.workspaceId, actor.email, input.planKey, input.interval);
+      return await this.billing.startCheckout(
+        actor.workspaceId,
+        actor.email,
+        input.planKey,
+        input.interval,
+        input.couponCode,
+      );
     } catch (err) {
       if (err instanceof PlanNotConfiguredError) {
         // A configuration gap for that plan, not a server fault.

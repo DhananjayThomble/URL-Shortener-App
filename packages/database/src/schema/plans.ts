@@ -78,6 +78,19 @@ export const plans = pgTable(
      *  plain uuid (not an FK) so creating the first version is a plain update and
      *  dropping a version never cascades the plan away. */
     currentVersionId: uuid("current_version_id"),
+
+    /* ── #992 trials ── per-plan trial configuration. The trial itself is the
+         provider's trialing subscription (entitled via the verified webhook,
+         #986); these columns are only the OFFER an admin sets per plan. ── */
+    /** Trial length in days, 0 = no trial (the default). A checkout for a plan
+     *  with trialDays > 0 opens a trialing subscription that converts (charges)
+     *  or reverts to free at the trial end via the provider's lifecycle. */
+    trialDays: integer("trial_days").notNull().default(0),
+    /** Whether a card is required up front to start the trial. With a card, the
+     *  provider auto-charges at trial end (convert); without, the trial reverts
+     *  to free unless the owner adds payment. Default true (card up front). */
+    trialRequiresCard: integer("trial_requires_card").notNull().default(1),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -56,6 +56,12 @@ export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 export const StartCheckoutInput = z.object({
   planKey: z.enum(PAID_PLAN_KEYS),
   interval: z.enum(BILLING_INTERVALS),
+  /** #992 — an optional coupon code to apply at checkout. The server validates
+   *  it against the coupon's own rules (expiry, max redemptions, plan/interval
+   *  restriction, paused) and records the redemption; the DISCOUNT is applied by
+   *  the provider via the coupon's offer id. An absent or empty code is simply
+   *  no coupon. Trimmed and length-capped to the coupon code shape. */
+  couponCode: z.string().trim().min(1).max(40).optional(),
 });
 export type StartCheckoutInput = z.infer<typeof StartCheckoutInput>;
 
@@ -81,6 +87,23 @@ export const CheckoutSession = z.object({
    *  the confirmation screen, never a client-named amount. */
   amountMinor: z.number().int().min(0).nullable(),
   currency: z.string(),
+  /** #992 — the coupon that was applied at checkout, or null when none. The
+   *  `code` is echoed for the confirmation screen and `discountMinor` is the
+   *  preview discount off `amountMinor` (the provider applies the real discount
+   *  via the coupon's offer). Null when no coupon, or when the applied coupon
+   *  has no provider offer (nothing is discounted at the provider then). */
+  coupon: z
+    .object({
+      code: z.string(),
+      discountMinor: z.number().int().min(0),
+    })
+    .nullable()
+    .default(null),
+  /** #992 — when this checkout starts a free trial, the ISO instant the trial
+   *  ends (the first charge date), else null. Entitlement during the trial is
+   *  the provider's `trialing` status on the verified webhook, never a local
+   *  grant — this is for the confirmation screen only. */
+  trialEndsAt: z.string().datetime().nullable().default(null),
 });
 export type CheckoutSession = z.infer<typeof CheckoutSession>;
 
