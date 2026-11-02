@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { createRequire } from "node:module";
 
 /* This app is a pure client of the NestJS API. There are intentionally no
    route handlers under src/app/api — all data access goes through
@@ -74,4 +75,52 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/* #995 — Sentry source-map upload, CI ONLY and ONLY when a SENTRY_AUTH_TOKEN
+ * secret exists; skip cleanly otherwise.
+ *
+ * withSentryConfig wraps the build to upload the browser source maps so stack
+ * traces in Sentry are un-minified. That upload needs an auth token and the
+ * org/project coordinates, and it is meant for the GitHub Actions CI build —
+ * NOT the Vercel deploy (which has no SnapURL Sentry project configured and
+ * whose own env may carry an unrelated token). So the gate is two conditions:
+ * run on GitHub Actions (GITHUB_ACTIONS=true) AND with a token present. On
+ * Vercel, a local build, a self-hoster's build, or any CI run without the
+ * token, we return the plain config untouched and never load or call the Sentry
+ * plugin at all — no upload, no failure, no network call. (The error-tracking
+ * SDK itself is independent of this: it is gated on the DSN at runtime, not on
+ * this build-time token.)
+ *
+ * withSentryConfig is require()'d INSIDE this branch, not imported at the top,
+ * because the package's published type-export condition omits it from the entry
+ * TS resolves and — more importantly — so Vercel never even loads the plugin. */
+function withSourceMapUpload(config: NextConfig): NextConfig {
+  const authToken = process.env.SENTRY_AUTH_TOKEN;
+  const inGithubCi = process.env.GITHUB_ACTIONS === "true";
+  if (!authToken || !inGithubCi) return config;
+
+  // Resolve withSentryConfig from the package's config entry. It is NOT on the
+  // runtime index export in this SDK version — it lives in the build-config
+  // module — so we require that resolved path directly. Loaded only here, in
+  // the GitHub-CI branch, so Vercel and local/self-host builds never touch it.
+  const require = createRequire(import.meta.url);
+  const sentryEntry = require.resolve("@sentry/nextjs");
+  const configEntry = sentryEntry.replace(/index\.server\.js$/, "config/index.js");
+  const { withSentryConfig } = require(configEntry) as {
+    withSentryConfig: (config: NextConfig, options: Record<string, unknown>) => NextConfig;
+  };
+  return withSentryConfig(config, {
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    authToken,
+    // Upload source maps, then hide them from the public bundle so minified
+    // output ships without exposing source. Quiet unless something fails.
+    sourcemaps: { deleteSourcemapsAfterUpload: true },
+    silent: false,
+    // The release the maps attach to — match the runtime release tag.
+    release: { name: process.env.NEXT_PUBLIC_SENTRY_RELEASE ?? appVersion },
+    // Do not let a telemetry/upload problem fail a product build.
+    telemetry: false,
+  });
+}
+
+export default withSourceMapUpload(nextConfig);

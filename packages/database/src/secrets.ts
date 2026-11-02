@@ -230,6 +230,29 @@ export async function resolveRazorpaySecrets(
   }
 }
 
+/**
+ * Resolve the Sentry DSN (#995), never throwing.
+ *
+ * Optional like the Safe Browsing key: with no DSN configured, error tracking
+ * stays OFF, so a missing or unreadable secret must not fail the cold start.
+ * The error is returned for the caller to log once a logger exists, and the DSN
+ * is left undefined (telemetry then never initialises).
+ *
+ * Escape hatch as above: with no SENTRY_DSN_SECRET_ARN set, returns the plain
+ * SENTRY_DSN (possibly undefined) and makes no SDK call — local dev, compose,
+ * single-node and Kubernetes are byte-identical to today.
+ */
+export async function resolveSentryDsn(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ dsn: string | undefined; error?: Error }> {
+  try {
+    const dsn = await resolveJwtSecret("SENTRY_DSN_SECRET_ARN", "SENTRY_DSN", env);
+    return { dsn: dsn?.trim() || undefined };
+  } catch (err) {
+    return { dsn: undefined, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
 /** Test-only: clears the module-level cache and lazily-created client so each
  *  unit test starts from a clean slate. Not part of the runtime contract. */
 export function __resetSecretCacheForTests(): void {

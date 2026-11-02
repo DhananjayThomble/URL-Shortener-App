@@ -234,6 +234,30 @@ export interface SnapUrlStackProps extends StackProps {
    * it from Secrets Manager at cold start, which needs a route out.
    */
   razorpaySecretName?: string;
+  /**
+   * NAME of an operator-created Secrets Manager secret holding the Sentry DSN
+   * for error tracking (#995), e.g. `snapurl/prod/sentry-dsn`. Optional and
+   * opt-in, exactly like {@link safeBrowsingSecretName}: unset means error
+   * tracking stays OFF (no DSN resolves, nothing initialises) and the stack is
+   * unchanged.
+   *
+   * Referenced by name, not created here: the operator creates the secret with
+   * the project's DSN first, then deploys. ALL THREE functions (api, redirect,
+   * worker) read it — each reports its own crashes — so the ARN is set on the
+   * shared environment and all three are granted read, unlike the API-only
+   * Safe-Browsing/Razorpay secrets.
+   *
+   * Only meaningful with egress (`natStrategy` not `'none'`): the functions
+   * resolve it from Secrets Manager at cold start, which needs a route out.
+   */
+  sentryDsnSecretName?: string;
+  /**
+   * The error-tracking RELEASE id tagged on every event (#995) — typically the
+   * image tag or commit sha, so an event points at the exact build. Optional;
+   * unset means events carry no release tag. Passed as a plain env var to all
+   * three functions and to the web build.
+   */
+  sentryRelease?: string;
 }
 
 /**
@@ -711,6 +735,22 @@ export class SnapUrlStack extends Stack {
         ? secretsmanager.Secret.fromSecretNameV2(this, "RazorpaySecret", props.razorpaySecretName)
         : undefined;
 
+    /* #995 — the Sentry DSN, opt-in the same way. Under 'none' there is no
+       route to Secrets Manager, so the setting is ignored with a warning rather
+       than wired to a lookup that could only ever fail. Unlike the two above,
+       ALL THREE functions read it (each reports its own crashes), so it is set
+       on the shared env and granted to all three below. */
+    if (props.sentryDsnSecretName && !hasEgress) {
+      Annotations.of(this).addWarningV2(
+        "snapurl:sentryNoEgress",
+        "sentryDsnSecretName is ignored under natStrategy 'none': the functions cannot reach Secrets Manager to resolve it.",
+      );
+    }
+    const sentryDsnSecret =
+      props.sentryDsnSecretName && hasEgress
+        ? secretsmanager.Secret.fromSecretNameV2(this, "SentryDsn", props.sentryDsnSecretName)
+        : undefined;
+
     /* 'none'-only fallback: no NAT, no route to Secrets Manager, so resolve the
        DB URL at synth time via unsafeUnwrap. This is the only path that still
        places the plaintext password in the template, by necessity. Left as a
@@ -769,6 +809,13 @@ export class SnapUrlStack extends Stack {
       THROTTLE_TTL_SECONDS: config.get("throttle-ttl-seconds"),
     };
 
+    /* #995 — error-tracking config shared by api/redirect/worker. The release
+       is a plain (non-secret) tag set whenever the deploy passes one, so an
+       event points at the exact build. The DSN itself is resolved from Secrets
+       Manager at cold start via SENTRY_DSN_SECRET_ARN (set on the egress path
+       below) — with no secret and no DSN, each service's init is a no-op. */
+    if (props.sentryRelease) commonEnv.SENTRY_RELEASE = props.sentryRelease;
+
     if (hasEgress) {
       /* Egress profiles ('instance'/'gateway'): pass ARNs, not values. Each
          function resolves the secret it needs at cold start over the NAT and
@@ -788,6 +835,12 @@ export class SnapUrlStack extends Stack {
       commonEnv.DATABASE_NAME = "snapurl";
       commonEnv.JWT_ACCESS_SECRET_ARN = config.jwtAccessSecret.secretArn;
       commonEnv.JWT_REFRESH_SECRET_ARN = config.jwtRefreshSecret.secretArn;
+      /* #995 — the Sentry DSN secret, when the operator opted in. A name, not an
+         ARN (GetSecretValue accepts either). Set on the SHARED env so all three
+         functions resolve it; the grants below give each read access. Resolved
+         at cold start, non-fatally — a missing/unreadable secret leaves error
+         tracking off and never blocks a boot. */
+      if (sentryDsnSecret) commonEnv.SENTRY_DSN_SECRET_ARN = sentryDsnSecret.secretName;
     } else {
       /* 'none'-only escape hatch: no egress means no runtime Secrets Manager
          lookup is possible, so the values are unwrapped at synth time and set
@@ -1507,6 +1560,12 @@ export class SnapUrlStack extends Stack {
       // #986 — only the API serves billing, so only the API can read the
       // Razorpay secret. redirectFn and workerFn never get it.
       razorpaySecret?.grantRead(apiFn);
+      // #995 — error tracking: ALL THREE functions report their own crashes, so
+      // each is granted read on the Sentry DSN secret (unlike the API-only
+      // secrets above). No-op when the operator did not opt in (secret unset).
+      sentryDsnSecret?.grantRead(apiFn);
+      sentryDsnSecret?.grantRead(redirectFn);
+      sentryDsnSecret?.grantRead(workerFn);
     }
 
     /* ---------------------------------------------------------

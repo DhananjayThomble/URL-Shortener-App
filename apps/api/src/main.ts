@@ -23,6 +23,7 @@ import {
 import { AppModule } from "./app.module.js";
 import { ENV, type Env } from "./config/env.js";
 import { resolveCorsOrigins } from "./config/cors-origins.js";
+import { initApiTelemetry } from "./common/telemetry.js";
 
 /* Resolve the database and JWT secrets from Secrets Manager (see
    packages/database/src/secrets.ts) and assign them onto process.env BEFORE the
@@ -81,6 +82,13 @@ async function bootstrap() {
 
   app.useLogger(app.get(Logger));
   const env = app.get<Env>(ENV);
+
+  /* #995 — initialise error tracking. OFF unless a DSN is configured: with no
+     SENTRY_DSN (and no SENTRY_DSN_SECRET_ARN to resolve one) this makes no SDK
+     call and leaves the disabled no-op handle in place, so the self-host / OSS
+     path is unchanged. Any secret-resolution error is logged once the logger
+     exists, below, and never blocks the boot. */
+  const { error: sentryError, enabled: sentryEnabled } = await initApiTelemetry(env);
 
   /* Fastify's built-in JSON parser rejects an empty body with a 400 whenever
      the request carries Content-Type: application/json, which breaks every
@@ -188,6 +196,13 @@ async function bootstrap() {
     logger.warn(
       "Safe Browsing is off (no GOOGLE_SAFE_BROWSING_API_KEY). Links will be marked clean without being scanned.",
     );
+  }
+  if (sentryError) {
+    // Names the secret and the SDK error, never the DSN value itself.
+    logger.warn(`Could not read the Sentry DSN secret: ${sentryError.message}`);
+  }
+  if (!sentryEnabled) {
+    logger.log("Error tracking is off (no SENTRY_DSN). Set a DSN to turn it on.");
   }
 }
 

@@ -1,0 +1,35 @@
+{
+  "name": "@snapurl/telemetry",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Error-tracking (Sentry) wiring shared by the API, redirect and worker. Off unless a DSN is set. Holds the pure beforeSend scrubber and the shouldSend()/sampleRate seam the #1020 runtime kill switch plugs into, so every Node service initialises Sentry the same way and the scrubbing is tested once.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pure": {
+      "types": "./dist/pure.d.ts",
+      "default": "./dist/pure.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sentry/node": "^11.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.11"
+  }
+}

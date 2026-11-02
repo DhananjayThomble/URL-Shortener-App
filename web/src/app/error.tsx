@@ -15,7 +15,8 @@
    query.
    ============================================================ */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui";
 import { ReportProblemButton } from "@/components/feedback/report-problem";
 
@@ -26,9 +27,16 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // #995 — report the error to Sentry and keep its event id, so a "Report a
+  // problem" filed from this page links straight to the captured crash. When
+  // error tracking is off (no DSN) captureException returns a locally-generated
+  // id that no event matches, so we fall back to Next's error digest, which is
+  // what this page used before an error tracker existed.
+  const [eventId, setEventId] = useState<string | undefined>(error.digest);
   useEffect(() => {
-    // Surface it in the console in dev; a real error-tracking sink (#995) would
-    // hook in here once its vendor is decided.
+    const id = Sentry.captureException(error);
+    if (Sentry.isInitialized()) setEventId(id);
+    // Surface it in the console in dev too.
     console.error(error);
   }, [error]);
 
@@ -44,12 +52,13 @@ export default function AppError({
           <Button variant="primary" onClick={reset} className="justify-center min-h-[40px]">
             Try again
           </Button>
-          {/* The digest is Next's stable id for this error instance — attach it
-              as the error-tracking event id so the report links back to it. */}
+          {/* The Sentry event id (when error tracking is on) or Next's error
+              digest (when it is off) — attach it as the error-tracking event id
+              so the report links back to this exact error instance (#995/#997). */}
           <ReportProblemButton
             label="Report a problem"
             variant="default"
-            context={error.digest ? { errorEventId: error.digest } : undefined}
+            context={eventId ? { errorEventId: eventId } : undefined}
           />
         </div>
       </div>

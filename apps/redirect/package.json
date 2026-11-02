@@ -15,10 +15,12 @@
     "@aws-sdk/client-dynamodb": "^3.1121.0",
     "@aws-sdk/client-sqs": "^3.1121.0",
     "@aws-sdk/lib-dynamodb": "^3.1121.0",
+    "@sentry/node": "^11.10.0",
     "@snapurl/cache": "workspace:*",
     "@snapurl/contract": "workspace:*",
     "@snapurl/database": "workspace:*",
     "@snapurl/domain": "workspace:*",
+    "@snapurl/telemetry": "workspace:*",
     "fastify": "^5.12.6",
     "jsonwebtoken": "^9.0.2",
     "pino": "^9.6.0"

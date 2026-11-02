@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from "@nestjs/common";
-import type { FastifyReply } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { isForeignKeyViolation, isUniqueViolation, postgresErrorCode } from "@snapurl/database";
+import { telemetry } from "./telemetry.js";
 
 /* ============================================================
    A backstop so a database constraint can never reach a user as
@@ -43,7 +44,9 @@ export class PostgresErrorFilter implements ExceptionFilter {
   private readonly logger = new Logger(PostgresErrorFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const reply = host.switchToHttp().getResponse<FastifyReply>();
+    const http = host.switchToHttp();
+    const reply = http.getResponse<FastifyReply>();
+    const request = http.getRequest<FastifyRequest>();
 
     /* A streaming route (forms/links CSV export) can throw after its head is
        already on the wire — see forms.controller.ts's exportResponses for the
@@ -80,11 +83,24 @@ export class PostgresErrorFilter implements ExceptionFilter {
       return;
     }
 
-    this.logger.error({ err: exception }, "unhandled exception");
+    /* A genuinely unexpected error — the one worth tracking (#995). Capture it
+       to Sentry (a no-op when telemetry is off / no DSN) and link it to the
+       request id the logs already carry, so the event and its log line share
+       one correlation id. The returned event id is handed back to the client as
+       errorEventId: the web error boundary threads it into a "Report a problem"
+       submission (#997), so a user's report is already correlated with the
+       crash. captureException attaches ONLY ids — the scrubber strips the rest. */
+    const requestId = typeof request?.id === "string" ? request.id : request?.id ? String(request.id) : undefined;
+    const errorEventId = telemetry().captureException(exception, { requestId });
+
+    this.logger.error({ err: exception, errorEventId, requestId }, "unhandled exception");
     void reply.status(500).send({
       statusCode: 500,
       error: "Internal Server Error",
       message: "The API is having trouble. Try again in a moment.",
+      /* Present only when an event was actually recorded (telemetry on), so the
+         off path's body is byte-identical to before. */
+      ...(errorEventId ? { errorEventId } : {}),
     });
   }
 }
