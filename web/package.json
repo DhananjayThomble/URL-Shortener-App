@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm -w build:packages && next dev --port 3000",
     "build": "next build",
-    "vercel-build": "pnpm --filter \"snapurl-web^...\" build && next build",
+    "vercel-build": "pnpm --filter @snapurl/contract build && pnpm --filter @snapurl/domain build && next build",
     "start": "next start --port 3000",
     "lint": "eslint .",
     "type-check": "pnpm -w build:packages && tsc --noEmit",
