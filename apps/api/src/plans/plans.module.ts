@@ -2,6 +2,7 @@ import { Global, Module, type OnApplicationBootstrap } from "@nestjs/common";
 import { Logger } from "@nestjs/common";
 import { PlansService } from "./plans.service.js";
 import { EntitlementsService } from "./entitlements.service.js";
+import { UsageService } from "./usage.service.js";
 
 /* ============================================================
    #970 — the plans / entitlements engine as its own GLOBAL module.
@@ -20,8 +21,8 @@ import { EntitlementsService } from "./entitlements.service.js";
    ============================================================ */
 @Global()
 @Module({
-  providers: [PlansService, EntitlementsService],
-  exports: [PlansService, EntitlementsService],
+  providers: [PlansService, EntitlementsService, UsageService],
+  exports: [PlansService, EntitlementsService, UsageService],
 })
 export class PlansModule implements OnApplicationBootstrap {
   private readonly logger = new Logger(PlansModule.name);

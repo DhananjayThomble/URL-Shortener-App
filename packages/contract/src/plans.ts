@@ -344,9 +344,20 @@ export const UsageRow = z.object({
 });
 export type UsageRow = z.infer<typeof UsageRow>;
 
+/** An active owner warning on a limit at or above 80%, for the in-app banner. */
+export const UsageWarning = z.object({
+  limitName: z.enum(LIMIT_NAMES),
+  label: z.string(),
+  band: z.enum(["warn", "full"]),
+});
+export type UsageWarning = z.infer<typeof UsageWarning>;
+
 export const WorkspaceUsage = z.object({
   planKey: z.string(),
   rows: z.array(UsageRow),
+  /** Limits the workspace is at or above 80% on, newest-crossed first. The
+   *  Settings page shows these as a banner; empty when nothing is near a limit. */
+  warnings: z.array(UsageWarning),
 });
 export type WorkspaceUsage = z.infer<typeof WorkspaceUsage>;
 

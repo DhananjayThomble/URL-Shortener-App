@@ -9,6 +9,7 @@ import {
   type FeatureName,
   type LimitName,
   type LimitValue,
+  type PricingTable,
   type ResolvableOverride,
   type ResolvableVersion,
   type ResolvedEntitlements,
@@ -162,6 +163,27 @@ export class PlansService {
     if (fromDb) return fromDb;
     if (catalog.size > 0) return null; // DB is seeded and does not have it
     return this.seedCatalog().find((p) => p.key.toLowerCase() === k) ?? null;
+  }
+
+  /** The public pricing table, built from the public-visible plans' current
+   *  matrices. Hidden and archived plans are excluded — /pricing shows only what
+   *  a visitor can sign up for. Ordered by sortOrder. */
+  async pricingTable(): Promise<PricingTable> {
+    const catalog = await this.listCatalog();
+    const plansOut = catalog
+      .filter((p) => p.visibility === "public")
+      .map((p) => {
+        const matrices = toResolvedMatrices(p.features, p.limits);
+        return {
+          key: p.key,
+          displayName: p.displayName,
+          description: p.description,
+          highlightBadge: p.highlightBadge,
+          features: matrices.features,
+          limits: matrices.limits,
+        };
+      });
+    return { plans: plansOut, featureOrder: [...FEATURE_NAMES], limitOrder: [...LIMIT_NAMES] };
   }
 
   /** The compiled-in seed plans shaped as CatalogPlan, for the unseeded-DB

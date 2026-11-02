@@ -15,6 +15,7 @@ import {
   OverrideKind,
   PlanVisibility,
   resolveEntitlements,
+  UsageWarning,
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
@@ -340,6 +341,18 @@ describe("SetOverrideInput", () => {
     expect(SetOverrideInput.safeParse({ kind: "feature", name: "forms", value: true, expiresAt: "soon" }).success).toBe(
       false,
     );
+  });
+});
+
+describe("UsageWarning", () => {
+  it("accepts a warn/full band on a known limit", () => {
+    expect(UsageWarning.safeParse({ limitName: "links", label: "links", band: "warn" }).success).toBe(true);
+    expect(UsageWarning.safeParse({ limitName: "forms", label: "forms", band: "full" }).success).toBe(true);
+  });
+
+  it("rejects a none band or an unknown limit", () => {
+    expect(UsageWarning.safeParse({ limitName: "links", label: "links", band: "none" }).success).toBe(false);
+    expect(UsageWarning.safeParse({ limitName: "galaxies", label: "x", band: "warn" }).success).toBe(false);
   });
 });
 

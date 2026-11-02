@@ -103,6 +103,8 @@ export const ACCESS_MATRIX: Row[] = [
   // #972 — the site-wide banner, @Public so reachable by anyone (signed-in or
   // not); it returns the public banner shape only, never anything gated.
   { route: "GET /api/v1/public/platform/banner", expect: { any: "allow" }, status: "approved" },
+  // #970 — the public pricing table, unauthenticated like every other public route.
+  { route: "GET /api/v1/public/pricing", expect: { any: "allow" }, status: "approved" },
   // ── health ──
   { route: "GET /api/v1/health", expect: { any: "allow" }, status: "approved" },
   // ── links ──
@@ -148,6 +150,9 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "DELETE /api/v1/bio-pages/{id}", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: 403, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // ── workspaces ──
   { route: "GET /api/v1/workspaces/current", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "allow", "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #970 — usage against plan limits. Same access shape as GET /workspaces/current:
+  // any workspace member reads it, API keys 403 (no user/workspace-session behind them).
+  { route: "GET /api/v1/workspaces/current/usage", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "allow", "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "PATCH /api/v1/workspaces/current", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: 403, viewerA: 403, ownerB: "allow", "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // ── conversions ──
   { route: "GET /api/v1/conversions", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "own-only", "keyA-all": "allow", "keyA-links-read": 403, "keyB-all": "own-only" }, status: "approved" },
@@ -238,5 +243,6 @@ export const ACCESS_MATRIX: Row[] = [
 // + 7 for #974's system-health routes + 11 for #969's users-and-workspaces
 // + 9 for #971's moderation routes + 2 for #973's GET /admin/analytics and its
 // CSV export + 2 for #972's admin settings routes + 1 for #972's public banner
-// route + 8 for #970's plans/versions/overrides admin routes).
-export const EXPECTED_ROUTE_COUNT = 112;
+// route + 8 for #970's plans/versions/overrides admin routes + 2 for #970's
+// public /pricing and GET /workspaces/current/usage).
+export const EXPECTED_ROUTE_COUNT = 114;

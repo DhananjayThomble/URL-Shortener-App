@@ -151,6 +151,33 @@ export const workspacePlanOverrides = pgTable(
   ],
 );
 
+export const usageWarnings = pgTable(
+  "usage_warnings",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** The limit this warning is about (a LimitName, e.g. "links"). */
+    limitName: varchar("limit_name", { length: 40 }).notNull(),
+    /**
+     * The band the workspace is currently IN for this limit: "warn" (>=80%) or
+     * "full" (>=100%). A row exists only while the workspace is at or above the
+     * warn threshold; dropping back below it deletes the row. This IS the in-app
+     * signal the Settings usage view reads, and it dedupes the owner email — an
+     * email is sent only when the band crosses UP to a level not already
+     * recorded, so an owner is warned once at 80% and once at 100%, not on every
+     * usage read.
+     */
+    band: varchar("band", { length: 10 }).notNull(),
+    /** When the current band was last notified by email, so a re-evaluation at
+     *  the same band does not re-send. */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("usage_warnings_workspace_limit_key").on(t.workspaceId, t.limitName)],
+);
+
 export const plansRelations = relations(plans, ({ many }) => ({
   versions: many(planVersions),
 }));
