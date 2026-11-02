@@ -17,6 +17,7 @@ import { TotpService } from "../auth/totp.service.js";
 import type { OAuthService } from "../auth/oauth.service.js";
 import type { MailService } from "../mail/mail.service.js";
 import { AuthService } from "../auth/auth.service.js";
+import { botProtectionStub, signupRefusalStub } from "../test/signup-controls.stub.js";
 import type { Env } from "../config/env.js";
 import type { AdminActor } from "./admin-management.service.js";
 import { PlatformSettingsService, SETTINGS_CACHE_TTL_MS } from "./platform-settings.service.js";
@@ -117,6 +118,8 @@ describeDb("#972 — runtime platform settings", () => {
       oauth,
       new FakeMail() as unknown as MailService,
       settings,
+      botProtectionStub(),
+      signupRefusalStub(),
     );
 
     const [adminRow] = await db
@@ -207,7 +210,7 @@ describeDb("#972 — runtime platform settings", () => {
     // oauthSignIn with a never-seen subject/email hits the new-account branch,
     // which is gated identically.
     const oauthReject = { verify: async () => ({ subject: `s-${stamp}`, email: `ps-oauth-${stamp}@x.com`, emailVerified: true }) } as unknown as OAuthService;
-    const gatedAuth = new AuthService(db, env, new TokenService(db, env, new JwtService()), new TotpService(), oauthReject, new FakeMail() as unknown as MailService, settings);
+    const gatedAuth = new AuthService(db, env, new TokenService(db, env, new JwtService()), new TotpService(), oauthReject, new FakeMail() as unknown as MailService, settings, botProtectionStub(), signupRefusalStub());
 
     await settings.update({ signupMode: "closed" }, actor);
     await expect(gatedAuth.oauthSignIn("google", "tok", "nonce")).rejects.toBeInstanceOf(ForbiddenException);

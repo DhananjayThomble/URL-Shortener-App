@@ -1784,3 +1784,76 @@ and falls back to `ui-monospace`.
 runtime `<link>`. The build-time-hermetic, same-origin, no-reflow property is the invariant to
 preserve. For a non-OFL family, confirm the licence permits redistribution before vendoring, or load
 it from the app's own asset host instead.
+
+
+
+### #993 · Sign-up and account abuse controls (launch readiness)
+
+Four controls landed together to stop spammers and phishers at sign-up and account level before
+marketing brings traffic in. Each is additive and defaults to the least-surprising behaviour for an
+open-source self-hoster.
+
+**D1 · Unverified accounts can create links, but the links do not redirect until the owner verifies
+their email.** Modelled exactly on #971's admin `disabled` flag: a new `ownerUnverified` attribute
+rides the DynamoDB link projection (and the Postgres resolver computes the same from the owner's
+live `email_verified_at`), makes the link edge-ineligible (`isEdgeEligible` returns false so the
+CloudFront fast path never serves it), and the redirect Lambda's gate stops it with a dedicated
+"link not active yet" page (404 — not started, not gone). The hold is a new `not_active` verdict in
+`@snapurl/domain`'s `effectiveGate`, ranked directly under an admin `disabled` (the stronger
+moderation verdict wins) and above archived/flagged/lifecycle. On `verifyEmail`, the owner's links
+are re-enqueued to the projection outbox in the same transaction as the flag flip, so they go live
+within the normal projection window. Existing (already-verified) accounts are unaffected, and a
+link projected before #993 revives with `ownerUnverified=false` so no live link goes dark.
+
+**Picked it over** a per-link `owner_unverified_at` column: the state is a property of the *owner*,
+not the link, so deriving it from the owner's live verification state at projection time means
+verification needs no per-link backfill — just a re-projection of the owner's links.
+
+**D2 · Bot protection on sign-up is behind a provider switch that is OFF by default. VENDOR NOT YET
+CHOSEN.** The operator has not picked between Cloudflare Turnstile, hCaptcha, and AWS WAF CAPTCHA, so
+the code ships a pluggable `BotProtectionService` with three settings: `none` (the default — a
+self-hoster registers with no third-party dependency), `turnstile`, and `hcaptcha`. The provider is
+a *runtime platform setting* (`botProtection.provider`, admin-panel editable, #972 store), so the
+operator flips it on without a redeploy once they have configured the secret. The matching secret is
+an **env/SSM value** (`BOT_PROTECTION_SECRET`), never in the settings store (#972 keeps secrets out).
+Both supported providers are a single `application/x-www-form-urlencoded` POST to a siteverify URL
+(`challenges.cloudflare.com/turnstile/v0/siteverify`, `api.hcaptcha.com/siteverify`) returning
+`{ success }`, so one `verify` method dispatches on the provider; adding AWS WAF CAPTCHA later is a
+new branch and a new enum member. The gate is **fail-closed**: when a provider is on, a missing/empty
+token, a missing secret, a siteverify rejection, or a transport error all refuse — a sign-up gate
+that cannot confirm a human must not wave it through. Wired into BOTH password register and the
+OAuth new-account branch (an existing user signing in is never challenged). Verify calls are mocked
+in tests; CI makes no live call.
+
+**The open vendor choice** is the one thing a human still has to decide. Recommendation when the time
+comes: **Cloudflare Turnstile** for a privacy-friendly, free, invisible challenge with no user
+puzzles; **hCaptcha** if an accessibility-audited visible fallback is wanted; **AWS WAF CAPTCHA** only
+if you want it enforced at the edge/WAF layer rather than in the app (that path is not implemented
+here — it would gate before the Lambda, not in `verify`). **Revisit if** the operator picks a vendor:
+set `botProtection.provider` in the admin panel and `BOT_PROTECTION_SECRET` in SSM; no code change
+needed for turnstile/hcaptcha.
+
+**D3 · New-account link caps are runtime settings, ON by default, liftable per workspace.** For a
+workspace's first `windowDays` days (default 7) it may create at most `perDay` (20) links in any
+rolling 24h and `perHour` (10) in any rolling hour — a brake on a bot farm minting links faster than
+a human, on top of (not instead of) the plan limit. Enforced in `LinksService` (single and bulk
+create) AFTER input validation and the authorization guards (so a malformed or blocked request still
+gets its own 400, never a 429 that hides it) and BEFORE the write. A platform admin lifts the caps
+for a legitimate new account per workspace from the admin panel
+(`AdminUpdateWorkspaceInput.liftNewAccountLimits` → `workspaces.new_account_limits_lifted_at`,
+migration 0026), and the lift is audited. `windowDays: 0` turns the caps off entirely.
+
+**D4 · Disposable-email sign-up is refused using a vendored list plus admin additions.** A curated
+subset of the public, CC0-licensed `disposable-email-domains` project is vendored with its licence
+and an update note (`apps/api/src/common/disposable-email-domains.ts` +
+`disposable-email-domains.LICENCE`); the operator adds a newly-seen domain from the admin panel
+(`disposableEmails.extraDomains`) without waiting for a list refresh. Matched the same way the
+destination blocklist matches — exact host or sub-domain, case-insensitive — on both register and the
+OAuth new-account path. **Picked a curated subset over the full ~4k-domain upstream blob** to keep the
+diff reviewable and the secret-scan fast; the gap is covered by admin additions and periodic
+refreshes.
+
+**Every refusal is logged with a reason code** (`SignupRefusalService` → the platform audit trail,
+action `admin.signup.refused`, the reason code as the target) so the admin panel can count and filter
+them: `disposable_email`, `bot_challenge_missing`, `bot_challenge_failed`, `new_account_cap_day`,
+`new_account_cap_hour`. No new table — the #974 audit viewer already reads this trail.

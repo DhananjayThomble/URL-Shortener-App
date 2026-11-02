@@ -110,26 +110,23 @@ export class LinksService {
     const hourAgo = new Date(now - 3_600_000);
     const dayAgo = new Date(now - 86_400_000);
 
-    /* One grouped query returns both rolling counts: total in the last 24h and
-       the subset in the last hour. managedBioPageId IS NULL excludes the
-       read-only managed links a bio page owns (same exclusion list() uses), so
-       only user-created links count toward the cap. */
-    const [counts] = await this.db
-      .select({
-        day: sql<number>`count(*)`,
-        hour: sql<number>`count(*) filter (where ${links.createdAt} >= ${hourAgo})`,
-      })
-      .from(links)
-      .where(
-        and(
-          eq(links.workspaceId, workspaceId),
-          isNull(links.managedBioPageId),
-          gte(links.createdAt, dayAgo),
-        ),
-      );
+    /* Two small count queries, each a plain `gte(column, Date)` in the WHERE —
+       the same typed comparison list() uses, which drizzle binds correctly
+       (a Date interpolated into a raw sql`` fragment is NOT bound and throws).
+       managedBioPageId IS NULL excludes the read-only managed links a bio page
+       owns (same exclusion list() uses), so only user-created links count. The
+       hour window is a subset of the day window, so running both is two cheap
+       index scans on links_workspace_created_idx. */
+    const countSince = async (since: Date): Promise<number> => {
+      const [row] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(links)
+        .where(and(eq(links.workspaceId, workspaceId), isNull(links.managedBioPageId), gte(links.createdAt, since)));
+      return Number(row?.n ?? 0);
+    };
 
-    const dayCount = Number(counts?.day ?? 0);
-    const hourCount = Number(counts?.hour ?? 0);
+    const hourCount = await countSince(hourAgo);
+    const dayCount = await countSince(dayAgo);
 
     if (hourCount >= newAccountLimits.perHour) {
       await this.refusals.record("new_account_cap_hour", workspaceId);
@@ -793,12 +790,6 @@ export class LinksService {
     passwordHash: string | null,
     clonedFrom?: string,
   ): Promise<Link> {
-    /* #993 — the brand-new-account link cap, checked before any work: a new
-       account minting links faster than its per-hour / per-day allowance is
-       refused here (429) with the refusal logged, rather than creating the row
-       and relying on a later cleanup. */
-    await this.assertNewAccountLinkCap(workspaceId);
-
     const domain = await this.resolveDomain(workspaceId, input.domain);
 
     const problems = [
@@ -838,6 +829,13 @@ export class LinksService {
        on a known shortener, or on one of our own short domains). Same stage as
        the blocklist: validation before any write. */
     this.assertDestinationNotChained(input.destination, await this.loadSelfHosts());
+
+    /* #993 — the brand-new-account link cap. Checked AFTER input validation and
+       the authorization guards (so a malformed or blocked request still gets
+       its own 400, not a 429 that hides it) but BEFORE the write, so a capped
+       account never creates the row. Returns fast for an aged or lifted
+       workspace, or when the operator turned the caps off. */
+    await this.assertNewAccountLinkCap(workspaceId);
 
     const scan = await this.safeBrowsing.check(input.destination);
 

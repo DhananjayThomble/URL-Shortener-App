@@ -4,6 +4,7 @@ import * as argon2 from "argon2";
 import { and, createDatabase, eq, isNull, passwordResetTokens, refreshTokens, users, type Database } from "@snapurl/database";
 import { AuthService } from "./auth.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
+import { botProtectionStub, signupRefusalStub } from "../test/signup-controls.stub.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -75,6 +76,8 @@ describeDb("AuthService password reset", () => {
       {} as unknown as OAuthService,
       mail as unknown as MailService,
       openPlatformSettingsStub(),
+      botProtectionStub(),
+      signupRefusalStub(),
     );
     userId = await seedUser();
   });

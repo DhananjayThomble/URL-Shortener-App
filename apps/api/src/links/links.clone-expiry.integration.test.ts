@@ -8,6 +8,7 @@ import type { RequestActor } from "../auth/auth.guard.js";
 import { LinksController } from "./links.controller.js";
 import { LinksService } from "./links.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
+import { signupRefusalStub } from "../test/signup-controls.stub.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -95,7 +96,7 @@ describeDb("cloning an expired link cannot produce a born-expired copy (#812)", 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub()));
+    controller = new LinksController(new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub(), signupRefusalStub()));
     const [row] = await db
       .insert(workspaces)
       .values({ name: `clone expiry ${ws.domain}`, slug: `cx-${stamp}` })
