@@ -4,7 +4,7 @@ import { createDatabase, domains, eq, inArray, memberships, users, workspaces, t
 import { UpdateWorkspaceInput } from "@snapurl/contract";
 import { AuthService } from "./auth.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
-import { botProtectionStub, signupRefusalStub } from "../test/signup-controls.stub.js";
+import { botProtectionStub, mailDomainStub, signupRefusalStub } from "../test/signup-controls.stub.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -77,6 +77,7 @@ describeDb("AuthService workspace slug allocation under concurrency", () => {
       openPlatformSettingsStub(),
       botProtectionStub(),
       signupRefusalStub(),
+      mailDomainStub(),
     );
   });
 

@@ -33,3 +33,15 @@ export function signupRefusalStub(): SignupRefusalService & {
     },
   } as unknown as SignupRefusalService & { recorded: Array<{ reason: string; subject: string }> };
 }
+
+
+/** #1007 — a MailDomainService stub. By default `hasNoMailRecords` returns
+ *  false (the domain has mail records / the check is a no-op), so a test not
+ *  about the DNS check is never refused by it. Pass `true` to drive the
+ *  definitive no-mail refusal path. */
+export function mailDomainStub(noMail = false): import("../auth/mail-domain.service.js").MailDomainService {
+  return {
+    hasNoMailRecords: async () => noMail,
+    setResolverForTesting: () => {},
+  } as unknown as import("../auth/mail-domain.service.js").MailDomainService;
+}

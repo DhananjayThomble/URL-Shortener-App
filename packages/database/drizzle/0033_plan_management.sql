@@ -1,7 +1,8 @@
 -- #992 — plan-management (billing 6/6). Additive: two new tables
 -- (plan_change_requests, workspace_plan_history) and their indexes/FKs. No
--- change to any existing table. Takes slot 0031 after #993's 0028, #987's
--- 0029 and #989's 0030. Renumber again if the conductor says it moved.
+-- change to any existing table. Takes slot 0033 by conductor assignment: 0031
+-- is reserved for #988 (PR #1008) and 0032 for #997 (PR #1016), both merging
+-- ahead of this. Renumber again if the conductor says it moved.
 CREATE TABLE "plan_change_requests" (
 	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
 	"workspace_id" uuid NOT NULL,
