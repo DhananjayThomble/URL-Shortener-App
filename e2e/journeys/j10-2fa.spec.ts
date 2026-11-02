@@ -24,6 +24,8 @@ import {
   makeEmail,
   RUN_PASSWORD,
   registerUser,
+  reserveAuthSlots,
+  reserveLoginSlots,
   API_URL,
   totpCode,
 } from "./helpers";
@@ -63,6 +65,11 @@ test.describe("Journey 10 — 2FA", () => {
     expect(enableBody.recoveryCodes?.length, "Should have 10 recovery codes").toBe(10);
 
     /* ---- 3. Sign in via the UI — should get a TOTP challenge ---- */
+    // #977: this UI flow spends one /auth/login slot and two /auth/2fa/verify
+    // slots (a wrong code then the right one); reserve them on the shared
+    // 5/min-per-IP windows so they are paced with the rest of the shard.
+    await reserveLoginSlots(1);
+    await reserveAuthSlots("2fa/verify", 2);
     await page.goto("/login");
     await page.getByPlaceholder(/you@company|email/i).fill(email);
     await page.getByPlaceholder(/password|••/i).first().fill(RUN_PASSWORD);
@@ -112,6 +119,7 @@ test.describe("Journey 10 — 2FA", () => {
     // Confirm at the backend: a fresh login for this account now returns a
     // session, not a TOTP challenge. This is the real-stack proof (fixtures
     // cannot prove it — qa-oracles §5).
+    await reserveLoginSlots(1); // #977: /auth/login is 5/min per IP
     const loginRes = await fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },

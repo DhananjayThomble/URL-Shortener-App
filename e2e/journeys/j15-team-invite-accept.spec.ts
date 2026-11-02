@@ -28,7 +28,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, reserveAuthSlots, reserveLoginSlots, type Session } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -86,6 +86,8 @@ async function apiInvite(owner: Session, email: string, role: string) {
 const browserToken = (page: Page) => page.evaluate(() => window.localStorage.getItem("snapurl.accessToken") ?? "");
 
 async function signIn(page: Page, email: string) {
+  // #977: pace this UI /auth/login through the shared 5/min-per-IP window.
+  await reserveLoginSlots(1);
   await page.getByPlaceholder("you@company.com").fill(email);
   await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -171,6 +173,7 @@ test.describe("Journey 15 — Team invitation accept (#668)", () => {
     await page.getByPlaceholder("Priya Raman").fill(newcomerName);
     await page.getByPlaceholder("you@company.com").fill(newcomerEmail);
     await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
+    await reserveAuthSlots("register", 1); // #977: this UI /auth/register (5/min per IP)
     await page.getByRole("button", { name: "Create account" }).click();
 
     // Back on the invitation with the token preserved.

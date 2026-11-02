@@ -465,6 +465,36 @@ export async function seedPaidOwner(email: string): Promise<Session> {
 }
 
 /**
+ * Stamp a user's email as verified directly in the DB (#993, #977).
+ *
+ * WHY. #993 holds a link ("not active yet", a 404 from the redirect service)
+ * while its owner's email is unverified (resolver.ts: ownerUnverified reads
+ * `users.email_verified_at IS NULL`). A journey whose SUBJECT is the register
+ * form (j01, j794) registers through the real UI, which leaves the account
+ * unverified, so a link it then creates does not redirect — the journey's
+ * "follow the short link to its destination" step fails on a brand-new account.
+ * seedUser() accounts are already verified; a UI-registered one is not.
+ *
+ * Verifying the real way (clicking the emailed link) is a different journey's
+ * subject (j15/j24 exercise it); here it is seed plumbing, so stamp the column
+ * the same way the previous worker did for j23 — a direct UPDATE, the one thing
+ * the public API cannot express for your own fresh account before you have the
+ * emailed token. Keyed on the lower-cased email (matching the users_email_key
+ * functional index). Idempotent; opens a max:1 pool and closes it.
+ */
+export async function verifyUserEmail(email: string): Promise<void> {
+  const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
+  try {
+    await handle.db
+      .update(users)
+      .set({ emailVerifiedAt: new Date() })
+      .where(sql`lower(${users.email}) = ${email.toLowerCase()}`);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Seed tokens into localStorage before the first navigation.
  * Must be called before page.goto().
  */

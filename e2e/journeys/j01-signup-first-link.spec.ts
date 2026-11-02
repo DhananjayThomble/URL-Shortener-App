@@ -16,7 +16,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { makeEmail, RUN_PASSWORD } from "./helpers";
+import { makeEmail, reserveAuthSlots, RUN_PASSWORD, verifyUserEmail } from "./helpers";
 
 const DESTINATION = "https://example.com/j1-landing";
 
@@ -32,10 +32,17 @@ test.describe("Journey 1 — Sign up → first link", () => {
     await page.getByPlaceholder("Priya Raman").fill("Journey Tester");
     await page.getByPlaceholder("you@company.com").fill(email);
     await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
+    await reserveAuthSlots("register", 1); // #977: pace this UI /auth/register (5/min per IP)
     await page.getByRole("button", { name: "Create account" }).click();
 
     /* After registration the app navigates to /links */
     await expect(page).toHaveURL(/\/links/, { timeout: 30_000 });
+
+    /* #993 holds a brand-new (unverified) owner's links as "not active yet", so
+       the redirect in step 4 would not reach the destination. Verifying the
+       email is a different journey's subject (j15/j24 drive the emailed link);
+       here it is seed plumbing, so stamp it directly before creating the link. */
+    await verifyUserEmail(email);
 
     /* ---- 2. Create a link ---- */
     const slug = `j1-${Date.now().toString(36)}`;
