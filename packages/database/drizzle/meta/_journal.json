@@ -204,6 +204,13 @@
       "when": 1793660000000,
       "tag": "0029_plan_prices_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793600313301,
+      "tag": "0030_billing_grace",
+      "breakpoints": true
     }
   ]
 }
