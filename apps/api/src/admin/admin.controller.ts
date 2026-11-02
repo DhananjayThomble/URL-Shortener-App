@@ -47,6 +47,7 @@ import {
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
+  UpdatePlanPricesInput,
   type OverrideView,
   type PlanList,
   type PlanView,
@@ -243,6 +244,19 @@ export class AdminController {
     @AdminRequestIp() ip: string | null,
   ): Promise<PlanView> {
     return this.plansAdmin.editMatrix(id, input, actor(admin, ip));
+  }
+
+  /** #987 — edit a live plan's PRICES. Creates a new version (same matrix +
+   *  limits, new prices); existing subscribers stay grandfathered on the old
+   *  price, and the new price is synced to the billing provider. Audited. */
+  @Put("plans/:id/prices")
+  editPlanPrices(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(UpdatePlanPricesInput)) input: UpdatePlanPricesInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<PlanView> {
+    return this.plansAdmin.editPrices(id, input, actor(admin, ip));
   }
 
   /** The per-workspace overrides on a workspace. */

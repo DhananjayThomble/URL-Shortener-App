@@ -1,14 +1,25 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { FeatureMatrix, LimitMatrix } from "@snapurl/contract";
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
+import { FeatureMatrix, LimitMatrix, PlanPrices, PRICE_INTERVALS } from "@snapurl/contract";
 import type {
   CreatePlanInput,
   MigrateWorkspaceVersionInput,
   OverrideView,
+  PaidPlanKey,
   PlanList,
   PlanView,
+  PriceCurrency,
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
+  UpdatePlanPricesInput,
 } from "@snapurl/contract";
 import {
   and,
@@ -25,7 +36,13 @@ import {
 } from "@snapurl/database";
 import { DB } from "../database/database.module.js";
 import type { AdminActor } from "../admin/admin-management.service.js";
-import { PlansService, toResolvedMatrices } from "./plans.service.js";
+import { BILLING_PROVIDER, type BillingProvider } from "../billing/billing-provider.js";
+import { PlansService, parsePricing, toResolvedMatrices } from "./plans.service.js";
+
+/** The paid plan keys whose price edits are pushed to the billing provider. A
+ *  key outside this set (free, enterprise, an admin-added key) is still priced
+ *  and audited; it just has no provider plan to sync. */
+const PROVIDER_SYNCED_KEYS = new Set<string>(["starter", "pro", "team"]);
 
 /* ============================================================
    #970 — the admin write path for plans, versions and overrides.
@@ -48,9 +65,16 @@ import { PlansService, toResolvedMatrices } from "./plans.service.js";
 
 @Injectable()
 export class PlansAdminService {
+  private readonly logger = new Logger(PlansAdminService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly plansRead: PlansService,
+    /** #987 — the billing provider, to push an edited price to the provider.
+     *  Optional: when billing is off (BILLING_PROVIDER=none) the sync is a
+     *  no-op, and a price edit still lands in the catalogue and the audit log.
+     *  @Optional so the admin module works whether or not billing is wired. */
+    @Optional() @Inject(BILLING_PROVIDER) private readonly billing?: BillingProvider,
   ) {}
 
   /* ── plans ── */
@@ -217,6 +241,123 @@ export class PlansAdminService {
     return this.requirePlanView(planId);
   }
 
+  /**
+   * #987 — edit a live plan's PRICES. Creates a NEW version carrying the SAME
+   * feature matrix + limits as the outgoing version but the new prices, moves
+   * the plan's current version forward, and — exactly like editMatrix — pins
+   * every unpinned workspace on this plan to the outgoing version first, so a
+   * price change applies to NEW subscriptions only and existing subscribers keep
+   * the price they are on (grandfathering, §2). The change is audited in the
+   * same transaction, then the new price is pushed to the billing provider
+   * (best-effort: a provider sync failure is logged, never rolls the edit back —
+   * the catalogue is the source of truth, the provider is downstream).
+   */
+  async editPrices(planId: string, input: UpdatePlanPricesInput, actor: AdminActor): Promise<PlanView> {
+    const before = await this.requirePlanRow(planId);
+    const prices = PlanPrices.parse(input.prices);
+
+    const outcome = await this.db.transaction(async (tx) => {
+      // The current (outgoing) version: its number, and its matrices to carry
+      // forward unchanged onto the new priced version.
+      const [cur] = await tx
+        .select({
+          id: planVersions.id,
+          version: planVersions.version,
+          features: planVersions.features,
+          limits: planVersions.limits,
+          pricing: planVersions.pricing,
+        })
+        .from(planVersions)
+        .where(eq(planVersions.planId, planId))
+        .orderBy(desc(planVersions.version))
+        .limit(1);
+      const outgoingVersionId = cur?.id ?? before.currentVersionId;
+      const nextVersion = (cur?.version ?? 0) + 1;
+
+      // Grandfather every unpinned workspace on this plan onto the outgoing
+      // version so the price change never silently reprices them.
+      if (outgoingVersionId) {
+        await tx.execute(sql`
+          update workspaces
+             set plan_version_id = ${outgoingVersionId}
+           where lower(plan) = ${before.key.toLowerCase()}
+             and plan_version_id is null
+        `);
+      }
+
+      const [version] = await tx
+        .insert(planVersions)
+        .values({
+          planId,
+          version: nextVersion,
+          // Carry the outgoing matrices forward unchanged — only the price moves.
+          features: FeatureMatrix.parse(cur?.features ?? {}),
+          limits: LimitMatrix.parse(cur?.limits ?? {}),
+          pricing: prices,
+        })
+        .returning({ id: planVersions.id });
+      await tx
+        .update(plans)
+        .set({ currentVersionId: version!.id, updatedAt: new Date() })
+        .where(eq(plans.id, planId));
+
+      await writeAdminAuditEntry(tx, {
+        actorId: actor.admin.id,
+        actorLabel: actor.admin.email,
+        action: "admin.plan.price",
+        targetType: "plan",
+        targetId: planId,
+        before: { version: cur?.version ?? 0, prices: parsePricing(cur?.pricing) },
+        after: { version: nextVersion, prices },
+        requestIp: actor.ip,
+      });
+      return { nextVersion };
+    });
+
+    void outcome;
+    this.plansRead.invalidate();
+
+    // Push the new prices to the billing provider, best-effort and OUTSIDE the
+    // transaction (a provider call must never hold a DB transaction open).
+    await this.syncPricesToProvider(before.key, prices);
+
+    return this.requirePlanView(planId);
+  }
+
+  /** #987 — push every priced (interval, currency) of a paid plan to the
+   *  billing provider. Best-effort: billing off, a provider with no price sync,
+   *  or a provider error all leave the catalogue edit intact; the failure is
+   *  logged, not raised. */
+  private async syncPricesToProvider(planKey: string, prices: PlanPrices): Promise<void> {
+    const key = planKey.toLowerCase();
+    if (!PROVIDER_SYNCED_KEYS.has(key)) return;
+    const provider = this.billing;
+    if (!provider || !provider.enabled || !provider.syncPlanPrice) return;
+
+    for (const interval of PRICE_INTERVALS) {
+      const forInterval = prices.amounts[interval];
+      if (!forInterval) continue;
+      for (const [currency, amountMinor] of Object.entries(forInterval)) {
+        if (typeof amountMinor !== "number") continue;
+        try {
+          const synced = await provider.syncPlanPrice({
+            planKey: key as PaidPlanKey,
+            interval,
+            currency: currency as PriceCurrency,
+            amountMinor,
+          });
+          const id = synced && "providerPlanId" in synced ? synced.providerPlanId : "(none)";
+          this.logger.log(`Synced ${key} ${interval} ${currency} ${amountMinor} → provider plan ${id}`);
+        } catch (err) {
+          // Downstream, non-fatal: the catalogue holds the truth.
+          this.logger.warn(
+            `Provider price sync failed for ${key} ${interval} ${currency}: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+  }
+
   /* ── per-workspace overrides ── */
 
   /** Set (upsert) a per-workspace override. One row per (workspace, kind, name):
@@ -379,7 +520,13 @@ export class PlansAdminService {
       .orderBy(asc(plans.sortOrder), asc(plans.key));
 
     const versionRows = await this.db
-      .select({ id: planVersions.id, version: planVersions.version, features: planVersions.features, limits: planVersions.limits })
+      .select({
+        id: planVersions.id,
+        version: planVersions.version,
+        features: planVersions.features,
+        limits: planVersions.limits,
+        pricing: planVersions.pricing,
+      })
       .from(planVersions);
     const byId = new Map(versionRows.map((v) => [v.id, v]));
 
@@ -400,6 +547,7 @@ export class PlansAdminService {
         version: cur?.version ?? 0,
         features: matrices.features,
         limits: matrices.limits,
+        prices: parsePricing(cur?.pricing),
       };
     });
   }

@@ -1,4 +1,4 @@
-import type { FeatureMatrix, LimitMatrix, PlanVisibility } from "@snapurl/contract";
+import type { FeatureMatrix, LimitMatrix, PlanPrices, PlanVisibility } from "@snapurl/contract";
 
 /* ============================================================
    #970 — the seed plan catalogue.
@@ -28,7 +28,25 @@ export interface SeedPlan {
   visibility: PlanVisibility;
   features: FeatureMatrix;
   limits: LimitMatrix;
+  /** #987 — the plan's starting prices (minor units, INR). Omitted for an
+   *  unpriced plan (free, enterprise). An admin edits these from the panel,
+   *  which creates a new version and never touches this file. */
+  prices?: PlanPrices;
 }
+
+/* #987 — the operator's default prices (2026-11-02), in paise (₹1 = 100 paise).
+   Yearly is 10× monthly (two months free). All editable from the admin panel.
+
+     Starter  ₹59/mo   ₹590/yr
+     Pro      ₹199/mo  ₹1,990/yr
+     Team     ₹299/mo  ₹2,990/yr                                              */
+const inrPrices = (monthlyRupees: number, yearlyRupees: number): PlanPrices => ({
+  primaryCurrency: "INR",
+  amounts: {
+    monthly: { INR: monthlyRupees * 100 },
+    yearly: { INR: yearlyRupees * 100 },
+  },
+});
 
 export const SEED_PLANS: SeedPlan[] = [
   {
@@ -96,6 +114,7 @@ export const SEED_PLANS: SeedPlan[] = [
       forms: 3,
       retentionYears: 2,
     },
+    prices: inrPrices(59, 590),
   },
   {
     key: "pro",
@@ -128,6 +147,7 @@ export const SEED_PLANS: SeedPlan[] = [
       forms: 25,
       retentionYears: 3,
     },
+    prices: inrPrices(199, 1_990),
   },
   {
     key: "team",
@@ -160,6 +180,7 @@ export const SEED_PLANS: SeedPlan[] = [
       forms: 100,
       retentionYears: 5,
     },
+    prices: inrPrices(299, 2_990),
   },
   {
     key: "enterprise",
