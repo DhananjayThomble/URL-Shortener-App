@@ -18,7 +18,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   API_URL,
 } from "./helpers";
@@ -26,7 +26,7 @@ import {
 test.describe("Journey 9 — Team and roles", () => {
   test("invite a member and see them as pending", async ({ page }) => {
     /* ---- Setup: owner account ---- */
-    const owner = await registerUser(makeEmail("j9-owner"));
+    const owner = await seedUser(makeEmail("j9-owner"));
     await seedAccount(page, owner);
 
     await page.goto("/team");

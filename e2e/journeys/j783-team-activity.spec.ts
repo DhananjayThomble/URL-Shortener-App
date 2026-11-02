@@ -18,7 +18,7 @@
 
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { API_URL, makeEmail, registerPaidOwner, seedAccount, type Session } from "./helpers";
+import { API_URL, makeEmail, seedPaidOwner, seedAccount, type Session } from "./helpers";
 
 const RAW_KEY = /\b[a-z][a-z_]*\.(created|updated|deleted|added|removed|verified|invited|joined|role_changed|published|unpublished|revoked|flagged|reviewed|invite_resent)\b/;
 const EVIDENCE = process.env.QA_783_EVIDENCE;
@@ -38,7 +38,7 @@ test.describe("Journey 783 — team activity copy @mobile", () => {
   test("every entry is a sentence; the role change names the member; domain and bio page are listed", async ({ page }, info) => {
     // #977 — this owner connects a custom domain (a paid feature, #966); seed a
     // paid plan so POST /domains succeeds and the activity log lists it.
-    const owner = await registerPaidOwner(makeEmail(`j783-${info.project.name}`));
+    const owner = await seedPaidOwner(makeEmail(`j783-${info.project.name}`));
     const tag = `${Date.now().toString(36)}${info.project.name.slice(0, 1)}`;
     const mate = makeEmail(`j783-mate-${info.project.name}`);
     const host = `j783-${tag}.example.com`;

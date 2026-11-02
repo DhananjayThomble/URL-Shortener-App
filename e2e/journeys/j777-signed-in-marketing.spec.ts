@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REFRESH_KEY, RUN_PASSWORD, TOKEN_KEY, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, REFRESH_KEY, RUN_PASSWORD, TOKEN_KEY, makeEmail, registerUser, seedAccount, seedUser, type Session } from "./helpers";
 
 const header = (page: Page) => page.locator("header").first();
 
@@ -60,8 +60,8 @@ test.describe("Journey 777 — signed-in marketing header + auth-page redirect",
   let dead: Session;
 
   test.beforeAll(async ({}, info) => {
-    live = await registerUser(makeEmail(`j777-live-${info.project.name}`));
-    dead = await registerUser(makeEmail(`j777-dead-${info.project.name}`));
+    live = await seedUser(makeEmail(`j777-live-${info.project.name}`));
+    dead = await seedUser(makeEmail(`j777-dead-${info.project.name}`));
     // Revoke the second account's refresh-token family on the real API, as a sign-out elsewhere would.
     const out = await fetch(`${API_URL}/auth/logout`, {
       method: "POST",

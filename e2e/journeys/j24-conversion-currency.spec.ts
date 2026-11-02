@@ -26,7 +26,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, makeEmail, registerUser, seedAccount, signInViaSeed, type Session } from "./helpers";
+import { API_URL, RUN_ID, makeEmail, seedUser, seedAccount, signInViaSeed, type Session } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -68,7 +68,7 @@ async function revenueTile(page: Page): Promise<string> {
 test.describe("Journey 24 — conversion currency visibility (#654)", () => {
   test("an off-currency sale is surfaced, and the currency can be changed in Settings", async ({ page }) => {
     const email = makeEmail("j24");
-    const session = await registerUser(email);
+    const session = await seedUser(email);
     const key = await createKey(session.accessToken);
 
     /* ---- 0. A fresh workspace with no conversions: no notice at all ---- */
@@ -137,32 +137,28 @@ test.describe("Journey 24 — conversion currency visibility (#654)", () => {
   test("a Viewer sees the notice but cannot change the currency", async ({ page }, testInfo) => {
     // Owner workspace with one off-currency sale.
     const ownerEmail = makeEmail("j24-owner");
-    const owner = await registerUser(ownerEmail);
+    const owner = await seedUser(ownerEmail);
     const key = await createKey(owner.accessToken);
     await recordSale(key, "J24 viewer USD sale", 2500, "USD", "j24v-usd");
 
-    // The viewer: registers, is invited, verifies, accepts (API plumbing — the
-    // surface under test is the Settings page they then see).
+    // The viewer: seeded (email-verified by construction, #977), invited, then
+    // accepts (API plumbing — the surface under test is the Settings page they
+    // then see). seedUser avoids the throttled /auth/register and the account is
+    // already verified, so the separate verify-email step is no longer needed.
     const viewerEmail = makeEmail("j24-viewer");
-    const viewer = await registerUser(viewerEmail);
+    const viewer = await seedUser(viewerEmail);
     const inv = await fetch(`${API_URL}/members`, {
       method: "POST",
       headers: { ...json, authorization: `Bearer ${owner.accessToken}` },
       body: JSON.stringify({ email: viewerEmail, role: "viewer" }),
     });
     expect(inv.status, "invite the viewer").toBe(201);
-    const tokenOf = async (path: "/invite" | "/verify-email") =>
-      new URL(await mailLink(viewerEmail, path)).searchParams.get("token")!;
-    const verify = await fetch(`${API_URL}/auth/email/verify`, {
-      method: "POST",
-      headers: json,
-      body: JSON.stringify({ token: await tokenOf("/verify-email") }),
-    });
-    expect(verify.status, "verify the viewer's email").toBe(200);
+    const inviteTokenOf = async () =>
+      new URL(await mailLink(viewerEmail, "/invite")).searchParams.get("token")!;
     const accept = await fetch(`${API_URL}/auth/invite/accept`, {
       method: "POST",
       headers: { ...json, authorization: `Bearer ${viewer.accessToken}` },
-      body: JSON.stringify({ token: await tokenOf("/invite") }),
+      body: JSON.stringify({ token: await inviteTokenOf() }),
     });
     expect(accept.status, "accept the invitation").toBe(200);
 

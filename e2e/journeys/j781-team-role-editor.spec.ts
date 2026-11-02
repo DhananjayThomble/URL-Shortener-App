@@ -13,7 +13,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 type Box = { x: number; y: number; width: number; height: number };
 const need = (b: Box | null): Box => {
@@ -38,7 +38,7 @@ const members = async (owner: Session) =>
 
 test.describe("Journey 781 — /team role editor layout (#781) @mobile", () => {
   test("choosing a role keeps the editor open and leaves nothing destructive under the old controls", async ({ page }, info) => {
-    const owner = await registerUser(makeEmail("j781-owner"));
+    const owner = await seedUser(makeEmail("j781-owner"));
     const teammate = makeEmail("j781-mate");
     const created = await fetch(`${API_URL}/members`, {
       method: "POST",
@@ -116,7 +116,7 @@ test.describe("Journey 781 — /team role editor layout (#781) @mobile", () => {
   });
 
   test("the only owner cannot be demoted: the refusal is shown under the table and the editor stays put", async ({ page }) => {
-    const owner = await registerUser(makeEmail("j781-solo"));
+    const owner = await seedUser(makeEmail("j781-solo"));
     await seedAccount(page, owner);
     await page.goto("/team");
     const row = page.getByRole("row").filter({ hasText: owner.email });

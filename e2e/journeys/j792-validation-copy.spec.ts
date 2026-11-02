@@ -20,7 +20,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, makeEmail, registerUser, seedAccount } from "./helpers";
+import { API_URL, RUN_PASSWORD, makeEmail, registerUser, seedAccount, seedUser } from "./helpers";
 
 const ZOD_ENGLISH = /Too big|Too small|Invalid input|Invalid email address|Invalid option|expected .* to have/;
 const FIELD_PREFIX = /\b(name|email|password|destination|endpoint|events|slug|links\.\d+\.\w+): /;
@@ -121,7 +121,7 @@ test.describe("Journey 792 — plain validation copy", () => {
   });
 
   test("/developers: a private webhook endpoint is refused in plain English @mobile", async ({ page }, info) => {
-    const session = await registerUser(makeEmail(`j792-dev-${info.project.name}`));
+    const session = await seedUser(makeEmail(`j792-dev-${info.project.name}`));
     await seedAccount(page, session);
     await page.goto("/developers");
     await page.getByRole("button", { name: "＋ Add endpoint" }).click();
@@ -133,7 +133,7 @@ test.describe("Journey 792 — plain validation copy", () => {
   });
 
   test("bulk create: a bad line shows one plain sentence on its row @mobile", async ({ page }, info) => {
-    const session = await registerUser(makeEmail(`j792-bulk-${info.project.name}`));
+    const session = await seedUser(makeEmail(`j792-bulk-${info.project.name}`));
     await seedAccount(page, session);
     await page.goto("/links");
     await page.getByRole("button", { name: "Bulk create" }).click();

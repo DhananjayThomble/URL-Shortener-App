@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerPaidOwner, registerUser, signInViaSeed, type Session } from "./helpers";
+import { API_URL, RUN_ID, makeEmail, seedPaidOwner, seedUser, signInViaSeed, type Session } from "./helpers";
 
 // Run SQL inside the staging Postgres container with `docker exec`, the pattern
 // j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
@@ -102,8 +102,8 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
     // stranger: the foreign domain the leak checks use). Custom domains are a
     // paid feature (#966), so seed both workspaces onto a paid plan or every
     // POST /domains below 403s.
-    owner = await registerPaidOwner(makeEmail("j26-owner"));
-    stranger = await registerPaidOwner(makeEmail("j26-other"));
+    owner = await seedPaidOwner(makeEmail("j26-owner"));
+    stranger = await seedPaidOwner(makeEmail("j26-other"));
 
     base = await get();
 
@@ -240,17 +240,18 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
 
   test("(g) a viewer sees the control disabled with the reason, and the API answers 403", async ({ browser }) => {
     const viewerEmail = makeEmail("j26-viewer");
-    const viewer = await registerUser(viewerEmail);
+    const viewer = await seedUser(viewerEmail);
     psql(`update memberships set role='viewer' where lower(email)=lower('${viewerEmail}')`);
-    // One API login (the role just changed, so a fresh token is needed to carry
-    // the viewer role). #977 Option A: reuse THIS login's tokens to seed the
-    // browser session below instead of driving a second UI /auth/login.
-    const login = await fetch(`${API_URL}/auth/login`, {
+    // The role just changed, so a fresh token is needed to carry the viewer
+    // role. #977 Option A: get it from the UNTHROTTLED /auth/refresh (which
+    // rebuilds claims from the current membership) rather than a /auth/login —
+    // this spec does not test the login flow, so it spends no auth bucket.
+    const refresh = await fetch(`${API_URL}/auth/refresh`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: viewerEmail, password: RUN_PASSWORD }),
+      body: JSON.stringify({ refreshToken: viewer.refreshToken }),
     });
-    const viewerSession = (await login.json()) as { accessToken: string; refreshToken: string };
+    const viewerSession = (await refresh.json()) as { accessToken: string; refreshToken: string };
     const denied = await call(viewerSession.accessToken, "PATCH", "/workspaces/current", { defaultDomain: "not-mine.example" });
     expect(denied.status).toBe(403);
 

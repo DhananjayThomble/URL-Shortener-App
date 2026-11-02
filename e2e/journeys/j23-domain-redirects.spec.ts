@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, registerUser, setWorkspacePlan, signInViaSeed } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, seedUser, setWorkspacePlan, signInViaSeed } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -83,7 +83,7 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
 
   test.beforeAll(async ({ browser }, testInfo) => {
     const email = makeEmail("j23");
-    const session = await registerUser(email);
+    const session = await seedUser(email);
     token = session.accessToken;
     ownerWorkspaceId = session.workspaceId;
     // #977 — custom domains are paid-only (#966). Put this workspace on a paid
@@ -217,13 +217,10 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
      workspace on navigation, so a cross-workspace membership flaps.) */
   test("the API refuses a redirect change by an editor (gate behind the hidden control)", async () => {
     const editorEmail = makeEmail("j23-editor");
-    const invitee = await registerUser(editorEmail);
-    // Fixture: accepting an invitation requires a verified email.
-    const { stdout } = await run("docker", [
-      "exec", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-At", "-c",
-      `update users set email_verified_at = now() where lower(email) = lower('${editorEmail.replace(/'/g, "''")}') returning id`,
-    ]);
-    expect(stdout.trim(), "invitee email verified").not.toBe("");
+    // Accepting an invitation requires a verified email. seedUser (#977) creates
+    // the account email-verified by construction (and via the unthrottled
+    // /auth/refresh, not /auth/register), so no separate verify step is needed.
+    const invitee = await seedUser(editorEmail);
 
     expect((await apiJson(token, "/members", { method: "POST", body: JSON.stringify({ email: editorEmail, role: "editor" }) })).status).toBe(201);
     const inviteToken = new URL(await inviteLink(editorEmail)).searchParams.get("token")!;
