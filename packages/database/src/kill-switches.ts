@@ -1,4 +1,4 @@
-import { eq, gte, sql } from "drizzle-orm";
+import { eq, gte, lt, sql } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { emailSendLog, platformSettings } from "./schema/admin.js";
 
@@ -70,9 +70,11 @@ export async function pruneEmailSendLog(
   now: Date = new Date(),
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - keepMs);
-  const deleted = await db
-    .delete(emailSendLog)
-    .where(sql`${emailSendLog.sentAt} < ${cutoff}`)
-    .returning({ id: emailSendLog.id });
+  // Use drizzle's lt(column, Date) rather than a raw sql`... < ${cutoff}`
+  // template: interpolating a JS Date into a raw fragment makes postgres.js
+  // throw "The string argument must be of type string ... Received an instance
+  // of Date" at bind time (the worker logged this at error level and tripped
+  // the compose "fail on container errors" gate).
+  const deleted = await db.delete(emailSendLog).where(lt(emailSendLog.sentAt, cutoff)).returning({ id: emailSendLog.id });
   return deleted.length;
 }
