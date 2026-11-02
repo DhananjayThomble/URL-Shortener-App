@@ -4,6 +4,7 @@ import {
   AdminRefundInput,
   AdminRefundResult,
   AdminRevenue,
+  AdminRevenueRankRow,
   AdminSubscriptionList,
   AdminSubscriptionRow,
   AdminWorkspaceBillingEvents,
@@ -64,6 +65,21 @@ describe("AdminSubscriptionList", () => {
 
   it("rejects a row that is not a valid subscription", () => {
     expect(AdminSubscriptionList.safeParse({ subscriptions: [{ workspaceId: "x" }] }).success).toBe(false);
+  });
+});
+
+describe("AdminRevenueRankRow", () => {
+  it("accepts a label with an integer value", () => {
+    expect(AdminRevenueRankRow.safeParse({ label: "pro", value: 3 }).success).toBe(true);
+  });
+
+  it("rejects a non-integer value", () => {
+    expect(AdminRevenueRankRow.safeParse({ label: "pro", value: 3.5 }).success).toBe(false);
+  });
+
+  it("requires both label and value", () => {
+    expect(AdminRevenueRankRow.safeParse({ label: "pro" }).success).toBe(false);
+    expect(AdminRevenueRankRow.safeParse({ value: 3 }).success).toBe(false);
   });
 });
 
