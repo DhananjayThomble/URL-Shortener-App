@@ -1467,6 +1467,14 @@ export async function fixtureRequest<T>(
     // Mirrors PublicService.lock (#762): the short URL and the flag, never the destination.
     const preview = previewFor(m(/^\/public\/links\/([^/]+)\/lock$/)![1]);
     data = { shortUrl: preview.shortUrl, passwordProtected: preview.passwordProtected } satisfies PublicLinkLock;
+  } else if (m(/^\/billing\//)) {
+    // #988 — fixtures mirror a dev build with billing OFF (BILLING_PROVIDER=none,
+    // the default), which 404s the whole billing surface. The billing hooks
+    // swallow a 404 into BILLING_OFF, so the Settings → Billing card renders
+    // nothing — exactly the fixtures-mode behaviour before billing existed. A
+    // frontend session that wants to exercise billing uses the mocked-api lane,
+    // which stubs these routes with 200s.
+    throw new ApiError(404, "Billing is disabled on this deployment.");
   } else throw new Error(`No fixture for ${method} ${path}. Add one in src/lib/api/fixtures.ts.`);
 
   return schema.parse(data);

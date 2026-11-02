@@ -272,9 +272,20 @@ export const ACCESS_MATRIX: Row[] = [
   // 404s while billing is off, and the signature check only runs once billing
   // is on.
   { route: "POST /api/v1/billing/checkout", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
-    note: "Billing off (BILLING_PROVIDER=none) in staging: a session principal gets 404 — BillingEnabledGuard 404s at the controller BEFORE the body pipe runs, so even a malformed body is 404 (unreachable), never a 400 validation error. anon is 401 (the global auth guard runs before the controller guard); API keys are 403 (no @Scope, fail closed). With billing ON this is a session write (owner/admin/editor allow, viewer 403)." },
+    note: "Billing off (BILLING_PROVIDER=none) in staging: a session principal gets 404 — BillingEnabledGuard 404s at the controller BEFORE the body pipe runs, so even a malformed body is 404 (unreachable), never a 400 validation error. anon is 401 (the global auth guard runs before the controller guard); API keys are 403 (no @Scope, fail closed). #988 made billing OWNER-ONLY, but the owner check runs INSIDE the handler (NOT @Roles, which the global guard would evaluate before BillingEnabledGuard and leak a 403), so billing-off is 404 for EVERY authed principal here; with billing ON this becomes owner allow, admin/editor/viewer 403." },
   { route: "GET /api/v1/billing/subscription", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
-    note: "Billing off: 404 for every authed principal (route unreachable), 401 anon, 403 API keys (no @Scope)." },
+    note: "Billing off: 404 for every authed principal (route unreachable), 401 anon, 403 API keys (no @Scope). #988: owner-only (handler-enforced) when billing ON." },
+  // #988 — the owner-facing billing surface: invoices, cancel, change. OBSERVED
+  // with billing off in staging, so all three 404 for every authed principal,
+  // exactly like checkout/subscription. Owner-only is enforced in the handler
+  // (after BillingEnabledGuard), so with billing ON it is owner allow,
+  // admin/editor/viewer 403 — never a 403 leak while billing is off.
+  { route: "GET /api/v1/billing/invoices", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off: 404 for every authed principal (unreachable), 401 anon, 403 API keys (no @Scope). #988 owner-only read (handler-enforced) when billing ON." },
+  { route: "POST /api/v1/billing/cancel", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off: 404 (BillingEnabledGuard before the body pipe, so a malformed body is still 404 not 400). #988 owner-only session write (handler-enforced) when billing ON." },
+  { route: "POST /api/v1/billing/change", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off: 404 (guard before the body pipe). #988 owner-only session write (handler-enforced) when billing ON." },
   { route: "POST /api/v1/billing/webhook", expect: { any: 404 }, status: "approved",
     note: "@Public: Razorpay signs the body, there is no session. Billing off in staging, so it 404s; with billing on it is a signature-verified endpoint (400 on a bad/absent signature, 200 on a verified event)." },
 ];
@@ -287,6 +298,7 @@ export const ACCESS_MATRIX: Row[] = [
 // public /pricing and GET /workspaces/current/usage + 3 for #986's billing
 // checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
 // + 4 for #989's admin subscriptions/revenue/billing-events/refund
+// + 3 for #988's billing invoices/cancel/change
 // + 1 for #997's public POST /public/feedback
 // + 3 for #997's admin feedback inbox (list, detail, status/notes update)).
-export const EXPECTED_ROUTE_COUNT = 126;
+export const EXPECTED_ROUTE_COUNT = 129;
