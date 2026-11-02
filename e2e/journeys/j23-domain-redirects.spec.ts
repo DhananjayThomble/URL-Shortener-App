@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, setWorkspacePlan } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -86,6 +86,10 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
     const session = await registerUser(email);
     token = session.accessToken;
     ownerWorkspaceId = session.workspaceId;
+    // #977 — custom domains are paid-only (#966). Put this workspace on a paid
+    // plan so POST /domains is 201; the invited editor added later inherits the
+    // same workspace plan, so it needs no separate seed.
+    await setWorkspacePlan(ownerWorkspaceId);
 
     const add = await fetch(`${API_URL}/domains`, {
       method: "POST",

@@ -1126,8 +1126,16 @@ jobs:
 
       # jK: one journeys shard (K of 3). QA_PREBUILT_WEB=1 → the config's
       # webServer runs `next start` only against the bundle built above.
+      # QA_DATABASE_URL points the journeys' setWorkspacePlan seed (#977) at the
+      # staging Postgres on the published host port (5435), the same port the
+      # aux leg's STACK_DATABASE_URL uses — custom-domain journeys put their
+      # workspace on a paid plan this way so #966's plan gate lets POST /domains
+      # through. It matches the helper's own default, set here explicitly so the
+      # dependency is visible in the workflow.
       - name: Journeys (shard ${{ matrix.leg }})
         if: matrix.leg != 'aux'
+        env:
+          QA_DATABASE_URL: postgres://snapurl:snapurl@localhost:5435/snapurl
         run: |
           shard="${{ matrix.leg }}"       # j1 | j2 | j3
           k="${shard#j}"
