@@ -283,6 +283,35 @@ export function foldKillSwitchChanges(
   return next;
 }
 
+/** Fold a (possibly partial, stale or malformed) stored value onto the shipped
+ *  defaults so every key is present and typed. A key whose stored state fails
+ *  its schema is replaced by its default — never dropped — so the result is
+ *  always a complete, valid set. Pure; lives here (not in the database package)
+ *  so the DB package need not import this module's runtime zod — both the API
+ *  service and the worker call it. */
+export function foldKillSwitches(stored: unknown): KillSwitchesSetting {
+  const base = structuredClone(DEFAULT_KILL_SWITCHES);
+  if (stored == null || typeof stored !== "object") return base;
+  const rec = stored as Record<string, unknown>;
+  for (const key of KILL_SWITCH_KEYS) {
+    const parsed = KillSwitchState.safeParse(rec[key]);
+    if (parsed.success) base[key] = parsed.data;
+  }
+  return base;
+}
+
+/** The fail-closed answer: every PAID switch forced OFF, the background
+ *  switches left on their shipped default. Used when the settings store cannot
+ *  be read at all — a paid action's safe reading of "I can't tell" is "refuse",
+ *  while the webhook (which consults no switch) is unaffected. */
+export function failClosedKillSwitches(): KillSwitchesSetting {
+  const safe = structuredClone(DEFAULT_KILL_SWITCHES);
+  for (const key of PAID_KILL_SWITCH_KEYS) {
+    safe[key] = { ...safe[key], on: false };
+  }
+  return safe;
+}
+
 /** The effective kill-switch state the admin page renders: the values, the
  *  defaults (for a "reset" / "default: X" column), who last changed them and
  *  when, and the cache TTL in milliseconds so the UI can show "effective state,

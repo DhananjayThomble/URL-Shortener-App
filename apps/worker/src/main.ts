@@ -17,11 +17,12 @@ import { resolve as dnsResolve } from "node:dns/promises";
 import {
   createDatabase,
   pruneEmailSendLog,
-  readKillSwitchesFailClosed,
+  readKillSwitchesRow,
   resolveDatabaseUrl,
   resolveSafeBrowsingApiKey,
   type Database,
 } from "@snapurl/database";
+import { failClosedKillSwitches, foldKillSwitches, type KillSwitchesSetting } from "@snapurl/contract";
 import { DynamoDbCacheStore, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { makeSafeBrowsingScanner, type UrlScanner } from "./jobs/safe-browsing.js";
@@ -53,6 +54,21 @@ import { makeRazorpayStatusSource, reconcileBilling, type ProviderStatusSource }
 /* Exported so the Lambda entrypoint logs through the same instance rather than
    creating a second pino with its own level and destination. */
 export const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
+
+/* #1020 — read the effective kill-switch set straight from platform_settings,
+   folded onto the defaults, FAILING CLOSED on a read error. A missing row means
+   "never set" (shipped defaults, billing/domains OFF already). A read that
+   THROWS (DB unreachable) returns the fail-closed set (paid switches OFF). The
+   fold + fail-closed helpers live in @snapurl/contract so the database package
+   stays free of a runtime contract import (which otherwise loaded a second zod
+   instance and broke the OpenAPI stack suites). */
+async function readKillSwitchesFailClosed(database: Database): Promise<KillSwitchesSetting> {
+  try {
+    return foldKillSwitches(await readKillSwitchesRow(database));
+  } catch {
+    return failClosedKillSwitches();
+  }
+}
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
 /* Defaults to ROLLUP_SECONDS so nothing needs to change to keep today's
    cadence — the dynamo-smoke CI job's ROLLUP_INTERVAL_SECONDS=0.25 already

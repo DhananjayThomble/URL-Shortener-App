@@ -13,7 +13,9 @@ import {
   KillSwitchesSetting,
   KillSwitchesView,
   PAID_KILL_SWITCH_KEYS,
+  failClosedKillSwitches,
   foldKillSwitchChanges,
+  foldKillSwitches,
 } from "./kill-switches.js";
 
 /* #1020 — kill-switches.ts is the typed kill-switch set. These tests pin every
@@ -279,6 +281,58 @@ describe("foldKillSwitchChanges", () => {
     expect(next["email.outbound"].on).toBe(DEFAULT_KILL_SWITCHES["email.outbound"].on);
     expect(next["customDomains.create"].domainCaps).toEqual(DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps);
     expect(next.errorTracking.errorCaps).toEqual(DEFAULT_KILL_SWITCHES.errorTracking.errorCaps);
+  });
+});
+
+describe("foldKillSwitches", () => {
+  it("returns the shipped defaults for null/undefined/garbage", () => {
+    expect(foldKillSwitches(null)).toEqual(DEFAULT_KILL_SWITCHES);
+    expect(foldKillSwitches(undefined)).toEqual(DEFAULT_KILL_SWITCHES);
+    expect(foldKillSwitches("not an object")).toEqual(DEFAULT_KILL_SWITCHES);
+    expect(foldKillSwitches(42)).toEqual(DEFAULT_KILL_SWITCHES);
+  });
+
+  it("keeps a valid stored switch and defaults the rest", () => {
+    const folded = foldKillSwitches({ "billing.checkout": { on: true } });
+    expect(folded["billing.checkout"].on).toBe(true);
+    expect(folded["billing.refunds"]).toEqual(DEFAULT_KILL_SWITCHES["billing.refunds"]);
+    expect(folded["email.outbound"]).toEqual(DEFAULT_KILL_SWITCHES["email.outbound"]);
+  });
+
+  it("replaces a malformed switch state with its default (never drops the key)", () => {
+    const folded = foldKillSwitches({
+      "billing.checkout": { on: "yes" },
+      errorTracking: { on: true, errorCaps: { sampleRate: 9 } },
+    });
+    expect(folded["billing.checkout"]).toEqual(DEFAULT_KILL_SWITCHES["billing.checkout"]);
+    expect(folded.errorTracking).toEqual(DEFAULT_KILL_SWITCHES.errorTracking);
+  });
+
+  it("does not mutate the shipped defaults constant", () => {
+    const folded = foldKillSwitches({ "billing.checkout": { on: true } });
+    folded["billing.checkout"].on = false;
+    expect(DEFAULT_KILL_SWITCHES["billing.checkout"].on).toBe(false);
+  });
+});
+
+describe("failClosedKillSwitches", () => {
+  it("forces every paid switch OFF", () => {
+    const safe = failClosedKillSwitches();
+    for (const key of PAID_KILL_SWITCH_KEYS) {
+      expect(safe[key].on).toBe(false);
+    }
+  });
+
+  it("leaves the background switches on their shipped default", () => {
+    const safe = failClosedKillSwitches();
+    expect(safe["email.outbound"].on).toBe(DEFAULT_KILL_SWITCHES["email.outbound"].on);
+    expect(safe.errorTracking.on).toBe(DEFAULT_KILL_SWITCHES.errorTracking.on);
+    expect(safe["linkScanning.rescans"].on).toBe(DEFAULT_KILL_SWITCHES["linkScanning.rescans"].on);
+  });
+
+  it("does not mutate the defaults constant", () => {
+    failClosedKillSwitches();
+    expect(DEFAULT_KILL_SWITCHES["email.outbound"].on).toBe(true);
   });
 });
 

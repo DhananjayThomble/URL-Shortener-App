@@ -1,14 +1,10 @@
 import { ForbiddenException, Inject, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
-import {
-  countEmailsSince,
-  failClosedKillSwitches,
-  foldKillSwitches,
-  recordEmailSent,
-  type Database,
-} from "@snapurl/database";
+import { countEmailsSince, recordEmailSent, type Database } from "@snapurl/database";
 import {
   DEFAULT_KILL_SWITCHES,
   KILL_SWITCH_LABELS,
+  failClosedKillSwitches,
+  foldKillSwitches,
   type KillSwitchesSetting,
   type KillSwitchKey,
   type KillSwitchRefusalReason,
