@@ -284,6 +284,14 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # #998 — every env var the self-host guide names must exist in the
+      # single-node .env.example, so a reviewer following SELF-HOSTING.md never
+      # meets an undocumented variable. Pure Node, no deps.
+      - name: Self-host guide / .env.example consistency
+        run: |
+          node --test scripts/check-selfhost-env.test.mjs
+          pnpm check:selfhost-env
+
       - name: Start the API and redirect service
         run: |
           # PORT is set per-process, not on the step: a step-level PORT would
