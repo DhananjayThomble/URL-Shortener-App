@@ -223,6 +223,15 @@ else
     -d "{\"name\":\"Redirect Tester\",\"email\":\"$EMAIL\",\"password\":\"$PASS\"}")
   ACCESS=$(echo "$S" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).accessToken||""')
   [ -n "$ACCESS" ] && ok "registered a workspace" || bad "register" "$S"
+
+  # #993 — a brand-new account's links are HELD (they do not redirect) until the
+  # owner verifies their email. This suite exists to follow links, so the
+  # freshly-registered account must be verified first. Do it the test-only way,
+  # straight in the DB via the same dbq() helper the assertions below use — a
+  # real user would click the emailed link, but there is no inbox here. Only for
+  # the self-register path (local/compose, where dbq reaches the DB); the
+  # SMOKE_EMAIL login path targets a pre-provisioned, already-verified account.
+  dbq "UPDATE users SET email_verified_at = now() WHERE lower(email) = lower('$EMAIL')" >/dev/null 2>&1 || true
 fi
 
 # Install the cleanup trap BEFORE creating any link, so nothing is left behind

@@ -1,0 +1,14 @@
+-- #993 — per-workspace lift of the brand-new-account link caps.
+--
+-- Adds workspaces.new_account_limits_lifted_at: null while the caps still
+-- apply (the default), a timestamp once a platform admin has lifted them for
+-- this workspace from the admin panel. The caps themselves are runtime platform
+-- settings (per-day / per-hour link limits for a workspace's first N days); this
+-- column is the per-workspace override an admin sets for a legitimate new
+-- account that hits them. Purely additive and nullable, so it is backfill-free
+-- and applies online without rewriting the table. Only the admin API sets or
+-- clears it; the link-create path reads it to skip the caps.
+--
+-- Numbered 0028: #986 billing took 0026 and #970's plans engine took 0027, so
+-- this launch-readiness migration sits after both.
+ALTER TABLE "workspaces" ADD COLUMN "new_account_limits_lifted_at" timestamp with time zone;

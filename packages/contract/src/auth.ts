@@ -35,6 +35,14 @@ export const RegisterInput = z.object({
     .string()
     .min(12, "Use at least 12 characters — length beats complexity")
     .max(200, "That's longer than we can hash"),
+  /* #993 — the bot-protection challenge token the browser widget produces
+     (Turnstile/hCaptcha). Optional in the contract because it is only required
+     when the operator has turned a provider on (BOT_PROTECTION_PROVIDER != none,
+     set from the admin panel): a self-hoster with protection off must still be
+     able to register with no token. Bounded so an oversized blob cannot be used
+     to push work onto the siteverify call. The server decides whether a missing
+     or bad token is a refusal — the contract only carries it. */
+  challengeToken: z.string().max(4096).optional(),
 });
 export type RegisterInput = z.infer<typeof RegisterInput>;
 
@@ -189,6 +197,12 @@ export const OAuthSignInInput = z.object({
   provider: z.enum(["google", "apple"]),
   idToken: z.string().min(1),
   nonce: z.string().min(16).max(256),
+  /* #993 — same bot-protection challenge token as RegisterInput. Carried on
+     every OAuth sign-in but only consulted on the NEW-ACCOUNT branch (a
+     first-time Google/Apple user), because that is the sign-up path the gate
+     protects; an existing user signing in is never challenged. Optional for the
+     same reason: no token is needed when the provider switch is off. */
+  challengeToken: z.string().max(4096).optional(),
 });
 export type OAuthSignInInput = z.infer<typeof OAuthSignInInput>;
 

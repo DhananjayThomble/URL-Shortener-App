@@ -199,6 +199,13 @@
       "breakpoints": true
     },
     {
+      "idx": 28,
+      "version": "7",
+      "when": 1793595056653,
+      "tag": "0028_workspace_new_account_limits_lifted",
+      "breakpoints": true
+    },
+    {
       "idx": 29,
       "version": "7",
       "when": 1793660000000,
@@ -215,7 +222,7 @@
     {
       "idx": 31,
       "version": "7",
-      "when": 1793603119412,
+      "when": 1793604928464,
       "tag": "0031_plan_management",
       "breakpoints": true
     }

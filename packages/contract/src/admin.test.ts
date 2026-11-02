@@ -269,6 +269,17 @@ describe("AdminUpdateWorkspaceInput", () => {
     expect(AdminUpdateWorkspaceInput.safeParse({ clicksIncluded: 0 }).success).toBe(true);
     expect(AdminUpdateWorkspaceInput.safeParse({ clicksIncluded: 2_147_483_647 }).success).toBe(true);
   });
+
+  /* #993 — the new-account-limits lift satisfies the "at least one" refine on
+     its own, both true and false. */
+  it("accepts a liftNewAccountLimits-only edit (true or false)", () => {
+    expect(AdminUpdateWorkspaceInput.safeParse({ liftNewAccountLimits: true }).success).toBe(true);
+    expect(AdminUpdateWorkspaceInput.safeParse({ liftNewAccountLimits: false }).success).toBe(true);
+  });
+
+  it("requires liftNewAccountLimits to be boolean", () => {
+    expect(AdminUpdateWorkspaceInput.safeParse({ liftNewAccountLimits: "yes" }).success).toBe(false);
+  });
 });
 
 describe("AdminViewAsWorkspace", () => {
@@ -809,6 +820,10 @@ describe("AdminCustomDomainRow / AdminCustomDomains (#971)", () => {
 
 import {
   BannerSetting,
+  BotProtectionProvider,
+  BotProtectionSetting,
+  DisposableEmailSetting,
+  NewAccountLimitsSetting,
   PlatformBanner,
   PlatformSettings,
   PlatformSettingsInput,
@@ -816,7 +831,18 @@ import {
   PlatformSettingMeta,
   RateLimitSetting,
   SignupMode,
+  SignupRefusalReason,
 } from "./admin.js";
+
+/* #993 — the new-account caps, bot-protection switch and disposable-email
+   additions added to the #972 settings store, plus the sign-up refusal reason
+   codes. These behavioural assertions keep packages/contract's mutation score
+   above the gate: a mutant that loosens a bound, flips an enum member or drops a
+   field must fail at least one assertion here. */
+
+const NEW_ACCOUNT_LIMITS_993 = { windowDays: 7, perDay: 20, perHour: 10 } as const;
+const BOT_PROTECTION_993 = { provider: "none" as const };
+const DISPOSABLE_EMAILS_993 = { extraDomains: [] as string[] };
 
 describe("SignupMode", () => {
   it("accepts exactly the three modes", () => {
@@ -922,6 +948,9 @@ describe("PlatformSettingsValues", () => {
     reservedSlugs: ["admin"],
     featureFlags: { bioPages: true },
     banner: { message: "", level: "info" as const },
+    newAccountLimits: NEW_ACCOUNT_LIMITS_993,
+    botProtection: BOT_PROTECTION_993,
+    disposableEmails: DISPOSABLE_EMAILS_993,
   };
 
   it("accepts a fully-specified effective value set", () => {
@@ -957,6 +986,9 @@ describe("PlatformSettings", () => {
     reservedSlugs: [] as string[],
     featureFlags: {} as Record<string, boolean>,
     banner: { message: "", level: "info" as const },
+    newAccountLimits: NEW_ACCOUNT_LIMITS_993,
+    botProtection: BOT_PROTECTION_993,
+    disposableEmails: DISPOSABLE_EMAILS_993,
   };
 
   it("accepts values + defaults + per-key meta", () => {
@@ -984,5 +1016,115 @@ describe("PlatformBanner", () => {
 
   it("accepts an empty message (client renders nothing)", () => {
     expect(PlatformBanner.safeParse({ message: "", level: "info" }).success).toBe(true);
+  });
+});
+
+
+describe("NewAccountLimitsSetting (#993)", () => {
+  it("accepts the defaults", () => {
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 20, perHour: 10 }).success).toBe(true);
+  });
+
+  it("requires all three fields", () => {
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 20 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perHour: 10 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ perDay: 20, perHour: 10 }).success).toBe(false);
+  });
+
+  it("allows windowDays 0 (caps off) but not negative or fractional", () => {
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 0, perDay: 20, perHour: 10 }).success).toBe(true);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 365, perDay: 20, perHour: 10 }).success).toBe(true);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 366, perDay: 20, perHour: 10 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: -1, perDay: 20, perHour: 10 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 1.5, perDay: 20, perHour: 10 }).success).toBe(false);
+  });
+
+  it("keeps perDay and perHour at least 1 (never zero), integer and bounded", () => {
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 0, perHour: 10 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 20, perHour: 0 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 1, perHour: 1 }).success).toBe(true);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 100_000, perHour: 100_000 }).success).toBe(
+      true,
+    );
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 100_001, perHour: 10 }).success).toBe(false);
+    expect(NewAccountLimitsSetting.safeParse({ windowDays: 7, perDay: 20, perHour: 2.5 }).success).toBe(false);
+  });
+});
+
+describe("BotProtectionProvider / BotProtectionSetting (#993)", () => {
+  it("accepts exactly the three providers", () => {
+    for (const p of ["none", "turnstile", "hcaptcha"]) {
+      expect(BotProtectionProvider.safeParse(p).success).toBe(true);
+    }
+  });
+
+  it("rejects any other provider", () => {
+    for (const p of ["recaptcha", "None", "", "NONE", "aws-waf"]) {
+      expect(BotProtectionProvider.safeParse(p).success).toBe(false);
+    }
+  });
+
+  it("wraps the provider in the setting object and requires it", () => {
+    expect(BotProtectionSetting.safeParse({ provider: "turnstile" }).success).toBe(true);
+    expect(BotProtectionSetting.safeParse({}).success).toBe(false);
+    expect(BotProtectionSetting.safeParse({ provider: "nope" }).success).toBe(false);
+  });
+});
+
+describe("DisposableEmailSetting (#993)", () => {
+  it("accepts an empty additions list", () => {
+    expect(DisposableEmailSetting.safeParse({ extraDomains: [] }).success).toBe(true);
+  });
+
+  it("accepts and trims a list of domains", () => {
+    const parsed = DisposableEmailSetting.parse({ extraDomains: ["  trashy.test  ", "throwaway.test"] });
+    expect(parsed.extraDomains).toEqual(["trashy.test", "throwaway.test"]);
+  });
+
+  it("requires the extraDomains key", () => {
+    expect(DisposableEmailSetting.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects empty entries, over-long entries, and an over-long list", () => {
+    expect(DisposableEmailSetting.safeParse({ extraDomains: [""] }).success).toBe(false);
+    expect(DisposableEmailSetting.safeParse({ extraDomains: ["x".repeat(254)] }).success).toBe(false);
+    expect(DisposableEmailSetting.safeParse({ extraDomains: Array(5_001).fill("a.test") }).success).toBe(false);
+  });
+});
+
+describe("SignupRefusalReason (#993)", () => {
+  it("accepts exactly the five reason codes", () => {
+    for (const r of [
+      "disposable_email",
+      "bot_challenge_missing",
+      "bot_challenge_failed",
+      "new_account_cap_day",
+      "new_account_cap_hour",
+    ]) {
+      expect(SignupRefusalReason.safeParse(r).success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown reason code", () => {
+    for (const r of ["spam", "bot", "cap", "", "DISPOSABLE_EMAIL"]) {
+      expect(SignupRefusalReason.safeParse(r).success).toBe(false);
+    }
+  });
+});
+
+describe("PlatformSettingsInput — the #993 settings", () => {
+  it("accepts each #993 setting on its own", () => {
+    expect(
+      PlatformSettingsInput.safeParse({ newAccountLimits: { windowDays: 7, perDay: 20, perHour: 10 } }).success,
+    ).toBe(true);
+    expect(PlatformSettingsInput.safeParse({ botProtection: { provider: "hcaptcha" } }).success).toBe(true);
+    expect(PlatformSettingsInput.safeParse({ disposableEmails: { extraDomains: ["x.test"] } }).success).toBe(true);
+  });
+
+  it("validates a nested #993 setting through the body", () => {
+    expect(
+      PlatformSettingsInput.safeParse({ newAccountLimits: { windowDays: 7, perDay: 0, perHour: 10 } }).success,
+    ).toBe(false);
+    expect(PlatformSettingsInput.safeParse({ botProtection: { provider: "recaptcha" } }).success).toBe(false);
   });
 });

@@ -1,4 +1,13 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import * as argon2 from "argon2";
 import { and, asc, blockedDomains, clickDaily, desc, domainProjectionOp, domains, eq, gte, inArray, isNull, linkCounters, links, projectionOutbox, routingRules, sql, users, workspaces, type Database, type Executor } from "@snapurl/database";
 import { CreateLinkInput as CreateLinkInputSchema, RedirectType as RedirectTypeSchema, issuesToSentence } from "@snapurl/contract";
@@ -24,6 +33,7 @@ import {
 } from "@snapurl/domain";
 import { DB, READ_DB } from "../database/database.module.js";
 import { PlatformSettingsService } from "../admin/platform-settings.service.js";
+import { SignupRefusalService } from "../auth/signup-refusal.service.js";
 import { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import { ProjectionNudgeService } from "./projection-nudge.service.js";
 import { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -58,9 +68,81 @@ export class LinksService {
     private readonly projectionNudge: ProjectionNudgeService,
     private readonly cacheBust: LinkCacheBustService,
     private readonly settings: PlatformSettingsService,
+    private readonly refusals: SignupRefusalService,
   ) {}
 
   private readonly logger = new Logger(LinksService.name);
+
+  /* #993 — the brand-new-account link caps.
+   *
+   * For a workspace's first `windowDays` days it may create at most `perDay`
+   * links in any rolling 24h and `perHour` in any rolling hour (values from
+   * platform settings). This is a launch-abuse brake on top of the plan limit,
+   * not a replacement: a bot farm minting links faster than a human is stopped
+   * here even on the free plan. It does NOT apply when:
+   *   - windowDays is 0 (the operator turned the caps off), or
+   *   - the workspace is older than the window, or
+   *   - a platform admin lifted the caps for this workspace
+   *     (workspaces.new_account_limits_lifted_at is set).
+   *
+   * The N+1th link is refused with a clear 429, and the refusal is logged with
+   * its reason code (new_account_cap_day / _hour) so the admin panel sees it.
+   * Counts read this.db (not the replica) so a burst of creates in the same
+   * request window cannot slip past a lagging replica's stale count.
+   */
+  private async assertNewAccountLinkCap(workspaceId: string): Promise<void> {
+    const { newAccountLimits } = await this.settings.getValues();
+    if (newAccountLimits.windowDays <= 0) return;
+
+    const [ws] = await this.db
+      .select({ createdAt: workspaces.createdAt, liftedAt: workspaces.newAccountLimitsLiftedAt })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    // No workspace row (should not happen on a create) or caps lifted: no cap.
+    if (!ws || ws.liftedAt) return;
+
+    const now = Date.now();
+    const windowMs = newAccountLimits.windowDays * 86_400_000;
+    // Older than the new-account window: the caps no longer apply.
+    if (now - ws.createdAt.getTime() >= windowMs) return;
+
+    const hourAgo = new Date(now - 3_600_000);
+    const dayAgo = new Date(now - 86_400_000);
+
+    /* Two small count queries, each a plain `gte(column, Date)` in the WHERE —
+       the same typed comparison list() uses, which drizzle binds correctly
+       (a Date interpolated into a raw sql`` fragment is NOT bound and throws).
+       managedBioPageId IS NULL excludes the read-only managed links a bio page
+       owns (same exclusion list() uses), so only user-created links count. The
+       hour window is a subset of the day window, so running both is two cheap
+       index scans on links_workspace_created_idx. */
+    const countSince = async (since: Date): Promise<number> => {
+      const [row] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(links)
+        .where(and(eq(links.workspaceId, workspaceId), isNull(links.managedBioPageId), gte(links.createdAt, since)));
+      return Number(row?.n ?? 0);
+    };
+
+    const hourCount = await countSince(hourAgo);
+    const dayCount = await countSince(dayAgo);
+
+    if (hourCount >= newAccountLimits.perHour) {
+      await this.refusals.record("new_account_cap_hour", workspaceId);
+      throw new HttpException(
+        `New accounts can create up to ${newAccountLimits.perHour} links per hour. You've reached that limit — try again later, or contact support if you need it raised.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (dayCount >= newAccountLimits.perDay) {
+      await this.refusals.record("new_account_cap_day", workspaceId);
+      throw new HttpException(
+        `New accounts can create up to ${newAccountLimits.perDay} links per day. You've reached that limit — try again later, or contact support if you need it raised.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
 
   /* Replica-safe: list() is a purely external read for the dashboard table
      and CSV export. It never writes, and it is never called from inside a
@@ -282,6 +364,13 @@ export class LinksService {
     actor: Actor,
     input: BulkCreateLinksInput,
   ): Promise<BulkCreateLinksResult> {
+    /* #993 — the new-account cap is an ACCOUNT-level gate, not a per-row
+       problem, so it refuses the whole bulk request with a 429 (like the
+       single-create path) rather than failing individual rows. Checked once up
+       front: a capped new account cannot use bulk create to get around the
+       per-hour / per-day limit. */
+    await this.assertNewAccountLinkCap(workspaceId);
+
     const rows = input.links;
     const errors = new Map<number, string>();
     /* Rows that collide with a back-half already in the database. Kept apart
@@ -740,6 +829,13 @@ export class LinksService {
        on a known shortener, or on one of our own short domains). Same stage as
        the blocklist: validation before any write. */
     this.assertDestinationNotChained(input.destination, await this.loadSelfHosts());
+
+    /* #993 — the brand-new-account link cap. Checked AFTER input validation and
+       the authorization guards (so a malformed or blocked request still gets
+       its own 400, not a 429 that hides it) but BEFORE the write, so a capped
+       account never creates the row. Returns fast for an aged or lifted
+       workspace, or when the operator turned the caps off. */
+    await this.assertNewAccountLinkCap(workspaceId);
 
     const scan = await this.safeBrowsing.check(input.destination);
 
