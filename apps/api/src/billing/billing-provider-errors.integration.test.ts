@@ -160,9 +160,11 @@ describeDb("#1023 — provider failures on billing writes map to 4xx/503 with no
   }
 
   /** Seed an ACTIVE paid subscription with a provider id, so change/cancel/charge
-   *  reach the provider call. */
+   *  reach the provider call. The provider_subscription_id is globally unique
+   *  (a random suffix) because it has a unique index — every seeded sub, across
+   *  every endpoint × failure-mode case, must not collide. */
   async function seedActiveSub(workspaceId: string, tag: string, planKey = "pro", interval = "monthly") {
-    const subId = `sub_${stamp}_${tag}`;
+    const subId = `sub_${stamp}_${tag}_${Math.random().toString(16).slice(2, 10)}`;
     await db.insert(subscriptions).values({
       workspaceId,
       planKey,
