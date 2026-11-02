@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, createLink, makeEmail, registerUser, signInViaSeed } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, createLink, makeEmail, seedUser, signInViaSeed } from "./helpers";
 
 const DASH = "—";
 
@@ -47,7 +47,7 @@ test.describe("Journey 18 — Conversions page (#662)", () => {
   test("clicks but no conversions, then a sale with no earlier funnel steps", async ({ page }) => {
     /* ---- Setup: a workspace with real clicks, no conversions ---- */
     const email = makeEmail("j18");
-    const session = await registerUser(email);
+    const session = await seedUser(email);
     const link = await createLink(session.accessToken, { destination: "https://example.com/j18-target" });
 
     // Oracle for the click-ID claim: the real redirect carries no click identifier.

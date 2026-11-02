@@ -23,7 +23,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, makeEmail, REDIRECT_URL, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const TZ = "Asia/Kolkata";
 const DAY = 86_400_000;
@@ -37,7 +37,7 @@ const auth = (s: Session) => ({ authorization: `Bearer ${s.accessToken}`, "conte
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -72,7 +72,7 @@ test.describe("Journey 754 — past expiry dates", () => {
   test.use({ timezoneId: TZ });
 
   test("create: yesterday is refused inline and never posted; today creates a working link @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j754a"));
+    const session = await seedUser(makeEmail("j754a"));
     await signIn(page, session);
     const posts: string[] = [];
     page.on("request", (r) => {
@@ -118,7 +118,7 @@ test.describe("Journey 754 — past expiry dates", () => {
   });
 
   test("edit: an expired link stays editable; a different past day is refused; a future day revives it @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j754b"));
+    const session = await seedUser(makeEmail("j754b"));
     const domain = await domainOf(session);
     const slug = slugFor("exp");
     const made = await api(session, "POST", "/links", { destination: DEST, domain, slug, expiresAt: new Date(Date.now() + 4_000).toISOString() });
@@ -174,7 +174,7 @@ test.describe("Journey 754 — past expiry dates", () => {
   });
 
   test("the API refuses a past expiry itself, with the same words, on create, bulk and edit", async () => {
-    const session = await registerUser(makeEmail("j754c"));
+    const session = await seedUser(makeEmail("j754c"));
     const domain = await domainOf(session);
     const past = new Date(Date.now() - DAY).toISOString();
 

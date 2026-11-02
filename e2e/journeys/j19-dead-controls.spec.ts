@@ -25,7 +25,7 @@
  */
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { createLink, makeEmail, registerUser, signInViaSeed } from "./helpers";
+import { createLink, makeEmail, seedUser, signInViaSeed } from "./helpers";
 
 const REMOVED_BUTTONS = [
   "Schedule report",
@@ -54,7 +54,7 @@ test.describe("Journey 19 — dead controls (#661)", () => {
 
   test.beforeAll(async ({ browser }, testInfo) => {
     const email = makeEmail("j19");
-    const session = await registerUser(email);
+    const session = await seedUser(email);
     link = await createLink(session.accessToken, { destination: "https://example.com/j19-target" });
     context = await browser.newContext({
       baseURL: testInfo.project.use.baseURL,

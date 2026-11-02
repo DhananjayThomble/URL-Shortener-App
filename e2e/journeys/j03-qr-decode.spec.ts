@@ -23,7 +23,7 @@
 
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { makeEmail, registerUser, seedAccount, createLink, expectedShortUrl } from "./helpers";
+import { makeEmail, seedUser, seedAccount, createLink, expectedShortUrl } from "./helpers";
 
 const JSQR_PATH = path.resolve(__dirname, "../node_modules/jsqr/dist/jsQR.js");
 
@@ -130,7 +130,7 @@ test.describe("Journey 3 — QR decode", () => {
     /* ------------------------------------------------------------------ */
     /* Setup                                                                */
     /* ------------------------------------------------------------------ */
-    const session = await registerUser(makeEmail("j3"));
+    const session = await seedUser(makeEmail("j3"));
     const link = await createLink(session.accessToken, {
       destination: "https://example.com/j3-qr-target",
     });

@@ -18,12 +18,12 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { API_URL, createLink, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, createLink, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 async function register(email: string): Promise<Session> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await registerUser(email);
+      return await seedUser(email);
     } catch (err) {
       if (attempt >= 4 || !/429/.test((err as Error).message)) throw err;
       await new Promise((r) => setTimeout(r, 20_000));

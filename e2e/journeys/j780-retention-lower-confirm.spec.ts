@@ -22,7 +22,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { API_URL, makeEmail, registerUser, seedAccount } from "./helpers";
+import { API_URL, makeEmail, seedUser, seedAccount } from "./helpers";
 
 const SHOTS = process.env.QA_780_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/780");
 
@@ -40,7 +40,7 @@ test.describe("Journey — retention lowering confirm (#780)", () => {
   test("@mobile a shorter window asks first; cancel keeps the stored value, confirm stores it; a longer one does not ask", async ({ page }, info) => {
     mkdirSync(SHOTS, { recursive: true });
     const tag = info.project.name;
-    const session = await registerUser(makeEmail("j780"));
+    const session = await seedUser(makeEmail("j780"));
     await seedAccount(page, session);
 
     await page.goto("/settings");

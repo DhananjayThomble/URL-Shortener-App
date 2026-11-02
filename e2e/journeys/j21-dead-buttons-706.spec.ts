@@ -29,7 +29,7 @@ import {
   createLink,
   expectedShortUrl,
   makeEmail,
-  registerUser,
+  seedUser,
   signInViaSeed,
 } from "./helpers";
 
@@ -42,7 +42,7 @@ test.describe("Journey 21 — dead buttons (#706)", () => {
 
   test.beforeAll(async ({ browser }, testInfo) => {
     const email = makeEmail("j21");
-    const session = await registerUser(email);
+    const session = await seedUser(email);
     link = await createLink(session.accessToken, { destination: "https://example.com/j21-target" });
     context = await browser.newContext({
       baseURL: testInfo.project.use.baseURL,

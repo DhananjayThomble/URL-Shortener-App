@@ -15,7 +15,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { API_URL, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 const COMBOBOX = "Search links, slugs, destinations, tags";
 
@@ -48,8 +48,8 @@ test.describe("Journey 25 — search by tag (#756)", () => {
   test("top-bar search: a tag finds the link; another workspace's tag does not", async ({ page }, info) => {
     test.skip(info.project.name === "mobile", "top-bar search is desktop/tablet only (DC5)");
     const tag = `qatag${randomBytes(3).toString("hex")}`;
-    const mine = await registerUser(makeEmail("j25a"));
-    const theirs = await registerUser(makeEmail("j25b"));
+    const mine = await seedUser(makeEmail("j25a"));
+    const theirs = await seedUser(makeEmail("j25b"));
     const link = await createTaggedLink(mine, [tag, "second"]);
     const foreignTag = `foreign${randomBytes(3).toString("hex")}`;
     await createTaggedLink(theirs, [foreignTag]);
@@ -92,7 +92,7 @@ test.describe("Journey 25 — search by tag (#756)", () => {
 
   test("links page search: a tag finds the link (phone has no top-bar search) @mobile", async ({ page }) => {
     const tag = `mtag${randomBytes(3).toString("hex")}`;
-    const mine = await registerUser(makeEmail("j25c"));
+    const mine = await seedUser(makeEmail("j25c"));
     const link = await createTaggedLink(mine, [tag]);
     await createTaggedLink(mine, ["unrelated"]);
 

@@ -16,7 +16,7 @@
 
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const SHOTS = process.env.QA_757_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/757");
 const auth = (s: Session) => ({ authorization: `Bearer ${s.accessToken}`, "content-type": "application/json" });
@@ -24,7 +24,7 @@ const auth = (s: Session) => ({ authorization: `Bearer ${s.accessToken}`, "conte
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -47,7 +47,7 @@ const toast = (page: Page, text: RegExp | string) => page.getByTestId("toast").f
 
 test.describe("Journey 757 — success toasts and archive Undo", () => {
   test("archive confirms and Undo really unarchives; a double click archives one link @mobile", async ({ page }, info) => {
-    const session = await registerUser(makeEmail("j757a"));
+    const session = await seedUser(makeEmail("j757a"));
     const a = await createLink(session, "a");
     const b = await createLink(session, "b");
     await signIn(page, session);
@@ -79,7 +79,7 @@ test.describe("Journey 757 — success toasts and archive Undo", () => {
   });
 
   test("delete, create and settings save each confirm @mobile", async ({ page }, info) => {
-    const session = await registerUser(makeEmail("j757b"));
+    const session = await seedUser(makeEmail("j757b"));
     const doomed = await createLink(session, "del");
     await signIn(page, session);
 

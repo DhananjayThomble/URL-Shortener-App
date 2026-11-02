@@ -15,7 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, registerPaidOwner, seedAccount } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, seedPaidOwner, seedAccount } from "./helpers";
 
 const SHARED_HOST = process.env.QA_DEFAULT_DOMAIN ?? new URL(REDIRECT_URL).host;
 const host = `j782-${RUN_ID}.example.com`;
@@ -32,7 +32,7 @@ test.describe("Journey 782 — shared domain actions and SSL state", () => {
 
     // #977 — this owner connects a custom domain, a paid-plan feature (#966);
     // seed the workspace onto a paid plan so POST /domains is 201, not 403.
-    const session = await registerPaidOwner(makeEmail("j782"));
+    const session = await seedPaidOwner(makeEmail("j782"));
     const add = await fetch(`${API_URL}/domains`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${session.accessToken}` },

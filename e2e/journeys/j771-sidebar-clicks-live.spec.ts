@@ -11,7 +11,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { REDIRECT_URL, createLink, makeEmail, registerUser, seedAccount } from "./helpers";
+import { REDIRECT_URL, createLink, makeEmail, seedUser, seedAccount } from "./helpers";
 
 const CHROME_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -41,7 +41,7 @@ test("sidebar clicks this month follows new clicks without a reload @mobile", as
   test.setTimeout(240_000);
   const tag = info.project.name;
 
-  const session = await registerUser(makeEmail(`j771-${tag}`));
+  const session = await seedUser(makeEmail(`j771-${tag}`));
   const link = await createLink(session.accessToken, { destination: "https://example.com/j771" });
   await seedAccount(page, session);
   await page.goto("/links");

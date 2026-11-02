@@ -16,7 +16,7 @@
 
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const SHOTS = process.env.QA_787_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/787");
 const LONG_PATH = `/products/category/very-long-product-name-that-goes-on/and-on?utm_source=newsletter&utm_medium=email&utm_campaign=spring-sale-${"x".repeat(40)}`;
@@ -24,7 +24,7 @@ const LONG_PATH = `/products/category/very-long-product-name-that-goes-on/and-on
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -41,7 +41,7 @@ async function create(session: Session, domain: string, slug: string, destinatio
 
 test.describe("Journey 787 — Links grid layout", () => {
   test("hyphenated slug stays on one line and the destination keeps its host @mobile", async ({ page }, info) => {
-    const session = await registerUser(makeEmail("j787"));
+    const session = await seedUser(makeEmail("j787"));
     const ws = (await (await fetch(`${API_URL}/workspaces/current`, {
       headers: { authorization: `Bearer ${session.accessToken}` },
     })).json()) as { defaultDomain?: string };

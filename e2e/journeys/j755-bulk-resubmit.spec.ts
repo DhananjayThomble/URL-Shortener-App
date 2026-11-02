@@ -21,14 +21,14 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, createLink, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, createLink, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const rand = () => Math.random().toString(36).slice(2, 8);
 
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -44,7 +44,7 @@ const countOf = (l: Listed, destination: string) => l.items.filter((i) => i.dest
 
 test.describe("Journey 755 — Bulk create resubmit after a partial failure", () => {
   test("a second Create never duplicates a row that was already created @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j755"));
+    const session = await seedUser(makeEmail("j755"));
     const r = rand();
     const D = `https://example.com/j755-${r}`;
     const takenSlug = `j755-taken-${r}`;

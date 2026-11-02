@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, createLink, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, createLink, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j752-destination";
 
@@ -31,7 +31,7 @@ const slugFor = (tag: string) => `j752-${tag}-${Math.random().toString(36).slice
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -54,7 +54,7 @@ async function slugsWithTag(session: Session, tag: string): Promise<string[]> {
 
 test.describe("Journey 752 — Typing tags into the link drawers", () => {
   test("create: 'a, b' typed key by key is saved as two tags, each findable by the tag filter @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j752a"));
+    const session = await seedUser(makeEmail("j752a"));
     const slug = slugFor("create");
     await signIn(page, session);
 
@@ -89,7 +89,7 @@ test.describe("Journey 752 — Typing tags into the link drawers", () => {
   });
 
   test("edit: extend the tags by typing, save, reload, and see them again @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j752b"));
+    const session = await seedUser(makeEmail("j752b"));
     const link = await createLink(session.accessToken, { destination: DEST });
     // Seed the starting tags through the API (a real PATCH), as an earlier edit would have.
     const seed = await fetch(`${API_URL}/links/${link.id}`, {

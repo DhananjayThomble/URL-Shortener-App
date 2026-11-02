@@ -19,7 +19,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   createLink,
   REDIRECT_URL,
@@ -69,7 +69,7 @@ async function waitForRollup(
 test.describe("Journey 5 — Analytics", () => {
   test("desktop: N clicks appear in the analytics dashboard", async ({ page }) => {
     /* ---- Setup ---- */
-    const session = await registerUser(makeEmail("j5-desk"));
+    const session = await seedUser(makeEmail("j5-desk"));
     const link = await createLink(session.accessToken, {
       destination: "https://example.com/j5-target",
     });
@@ -122,7 +122,7 @@ test.describe("Journey 5 — Analytics", () => {
   });
 
   test("@mobile: analytics page renders on mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j5-mob"));
+    const session = await seedUser(makeEmail("j5-mob"));
     const link = await createLink(session.accessToken, {
       destination: "https://example.com/j5-mob-target",
     });

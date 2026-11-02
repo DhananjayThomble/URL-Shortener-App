@@ -22,7 +22,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, createLink, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, createLink, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j758-destination";
 
@@ -32,7 +32,7 @@ const slugFor = (tag: string) => `j758-${tag}-${Math.random().toString(36).slice
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -66,7 +66,7 @@ async function patchLink(session: Session, id: string, body: object) {
 
 test.describe("Journey 758 — Typing a click limit into the link drawers", () => {
   test("edit: bad entries are kept, explained and never saved; '25' typed after clearing saves 25 @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j758a"));
+    const session = await seedUser(makeEmail("j758a"));
     const link = await createLink(session.accessToken, { destination: DEST });
     await signIn(page, session);
 
@@ -128,7 +128,7 @@ test.describe("Journey 758 — Typing a click limit into the link drawers", () =
   });
 
   test("create: '0' is refused with a message, '7' creates a link limited to 7 @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j758b"));
+    const session = await seedUser(makeEmail("j758b"));
     const slug = slugFor("create");
     await signIn(page, session);
 
@@ -163,7 +163,7 @@ test.describe("Journey 758 — Typing a click limit into the link drawers", () =
   });
 
   test("API: refuses a click limit that is not a whole number from 1 to 2147483647, accepts the bounds and null", async () => {
-    const session = await registerUser(makeEmail("j758c"));
+    const session = await seedUser(makeEmail("j758c"));
     const link = await createLink(session.accessToken, { destination: DEST });
 
     for (const bad of [0, -1, -5, 2.5, 2147483648, 3_000_000_000, "5", ""]) {

@@ -27,7 +27,7 @@
 
 import { execFileSync } from "node:child_process";
 import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
-import { API_URL, makeEmail, REDIRECT_URL, registerPaidOwner, RUN_ID, type Session, signInViaSeed } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, seedPaidOwner, RUN_ID, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j20-destination";
 const slugFor = (tag: string) => `j20-${tag}-${Math.random().toString(36).slice(2, 8)}`;
@@ -66,7 +66,7 @@ async function api<T>(session: Session, path: string, init?: RequestInit): Promi
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -89,7 +89,7 @@ test.describe("Journey 20 — domain picker default (#651)", () => {
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     // #977 — this workspace connects its own custom domains (pending + verified),
     // a paid-plan feature (#966); seed a paid plan so POST /domains succeeds.
-    session = await registerPaidOwner(makeEmail("j20"));
+    session = await seedPaidOwner(makeEmail("j20"));
 
     const ws = await api<{ defaultDomain: string }>(session, "/workspaces/current");
     defaultDomain = ws.defaultDomain;

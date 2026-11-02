@@ -17,7 +17,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   createLink,
   REDIRECT_URL,
@@ -30,7 +30,7 @@ const DEST_US = "https://example.com/j4-us";
 test.describe("Journey 4 — Routing rules", () => {
   test("country rule: matching visitor → rule target; non-matching → default", async ({ page }) => {
     /* ---- Setup: register account, create link ---- */
-    const session = await registerUser(makeEmail("j4"));
+    const session = await seedUser(makeEmail("j4"));
 
     // Create the link via API to get its id
     const link = await createLink(session.accessToken, {

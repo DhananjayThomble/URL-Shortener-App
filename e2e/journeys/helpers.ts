@@ -343,9 +343,13 @@ function slugify(value: string): string {
  * auth-UI specs (j01, j778, j794, j10/j776 2FA, j777, j26-login-next, j15 accept,
  * j17 (x)) keep registerUser()/the real forms, so the register and login flows
  * are still exercised end-to-end — just not 150 times a shard.
+ *
+ * The signature mirrors registerUser(email): pass the account's email (usually
+ * makeEmail("tag")), so a conversion is a 1:1 rename and any spec that needs the
+ * account's address to match an invite keeps using the same value.
  */
-export async function seedUser(intent: string, opts: { plan?: string } = {}): Promise<Session> {
-  const email = makeEmail(intent).toLowerCase();
+export async function seedUser(emailArg: string, opts: { plan?: string } = {}): Promise<Session> {
+  const email = emailArg.toLowerCase();
   const name = "Journey Tester";
   const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
   let userId = "";
@@ -456,8 +460,8 @@ export async function seedUser(intent: string, opts: { plan?: string } = {}): Pr
  * The seeded equivalent of registerPaidOwner for custom-domain journeys whose
  * subject is not the auth UI.
  */
-export async function seedPaidOwner(intent: string): Promise<Session> {
-  return seedUser(intent, { plan: "Enterprise" });
+export async function seedPaidOwner(email: string): Promise<Session> {
+  return seedUser(email, { plan: "Enterprise" });
 }
 
 /**

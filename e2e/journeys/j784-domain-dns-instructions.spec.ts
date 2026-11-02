@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { API_URL, RUN_ID, makeEmail, registerPaidOwner, registerUser, seedAccount } from "./helpers";
+import { API_URL, RUN_ID, makeEmail, seedPaidOwner, seedUser, seedAccount } from "./helpers";
 
 type DnsRecord = { type: string; name: string; value: string; ttl: number };
 type ApiDomain = { id: string; domain: string; shared?: boolean; dns?: DnsRecord | null; routing?: DnsRecord | null };
@@ -40,7 +40,7 @@ test.describe("Journey 784 — DNS setup instructions", () => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 
     // #977 — custom domains are paid-only (#966); seed a paid plan for the owner.
-    const owner = await registerPaidOwner(makeEmail("j784"));
+    const owner = await seedPaidOwner(makeEmail("j784"));
     const added = await call(owner.accessToken, "POST", "/domains", { domain: host });
     expect(added.status, "POST /domains").toBe(201);
     const dto = (await added.json()) as ApiDomain;
@@ -86,8 +86,8 @@ test.describe("Journey 784 — DNS setup instructions", () => {
   test("another workspace never sees this workspace's domain or its records", async ({ page }) => {
     // #977 — `a` connects a custom domain (paid-only, #966), so seed its plan;
     // `b` only reads its own (empty) domain list, so Free is correct for it.
-    const a = await registerPaidOwner(makeEmail("j784a"));
-    const b = await registerUser(makeEmail("j784b"));
+    const a = await seedPaidOwner(makeEmail("j784a"));
+    const b = await seedUser(makeEmail("j784b"));
     const hostA = `j784a-${RUN_ID}.example.com`;
     expect((await call(a.accessToken, "POST", "/domains", { domain: hostA })).status).toBe(201);
     const theirs = (await (await call(b.accessToken, "GET", "/domains")).json()) as ApiDomain[];

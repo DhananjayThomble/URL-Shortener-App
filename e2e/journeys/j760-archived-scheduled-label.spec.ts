@@ -22,7 +22,7 @@
 
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, makeEmail, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j760-destination";
 const SHOTS = process.env.QA_760_SHOTS ?? path.resolve(__dirname, "../../.qa-runs/760");
@@ -30,7 +30,7 @@ const SHOTS = process.env.QA_760_SHOTS ?? path.resolve(__dirname, "../../.qa-run
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -64,7 +64,7 @@ async function getLink(session: Session, id: string) {
 
 test.describe("Journey 760 — archived scheduled link", () => {
   test("the Archived filter row still says when the link goes live @mobile", async ({ page }, info) => {
-    const session = await registerUser(makeEmail("j760"));
+    const session = await seedUser(makeEmail("j760"));
     const activatesAt = new Date(Date.now() + 9 * 864e5).toISOString();
     const link = await createScheduled(session, activatesAt);
     expect(link.status).toBe("scheduled");

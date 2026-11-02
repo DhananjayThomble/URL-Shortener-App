@@ -20,7 +20,7 @@
  */
 
 import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
-import { API_URL, makeEmail, REDIRECT_URL, registerUser, type Session, signInViaSeed } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j14-destination";
 const SCHEDULED_TO = "https://example.com/j14-coming-soon";
@@ -39,7 +39,7 @@ function dateInput(days: number): string {
 async function signIn(page: Page, session: Session) {
   // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
   // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
-  // seeds the REAL tokens registerUser issued; no forged JWT, no login call.
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
   await signInViaSeed(page, session);
 }
 
@@ -86,7 +86,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
   let session: Session;
   let page: Page;
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
-    session = await registerUser(makeEmail("j14"));
+    session = await seedUser(makeEmail("j14"));
     page = await browser.newPage();
     await signIn(page, session);
   });
