@@ -71,6 +71,9 @@ importers:
       '@nestjs/throttler':
         specifier: ^6.4.0
         version: 6.5.0(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.3(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)
+      '@sentry/node':
+        specifier: ^11.10.0
+        version: 11.10.0(rollup@4.63.0)(webpack@5.106.2(esbuild@0.28.2)(lightningcss@1.32.0)(postcss@8.5.26))
       '@snapurl/cache':
         specifier: workspace:*
         version: link:../../packages/cache
@@ -83,6 +86,9 @@ importers:
       '@snapurl/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@snapurl/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       argon2:
         specifier: ^0.44.0
         version: 0.44.0
@@ -178,6 +184,9 @@ importers:
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1121.0
         version: 3.1121.0(@aws-sdk/client-dynamodb@3.1121.0)
+      '@sentry/node':
+        specifier: ^11.10.0
+        version: 11.10.0(rollup@4.63.0)(webpack@5.106.2(esbuild@0.28.2)(lightningcss@1.32.0)(postcss@8.5.26))
       '@snapurl/cache':
         specifier: workspace:*
         version: link:../../packages/cache
@@ -190,6 +199,9 @@ importers:
       '@snapurl/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@snapurl/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       fastify:
         specifier: ^5.12.6
         version: 5.12.7
@@ -227,6 +239,9 @@ importers:
       '@aws-sdk/signature-v4a':
         specifier: ^3.1111.0
         version: 3.1111.0
+      '@sentry/node':
+        specifier: ^11.10.0
+        version: 11.10.0(rollup@4.63.0)(webpack@5.106.2(esbuild@0.28.2)(lightningcss@1.32.0)(postcss@8.5.26))
       '@snapurl/cache':
         specifier: workspace:*
         version: link:../../packages/cache
@@ -239,6 +254,9 @@ importers:
       '@snapurl/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@snapurl/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       pino:
         specifier: ^9.6.0
         version: 9.14.0
