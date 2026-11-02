@@ -12,8 +12,12 @@ import {
   AdminListQuery,
   AdminRefundInput,
   AdminUpdateWorkspaceInput,
+  DEFAULT_KILL_SWITCHES,
+  KillSwitchesPatchBody,
   PlatformSettingsInput,
+  foldKillSwitchChanges,
   type AdminAbuseQueuePage,
+  type KillSwitchesView,
   type AdminRefundResult,
   type AdminRevenue,
   type AdminSubscriptionList,
@@ -61,6 +65,7 @@ import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { AdminBillingService } from "./billing/admin-billing.service.js";
 import { AdminCouponsService } from "./billing/admin-coupons.service.js";
 import { PlatformSettingsService } from "./platform-settings.service.js";
+import { KillSwitchService } from "./kill-switch.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
 import {
   AdminPlanChangeInput,
@@ -104,6 +109,7 @@ export class AdminController {
     private readonly adminBilling: AdminBillingService,
     private readonly adminCoupons: AdminCouponsService,
     private readonly settings: PlatformSettingsService,
+    private readonly killSwitches: KillSwitchService,
     private readonly plansAdmin: PlansAdminService,
     private readonly planManagement: PlanManagementService,
     private readonly billingDetails: BillingDetailsService,
@@ -137,6 +143,51 @@ export class AdminController {
     @AdminRequestIp() ip: string | null,
   ): Promise<PlatformSettings> {
     return this.settings.update(input, actor(admin, ip));
+  }
+
+  /* ── runtime kill switches (#1020) ── */
+
+  /** The Kill switches page: the effective state of every switch (and its
+   *  caps), the defaults, who last changed them, and the cache TTL so the UI
+   *  can show the effective state and when it refreshes. */
+  @Get("killswitches")
+  async getKillSwitches(): Promise<KillSwitchesView> {
+    const { values, defaults, meta } = await this.settings.getKillSwitchesForAdmin();
+    return {
+      values,
+      defaults,
+      updatedAt: meta.updatedAt,
+      updatedBy: meta.updatedBy,
+      cacheTtlMs: this.killSwitches.cacheTtlMs,
+    };
+  }
+
+  /** Change one or more kill switches (and/or their caps). A reason is required
+   *  on every change (the body's `reason`), and the before/after is written to
+   *  the platform audit log in one transaction with the store write — so the
+   *  admin page's change history reads straight off the audit trail. Each
+   *  partial is folded onto the current value. Takes effect within the cache
+   *  window with no restart. */
+  @Patch("killswitches")
+  async updateKillSwitches(
+    @Body(zodBody(KillSwitchesPatchBody)) body: KillSwitchesPatchBody,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<KillSwitchesView> {
+    const { reason, ...changes } = body;
+    const values = await this.settings.writeKillSwitches(
+      (current) => foldKillSwitchChanges(current, changes),
+      { admin, ip },
+      reason,
+    );
+    const { meta } = await this.settings.getKillSwitchesForAdmin();
+    return {
+      values,
+      defaults: DEFAULT_KILL_SWITCHES,
+      updatedAt: meta.updatedAt,
+      updatedBy: meta.updatedBy,
+      cacheTtlMs: this.killSwitches.cacheTtlMs,
+    };
   }
 
   /* ── users (#969) ── */

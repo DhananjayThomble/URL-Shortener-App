@@ -23,10 +23,12 @@ import {
   eq,
   inArray,
   memberships,
+  platformSettings,
   users,
   workspaces,
   type Database,
 } from "@snapurl/database";
+
 
 export type PrincipalName =
   | "anon"
@@ -220,6 +222,9 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
 
   const cleanup = async () => {
     try {
+      // #1020 — drop the kill-switch seed row so a later run starts from the
+      // shipped defaults again.
+      await db.delete(platformSettings).where(eq(platformSettings.key, "killSwitches"));
       if (apiKeyIds.length) await db.delete(apiKeys).where(inArray(apiKeys.id, apiKeyIds));
       // memberships and api keys cascade on workspace delete, but delete rows
       // explicitly too so a partial seed still tidies up.
@@ -255,6 +260,41 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
        Enterprise (not Pro) so the per-plan domain cap is well clear of the many
        fresh domains the M4/M5 probes mint across the run without cleanup. */
     await db.update(workspaces).set({ plan: "Enterprise" }).where(inArray(workspaces.id, [workspaceA, workspaceB]));
+
+    /* #1020: the kill switches ship billing + customDomains.create OFF by
+       default, and a switched-off feature refuses with a 503 that changes
+       nothing. This suite exercises role/tenancy access control (and the fuzz
+       suite, input fuzzing) — NOT the kill switches, which are proven in their
+       own tests — so turn every switch ON here, exactly as the paid-plan line
+       above does for the #966 gate: with them on, seedResources' freshDomain()
+       can connect its fixture and the access-matrix oracle for the billing and
+       /domains routes ("allow"/404-when-off-handled-elsewhere) is what runs.
+       The kill switches themselves are proven on/off in
+       billing-kill-switches / domains-kill-switches / kill-switch.service tests. */
+    // An INLINE plain literal, NOT imported from @snapurl/contract. A static
+    // `import { DEFAULT_KILL_SWITCHES } from "@snapurl/contract"` at the top of
+    // this file pulls contract's runtime zod into the stack suite's eager import
+    // graph (fuzz.stack.test.ts imports principals.ts) BEFORE its
+    // extendZodWithOpenApi runs — which breaks zod-to-openapi's .openapi()
+    // prototype patch and reds the fuzz + access-matrix suites with
+    // "zodSchema.openapi is not a function". Every switch ON with no caps is a
+    // valid KillSwitchState the API folds onto the shipped cap defaults on read.
+    const on = { on: true };
+    const allOn = {
+      "billing.checkout": on,
+      "billing.planChanges": on,
+      "billing.coupons": on,
+      "billing.trials": on,
+      "billing.refunds": on,
+      "customDomains.create": on,
+      "email.outbound": on,
+      errorTracking: on,
+      "linkScanning.rescans": on,
+    };
+    await db
+      .insert(platformSettings)
+      .values({ key: "killSwitches", value: allOn, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: platformSettings.key, set: { value: allOn, updatedAt: new Date() } });
 
     // admin / editor / viewer of A: register a fresh account, add an active
     // membership of A with the target role, then refresh into A so the token

@@ -833,6 +833,7 @@ import {
   SignupMode,
   SignupRefusalReason,
 } from "./admin.js";
+import { DEFAULT_KILL_SWITCHES } from "./kill-switches.js";
 
 /* #993 — the new-account caps, bot-protection switch and disposable-email
    additions added to the #972 settings store, plus the sign-up refusal reason
@@ -951,6 +952,7 @@ describe("PlatformSettingsValues", () => {
     newAccountLimits: NEW_ACCOUNT_LIMITS_993,
     botProtection: BOT_PROTECTION_993,
     disposableEmails: DISPOSABLE_EMAILS_993,
+    killSwitches: DEFAULT_KILL_SWITCHES,
   };
 
   it("accepts a fully-specified effective value set", () => {
@@ -989,6 +991,7 @@ describe("PlatformSettings", () => {
     newAccountLimits: NEW_ACCOUNT_LIMITS_993,
     botProtection: BOT_PROTECTION_993,
     disposableEmails: DISPOSABLE_EMAILS_993,
+    killSwitches: DEFAULT_KILL_SWITCHES,
   };
 
   it("accepts values + defaults + per-key meta", () => {

@@ -1,5 +1,6 @@
 import { Global, Module } from "@nestjs/common";
 import { PlatformSettingsService } from "./platform-settings.service.js";
+import { KillSwitchService } from "./kill-switch.service.js";
 
 /* #972 — the runtime platform-settings store as its own GLOBAL module.
  *
@@ -12,7 +13,7 @@ import { PlatformSettingsService } from "./platform-settings.service.js";
  * which are already global, so it introduces no module cycle. */
 @Global()
 @Module({
-  providers: [PlatformSettingsService],
-  exports: [PlatformSettingsService],
+  providers: [PlatformSettingsService, KillSwitchService],
+  exports: [PlatformSettingsService, KillSwitchService],
 })
 export class PlatformSettingsModule {}
