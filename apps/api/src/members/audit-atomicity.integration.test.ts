@@ -73,7 +73,9 @@ describeDb("an audit insert that fails rolls its action back (#783)", () => {
     developers = new DevelopersService(db);
     bio = makeBioService(db);
 
-    await db.insert(workspaces).values({ id: ws, name: "atomic", slug: `aud-atomic-${stamp}` });
+    // #966: domainsService.add() gates on the plan; a paid plan so the add
+    // atomicity test exercises the audit rollback, not the plan gate.
+    await db.insert(workspaces).values({ id: ws, name: "atomic", slug: `aud-atomic-${stamp}`, plan: "Pro" });
     liveDomain = `atomic-${stamp}.example.com`;
     await db.insert(domains).values({ workspaceId: ws, domain: liveDomain, status: "live" });
 

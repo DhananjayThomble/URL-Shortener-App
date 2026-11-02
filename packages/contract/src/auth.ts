@@ -7,6 +7,11 @@ export const AuthUser = z.object({
   email: z.string(),
   initials: z.string(),
   role: MemberRole,
+  /** The plan of the workspace this session is in (#966). The web gates
+   *  paid-plan features — the Domains page's add form — on it via
+   *  @snapurl/contract's `entitlementsFor`. A string because an operator sets
+   *  plan names by hand and #970 will make the set editable. */
+  plan: z.string(),
 });
 export type AuthUser = z.infer<typeof AuthUser>;
 

@@ -64,9 +64,11 @@ describeDb("audit trail on the team page (#783)", () => {
     developers = new DevelopersService(db);
     bio = makeBioService(db);
 
+    // #966: domainsService.add() gates on the plan; a paid plan so these audit
+    // tests exercise the connect/disconnect audit trail, not the plan gate.
     await db.insert(workspaces).values([
-      { id: own, name: "own", slug: `aud-own-${stamp}` },
-      { id: other, name: "other", slug: `aud-other-${stamp}` },
+      { id: own, name: "own", slug: `aud-own-${stamp}`, plan: "Pro" },
+      { id: other, name: "other", slug: `aud-other-${stamp}`, plan: "Pro" },
     ]);
     liveDomain = `bio-${stamp}.example.com`;
     await db.insert(domains).values({ workspaceId: own, domain: liveDomain, status: "live" });
