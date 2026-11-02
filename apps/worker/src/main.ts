@@ -30,6 +30,8 @@ import { DynamoProjection } from "./jobs/dynamo-projection.js";
 import { KvsWriter } from "./jobs/kvs-projection.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
 import { emitBacklogMetrics } from "./jobs/backlog-metrics.js";
+import { resolveRazorpaySecrets } from "@snapurl/database";
+import { makeRazorpayStatusSource, reconcileBilling, type ProviderStatusSource } from "./jobs/billing-reconcile.js";
 
 /* ============================================================
    The worker.
@@ -224,6 +226,33 @@ const domainBlocklistLookup: DomainBlocklistLookup = async (host: string): Promi
    signal is never silent. */
 async function reputationAlert(hit: ReputationHit): Promise<void> {
   log.error({ host: hit.host, source: hit.source }, "reputation watch: one of our own hosts is LISTED");
+}
+
+/* #989 — the Razorpay status source the daily reconciliation job reads the
+   provider's truth through. Built once, only when billing is configured with
+   Razorpay AND the key id + secret resolve (Secrets Manager via the ARN, or the
+   plain env). Memoised across warm invocations like the db handle and the Safe
+   Browsing scanner. Undefined when billing is off or a key is missing, in which
+   case the reconciliation pass is skipped (there is nothing to reconcile
+   against), exactly as the self-host / OSS default behaves. The key secret is
+   held inside the source and never returned or logged. */
+let razorpayStatusSource: ProviderStatusSource | undefined;
+let reconcileWarned = false;
+async function statusSourceFor(): Promise<ProviderStatusSource | undefined> {
+  if (razorpayStatusSource) return razorpayStatusSource;
+  if ((process.env.BILLING_PROVIDER ?? "none") !== "razorpay") return undefined;
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const { keySecret, error } = await resolveRazorpaySecrets();
+  if (error) log.warn({ err: error }, "could not resolve the Razorpay secret — billing reconciliation is off");
+  if (!keyId || !keySecret) {
+    if (!reconcileWarned) {
+      reconcileWarned = true;
+      log.warn("BILLING_PROVIDER=razorpay but no key id/secret — billing reconciliation is off");
+    }
+    return undefined;
+  }
+  razorpayStatusSource = await makeRazorpayStatusSource(keyId, keySecret);
+  return razorpayStatusSource;
 }
 
 function projectionFor(database: Database): ProjectionTarget {
@@ -429,6 +458,40 @@ export async function runMaintenance(database: Database) {
       log.info({ checked: rep.checked, hits: rep.hits.length }, "reputation watch pass");
     } catch (err) {
       log.error({ err }, "reputation watch pass failed");
+    }
+  }
+
+  /* #989 — billing reconciliation runs DAILY, gated to the configured UTC hour
+     (BILLING_RECONCILE_HOUR, default 3) so a maintenance pass fires it at most
+     once a day. Kept OUT of the counted maintenance jobs (and in its own
+     try/catch) so it never contributes to the all-failed check and a provider
+     outage never fails the pass. Skipped entirely when no Razorpay status
+     source is configured (billing off / no key) — there is nothing to
+     reconcile against. Each mismatch is logged at warn (the operator's signal
+     to investigate and replay a missed webhook); the job never flips a plan
+     itself, because a verified webhook is the only mover (#986). */
+  const reconcileHour = Number(process.env.BILLING_RECONCILE_HOUR ?? 3);
+  if (new Date().getUTCHours() === reconcileHour) {
+    try {
+      const source = await statusSourceFor();
+      if (source) {
+        const recon = await reconcileBilling(database, {
+          providerStatus: source,
+          alert: (m) =>
+            log.warn(
+              {
+                subscriptionId: m.subscriptionId,
+                workspaceId: m.workspaceId,
+                localStatus: m.localStatus,
+                providerStatus: m.providerStatus,
+              },
+              "billing reconciliation: local subscription disagrees with the provider",
+            ),
+        });
+        log.info({ checked: recon.checked, mismatches: recon.mismatches.length }, "billing reconciliation pass");
+      }
+    } catch (err) {
+      log.error({ err }, "billing reconciliation pass failed");
     }
   }
 
