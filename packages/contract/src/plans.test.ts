@@ -25,6 +25,18 @@ import {
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
+  UpdatePlanPricesInput,
+  PlanPrices,
+  PriceCurrency,
+  PriceInterval,
+  PriceAmountMinor,
+  IntervalPrices,
+  PRICE_CURRENCIES,
+  PRICE_INTERVALS,
+  CURRENCY_MINOR_UNITS,
+  emptyPlanPrices,
+  priceFor,
+  formatPrice,
   WorkspaceUsage,
   usageBand,
   usagePercent,
@@ -532,6 +544,7 @@ describe("PlanView / PlanList", () => {
     version: 3,
     features: Object.fromEntries(FEATURE_NAMES.map((f) => [f, true])),
     limits: Object.fromEntries(LIMIT_NAMES.map((l) => [l, 10])),
+    prices: { primaryCurrency: "INR" as const, amounts: { monthly: { INR: 19900 }, yearly: { INR: 199000 } } },
   };
 
   it("parses a complete plan view", () => {
@@ -557,6 +570,7 @@ describe("PricingPlan / PricingTable", () => {
     highlightBadge: "Most popular",
     features: Object.fromEntries(FEATURE_NAMES.map((f) => [f, false])),
     limits: Object.fromEntries(LIMIT_NAMES.map((l) => [l, null])),
+    prices: { primaryCurrency: "INR" as const, amounts: { monthly: { INR: 19900 } } },
   };
 
   it("parses a pricing plan with a null badge too", () => {
@@ -599,5 +613,93 @@ describe("UsageRow / WorkspaceUsage", () => {
     };
     expect(WorkspaceUsage.safeParse(usage).success).toBe(true);
     expect(WorkspaceUsage.safeParse({ ...usage, warnings: "nope" }).success).toBe(false);
+  });
+});
+
+
+describe("plan prices (#987)", () => {
+  it("exposes the currency and interval vocabularies", () => {
+    expect([...PRICE_CURRENCIES]).toEqual(["INR", "USD"]);
+    expect([...PRICE_INTERVALS]).toEqual(["monthly", "yearly"]);
+    expect(PriceCurrency.safeParse("INR").success).toBe(true);
+    expect(PriceCurrency.safeParse("EUR").success).toBe(false);
+    expect(PriceInterval.safeParse("monthly").success).toBe(true);
+    expect(PriceInterval.safeParse("weekly").success).toBe(false);
+  });
+
+  it("CURRENCY_MINOR_UNITS is 100 for both currencies", () => {
+    expect(CURRENCY_MINOR_UNITS.INR).toBe(100);
+    expect(CURRENCY_MINOR_UNITS.USD).toBe(100);
+  });
+
+  it("PriceAmountMinor is a bounded non-negative integer", () => {
+    expect(PriceAmountMinor.safeParse(0).success).toBe(true);
+    expect(PriceAmountMinor.safeParse(5900).success).toBe(true);
+    expect(PriceAmountMinor.safeParse(-1).success).toBe(false);
+    expect(PriceAmountMinor.safeParse(1.5).success).toBe(false);
+    expect(PriceAmountMinor.safeParse(100_000_001).success).toBe(false);
+  });
+
+  it("IntervalPrices is a partial currency→amount map that rejects a bad currency/amount", () => {
+    expect(IntervalPrices.safeParse({ INR: 5900 }).success).toBe(true);
+    expect(IntervalPrices.safeParse({ INR: 5900, USD: 700 }).success).toBe(true);
+    expect(IntervalPrices.safeParse({}).success).toBe(true);
+    expect(IntervalPrices.safeParse({ EUR: 5900 }).success).toBe(false);
+    expect(IntervalPrices.safeParse({ INR: -1 }).success).toBe(false);
+  });
+
+  it("PlanPrices parses, defaults primaryCurrency to INR and amounts to {}", () => {
+    const parsed = PlanPrices.parse({});
+    expect(parsed.primaryCurrency).toBe("INR");
+    expect(parsed.amounts).toEqual({});
+    const full = PlanPrices.parse({ primaryCurrency: "USD", amounts: { monthly: { USD: 700 } } });
+    expect(full.primaryCurrency).toBe("USD");
+    expect(full.amounts.monthly?.USD).toBe(700);
+    expect(PlanPrices.safeParse({ primaryCurrency: "EUR" }).success).toBe(false);
+    expect(PlanPrices.safeParse({ amounts: { daily: { INR: 1 } } }).success).toBe(false);
+  });
+
+  it("emptyPlanPrices is a fresh unpriced INR set", () => {
+    const e = emptyPlanPrices();
+    expect(e).toEqual({ primaryCurrency: "INR", amounts: {} });
+    // fresh object each call (not a shared mutable singleton)
+    expect(emptyPlanPrices()).not.toBe(e);
+  });
+
+  it("priceFor reads the amount for an (interval, currency), defaulting to primary", () => {
+    const prices = PlanPrices.parse({
+      primaryCurrency: "INR",
+      amounts: { monthly: { INR: 5900, USD: 100 }, yearly: { INR: 59000 } },
+    });
+    expect(priceFor(prices, "monthly")).toBe(5900); // primary currency
+    expect(priceFor(prices, "monthly", "USD")).toBe(100);
+    expect(priceFor(prices, "yearly")).toBe(59000);
+    // yearly has no USD → not priced
+    expect(priceFor(prices, "yearly", "USD")).toBeNull();
+    // nothing priced for a missing interval
+    expect(priceFor(PlanPrices.parse({}), "monthly")).toBeNull();
+    // null/undefined price set → null, never a throw
+    expect(priceFor(null, "monthly")).toBeNull();
+    expect(priceFor(undefined, "monthly")).toBeNull();
+  });
+
+  it("priceFor treats a zero amount as a real price, not absent", () => {
+    const prices = PlanPrices.parse({ amounts: { monthly: { INR: 0 } } });
+    expect(priceFor(prices, "monthly")).toBe(0);
+  });
+
+  it("formatPrice shows whole amounts without decimals and fractional with two", () => {
+    expect(formatPrice(5900, "INR")).toBe("₹59");
+    expect(formatPrice(199000, "INR")).toBe("₹1,990");
+    expect(formatPrice(700, "USD")).toBe("$7");
+    expect(formatPrice(750, "USD")).toBe("$7.50");
+    expect(formatPrice(0, "INR")).toBe("₹0");
+    expect(formatPrice(5950, "INR")).toBe("₹59.50");
+  });
+
+  it("UpdatePlanPricesInput wraps a price set", () => {
+    expect(UpdatePlanPricesInput.safeParse({ prices: { amounts: { monthly: { INR: 5900 } } } }).success).toBe(true);
+    expect(UpdatePlanPricesInput.safeParse({ prices: { primaryCurrency: "EUR" } }).success).toBe(false);
+    expect(UpdatePlanPricesInput.safeParse({}).success).toBe(false);
   });
 });
