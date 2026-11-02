@@ -43,6 +43,112 @@ export function makeEmail(intent: string): string {
 export const RUN_PASSWORD = `journeys-pw-${RUN_ID}`;
 
 /* ------------------------------------------------------------------ */
+/*  Auth-throttle window limiter (#977)                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Why this exists.
+ *
+ * /auth/register, /auth/login and /auth/2fa/verify each carry a route-level
+ * @Throttle of 5 requests / 60s PER CLIENT IP (apps/api auth.controller.ts).
+ * These are security limits — THROTTLE_LIMIT does not lift them and, per
+ * apps/api ProxyAwareThrottlerGuard, they are not runtime-tunable either, so a
+ * staging run cannot raise them. A journeys CI shard runs every spec in ONE
+ * worker (workers:1, fullyParallel:false) on ONE runner IP, so EVERY spec's
+ * registers and logins share the same 5/min buckets.
+ *
+ * Specs used to budget this by hand with scattered `waitForTimeout(61_000)`
+ * staggers, each guessing it is first in the shard. That assumption broke as
+ * the suite grew and the shard composition shifted: a register/login-heavy spec
+ * (e.g. j777) now precedes another (j778/j781) and drains the bucket, so the
+ * next spec's login 429s where it expects 401 and the run reds (#977). The 61s
+ * guesses are also "wait it out", not "remove the cause".
+ *
+ * This limiter removes the cause: a single shared, per-WORKER-PROCESS record of
+ * the auth calls made on each route-class, and a deterministic wait until the
+ * trailing-60s window has room BEFORE the next call. It paces the suite to the
+ * real server limit exactly, independent of spec order, with no fixed sleeps
+ * and without changing any assertion. Because a shard is one process, one
+ * module-level record covers every spec that runs in it.
+ *
+ * API-side calls (registerUser) reserve a slot automatically. Browser-driven
+ * logins (the UI sign-in specs) cannot be intercepted here, so those specs call
+ * `reserveLoginSlots(n)` for the n logins the test is about to drive; the
+ * reservation blocks until the window has room, then the UI requests land in a
+ * window that can serve them.
+ */
+
+/** Route-classes that carry the 5/min-per-IP @Throttle the suite must pace. */
+export type ThrottledRoute = "register" | "login" | "2fa/verify";
+
+const THROTTLE_LIMIT_PER_ROUTE = 5;
+const THROTTLE_WINDOW_MS = 60_000;
+/* A small margin added past the exact 60s edge so a reservation that waits for
+   a slot never lands a hair early and 429s on a clock/transport skew. */
+const THROTTLE_MARGIN_MS = 1_500;
+
+/** Monotonic timestamps (ms) of the recent reserved calls, per route-class. */
+const authCallTimes: Record<ThrottledRoute, number[]> = {
+  register: [],
+  login: [],
+  "2fa/verify": [],
+};
+
+/* Serialise reservations per route so two concurrent awaits cannot both read a
+   window as having room and then each take the last slot. Each reservation
+   chains onto the previous one for its route. */
+const authReserveChain: Record<ThrottledRoute, Promise<void>> = {
+  register: Promise.resolve(),
+  login: Promise.resolve(),
+  "2fa/verify": Promise.resolve(),
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function reserveOne(route: ThrottledRoute): Promise<void> {
+  const times = authCallTimes[route];
+  for (;;) {
+    const now = Date.now();
+    // Drop calls that have aged out of the trailing window.
+    while (times.length > 0 && now - times[0] >= THROTTLE_WINDOW_MS) times.shift();
+    if (times.length < THROTTLE_LIMIT_PER_ROUTE) {
+      // Room now — claim the slot and return.
+      times.push(now);
+      return;
+    }
+    // Full: wait until the oldest call ages out, then re-check.
+    const waitMs = times[0] + THROTTLE_WINDOW_MS - now + THROTTLE_MARGIN_MS;
+    await sleep(waitMs);
+  }
+}
+
+/**
+ * Reserve `count` slots on a throttled auth route, blocking until the trailing
+ * 60s window has room for each. Call it immediately BEFORE the matching
+ * requests (API or browser-driven) so they land inside a window that can serve
+ * them. Reservations on a route are serialised, so parallel callers cannot race
+ * for the same slot.
+ *
+ * `register` is reserved for you by `registerUser`. Use this directly for the
+ * UI sign-in specs: `await reserveLoginSlots(n)` for the n `/auth/login`
+ * requests the test is about to drive through the browser, and
+ * `reserveAuthSlots("2fa/verify", n)` for 2FA-verify POSTs.
+ */
+export function reserveAuthSlots(route: ThrottledRoute, count = 1): Promise<void> {
+  // Chain `count` reservations onto the route's serial chain and hand back the
+  // tail, so the caller awaits until all are granted.
+  let tail = authReserveChain[route];
+  for (let i = 0; i < count; i++) tail = tail.then(() => reserveOne(route));
+  authReserveChain[route] = tail;
+  return tail;
+}
+
+/** Convenience wrapper for the UI sign-in specs. */
+export function reserveLoginSlots(count = 1): Promise<void> {
+  return reserveAuthSlots("login", count);
+}
+
+/* ------------------------------------------------------------------ */
 /*  API helpers — direct fetch against the staging API                 */
 /* ------------------------------------------------------------------ */
 
@@ -62,9 +168,15 @@ export async function registerUser(email: string, password = RUN_PASSWORD): Prom
   // /auth/register carries a route-level 5/min-per-IP throttle (security
   // behaviour that THROTTLE_LIMIT does NOT lift — .kiro/specs/real-stack-ci/
   // design.md §1 "Throttles"). A spec that registers several accounts, or a
-  // CI shard running back-to-back specs on one IP, can hit a 429. Back off and
-  // retry (the j790-dead-ends.spec.ts pattern) so a real-stack register is
-  // resilient to its own route limit instead of failing the run.
+  // CI shard running back-to-back specs on one IP, can hit a 429.
+  //
+  // Reserve a slot on the shared `register` window FIRST (#977): this paces the
+  // whole shard — every spec's registers share this one process-wide record —
+  // so a register is issued only when the trailing-60s window has room, instead
+  // of each spec guessing it starts with a clean bucket. The 429 back-off below
+  // is kept as a belt-and-suspenders safety net for any register that does not
+  // route through this helper (none in the journey suite today).
+  await reserveAuthSlots("register");
   let text = "";
   let res: Response | undefined;
   for (let attempt = 0; ; attempt++) {
