@@ -292,6 +292,14 @@ jobs:
           node --test scripts/check-selfhost-env.test.mjs
           pnpm check:selfhost-env
 
+      # #1026 — pin the five structural properties that keep production web and
+      # API shipping from one commit (vercel.json disables main git deploys; the
+      # web build + credential check precede the API deploy; promote follows
+      # deploy+migrate; release needs promote and smoke). Pure Node, no deps; it
+      # parses deploy-aws.yml and web/vercel.json and never runs the pipeline.
+      - name: Deploy web+API-together guard (#1026)
+        run: node --test scripts/deploy-sync-guard.test.mjs
+
       - name: Start the API and redirect service
         run: |
           # PORT is set per-process, not on the step: a step-level PORT would
