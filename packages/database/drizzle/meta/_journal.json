@@ -232,6 +232,13 @@
       "when": 1793611622314,
       "tag": "0033_plan_management",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793613581172,
+      "tag": "0034_trials_coupons",
+      "breakpoints": true
     }
   ]
 }

@@ -21,3 +21,4 @@ export * from "./billing.js";
 export * from "./admin-billing.js";
 export * from "./proration.js";
 export * from "./plan-management.js";
+export * from "./coupon.js";

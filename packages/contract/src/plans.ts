@@ -320,6 +320,10 @@ export const PlanView = z.object({
   limits: z.record(z.enum(LIMIT_NAMES), LimitValue),
   /** The current version's prices (#987). Empty amounts for an unpriced plan. */
   prices: PlanPrices,
+  /** #992 — trial length in days (0 = no trial) and whether a card is required
+   *  up front. The trial itself runs as the provider's trialing subscription. */
+  trialDays: z.number().int().min(0),
+  trialRequiresCard: z.boolean(),
 });
 export type PlanView = z.infer<typeof PlanView>;
 
@@ -342,6 +346,10 @@ export const CreatePlanInput = z.object({
   visibility: PlanVisibility.default("public"),
   features: FeatureMatrix.default({}),
   limits: LimitMatrix.default({}),
+  /** #992 — trial config. Defaults to no trial, card required (so an existing
+   *  create call is unchanged). trialDays capped at a sane year. */
+  trialDays: z.number().int().min(0).max(365).default(0),
+  trialRequiresCard: z.boolean().default(true),
 });
 export type CreatePlanInput = z.infer<typeof CreatePlanInput>;
 
@@ -353,6 +361,9 @@ export const UpdatePlanInput = z.object({
   highlightBadge: z.string().trim().max(40).nullable().optional(),
   sortOrder: z.number().int().min(0).max(10_000).optional(),
   visibility: PlanVisibility.optional(),
+  /** #992 — edit the plan's trial config. Omitted = unchanged. */
+  trialDays: z.number().int().min(0).max(365).optional(),
+  trialRequiresCard: z.boolean().optional(),
 });
 export type UpdatePlanInput = z.infer<typeof UpdatePlanInput>;
 
