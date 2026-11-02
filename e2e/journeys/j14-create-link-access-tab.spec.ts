@@ -20,7 +20,7 @@
  */
 
 import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, makeEmail, REDIRECT_URL, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j14-destination";
 const SCHEDULED_TO = "https://example.com/j14-coming-soon";
@@ -37,11 +37,10 @@ function dateInput(days: number): string {
 
 /** Real sign-in through the login form, as a user would. */
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function openCreate(page: Page): Promise<Locator> {
@@ -87,7 +86,7 @@ test.describe("Journey 14 — Create link after visiting the Access tab", () => 
   let session: Session;
   let page: Page;
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
-    session = await registerUser(makeEmail("j14"));
+    session = await seedUser(makeEmail("j14"));
     page = await browser.newPage();
     await signIn(page, session);
   });

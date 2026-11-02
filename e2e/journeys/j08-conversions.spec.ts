@@ -15,7 +15,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   createLink,
   API_URL,
@@ -25,7 +25,7 @@ import {
 test.describe("Journey 8 — Conversions", () => {
   test("record a conversion and verify it appears in the report", async ({ page }) => {
     /* ---- Setup ---- */
-    const session = await registerUser(makeEmail("j8"));
+    const session = await seedUser(makeEmail("j8"));
     const link = await createLink(session.accessToken, {
       destination: "https://example.com/j8-conversion-target",
     });

@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { API_URL, RUN_ID, makeEmail, registerUser, seedAccount } from "./helpers";
+import { API_URL, RUN_ID, enableCustomDomains, makeEmail, seedPaidOwner, seedUser, seedAccount } from "./helpers";
 
 type DnsRecord = { type: string; name: string; value: string; ttl: number };
 type ApiDomain = { id: string; domain: string; shared?: boolean; dns?: DnsRecord | null; routing?: DnsRecord | null };
@@ -39,7 +39,10 @@ test.describe("Journey 784 — DNS setup instructions", () => {
     const shot = (name: string) => page.screenshot({ path: path.join(EVIDENCE, `${testInfo.project.name}-${name}.png`), fullPage: true });
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 
-    const owner = await registerUser(makeEmail("j784"));
+    // #977 — custom domains are paid-only (#966); seed a paid plan for the owner.
+    // #1022 — enable the custom-domain kill switch (OFF by default -> 503).
+    await enableCustomDomains();
+    const owner = await seedPaidOwner(makeEmail("j784"));
     const added = await call(owner.accessToken, "POST", "/domains", { domain: host });
     expect(added.status, "POST /domains").toBe(201);
     const dto = (await added.json()) as ApiDomain;
@@ -83,8 +86,12 @@ test.describe("Journey 784 — DNS setup instructions", () => {
   });
 
   test("another workspace never sees this workspace's domain or its records", async ({ page }) => {
-    const a = await registerUser(makeEmail("j784a"));
-    const b = await registerUser(makeEmail("j784b"));
+    // #977 — `a` connects a custom domain (paid-only, #966), so seed its plan;
+    // `b` only reads its own (empty) domain list, so Free is correct for it.
+    // #1022 — enable the custom-domain kill switch (OFF by default -> 503).
+    await enableCustomDomains();
+    const a = await seedPaidOwner(makeEmail("j784a"));
+    const b = await seedUser(makeEmail("j784b"));
     const hostA = `j784a-${RUN_ID}.example.com`;
     expect((await call(a.accessToken, "POST", "/domains", { domain: hostA })).status).toBe(201);
     const theirs = (await (await call(b.accessToken, "GET", "/domains")).json()) as ApiDomain[];
@@ -92,7 +99,12 @@ test.describe("Journey 784 — DNS setup instructions", () => {
 
     await seedAccount(page, b);
     await page.goto("/domains");
-    await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
+    // exact: the page title is the <h1>Domains</h1>. b is a Free workspace, so
+    // #966's "Custom domains are a paid feature" upgrade card is also on the
+    // page, and its <h3> contains the word "Domains" — a non-exact name match
+    // would resolve to both headings (strict-mode violation). Pin the page
+    // title exactly; it asserts the same thing (the Domains page rendered).
+    await expect(page.getByRole("heading", { name: "Domains", exact: true })).toBeVisible();
     await expect(page.getByText(hostA)).toHaveCount(0);
   });
 });

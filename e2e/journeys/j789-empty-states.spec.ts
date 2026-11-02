@@ -22,7 +22,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, makeEmail, registerUser, seedAccount, createLink } from "./helpers";
+import { API_URL, REDIRECT_URL, makeEmail, seedUser, seedAccount, createLink } from "./helpers";
 
 const EVIDENCE = path.resolve(__dirname, "../../.qa-runs/789");
 const BROWSER_UA =
@@ -41,7 +41,7 @@ test.describe("Journey 789 — empty states @mobile", () => {
   test("new account: three empty states, working actions, unclipped funnel", async ({ page }, testInfo) => {
     mkdirSync(EVIDENCE, { recursive: true });
     const tag = testInfo.project.name;
-    const session = await registerUser(makeEmail(`j789-${tag}`));
+    const session = await seedUser(makeEmail(`j789-${tag}`));
     await seedAccount(page, session);
 
     /* ---- /bio ---- */

@@ -15,7 +15,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   API_URL,
   REDIRECT_URL,
@@ -25,7 +25,7 @@ import {
 test.describe("Journey 6 — Bio page", () => {
   test("create a bio page as draft, publish it, verify live in API @mobile", async ({ page }) => {
     /* ---- Setup ---- */
-    const session = await registerUser(makeEmail("j6"));
+    const session = await seedUser(makeEmail("j6"));
     await seedAccount(page, session);
 
     /* ---- 1. Navigate to bio page ---- */

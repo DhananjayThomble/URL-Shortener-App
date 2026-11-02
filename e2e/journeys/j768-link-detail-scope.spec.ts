@@ -23,7 +23,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, createLink, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, REDIRECT_URL, createLink, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 // Run SQL inside the staging Postgres container with `docker exec`, the pattern
 // j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
@@ -79,7 +79,7 @@ const card = (page: Page, title: string): Locator =>
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
 async function seedLink(intent: string): Promise<{ session: Session; linkId: string }> {
-  const session = await registerUser(makeEmail(`j768-${intent}-${test.info().project.name}`));
+  const session = await seedUser(makeEmail(`j768-${intent}-${test.info().project.name}`));
   const link = await createLink(session.accessToken, { destination: "https://example.com/j768-target" });
 
   // Seeded history FIRST, so the rollup's link_counters recompute (a sum over

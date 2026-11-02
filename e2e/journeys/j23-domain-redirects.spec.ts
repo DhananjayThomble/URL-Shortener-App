@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, enableCustomDomains, makeEmail, seedUser, setWorkspacePlan, signInViaSeed } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -83,9 +83,16 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
 
   test.beforeAll(async ({ browser }, testInfo) => {
     const email = makeEmail("j23");
-    const session = await registerUser(email);
+    const session = await seedUser(email);
     token = session.accessToken;
     ownerWorkspaceId = session.workspaceId;
+    // #977 — custom domains are paid-only (#966). Put this workspace on a paid
+    // plan so POST /domains is 201; the invited editor added later inherits the
+    // same workspace plan, so it needs no separate seed.
+    await setWorkspacePlan(ownerWorkspaceId);
+    // #1022 — custom-domain creation ships behind a kill switch OFF by default
+    // (503 on POST /domains); enable it platform-wide for the staging run.
+    await enableCustomDomains();
 
     const add = await fetch(`${API_URL}/domains`, {
       method: "POST",
@@ -115,11 +122,11 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
 
     context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 1280, height: 800 } });
     page = await context.newPage();
-    await page.goto("/login");
-    await page.getByPlaceholder("you@company.com").fill(email);
-    await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/links$/, { timeout: 20_000 });
+    // #977 Option A: seed the real session instead of a UI /auth/login. This
+    // spec's subject is custom-domain root/404 redirects, not the login form,
+    // and a UI login here 429'd under shard load (the earlier 0 ms beforeAll
+    // fail). seedAccount uses the tokens registerUser already issued — no login.
+    await signInViaSeed(page, session);
   });
 
   test.afterAll(async () => {
@@ -213,13 +220,10 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
      workspace on navigation, so a cross-workspace membership flaps.) */
   test("the API refuses a redirect change by an editor (gate behind the hidden control)", async () => {
     const editorEmail = makeEmail("j23-editor");
-    const invitee = await registerUser(editorEmail);
-    // Fixture: accepting an invitation requires a verified email.
-    const { stdout } = await run("docker", [
-      "exec", DB_CONTAINER, "psql", "-U", "snapurl", "-d", "snapurl", "-At", "-c",
-      `update users set email_verified_at = now() where lower(email) = lower('${editorEmail.replace(/'/g, "''")}') returning id`,
-    ]);
-    expect(stdout.trim(), "invitee email verified").not.toBe("");
+    // Accepting an invitation requires a verified email. seedUser (#977) creates
+    // the account email-verified by construction (and via the unthrottled
+    // /auth/refresh, not /auth/register), so no separate verify step is needed.
+    const invitee = await seedUser(editorEmail);
 
     expect((await apiJson(token, "/members", { method: "POST", body: JSON.stringify({ email: editorEmail, role: "editor" }) })).status).toBe(201);
     const inviteToken = new URL(await inviteLink(editorEmail)).searchParams.get("token")!;

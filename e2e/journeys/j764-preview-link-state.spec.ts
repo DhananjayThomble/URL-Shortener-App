@@ -25,7 +25,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, registerUser } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, seedUser } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -45,7 +45,7 @@ const expireInPast = (slug: string) =>
 
 test.describe("Journey 764 — preview shows the link's state @mobile", () => {
   test("expired, scheduled, archived and rule-routed links each read as what the redirect does", async ({ page }, testInfo) => {
-    const session = await registerUser(makeEmail(`j764-${testInfo.project.name}`));
+    const session = await seedUser(makeEmail(`j764-${testInfo.project.name}`));
     const auth = { authorization: `Bearer ${session.accessToken}`, "content-type": "application/json" };
     const ws = (await (await fetch(`${API_URL}/workspaces/current`, { headers: auth })).json()) as {
       defaultDomain?: string;

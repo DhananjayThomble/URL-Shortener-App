@@ -14,7 +14,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   REDIRECT_URL,
   API_URL,
@@ -26,7 +26,7 @@ const DEST_2 = "https://example.com/j2-edited";
 test.describe("Journey 2 — Link lifecycle", () => {
   test("create → edit destination → redirect changes → delete → gone @mobile", async ({ page }) => {
     /* ---- Setup ---- */
-    const session = await registerUser(makeEmail("j2"));
+    const session = await seedUser(makeEmail("j2"));
     await seedAccount(page, session);
 
     /* ---- 1. Create a link via the UI ---- */

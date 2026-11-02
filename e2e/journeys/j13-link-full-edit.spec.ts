@@ -24,7 +24,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_PASSWORD, createLink, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, createLink, makeEmail, REDIRECT_URL, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j13-destination";
 const NEW_DEST = "https://example.com/j13-new-destination";
@@ -42,11 +42,10 @@ function dateInput(days: number): string {
 
 /** Real sign-in through the login form, as a user would. */
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 async function openEditor(page: Page, linkId: string, slug: string): Promise<Locator> {
@@ -77,7 +76,7 @@ async function visit(slug: string) {
 
 test.describe("Journey 13 — Full link edit and archive", () => {
   test("edit every field in the drawer, reload, and see each saved value @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j13a"));
+    const session = await seedUser(makeEmail("j13a"));
     const link = await createLink(session.accessToken, { destination: DEST });
     await signIn(page, session);
 
@@ -192,7 +191,7 @@ test.describe("Journey 13 — Full link edit and archive", () => {
   });
 
   test("clearing optional values removes them (UTM, preview, rule, tags)", async ({ page }) => {
-    const session = await registerUser(makeEmail("j13b"));
+    const session = await seedUser(makeEmail("j13b"));
     const link = await createLink(session.accessToken, { destination: DEST });
     // Seed values over the API, then remove them through the UI.
     const seed = await fetch(`${API_URL}/links/${link.id}`, {
@@ -239,7 +238,7 @@ test.describe("Journey 13 — Full link edit and archive", () => {
   });
 
   test("password and expiry edits change what a visitor gets from the redirect service", async ({ page }) => {
-    const session = await registerUser(makeEmail("j13c"));
+    const session = await seedUser(makeEmail("j13c"));
     const link = await createLink(session.accessToken, { destination: DEST });
     await signIn(page, session);
 
@@ -301,7 +300,7 @@ test.describe("Journey 13 — Full link edit and archive", () => {
   });
 
   test("archive and unarchive from the drawer and the row moves the link in and out of the Archived filter", async ({ page }) => {
-    const session = await registerUser(makeEmail("j13d"));
+    const session = await seedUser(makeEmail("j13d"));
     const link = await createLink(session.accessToken, { destination: DEST });
     await signIn(page, session);
 

@@ -275,6 +275,10 @@ importers:
         version: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(vite@7.3.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.0)(tsx@4.23.12)(yaml@2.9.0))
 
   e2e:
+    dependencies:
+      '@snapurl/database':
+        specifier: workspace:*
+        version: link:../packages/database
     devDependencies:
       '@axe-core/playwright':
         specifier: 4.10.1

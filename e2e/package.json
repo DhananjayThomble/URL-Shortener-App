@@ -14,7 +14,11 @@
     "test:visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
     "test:e2e:ui": "playwright test --ui",
     "install:chromium": "playwright install --with-deps chromium",
+    "check:auth-volume": "node scripts/check-auth-volume.mjs",
     "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@snapurl/database": "workspace:*"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.10.1",

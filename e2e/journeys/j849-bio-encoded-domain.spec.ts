@@ -15,14 +15,14 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { API_URL, RUN_ID, makeEmail, registerUser } from "./helpers";
+import { API_URL, RUN_ID, makeEmail, seedUser } from "./helpers";
 
 const NAME = "J849 Encoded Domain";
 
 test.describe("Journey 849 — /b/<encoded-domain>/<slug>", () => {
   test("renders for a percent-encoded domain; unknown and undecodable addresses 404 @mobile", async ({ browser }, testInfo) => {
     /* ---- Setup: a published page on the workspace's default domain ---- */
-    const session = await registerUser(makeEmail("j849"));
+    const session = await seedUser(makeEmail("j849"));
     const auth = { authorization: `Bearer ${session.accessToken}`, "content-type": "application/json" };
 
     const wsRes = await fetch(`${API_URL}/workspaces/current`, { headers: auth });

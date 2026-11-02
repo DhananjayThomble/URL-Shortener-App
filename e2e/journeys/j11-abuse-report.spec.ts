@@ -20,7 +20,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   createLink,
   API_URL,
@@ -30,7 +30,7 @@ import {
 test.describe("Journey 11 — Abuse report", () => {
   test("file a report and see it in the operator queue", async ({ page }) => {
     /* ---- Setup ---- */
-    const session = await registerUser(makeEmail("j11"));
+    const session = await seedUser(makeEmail("j11"));
     const link = await createLink(session.accessToken, {
       destination: "https://example.com/j11-target",
     });

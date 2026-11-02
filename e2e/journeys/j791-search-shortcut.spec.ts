@@ -15,7 +15,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { API_URL, makeEmail, registerUser, seedAccount, type Session } from "./helpers";
+import { API_URL, makeEmail, seedUser, seedAccount, type Session } from "./helpers";
 
 const COMBOBOX = "Search links, slugs, destinations, tags";
 
@@ -53,7 +53,7 @@ async function shoot(page: Page, name: string) {
 test.describe("Journey 791 — search shortcut", () => {
   test("Linux/Windows: Ctrl+K focuses the search, and typing then opens a result", async ({ page }, info) => {
     test.skip(info.project.name === "mobile", "top-bar search is desktop/tablet only (DC5)");
-    const session = await registerUser(makeEmail("j791a"));
+    const session = await seedUser(makeEmail("j791a"));
     const link = await createLinkVia(session);
     await emulatePlatform(page, "Linux x86_64");
     const errors: string[] = [];
@@ -88,7 +88,7 @@ test.describe("Journey 791 — search shortcut", () => {
 
   test("Mac: ⌘K hint and Cmd+K focuses the search (Ctrl+K does not)", async ({ page }, info) => {
     test.skip(info.project.name === "mobile", "top-bar search is desktop/tablet only (DC5)");
-    const session = await registerUser(makeEmail("j791b"));
+    const session = await seedUser(makeEmail("j791b"));
     await emulatePlatform(page, "MacIntel");
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -109,7 +109,7 @@ test.describe("Journey 791 — search shortcut", () => {
 
   test("phone: no search and no hint @mobile", async ({ page }, info) => {
     test.skip(info.project.name !== "mobile", "phone viewport only");
-    const session = await registerUser(makeEmail("j791c"));
+    const session = await seedUser(makeEmail("j791c"));
     await seedAccount(page, session);
     await page.goto("/links");
     await expect(page.getByRole("combobox", { name: COMBOBOX })).toBeHidden();

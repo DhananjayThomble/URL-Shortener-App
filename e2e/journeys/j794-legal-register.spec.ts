@@ -10,7 +10,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { makeEmail, RUN_PASSWORD } from "./helpers";
+import { makeEmail, reserveAuthSlots, RUN_PASSWORD } from "./helpers";
 
 const EMAIL_MSG = "That doesn't look like an email address";
 
@@ -46,6 +46,13 @@ test.describe("Journey 794 — legal pages and register validation", () => {
     await expect(page).toHaveURL(/\/register/);
 
     await email.fill(makeEmail("j794"));
+    // This is a browser-driven /auth/register (5/min-per-IP, #977). j794 runs
+    // near the END of every shard, so by now sibling specs have spent the
+    // register window on this one IP — the UI signup then 429s and never
+    // reaches /links (the deterministic ~31s timeout on all three shards).
+    // Reserve a register slot on the shared window first so the signup lands in
+    // a window with room, regardless of what ran before it.
+    await reserveAuthSlots("register", 1);
     await page.getByRole("button", { name: "Create account" }).click();
     await expect(page).toHaveURL(/\/links/, { timeout: 30_000 });
     expect(registerCalls).toBe(1);

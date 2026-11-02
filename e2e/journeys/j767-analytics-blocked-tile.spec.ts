@@ -27,7 +27,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { API_URL, createLink, makeEmail, REDIRECT_URL, registerUser, seedAccount } from "./helpers";
+import { API_URL, createLink, makeEmail, REDIRECT_URL, seedUser, seedAccount } from "./helpers";
 
 const BROWSER_UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -58,7 +58,7 @@ async function totals(token: string): Promise<{ clicks: number; blocked: number 
 test.describe("Journey — analytics blocked visits tile (#767)", () => {
   test("@mobile the tile counts expired + scheduled rejections and says so", async ({ page }, testInfo) => {
     test.setTimeout(240_000);
-    const session = await registerUser(makeEmail("j767"));
+    const session = await seedUser(makeEmail("j767"));
     const token = session.accessToken;
 
     // 1. Three links: normal, expired, not yet live. The API refuses a past expiry (#754) but

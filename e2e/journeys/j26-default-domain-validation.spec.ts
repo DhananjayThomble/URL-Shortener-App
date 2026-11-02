@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, RUN_ID, enableCustomDomains, makeEmail, seedPaidOwner, seedUser, signInViaSeed, type Session } from "./helpers";
 
 // Run SQL inside the staging Postgres container with `docker exec`, the pattern
 // j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
@@ -79,12 +79,9 @@ function psql(sql: string) {
   );
 }
 
-async function signIn(page: Page, email: string) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+async function signIn(page: Page, session: Session) {
+  // #977 Option A: seed the real session instead of a UI /auth/login (5/min/IP).
+  await signInViaSeed(page, session);
 }
 
 test.describe("Journey 26 — default domain validation (#779)", () => {
@@ -101,8 +98,14 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     mkdirSync(SHOTS, { recursive: true });
-    owner = await registerUser(makeEmail("j26-owner"));
-    stranger = await registerUser(makeEmail("j26-other"));
+    // #977 — both workspaces connect custom domains (owner: pending+verified;
+    // stranger: the foreign domain the leak checks use). Custom domains are a
+    // paid feature (#966), so seed both workspaces onto a paid plan or every
+    // POST /domains below 403s.
+    // #1022 — enable the custom-domain kill switch (OFF by default -> 503).
+    await enableCustomDomains();
+    owner = await seedPaidOwner(makeEmail("j26-owner"));
+    stranger = await seedPaidOwner(makeEmail("j26-other"));
 
     base = await get();
 
@@ -184,7 +187,7 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
         await page.setViewportSize(vp.size);
         await page.emulateMedia({ colorScheme: scheme });
         if (!page.url().includes("/settings") && !(await page.evaluate(() => !!window.localStorage.getItem("snapurl.accessToken")).catch(() => false))) {
-          await signIn(page, owner.email);
+          await signIn(page, owner);
         }
         await page.goto("/settings");
         const select = page.getByLabel("Default domain");
@@ -239,20 +242,24 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
 
   test("(g) a viewer sees the control disabled with the reason, and the API answers 403", async ({ browser }) => {
     const viewerEmail = makeEmail("j26-viewer");
-    await registerUser(viewerEmail);
+    const viewer = await seedUser(viewerEmail);
     psql(`update memberships set role='viewer' where lower(email)=lower('${viewerEmail}')`);
-    const login = await fetch(`${API_URL}/auth/login`, {
+    // The role just changed, so a fresh token is needed to carry the viewer
+    // role. #977 Option A: get it from the UNTHROTTLED /auth/refresh (which
+    // rebuilds claims from the current membership) rather than a /auth/login —
+    // this spec does not test the login flow, so it spends no auth bucket.
+    const refresh = await fetch(`${API_URL}/auth/refresh`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: viewerEmail, password: RUN_PASSWORD }),
+      body: JSON.stringify({ refreshToken: viewer.refreshToken }),
     });
-    const viewerToken = ((await login.json()) as { accessToken: string }).accessToken;
-    const denied = await call(viewerToken, "PATCH", "/workspaces/current", { defaultDomain: "not-mine.example" });
+    const viewerSession = (await refresh.json()) as { accessToken: string; refreshToken: string };
+    const denied = await call(viewerSession.accessToken, "PATCH", "/workspaces/current", { defaultDomain: "not-mine.example" });
     expect(denied.status).toBe(403);
 
     const vp = await browser.newPage();
     try {
-      await signIn(vp, viewerEmail);
+      await signIn(vp, { ...viewer, accessToken: viewerSession.accessToken, refreshToken: viewerSession.refreshToken });
       await vp.goto("/settings");
       const select = vp.getByLabel("Default domain");
       await expect(select).toBeVisible({ timeout: 20_000 });

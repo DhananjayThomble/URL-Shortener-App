@@ -26,7 +26,7 @@
  */
 
 import { expect, test, type Page, type Request } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, makeEmail, registerUser, totpCode } from "./helpers";
+import { API_URL, RUN_PASSWORD, makeEmail, registerUser, reserveAuthSlots, reserveLoginSlots, totpCode } from "./helpers";
 
 type Seen = { url: string; status: number | null };
 
@@ -65,11 +65,17 @@ async function enable2fa(accessToken: string): Promise<string> {
 test.describe("Journey 778 — Enter after a failed login", () => {
   test("password step: Enter re-submits after a failed attempt, from the password and the email field @mobile", async ({ page, baseURL }, info) => {
     test.setTimeout(180_000);
-    // Let the desktop project's logins age out of the 5/min throttle.
-    if (info.project.name !== "desktop") await page.waitForTimeout(61_000);
 
     const email = makeEmail(`j778-pw-${info.project.name}`);
     await registerUser(email);
+    // This test drives three /auth/login requests through the UI (401, 401,
+    // 200). Reserve those three slots on the shared login window (#977) so they
+    // land in a window that has room — BEFORE this used a project-conditional
+    // 61s stagger that only separated this project's run from the other's and
+    // wrongly assumed no sibling spec (e.g. j777) had drained the 5/min bucket
+    // first. The reservation blocks until there is room, so it is order- and
+    // shard-composition-independent, and paces to the real limit with no guess.
+    await reserveLoginSlots(3);
     const sent = recordPosts(page, "/auth/login");
 
     await page.goto("/login");
@@ -107,21 +113,20 @@ test.describe("Journey 778 — Enter after a failed login", () => {
 
   test("2FA step: Enter re-submits the code after a wrong one @mobile", async ({ page, baseURL }, info) => {
     test.setTimeout(180_000);
-    // The password-step test above runs immediately before this one in the same
-    // worker (workers:1, fullyParallel:false), on the SAME IP, and spends
-    // /auth/login requests from the 5/min-per-IP bucket. Without a stagger the
-    // login this test makes to reach the 2FA challenge lands in that same window
-    // and 429s, so the challenge never renders (#950 — a pre-existing throttle
-    // timing fragility, not a product bug). Age the window out first, exactly
-    // as the password-step test and the j776 sibling already do for the same
-    // reason. 61s > the 60s window; the test budget is 180s.
-    await page.waitForTimeout(61_000);
 
     const email = makeEmail(`j778-2fa-${info.project.name}`);
     const session = await registerUser(email);
     const secret = await enable2fa(session.accessToken);
     const logins = recordPosts(page, "/auth/login");
     const verifies = recordPosts(page, "/auth/2fa/verify");
+    // This test drives one /auth/login (to reach the 2FA challenge) and four
+    // /auth/2fa/verify requests (401, 401, 401, 200), both 5/min-per-IP routes.
+    // Reserve those slots on the shared windows (#977) so they land in a window
+    // with room regardless of what the password-step test above, or any sibling
+    // spec on this one shard IP, spent first — replacing the old blind 61s
+    // stagger that only accounted for this file's own previous test.
+    await reserveLoginSlots(1);
+    await reserveAuthSlots("2fa/verify", 4);
 
     await page.goto("/login");
     await page.getByRole("textbox", { name: "Email" }).fill(email);

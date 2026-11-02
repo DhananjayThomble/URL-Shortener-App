@@ -14,7 +14,7 @@
 
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { createLink, makeEmail, registerUser, seedAccount } from "./helpers";
+import { createLink, makeEmail, seedUser, seedAccount } from "./helpers";
 
 const SHOTS = process.env.QA_SHOT_DIR;
 
@@ -51,7 +51,7 @@ for (const scheme of ["light", "dark"] as const) {
     test.use({ colorScheme: scheme });
 
     test(`@mobile help follows the level, logo raises L/M with a notice, swatches are outlined (${scheme})`, async ({ page }, info) => {
-      const session = await registerUser(makeEmail(`j774-${scheme}`));
+      const session = await seedUser(makeEmail(`j774-${scheme}`));
       await createLink(session.accessToken, { destination: "https://example.com/j774" });
       await seedAccount(page, session);
       await page.goto("/qr");

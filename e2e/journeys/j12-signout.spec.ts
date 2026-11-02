@@ -20,7 +20,7 @@
 import { expect, test } from "@playwright/test";
 import {
   makeEmail,
-  registerUser,
+  seedUser,
   seedAccount,
   API_URL,
 } from "./helpers";
@@ -28,7 +28,7 @@ import {
 test.describe("Journey 12 — Sign out", () => {
   test("sign out: session ends, /login reached, refresh token revoked", async ({ page }) => {
     /* ---- Setup: a logged-in session ---- */
-    const session = await registerUser(makeEmail("j12"));
+    const session = await seedUser(makeEmail("j12"));
     await seedAccount(page, session);
 
     await page.goto("/links");

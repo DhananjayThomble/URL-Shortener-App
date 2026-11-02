@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, TOKEN_KEY, makeEmail, registerUser } from "./helpers";
+import { API_URL, RUN_ID, TOKEN_KEY, makeEmail, seedUser, signInViaSeed } from "./helpers";
 
 const slug = `j22-${RUN_ID}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
 const TITLE = `J22 feedback ${RUN_ID}`;
@@ -42,14 +42,11 @@ test.describe.serial("Journey 22 — manage forms from the dashboard (#649)", ()
 
   test.beforeAll(async ({ browser }, testInfo) => {
     const email = makeEmail("j22");
-    await registerUser(email);
+    const session = await seedUser(email);
     context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width: 1280, height: 800 } });
     page = await context.newPage();
-    await page.goto("/login");
-    await page.getByPlaceholder("you@company.com").fill(email);
-    await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/links$/, { timeout: 20_000 });
+    // #977 Option A: seed the real session instead of a UI /auth/login (5/min/IP).
+    await signInViaSeed(page, session);
   });
 
   test.afterAll(async () => {

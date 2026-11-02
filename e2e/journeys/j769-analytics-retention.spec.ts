@@ -20,7 +20,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { API_URL, makeEmail, registerUser, seedAccount } from "./helpers";
+import { API_URL, makeEmail, seedUser, seedAccount } from "./helpers";
 
 const BASE = "No cookies set · click data never sold";
 
@@ -43,7 +43,7 @@ async function savedRetention(accessToken: string): Promise<number> {
 
 test.describe("Journey — analytics header retention (#769)", () => {
   test("@mobile the header follows the saved retention, including after a Settings change", async ({ page }) => {
-    const session = await registerUser(makeEmail("j769"));
+    const session = await seedUser(makeEmail("j769"));
     await seedAccount(page, session);
 
     // 1. The workspace's own (default) value.

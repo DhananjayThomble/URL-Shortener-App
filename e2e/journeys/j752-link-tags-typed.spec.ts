@@ -21,7 +21,7 @@
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { API_URL, RUN_PASSWORD, createLink, makeEmail, registerUser, type Session } from "./helpers";
+import { API_URL, createLink, makeEmail, seedUser, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j752-destination";
 
@@ -29,11 +29,10 @@ const slugFor = (tag: string) => `j752-${tag}-${Math.random().toString(36).slice
 
 /** Real sign-in through the login form, as a user would. */
 async function signIn(page: Page, session: Session) {
-  await page.goto("/login");
-  await page.getByPlaceholder("you@company.com").fill(session.email);
-  await page.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  // #977 Option A: establish the session WITHOUT a UI /auth/login (that route is
+  // 5/min-per-IP and a full shard's worth of logins overruns it). seedAccount
+  // seeds the REAL tokens seedUser issued; no forged JWT, no login call.
+  await signInViaSeed(page, session);
 }
 
 const tagsInput = (drawer: Locator) => drawer.getByLabel("Tags", { exact: true });
@@ -55,7 +54,7 @@ async function slugsWithTag(session: Session, tag: string): Promise<string[]> {
 
 test.describe("Journey 752 — Typing tags into the link drawers", () => {
   test("create: 'a, b' typed key by key is saved as two tags, each findable by the tag filter @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j752a"));
+    const session = await seedUser(makeEmail("j752a"));
     const slug = slugFor("create");
     await signIn(page, session);
 
@@ -90,7 +89,7 @@ test.describe("Journey 752 — Typing tags into the link drawers", () => {
   });
 
   test("edit: extend the tags by typing, save, reload, and see them again @mobile", async ({ page }) => {
-    const session = await registerUser(makeEmail("j752b"));
+    const session = await seedUser(makeEmail("j752b"));
     const link = await createLink(session.accessToken, { destination: DEST });
     // Seed the starting tags through the API (a real PATCH), as an earlier edit would have.
     const seed = await fetch(`${API_URL}/links/${link.id}`, {
