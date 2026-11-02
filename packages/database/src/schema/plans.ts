@@ -111,6 +111,13 @@ export const planVersions = pgTable(
     /** Left for #987 (admin-editable prices): a version can carry its price set
      *  later. Null here; #970 builds no pricing. jsonb so #987 is additive. */
     pricing: jsonb("pricing"),
+    /* NOTE (#986 ↔ #970): billing's `subscriptions.plan_version_id` (schema/
+       billing.ts) is a nullable, un-FK'd uuid that points at THIS table's `id`.
+       It is deliberately left loose (not a foreign key) and is written null by
+       #986. TODO(#987): when admin-editable prices land, populate it with the
+       version a subscription was created against and decide whether to promote
+       it to a real FK — kept additive here so #986's merged migration is not
+       disturbed. */
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("plan_versions_plan_version_key").on(t.planId, t.version)],

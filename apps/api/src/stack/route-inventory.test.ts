@@ -65,6 +65,7 @@ beforeAll(async () => {
     import("../openapi/paths/public.js"),
     import("../openapi/paths/reports.js"),
     import("../openapi/paths/workspaces.js"),
+    import("../openapi/paths/billing.js"),
   ]);
   const { buildRouteInventory, routeKeys } = await import("./route-inventory.js");
 
@@ -89,7 +90,7 @@ describe("registry parity: the reflected inventory equals the OpenAPI registry",
     ).toEqual({ missingFromRegistry: [], missingFromControllers: [] });
   });
 
-  it("the inventory has the 114 routes the design records (Appendix A + #968 /admin/me + #974 system-health + #969 users/workspaces + #971 moderation + #973 admin analytics + its CSV export + #972 settings + banner + #970 plans/versions/overrides + #970 pricing + usage)", () => {
-    expect(inventoryCount).toBe(114);
+  it("the inventory has the 117 routes the design records (Appendix A + #968 /admin/me + #974 system-health + #969 users/workspaces + #971 moderation + #973 admin analytics + its CSV export + #972 settings + banner + #986 billing checkout/subscription/webhook + #970 plans/versions/overrides + #970 pricing + usage)", () => {
+    expect(inventoryCount).toBe(117);
   });
 });

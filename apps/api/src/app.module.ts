@@ -25,6 +25,7 @@ import { MembersModule } from "./members/members.module.js";
 import { DevelopersModule } from "./developers/developers.module.js";
 import { BioPagesModule } from "./bio-pages/bio-pages.module.js";
 import { PublicModule } from "./public/public.module.js";
+import { BillingModule } from "./billing/billing.module.js";
 import { HealthController } from "./common/health.controller.js";
 import { CommonModule } from "./common/common.module.js";
 import { FormsModule } from "./forms/forms.module.js";
@@ -96,6 +97,7 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
     ReportsModule,
     PublicModule,
     AdminModule,
+    BillingModule,
   ],
   controllers: [HealthController],
   providers: [
