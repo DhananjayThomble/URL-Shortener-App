@@ -126,6 +126,63 @@ describe("BillingDetailsInput", () => {
   });
 });
 
+describe("trimming and anchoring (mutation coverage)", () => {
+  it("GSTIN_REGEX is anchored at the START — a valid GSTIN with a junk prefix is rejected", () => {
+    // Without the leading ^ the regex would match anywhere in the string, so a
+    // prefixed value would wrongly pass. This kills the start-anchor mutant.
+    expect(GSTIN_REGEX.test("JUNK" + VALID_GSTIN)).toBe(false);
+    expect(GSTIN_REGEX.test("x29ABCDE1234F1Z5")).toBe(false);
+  });
+
+  it("GSTIN enforcement in India rejects a valid GSTIN with a junk prefix", () => {
+    const r = BillingDetailsInput.safeParse({ taxId: "X29ABCDE1234F1Z5", address: { country: "IN" } });
+    expect(r.success).toBe(false);
+  });
+
+  it("trims every address field (leading/trailing whitespace is stripped)", () => {
+    const v = BillingDetailsInput.parse({
+      address: {
+        line1: "  1 MG Road  ",
+        line2: "  Suite 2  ",
+        city: "  Bengaluru  ",
+        state: "  Karnataka  ",
+        postalCode: "  560001  ",
+        country: "  in  ",
+      },
+    });
+    expect(v.address).toEqual({
+      line1: "1 MG Road",
+      line2: "Suite 2",
+      city: "Bengaluru",
+      state: "Karnataka",
+      postalCode: "560001",
+      country: "IN",
+    });
+  });
+
+  it("trims the billing email, company name and tax id", () => {
+    const v = BillingDetailsInput.parse({
+      billingEmail: "  accounts@example.com  ",
+      companyName: "  Acme Pvt Ltd  ",
+      taxId: "  29abcde1234f1z5  ",
+    });
+    expect(v.billingEmail).toBe("accounts@example.com");
+    expect(v.companyName).toBe("Acme Pvt Ltd");
+    expect(v.taxId).toBe("29ABCDE1234F1Z5"); // trimmed AND upper-cased
+  });
+
+  it("an email that only parses once trimmed is accepted (proves trim runs before email)", () => {
+    // With the trim dropped, "  a@b.com  " would fail the email check; trimmed
+    // it passes. Kills the billingEmail .trim() mutant.
+    expect(BillingDetailsInput.parse({ billingEmail: "  a@b.com  " }).billingEmail).toBe("a@b.com");
+  });
+
+  it("the BillingAddress schema (used standalone) also trims its fields", () => {
+    const a = BillingAddress.parse({ line1: "  X  ", line2: "  Y  ", city: "  C  ", state: "  S  ", postalCode: "  P  " });
+    expect(a).toEqual({ line1: "X", line2: "Y", city: "C", state: "S", postalCode: "P" });
+  });
+});
+
 describe("BillingDetails (read shape)", () => {
   it("parses an all-null record", () => {
     const d = BillingDetails.parse({
