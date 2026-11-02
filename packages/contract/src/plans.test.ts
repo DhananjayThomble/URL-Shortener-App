@@ -545,6 +545,8 @@ describe("PlanView / PlanList", () => {
     features: Object.fromEntries(FEATURE_NAMES.map((f) => [f, true])),
     limits: Object.fromEntries(LIMIT_NAMES.map((l) => [l, 10])),
     prices: { primaryCurrency: "INR" as const, amounts: { monthly: { INR: 19900 }, yearly: { INR: 199000 } } },
+    trialDays: 0,
+    trialRequiresCard: true,
   };
 
   it("parses a complete plan view", () => {
@@ -554,6 +556,14 @@ describe("PlanView / PlanList", () => {
   it("rejects a non-int version and a bad visibility", () => {
     expect(PlanView.safeParse({ ...view, version: 1.5 }).success).toBe(false);
     expect(PlanView.safeParse({ ...view, visibility: "gone" }).success).toBe(false);
+  });
+
+  it("requires the trial fields and rejects a negative or non-boolean", () => {
+    const { trialDays, trialRequiresCard, ...noTrial } = view;
+    expect(PlanView.safeParse(noTrial).success).toBe(false);
+    expect(PlanView.safeParse({ ...view, trialDays: -1 }).success).toBe(false);
+    expect(PlanView.safeParse({ ...view, trialDays: 1.5 }).success).toBe(false);
+    expect(PlanView.safeParse({ ...view, trialRequiresCard: "yes" }).success).toBe(false);
   });
 
   it("PlanList wraps an array of views", () => {
