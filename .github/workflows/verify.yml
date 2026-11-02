@@ -292,6 +292,14 @@ jobs:
           node --test scripts/check-selfhost-env.test.mjs
           pnpm check:selfhost-env
 
+      # #1025 — the web app's `vercel-build` must build every workspace package
+      # the web app depends on (Vercel runs it from a clean checkout with no
+      # prior `build:packages`). This unit test reds on a hand-kept list that
+      # misses a dep and on the live web/package.json if it regresses. Pure Node,
+      # no deps.
+      - name: Vercel-build builds every web workspace dep (#1025)
+        run: node --test scripts/vercel-build-deps.test.mjs
+
       - name: Start the API and redirect service
         run: |
           # PORT is set per-process, not on the step: a step-level PORT would
@@ -1474,6 +1482,52 @@ jobs:
         with:
           args: -color
 
+  # Vercel-build guard (issue #1025). The production deploy runs web's
+  # `vercel-build` from a clean checkout with no prior `pnpm build:packages`, so
+  # it only builds the workspace packages that `vercel-build` itself names. When
+  # #995 added a `@snapurl/telemetry` import to the web app but not to the
+  # hand-kept build list, production broke while every other CI job stayed green
+  # (they all run `build:packages`, which builds every package). This job
+  # reproduces the Vercel environment exactly — fresh install, NO
+  # `build:packages`, a real (non-localhost) NEXT_PUBLIC_API_URL so `next build`
+  # runs the full compile rather than the unconfigured-build bypass — so the
+  # next package the web app imports without the build covering it reds a PR
+  # here instead of production. Cheap: a single runner, no services, ~5 min.
+  vercel-build-guard:
+    name: Vercel build (clean checkout, no build:packages)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    # A production-like web build. NEXT_PUBLIC_API_URL must be a non-localhost
+    # https URL — next.config.ts rejects a build without it, and rejects a
+    # localhost value. Deliberately NOT setting SNAPURL_ALLOW_UNCONFIGURED_BUILD:
+    # Vercel does not set it, so this job builds exactly as production does.
+    env:
+      NEXT_PUBLIC_API_URL: https://api.snapurl.example/api/v1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The whole point of the guard: run web's vercel-build on a tree where no
+      # package has been pre-built. vercel-build must build every workspace
+      # package the web app depends on by itself. NO `pnpm build:packages` here.
+      - name: Run web vercel-build (no build:packages first)
+        run: pnpm --filter snapurl-web vercel-build
+
   # Mutation testing (issue #896). Stryker on the two pure packages
   # (packages/domain, packages/contract) proves the tests can actually fail, not
   # just that a line ran. Runs on a PR that touches either package (the
@@ -1542,7 +1596,7 @@ jobs:
   # test failure is red here; nothing is left pending.
   ci-gate:
     name: CI gate
-    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard, mutation, gitleaks]
+    needs: [changes, verify, integration, dynamo-smoke, restore-test, e2e, visual, coverage-delta, actionlint, regression-guard, mutation, gitleaks, vercel-build-guard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
