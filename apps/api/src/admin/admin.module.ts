@@ -9,6 +9,7 @@ import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminManagementService } from "./admin-management.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
+import { PlanManagementService } from "../plans/plan-management.service.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { WorkspacesModule } from "../workspaces/workspaces.module.js";
 import { BillingModule } from "../billing/billing.module.js";
@@ -52,6 +53,7 @@ import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admi
     AdminGuard,
     AdminManagementService,
     PlansAdminService,
+    PlanManagementService,
     AdminAnalyticsService,
     AdminBillingService,
     {
