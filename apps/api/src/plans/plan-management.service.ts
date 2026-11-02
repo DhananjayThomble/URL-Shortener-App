@@ -118,7 +118,11 @@ export class PlanManagementService {
     const input = AdminPlanChangeInput.parse(rawInput);
 
     const ws = await this.requireWorkspace(workspaceId);
-    const liveSub = await this.liveProviderSubscription(workspaceId);
+    // Whether a live provider subscription owns this workspace's plan (active or
+    // trialing). This is the ownership test — status only, exactly as the sweep
+    // uses — because a webhook would re-mirror the subscription's plan whether or
+    // not SnapURL captured its provider id yet.
+    const liveOwned = await this.hasLiveProviderSubscription(workspaceId);
     const fromPlanKey = await this.currentPlanKey(workspaceId, ws.plan);
 
     // The target plan must be a known catalogue key (fail closed: an unknown key
@@ -129,25 +133,26 @@ export class PlanManagementService {
     }
     const toPlanKey = target.key;
 
-    // #992 PR-C — a CHARGE settlement is a provider-backed change: it requires a
-    // live provider subscription to charge against, and moves the plan only on
-    // the confirming webhook. A comp is a label grant and must NOT run on a live
-    // subscription (the next webhook would re-mirror the subscription's own plan
-    // and undo it).
+    // #992 PR-C — a CHARGE settlement is a provider-backed change: it needs a
+    // live provider subscription WITH a provider id to drive at the provider,
+    // and moves the plan only on the confirming webhook. A comp is a label grant
+    // and must NOT run on a live subscription (the next webhook would re-mirror
+    // the subscription's own plan and undo it).
     if (input.settlement === "charge") {
-      if (!liveSub) {
+      const sub = await this.liveProviderSubscription(workspaceId);
+      if (!sub) {
         throw new BadRequestException(
           "A charge needs an active provider subscription to bill against; this workspace has none. Use a comp, or start a subscription first.",
         );
       }
-      return this.applyProviderBackedCharge(workspaceId, liveSub, fromPlanKey, toPlanKey, input, actor);
+      return this.applyProviderBackedCharge(workspaceId, sub, fromPlanKey, toPlanKey, input, actor);
     }
 
     // A comp (the default when no settlement is given) cannot run on a workspace
     // whose plan is owned by a live provider subscription — the next webhook
     // would overwrite it. Such a workspace needs a CHARGE (above), so refuse
     // with a named 409 pointing at it.
-    if (liveSub) {
+    if (liveOwned) {
       throw new ConflictException(
         "This workspace has an active provider subscription; move its plan with a provider-backed charge, not a comp.",
       );

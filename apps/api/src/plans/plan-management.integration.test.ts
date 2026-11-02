@@ -15,6 +15,7 @@ import {
 } from "@snapurl/database";
 import { PlansService } from "./plans.service.js";
 import { PlanManagementService } from "./plan-management.service.js";
+import { NoneBillingProvider } from "../billing/none-billing.provider.js";
 import type { AdminActor } from "../admin/admin-management.service.js";
 
 /* ============================================================
@@ -69,7 +70,11 @@ describeDb("PlanManagementService (#992 PR-A)", () => {
     db = handle.db;
     plans = new PlansService(db);
     await plans.seedIfEmpty(); // starter/pro/team present for the key checks
-    svc = new PlanManagementService(db, plans);
+    // #992 PR-C — the service now takes a billing provider (for the charge path,
+    // which these PR-A tests never exercise). A disabled none-provider stands in:
+    // these tests cover comp/period-end/sweep only, never a provider-backed
+    // charge, so the provider is never called here.
+    svc = new PlanManagementService(db, plans, new NoneBillingProvider());
     svc.setClockForTesting(() => new Date(nowMs));
 
     const [u] = await db
