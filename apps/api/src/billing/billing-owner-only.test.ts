@@ -1,60 +1,81 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import { Reflector } from "@nestjs/core";
+import { ForbiddenException } from "@nestjs/common";
 import { BillingController } from "./billing.controller.js";
-import { REQUIRED_ROLES, satisfiesRole } from "../auth/auth.guard.js";
+import type { BillingService } from "./billing.service.js";
+import type { RequestActor } from "../auth/auth.guard.js";
 
 /* ============================================================
    #988 — billing is the WORKSPACE OWNER's to manage.
 
    The issue's acceptance: "Only workspace owners can see or change billing."
-   That is enforced by @Roles("owner") on the BillingController, which the real
-   AuthGuard reads (REQUIRED_ROLES via Reflector.getAllAndOverride over
-   [handler, class]) and compares with satisfiesRole. This proves the two halves
-   of that wiring directly, without standing up the whole TokenService + DB auth
-   stack:
 
-   1. The controller class carries @Roles("owner"), and because a class-level
-      decorator is inherited by every handler, EVERY billing session route is
-      owner-gated — checkout, subscription, invoices, cancel, change. A @Public
-      route (the webhook) is exempt by IS_PUBLIC, which the guard checks first.
-   2. satisfiesRole("owner", ["owner"]) allows; admin / editor / viewer are all
-      denied against an owner-only requirement (the role ranking is strict here,
-      not "admin can do anything").
+   This is enforced INSIDE each handler (assertOwner), NOT with @Roles("owner").
+   The ordering is the whole point: the global AuthGuard evaluates @Roles BEFORE
+   the controller-scoped BillingEnabledGuard, so an owner-only @Roles would hand
+   a non-owner a 403 even when billing is OFF — leaking that the route exists on
+   a `none` build where the honest answer is 404 (and the real-stack access-matrix
+   oracle, run with billing off, asserts 404 for every authed principal). By
+   asserting the role in the handler, billing-off stays 404 for everyone (the
+   BillingEnabledGuard runs first) and owner-only 403 applies only once billing
+   is on.
 
-   RED-ON-BROKEN: remove @Roles("owner") from the controller and assertion (1)
-   reds (no REQUIRED_ROLES metadata); loosen satisfiesRole so admin satisfies an
-   owner-only route and assertion (2) reds. Either regression would silently let
-   a non-owner manage billing — exactly what the issue forbids.
+   These tests drive the REAL controller methods with a stub service so the
+   owner check runs exactly as in production. RED-ON-BROKEN: drop the assertOwner
+   call from any handler and that handler's "non-owner is refused" case reds.
    ============================================================ */
 
-describe("#988 — billing is owner-only", () => {
-  const reflector = new Reflector();
+/** A service stub whose methods would succeed — so a non-owner being refused
+ *  proves the refusal is the role check, not a service failure. */
+function serviceStub(): BillingService {
+  const sub = {
+    planKey: "pro" as const,
+    interval: "monthly" as const,
+    status: "active" as const,
+    currentPeriodEnd: "2026-12-01T00:00:00.000Z",
+    cancelAtPeriodEnd: false,
+  };
+  return {
+    startCheckout: async () => ({
+      provider: "razorpay" as const,
+      subscriptionId: "sub_x",
+      keyId: "rzp_test_x",
+      planKey: "pro" as const,
+      interval: "monthly" as const,
+    }),
+    currentSubscription: async () => sub,
+    listInvoices: async () => [],
+    cancelSubscription: async () => sub,
+    changePlan: async () => sub,
+  } as unknown as BillingService;
+}
 
-  it("the BillingController class carries @Roles(\"owner\")", () => {
-    const roles = reflector.get<string[]>(REQUIRED_ROLES, BillingController);
-    expect(roles).toEqual(["owner"]);
+function actor(role: RequestActor["role"]): RequestActor {
+  return { userId: "u1", workspaceId: "ws1", role, email: "x@example.com", label: "x@example.com" };
+}
+
+const NON_OWNERS: ReadonlyArray<RequestActor["role"]> = ["admin", "editor", "viewer"];
+
+describe("#988 — billing is owner-only (enforced in the handler, after the reachability gate)", () => {
+  it("the owner may reach every session route", async () => {
+    const c = new BillingController(serviceStub());
+    const owner = actor("owner");
+    await expect(c.startCheckout(owner, { planKey: "pro", interval: "monthly" })).resolves.toBeDefined();
+    await expect(c.currentSubscription(owner)).resolves.toBeDefined();
+    await expect(c.invoices(owner)).resolves.toBeDefined();
+    await expect(c.cancel(owner, { atPeriodEnd: true })).resolves.toBeDefined();
+    await expect(c.change(owner, { planKey: "team", interval: "monthly" })).resolves.toBeDefined();
   });
 
-  it("the owner-only requirement is read by getAllAndOverride for every handler (class-level inheritance)", () => {
-    // The AuthGuard reads [handler, class]; the class value is what applies to
-    // every route, so a handler with no own @Roles still inherits owner-only.
-    const fromClass = reflector.getAllAndOverride<string[]>(REQUIRED_ROLES, [
-      BillingController.prototype.startCheckout,
-      BillingController,
-    ]);
-    expect(fromClass).toEqual(["owner"]);
-    const onInvoices = reflector.getAllAndOverride<string[]>(REQUIRED_ROLES, [
-      BillingController.prototype.invoices,
-      BillingController,
-    ]);
-    expect(onInvoices).toEqual(["owner"]);
-  });
-
-  it("satisfiesRole gates owner-only to the owner: admin/editor/viewer are denied", () => {
-    expect(satisfiesRole("owner", ["owner"])).toBe(true);
-    expect(satisfiesRole("admin", ["owner"])).toBe(false);
-    expect(satisfiesRole("editor", ["owner"])).toBe(false);
-    expect(satisfiesRole("viewer", ["owner"])).toBe(false);
+  it("every non-owner role is refused on every session route with a ForbiddenException", async () => {
+    const c = new BillingController(serviceStub());
+    for (const role of NON_OWNERS) {
+      const a = actor(role);
+      await expect(c.startCheckout(a, { planKey: "pro", interval: "monthly" })).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(c.currentSubscription(a)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(c.invoices(a)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(c.cancel(a, { atPeriodEnd: true })).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(c.change(a, { planKey: "team", interval: "monthly" })).rejects.toBeInstanceOf(ForbiddenException);
+    }
   });
 });

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   HttpCode,
@@ -20,10 +21,24 @@ import {
   type WorkspaceSubscription,
 } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
-import { Actor, Public, Roles, type RequestActor } from "../auth/auth.guard.js";
+import { Actor, Public, type RequestActor } from "../auth/auth.guard.js";
 import { BillingService, NoActiveSubscriptionError, SamePlanError } from "./billing.service.js";
 import { BillingEnabledGuard } from "./billing-enabled.guard.js";
 import { PlanNotConfiguredError } from "./razorpay.provider.js";
+
+/* #988 — billing is the workspace OWNER's to manage. Enforced here, in the
+ *  handler, NOT with @Roles("owner"): the global AuthGuard evaluates @Roles
+ *  BEFORE the controller-scoped BillingEnabledGuard runs, so an owner-only
+ *  @Roles would answer a non-owner 403 even when billing is OFF — leaking that
+ *  the route exists on a `none` build, where the honest answer is 404. Asserting
+ *  the role inside the handler runs AFTER BillingEnabledGuard, so billing-off is
+ *  404 for every principal (unreachable) and the owner-only 403 only applies
+ *  once billing is on. */
+function assertOwner(actor: RequestActor): void {
+  if (actor.role !== "owner") {
+    throw new ForbiddenException("Only the workspace owner can manage billing.");
+  }
+}
 
 /* The raw request bytes are stashed on the request by the application/json body
  *  parser in main.ts (#986). The webhook needs them unmodified because the HMAC
@@ -50,12 +65,6 @@ declare module "fastify" {
    ============================================================ */
 @Controller("billing")
 @UseGuards(BillingEnabledGuard)
-// #988 — billing is the WORKSPACE OWNER's to manage. @Roles("owner") on the
-// controller makes every session route here owner-only (admin/editor/viewer →
-// 403), which is the issue's "only workspace owners can see or change billing"
-// enforced structurally rather than per-route. The @Public webhook is exempt
-// from role checks (it has no session), so it is unaffected.
-@Roles("owner")
 export class BillingController {
   constructor(private readonly billing: BillingService) {}
 
@@ -64,6 +73,7 @@ export class BillingController {
     @Actor() actor: RequestActor,
     @Body(zodBody(StartCheckoutInput)) input: StartCheckoutInput,
   ): Promise<CheckoutSession> {
+    assertOwner(actor);
     try {
       return await this.billing.startCheckout(actor.workspaceId, actor.email, input.planKey, input.interval);
     } catch (err) {
@@ -77,6 +87,7 @@ export class BillingController {
 
   @Get("subscription")
   async currentSubscription(@Actor() actor: RequestActor): Promise<WorkspaceSubscription> {
+    assertOwner(actor);
     return this.billing.currentSubscription(actor.workspaceId);
   }
 
@@ -87,6 +98,7 @@ export class BillingController {
    */
   @Get("invoices")
   async invoices(@Actor() actor: RequestActor): Promise<BillingInvoice[]> {
+    assertOwner(actor);
     return this.billing.listInvoices(actor.workspaceId);
   }
 
@@ -100,6 +112,7 @@ export class BillingController {
     @Actor() actor: RequestActor,
     @Body(zodBody(CancelSubscriptionInput)) input: CancelSubscriptionInput,
   ): Promise<WorkspaceSubscription> {
+    assertOwner(actor);
     try {
       return await this.billing.cancelSubscription(actor.workspaceId, input.atPeriodEnd);
     } catch (err) {
@@ -119,6 +132,7 @@ export class BillingController {
     @Actor() actor: RequestActor,
     @Body(zodBody(ChangePlanInput)) input: ChangePlanInput,
   ): Promise<WorkspaceSubscription> {
+    assertOwner(actor);
     try {
       return await this.billing.changePlan(actor.workspaceId, input.planKey, input.interval);
     } catch (err) {
