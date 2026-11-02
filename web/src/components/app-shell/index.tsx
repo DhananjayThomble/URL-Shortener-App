@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui";
+import { ReportProblemButton } from "@/components/feedback/report-problem";
 import { useLinks, useLogout, useMe, useMyWorkspaces, useSwitchWorkspace, useWorkspace } from "@/lib/api/hooks";
 import { importHref } from "@/lib/import";
 import { plural } from "@/lib/plural";
@@ -370,6 +371,10 @@ export function Topbar({ counts, onCreate }: { counts: Counts; onCreate: () => v
         >
           Import from Bitly
         </Button>
+        {/* #997 — "Report a problem" lives in the app shell, reachable from
+            every signed-in page. The dialog attaches the current page, browser
+            and app version automatically. */}
+        <ReportProblemButton />
         <AccountMenu />
       </div>
     </header>

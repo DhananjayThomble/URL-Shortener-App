@@ -8,4 +8,5 @@ export * from "./abuse.js";
 export * from "./moderation.js";
 export * from "./jobs.js";
 export * from "./billing.js";
+export * from "./feedback.js";
 export * from "./plan-management.js";
