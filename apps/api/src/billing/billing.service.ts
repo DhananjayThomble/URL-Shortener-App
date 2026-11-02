@@ -38,6 +38,17 @@ import {
    an event the provider already verified, and it is idempotent on the event id.
    ============================================================ */
 
+/** A stored payment row, as drizzle returns it. */
+export type PaymentRow = typeof payments.$inferSelect;
+
+/** The result of a refund attempt. The caller (AdminBillingService) maps each
+ *  outcome to an HTTP response and, on success, an audit entry. */
+export type RefundOutcome =
+  | { outcome: "not_found" }
+  | { outcome: "not_refundable"; payment: PaymentRow }
+  | { outcome: "already_refunded"; payment: PaymentRow }
+  | { outcome: "refunded"; payment: PaymentRow; before: PaymentRow };
+
 /** Display label for the workspace's `plan` column, derived from the key. The
  *  entitlement of record is the subscription row's planKey; this keeps the
  *  existing settings screen (which reads workspaces.plan) in step. */
@@ -83,6 +94,42 @@ export class BillingService {
    *  provider-agnostic. */
   verifyWebhook(rawBody: string, signature: string | undefined): NormalizedBillingEvent | null {
     return this.provider.verifyWebhook(rawBody, signature);
+  }
+
+  /**
+   * #989 — refund a stored payment at the provider, then mark it refunded
+   * locally. Admin-only and audited by the CALLER (AdminBillingService); this
+   * method does the provider call + the local status flip, and returns the row
+   * so the caller can record the before/after in the admin audit log.
+   *
+   * The money moves at the provider for the full captured amount — no partial
+   * amount is accepted, so a client can never name a figure. Refunding is
+   * idempotent-ish: a payment already `refunded` is returned unchanged without
+   * a second provider call. A payment that was never `captured` cannot be
+   * refunded (there is nothing to return) and is rejected.
+   */
+  async refundPayment(paymentId: string): Promise<RefundOutcome> {
+    const [row] = await this.db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+    if (!row) return { outcome: "not_found" };
+    if (row.status === "refunded") {
+      return { outcome: "already_refunded", payment: row };
+    }
+    if (row.status !== "captured") {
+      // Only a captured payment can be refunded — a failed charge took no money.
+      return { outcome: "not_refundable", payment: row };
+    }
+
+    // Provider call first: if it throws, the local row is NOT flipped, so a
+    // failed refund is visible (the payment stays captured) rather than being
+    // marked refunded when no money moved.
+    await this.provider.refund(row.providerPaymentId);
+
+    const [updated] = await this.db
+      .update(payments)
+      .set({ status: "refunded" })
+      .where(eq(payments.id, paymentId))
+      .returning();
+    return { outcome: "refunded", payment: updated ?? row, before: row };
   }
 
   /**

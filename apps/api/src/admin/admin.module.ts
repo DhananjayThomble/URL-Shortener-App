@@ -20,6 +20,9 @@ import {
   makeSesClient,
   type EmailStatsReader,
 } from "./analytics/email-stats.reader.js";
+import { AdminBillingService } from "./billing/admin-billing.service.js";
+import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admin-billing.reader.js";
+import { BillingModule } from "../billing/billing.module.js";
 
 /* #968 — the platform-admin module. AdminService resolves the role from the
    live user row + PLATFORM_ADMIN_EMAILS; AdminGuard enforces it on every route.
@@ -36,7 +39,7 @@ import {
    email figures sit behind EmailStatsReader. DB and ENV come from the global
    DatabaseModule/ConfigModule. */
 @Module({
-  imports: [AuthModule, WorkspacesModule],
+  imports: [AuthModule, WorkspacesModule, BillingModule],
   controllers: [AdminController],
   providers: [
     AdminService,
@@ -46,10 +49,19 @@ import {
     AdminManagementService,
     PlansAdminService,
     AdminAnalyticsService,
+    AdminBillingService,
     {
       provide: ADMIN_ANALYTICS_READER,
       inject: [READ_DB],
       useFactory: (readDb: Database) => new PostgresAdminAnalyticsReader(readDb),
+    },
+    // #989 — the admin billing reader off the read replica, same seam as the
+    // analytics reader. The refund WRITE goes through BillingService (imported
+    // from BillingModule), which owns the provider + payments table.
+    {
+      provide: ADMIN_BILLING_READER,
+      inject: [READ_DB],
+      useFactory: (readDb: Database) => new PostgresAdminBillingReader(readDb),
     },
     // SES figures: read the real account when the app is actually sending
     // through SES (MAIL_TRANSPORT=ses), otherwise report "unavailable" — the
