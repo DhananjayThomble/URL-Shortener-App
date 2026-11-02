@@ -353,6 +353,31 @@ describe("effectiveGate", () => {
     expect(effectiveGate({ disabled: false, archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
     expect(effectiveGate({ disabledAt: null, archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
   });
+
+  /* #993 — the owner-unverified hold ranks directly under an admin disable and
+     above archived/flagged/lifecycle. */
+  it("reports not_active when the owner is unverified, above archived/flagged/expired", () => {
+    expect(effectiveGate({ ownerUnverified: true, archived: false, safeBrowsingStatus: "clean" }, now)).toBe(
+      "not_active",
+    );
+    expect(
+      effectiveGate(
+        { ownerUnverified: true, archived: true, safeBrowsingStatus: "flagged", expiresAt: past },
+        now,
+      ),
+    ).toBe("not_active");
+  });
+
+  it("lets an admin disable still outrank the owner-unverified hold", () => {
+    expect(effectiveGate({ disabled: true, ownerUnverified: true, archived: false }, now)).toBe("disabled");
+  });
+
+  it("does not gate on not_active when ownerUnverified is false or omitted", () => {
+    expect(effectiveGate({ ownerUnverified: false, archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
+    expect(effectiveGate({ ownerUnverified: null, archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
+    // Omitted entirely: a pre-#993 caller keeps its exact behaviour.
+    expect(effectiveGate({ archived: false, safeBrowsingStatus: "clean" }, now)).toBeNull();
+  });
 });
 
 describe("effectiveGateFromState", () => {

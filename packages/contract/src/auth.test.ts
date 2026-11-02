@@ -233,6 +233,27 @@ describe("OAuthSignInInput — provider enum, idToken floor, nonce 16..256 (#263
     expect(OAuthSignInInput.safeParse({ ...valid, nonce: "a".repeat(256) }).success).toBe(true);
     expect(OAuthSignInInput.safeParse({ ...valid, nonce: "a".repeat(257) }).success).toBe(false); // above max(256) → min(256) mutant rejects 16
   });
+  /* #993 — the optional bot-protection challenge token. */
+  it("accepts an optional challengeToken and bounds it at 4096 chars", () => {
+    expect(OAuthSignInInput.safeParse(valid).success).toBe(true); // omitted is fine
+    expect(OAuthSignInInput.safeParse({ ...valid, challengeToken: "cf-chl-token" }).success).toBe(true);
+    expect(OAuthSignInInput.safeParse({ ...valid, challengeToken: "x".repeat(4096) }).success).toBe(true);
+    expect(OAuthSignInInput.safeParse({ ...valid, challengeToken: "x".repeat(4097) }).success).toBe(false);
+  });
+});
+
+/* #993 — RegisterInput carries the same optional bot-protection challenge
+   token; the server decides when a missing one is a refusal. */
+describe("RegisterInput.challengeToken (#993)", () => {
+  const base = { name: "Priya Raman", email: "a@example.com", password: "a-long-enough-password" };
+  it("is optional (register works with protection off)", () => {
+    expect(RegisterInput.safeParse(base).success).toBe(true);
+  });
+  it("accepts a token and bounds it at 4096 chars", () => {
+    expect(RegisterInput.safeParse({ ...base, challengeToken: "cf-chl-token" }).success).toBe(true);
+    expect(RegisterInput.safeParse({ ...base, challengeToken: "x".repeat(4096) }).success).toBe(true);
+    expect(RegisterInput.safeParse({ ...base, challengeToken: "x".repeat(4097) }).success).toBe(false);
+  });
 });
 
 describe("LogoutInput / password-reset / email-verify shapes", () => {

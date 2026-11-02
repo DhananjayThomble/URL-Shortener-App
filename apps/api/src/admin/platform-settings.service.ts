@@ -1,6 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
   BannerSetting,
+  BotProtectionSetting,
+  DisposableEmailSetting,
+  NewAccountLimitsSetting,
   PlatformBanner,
   PlatformSettings,
   PlatformSettingsInput,
@@ -40,7 +43,17 @@ import type { AdminActor } from "./admin-management.service.js";
 /** The setting keys, as stored in platform_settings.key and surfaced in the
  *  admin UI's per-setting "last changed by". Kept as a const tuple so the meta
  *  map and the audit action keys stay in lock-step with the value shape. */
-export const SETTING_KEYS = ["signupMode", "rateLimit", "reservedSlugs", "featureFlags", "banner"] as const;
+export const SETTING_KEYS = [
+  "signupMode",
+  "rateLimit",
+  "reservedSlugs",
+  "featureFlags",
+  "banner",
+  // #993 — launch-readiness abuse controls.
+  "newAccountLimits",
+  "botProtection",
+  "disposableEmails",
+] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 /** Per-key value schema, used to validate a jsonb row on read so a value that
@@ -52,6 +65,9 @@ const KEY_SCHEMA: Record<SettingKey, z.ZodTypeAny> = {
   reservedSlugs: z.array(z.string()),
   featureFlags: z.record(z.string(), z.boolean()),
   banner: BannerSetting,
+  newAccountLimits: NewAccountLimitsSetting,
+  botProtection: BotProtectionSetting,
+  disposableEmails: DisposableEmailSetting,
 };
 
 /** How long a loaded snapshot is served before the next read reloads it. The
@@ -90,6 +106,22 @@ export class PlatformSettingsService {
       reservedSlugs: [],
       featureFlags: {},
       banner: { message: "", level: "info" },
+      /* #993 — the issue's suggested defaults: a brand-new account's links are
+         capped for its first 7 days at 20/day and 10/hour. The gate is ON by
+         default (an empty store reproduces these), because launch readiness is
+         the point; an operator loosens or lifts it from the panel. The window
+         comes from NEW_ACCOUNT_LINK_WINDOW_DAYS (default 7) so the compose/local
+         test environment can set it to 0 (caps off) without weakening the
+         production default — the smoke harness creates many links through one
+         account and must not be throttled. */
+      newAccountLimits: { windowDays: env.NEW_ACCOUNT_LINK_WINDOW_DAYS, perDay: 20, perHour: 10 },
+      /* #993 — bot protection is OFF by default so a self-hoster needs no
+         third-party provider to register. The operator turns on turnstile or
+         hcaptcha from the panel once they have configured the secret. */
+      botProtection: { provider: "none" },
+      /* #993 — no operator additions by default; the vendored list still
+         applies on top of this (folded in by the caller). */
+      disposableEmails: { extraDomains: [] },
     };
   }
 
@@ -224,6 +256,9 @@ export class PlatformSettingsService {
       reservedSlugs: [...this.defaults.reservedSlugs],
       featureFlags: { ...this.defaults.featureFlags },
       banner: { ...this.defaults.banner },
+      newAccountLimits: { ...this.defaults.newAccountLimits },
+      botProtection: { ...this.defaults.botProtection },
+      disposableEmails: { extraDomains: [...this.defaults.disposableEmails.extraDomains] },
     };
     const meta = Object.fromEntries(
       SETTING_KEYS.map((k) => [k, { updatedAt: null, updatedBy: null } as PlatformSettingMeta]),

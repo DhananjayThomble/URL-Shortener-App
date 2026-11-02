@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
+import { readOutboxToken } from "./unique-identity.js";
 
 /* ============================================================
    A REAL session for the existing specs.
@@ -175,6 +176,26 @@ async function registerRealUserOnce(): Promise<RealSession> {
     );
   }
   diag(`registered local-part=${email.split("@")[0]}`);
+
+  /* #993 — a brand-new account's links are HELD (they do not redirect) until
+     the owner verifies their email. Journeys that create a link and follow it
+     need a verified account, so verify it here the way a real user would:
+     read the verification token out of the staging api's mail outbox (the same
+     helper account-recovery uses) and POST it to /auth/email/verify. Only the
+     real stack has a reachable outbox; a failure is logged and swallowed so a
+     non-stack config (no container) still returns a usable session. */
+  try {
+    const verifyToken = await readOutboxToken(email);
+    const vres = await fetch(`${API_URL}/auth/email/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: verifyToken }),
+    });
+    diag(vres.ok ? `verified email local-part=${email.split("@")[0]}` : `email verify returned ${vres.status}`);
+  } catch (err) {
+    diag(`email verify skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   return {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,

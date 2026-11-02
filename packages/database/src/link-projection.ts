@@ -121,6 +121,14 @@ export interface ProjectedLink {
    *  gate stops it before any lifecycle check. Projected so the change reaches
    *  the edge within the normal projection window. */
   disabled: boolean;
+  /** #993 — the link's OWNER has not verified their email, so the link is held:
+   *  it does not redirect and the visitor sees a "link not active yet" page.
+   *  Projected from the owner's live verification state at projection time, so
+   *  verifying the owner (which re-projects their links) flips this to false and
+   *  the link goes live. Edge-ineligible while true (the CloudFront Function
+   *  cannot render the page), and the Lambda gate stops it before any lifecycle
+   *  check — the same two-sided treatment as `disabled`. */
+  ownerUnverified: boolean;
   safeBrowsingStatus: string;
   utm: {
     source?: string | null;
@@ -164,6 +172,9 @@ export interface LinkItem {
   /** #971 — see ProjectedLink.disabled. Stored on the LINK item so the edge and
    *  the Lambda both see a disabled link as not resolvable. */
   disabled: boolean;
+  /** #993 — see ProjectedLink.ownerUnverified. Stored on the LINK item so the
+   *  edge and the Lambda both see an unverified-owner link as held. */
+  ownerUnverified: boolean;
   safeBrowsingStatus: string;
   utm: ProjectedLink["utm"];
 }
@@ -247,6 +258,7 @@ export function toLinkItem(link: ProjectedLink, host: string, slug: string): Lin
     publicPreview: link.publicPreview,
     archived: link.archived,
     disabled: link.disabled,
+    ownerUnverified: link.ownerUnverified,
     safeBrowsingStatus: link.safeBrowsingStatus,
     utm: link.utm ?? null,
   };
@@ -280,6 +292,13 @@ export function fromLinkItem(item: LinkItem): ProjectedLink {
        "disabled" and silently take a live link off the air. The next upsert
        writes the real value. */
     disabled: item.disabled ?? false,
+    /* `?? false`: a LINK item projected before #993 added this attribute has no
+       `ownerUnverified` field. Reviving it as false keeps a pre-existing link
+       resolving exactly as before — a missing attribute must never read as
+       "held" and silently take a live link off the air. The next upsert writes
+       the real value (which, for a link whose owner verified before #993
+       shipped, is false). */
+    ownerUnverified: item.ownerUnverified ?? false,
     safeBrowsingStatus: item.safeBrowsingStatus,
     utm: item.utm ?? null,
   };
@@ -383,6 +402,11 @@ export function isEdgeEligible(link: ProjectedLink): boolean {
        KVS keep redirecting a link an admin just disabled until its entry aged
        out. */
     link.disabled === false &&
+    /* #993 — an owner-unverified link is held the same way: the edge cannot
+       render the "link not active yet" page, so it must fall through to the
+       Lambda gate. Omitting this would let the KVS keep redirecting a held link
+       until its entry aged out, exactly the stale-edge hole #971 closed. */
+    link.ownerUnverified === false &&
     link.safeBrowsingStatus === "clean" &&
     link.utm == null &&
     link.deepLink === false &&

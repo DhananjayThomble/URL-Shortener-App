@@ -20,6 +20,9 @@ const CASES: Array<[ErrorKind, 404 | 410, string]> = [
   ["root", 404, "Nothing here."],
   // #971 — a platform admin disabled the link: 410, its own plain-text body.
   ["disabled", 410, "This link has been disabled."],
+  // #993 — the owner has not verified their email, so the link is held: 404
+  // (not started, not gone), its own plain-text body.
+  ["not_active", 404, "This link isn't active yet."],
 ];
 
 describe("wantsHtml", () => {

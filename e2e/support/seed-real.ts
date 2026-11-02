@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { readOutboxToken } from "./unique-identity.js";
 
 /* ============================================================
    API-driven idempotent seeder for the real-stack e2e suite.
@@ -121,6 +122,19 @@ async function registerAccount(name: string, email: string, password: string): P
     return loginResult;
   }
   if (!result.accessToken) throw new Error(`seed: register returned no token for ${email}`);
+
+  /* #993 — verify the freshly-registered seed account's email so the links
+     this seeder creates below actually redirect (an unverified owner's links
+     are held). Done the real-user way: read the verification token from the
+     staging api's mail outbox and POST it to /auth/email/verify. Best-effort:
+     a non-stack config has no reachable outbox, and a reused account (the 409
+     login branch above) is already verified from its first run. */
+  try {
+    const verifyToken = await readOutboxToken(email);
+    await apiPost("/auth/email/verify", { token: verifyToken });
+  } catch {
+    // No reachable outbox (non-stack config) or already verified — leave as is.
+  }
   return result;
 }
 

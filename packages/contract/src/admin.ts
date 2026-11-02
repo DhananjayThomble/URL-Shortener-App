@@ -135,10 +135,21 @@ export const AdminUpdateWorkspaceInput = z
   .object({
     plan: z.string().trim().min(1).max(40).optional(),
     clicksIncluded: z.number().int().min(0).max(2_147_483_647).optional(),
+    /** #993 — lift (true) or re-apply (false) the brand-new-account link caps
+     *  for this workspace. true stamps workspaces.new_account_limits_lifted_at
+     *  so the per-day/per-hour link caps stop applying to a legitimate new
+     *  account that hit them; false clears the stamp so the caps apply again
+     *  (while the account is still inside its new-account window). Omitted
+     *  leaves the lift state unchanged. The change is audited. */
+    liftNewAccountLimits: z.boolean().optional(),
   })
-  .refine((v) => v.plan !== undefined || v.clicksIncluded !== undefined, {
-    message: "Change the plan, the included clicks, or both.",
-  });
+  .refine(
+    (v) =>
+      v.plan !== undefined || v.clicksIncluded !== undefined || v.liftNewAccountLimits !== undefined,
+    {
+      message: "Change the plan, the included clicks, or the new-account limits.",
+    },
+  );
 export type AdminUpdateWorkspaceInput = z.infer<typeof AdminUpdateWorkspaceInput>;
 
 /** A read-only snapshot of a workspace, assembled for the admin's "view as".
@@ -550,6 +561,85 @@ export const BannerSetting = z.object({
 });
 export type BannerSetting = z.infer<typeof BannerSetting>;
 
+/* ============================================================
+   #993 — launch-readiness abuse controls, the runtime-settings half.
+
+   Three settings an operator tunes from the panel without a redeploy, added to
+   the #972 store alongside the ones above:
+     • newAccountLimits  — the per-day / per-hour link cap a brand-new account
+       lives under for its first few days (separate from plan limits);
+     • botProtection     — which invisible sign-up challenge provider is on
+       (off by default: a self-hoster needs no third party to register);
+     • disposableEmails  — the operator's own additions to the vendored
+       throwaway-domain blocklist.
+
+   The bot-protection SECRET is deliberately NOT here: #972 keeps secrets out of
+   the settings store (there is no schema for them and the admin surface must not
+   be able to read or write one). Only the provider CHOICE lives here; the secret
+   key is an env/SSM value, exactly like the Safe Browsing key.
+   ============================================================ */
+
+/** The brand-new-account link cap. For the first `windowDays` days after a
+ *  workspace is created, its links are capped at `perDay` in any rolling 24h
+ *  and `perHour` in any rolling hour — a brake on a bot farm minting links
+ *  faster than a human could, on top of (not instead of) the plan's own limit.
+ *  An admin can lift it per workspace from the panel; after the window a
+ *  workspace is never capped by this. All three bounded so a value cannot
+ *  disable the brake by being absurd or lock every new account out at zero. */
+export const NewAccountLimitsSetting = z.object({
+  /** How many days a workspace counts as "new" and lives under these caps. */
+  windowDays: z.number().int().min(0).max(365),
+  /** Links allowed in any rolling 24 hours while new. */
+  perDay: z.number().int().min(1).max(100_000),
+  /** Links allowed in any rolling hour while new. */
+  perHour: z.number().int().min(1).max(100_000),
+});
+export type NewAccountLimitsSetting = z.infer<typeof NewAccountLimitsSetting>;
+
+/** Which bot-protection provider guards sign-up. `"none"` (the default) turns
+ *  the challenge off entirely, so an open-source self-hoster can register with
+ *  no third-party dependency. `"turnstile"` and `"hcaptcha"` each verify the
+ *  browser widget's token with a server-side siteverify call; the matching
+ *  secret is an env value, never stored here. */
+export const BotProtectionProvider = z.enum(["none", "turnstile", "hcaptcha"]);
+export type BotProtectionProvider = z.infer<typeof BotProtectionProvider>;
+
+export const BotProtectionSetting = z.object({
+  provider: BotProtectionProvider,
+});
+export type BotProtectionSetting = z.infer<typeof BotProtectionSetting>;
+
+/** The operator's additions to the vendored disposable-email blocklist. The
+ *  vendored list ships with the build; these are extra domains an admin adds
+ *  from the panel when a new throwaway provider shows up before the vendored
+ *  list catches it. Lower-cased, de-duped and bounded by the API on write. A
+ *  bare host each (no scheme/path/@), the same shape the blocklist enforces. */
+export const DisposableEmailSetting = z.object({
+  extraDomains: z.array(z.string().trim().min(1).max(253)).max(5_000),
+});
+export type DisposableEmailSetting = z.infer<typeof DisposableEmailSetting>;
+
+/** Why a sign-up or new-account action was refused, as a stable code so the
+ *  admin panel can count and filter refusals without parsing prose (#993
+ *  acceptance: "every refusal is logged with a reason code"). Each is recorded
+ *  on the platform audit trail with action `admin.signup.refused` and this code
+ *  as a target, so an operator can see a spike of a single kind.
+ *
+ *   - disposable_email        — the address is on the throwaway-domain list.
+ *   - bot_challenge_missing   — protection is on and the request carried no
+ *                               challenge token.
+ *   - bot_challenge_failed    — the token was present but siteverify rejected it.
+ *   - new_account_cap_day     — the N+1th link in a new account's rolling day.
+ *   - new_account_cap_hour    — the N+1th link in a new account's rolling hour. */
+export const SignupRefusalReason = z.enum([
+  "disposable_email",
+  "bot_challenge_missing",
+  "bot_challenge_failed",
+  "new_account_cap_day",
+  "new_account_cap_hour",
+]);
+export type SignupRefusalReason = z.infer<typeof SignupRefusalReason>;
+
 /** The PATCH /admin/settings body: every setting is optional so an admin can
  *  change one without touching the rest, but the refine requires at least one,
  *  so an empty body is a 400 rather than a silent no-op that still writes an
@@ -562,7 +652,11 @@ export type BannerSetting = z.infer<typeof BannerSetting>;
  *   - featureFlags      — a map of feature key → on/off. Free-form keys so a
  *                         new switch needs no contract change; values are
  *                         strictly boolean.
- *   - banner            — the site-wide banner (see BannerSetting). */
+ *   - banner            — the site-wide banner (see BannerSetting).
+ *   - newAccountLimits  — the brand-new-account link caps (#993).
+ *   - botProtection     — the sign-up challenge provider switch (#993).
+ *   - disposableEmails  — the operator's additions to the throwaway-email
+ *                         blocklist (#993). */
 export const PlatformSettingsInput = z
   .object({
     signupMode: SignupMode.optional(),
@@ -570,6 +664,9 @@ export const PlatformSettingsInput = z
     reservedSlugs: z.array(z.string().trim().min(1).max(64)).max(500).optional(),
     featureFlags: z.record(z.string().min(1).max(64), z.boolean()).optional(),
     banner: BannerSetting.optional(),
+    newAccountLimits: NewAccountLimitsSetting.optional(),
+    botProtection: BotProtectionSetting.optional(),
+    disposableEmails: DisposableEmailSetting.optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
     message: "Change at least one setting.",
@@ -585,6 +682,9 @@ export const PlatformSettingsValues = z.object({
   reservedSlugs: z.array(z.string()),
   featureFlags: z.record(z.string(), z.boolean()),
   banner: BannerSetting,
+  newAccountLimits: NewAccountLimitsSetting,
+  botProtection: BotProtectionSetting,
+  disposableEmails: DisposableEmailSetting,
 });
 export type PlatformSettingsValues = z.infer<typeof PlatformSettingsValues>;
 
