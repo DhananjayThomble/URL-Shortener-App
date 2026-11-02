@@ -37,11 +37,18 @@ import {
   type PlatformAnalytics,
   type PlatformSettings,
 } from "@snapurl/contract";
+import {
+  FeedbackListQuery,
+  UpdateFeedbackInput,
+  type FeedbackDetail,
+  type FeedbackPage,
+} from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { AdminGuard, Admin, AdminRequestIp } from "./admin.guard.js";
 import type { AdminIdentity } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
+import { AdminFeedbackService } from "./admin.feedback.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { AdminBillingService } from "./billing/admin-billing.service.js";
@@ -81,6 +88,7 @@ export class AdminController {
   constructor(
     private readonly health: AdminHealthService,
     private readonly moderation: AdminModerationService,
+    private readonly feedback: AdminFeedbackService,
     private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
     private readonly adminBilling: AdminBillingService,
@@ -475,6 +483,33 @@ export class AdminController {
   @Get("custom-domains")
   customDomains(): Promise<AdminCustomDomains> {
     return this.moderation.customDomains();
+  }
+
+  /* ---- #997 "Report a problem" feedback inbox ---- */
+
+  /** The feedback inbox, newest first, optionally filtered by status. A read
+   *  (no audit). The list omits the screenshot blob and reports only whether
+   *  one is attached. */
+  @Get("feedback")
+  listFeedback(@Query(zodQuery(FeedbackListQuery)) q: FeedbackListQuery): Promise<FeedbackPage> {
+    return this.feedback.list(q);
+  }
+
+  /** One feedback report in full, including its screenshot data URL. A read. */
+  @Get("feedback/:id")
+  getFeedback(@Param("id", ParseUUIDPipe) id: string): Promise<FeedbackDetail> {
+    return this.feedback.get(id);
+  }
+
+  /** Move a report's status and/or set operator notes. Audited. */
+  @Patch("feedback/:id")
+  updateFeedback(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(UpdateFeedbackInput)) input: UpdateFeedbackInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<FeedbackDetail> {
+    return this.feedback.update(id, input, admin, ip);
   }
 
   /* ---- #973 platform-wide analytics ---- */

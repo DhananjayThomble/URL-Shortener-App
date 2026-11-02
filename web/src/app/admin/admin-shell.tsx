@@ -23,6 +23,8 @@ const NAV: NavItem[] = [
   { href: "/admin/workspaces", label: "Workspaces" },
   // #971 — moderation and abuse.
   { href: "/admin/moderation", label: "Moderation" },
+  // #997 — the "Report a problem" feedback inbox.
+  { href: "/admin/feedback", label: "Feedback" },
   // #973 — platform-wide analytics.
   { href: "/admin/analytics", label: "Analytics" },
   // #972 — runtime platform settings.

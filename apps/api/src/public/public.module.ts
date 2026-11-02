@@ -3,13 +3,14 @@ import { PublicController } from "./public.controller.js";
 import { PublicService } from "./public.service.js";
 import { FormsModule } from "../forms/forms.module.js";
 import { ReportsModule } from "../reports/reports.module.js";
+import { FeedbackModule } from "../feedback/feedback.module.js";
 import { BioPagesModule } from "../bio-pages/bio-pages.module.js";
 
-/* FormsModule, ReportsModule and BioPagesModule are imported rather than their
-   services re-provided, so the public routes and the dashboard's share one
-   instance and one set of rules. */
+/* FormsModule, ReportsModule, FeedbackModule and BioPagesModule are imported
+   rather than their services re-provided, so the public routes and the
+   dashboard's share one instance and one set of rules. */
 @Module({
-  imports: [FormsModule, ReportsModule, BioPagesModule],
+  imports: [FormsModule, ReportsModule, FeedbackModule, BioPagesModule],
   controllers: [PublicController],
   providers: [PublicService],
 })

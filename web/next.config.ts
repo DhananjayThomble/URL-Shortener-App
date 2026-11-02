@@ -61,8 +61,17 @@ if (isProductionBuild && !isCompileOnly) {
   }
 }
 
+/* #997 — the app version the "Report a problem" form attaches automatically.
+ * Next inlines NEXT_PUBLIC_* at build time; default to the package version so a
+ * local/dev build still reports something meaningful, and let a deploy override
+ * it (e.g. with the commit sha) through the hosting environment. */
+const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? process.env.npm_package_version ?? "dev";
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  env: {
+    NEXT_PUBLIC_APP_VERSION: appVersion,
+  },
 };
 
 export default nextConfig;
