@@ -19,9 +19,9 @@
  * seedAccount helper can drop tokens into localStorage before the first nav.
  */
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
-import { createDatabase, eq, workspaces } from "@snapurl/database";
+import { createDatabase, domains, eq, memberships, refreshTokens, sql, users, workspaces } from "@snapurl/database";
 
 export const TOKEN_KEY = "snapurl.accessToken";
 export const REFRESH_KEY = "snapurl.refreshToken";
@@ -34,6 +34,16 @@ export const REDIRECT_URL = process.env.QA_REDIRECT_URL ?? "http://localhost:300
    real-stack CI lane publishes and QA_API_URL targets. */
 export const QA_DATABASE_URL =
   process.env.QA_DATABASE_URL ?? "postgres://snapurl:snapurl@localhost:5435/snapurl";
+
+/* The shared system short-domain every workspace puts links on. Mirrors the
+   API's DEFAULT_DOMAIN (apps/api env) — the real-stack CI journeys step and the
+   compose staging stack both run the API with DEFAULT_DOMAIN=localhost:3002, so
+   the system domain row the API provisions on first registration carries that
+   host. seedUser() provisions the SAME row (idempotent upsert) so a DB-seeded
+   account's workspace points at the identical shared domain a registered one
+   would, and createLink()'s `ws.defaultDomain` resolves to it exactly as for a
+   registered owner. */
+export const DEFAULT_DOMAIN = process.env.QA_DEFAULT_DOMAIN ?? "localhost:3002";
 
 /** Stable per-process run token. Same pattern as support/unique-identity.ts. */
 export const RUN_ID = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
@@ -278,6 +288,176 @@ export async function registerPaidOwner(email: string, password = RUN_PASSWORD):
   const session = await registerUser(email, password);
   await setWorkspacePlan(session.workspaceId);
   return session;
+}
+
+/* ------------------------------------------------------------------ */
+/*  DB-seeded accounts — zero throttled auth calls (#977 Option A)     */
+/* ------------------------------------------------------------------ */
+
+const sha256Hex = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/**
+ * Produce the `base/base-2/base-3/.../base-<rand>` slug ladder the API uses,
+ * mirroring apps/api auth.service.ts insertWorkspaceWithUniqueSlug so a seeded
+ * workspace's slug is shaped identically to a registered one and collides the
+ * same (benign) way under the unique index.
+ */
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/**
+ * Create a fully-provisioned, email-verified owner account WITHOUT touching the
+ * throttled /auth/register route, and return a session carrying REAL
+ * API-issued tokens (#977 Option A).
+ *
+ * WHY. /auth/register and /auth/login are 5/min-per-IP security throttles the
+ * staging stack cannot lift (apps/api auth.controller.ts; ProxyAwareThrottler
+ * only overrides routes WITHOUT an explicit @Throttle). A journeys CI shard
+ * runs every spec in one worker on ONE runner IP, and the suite's ~150+
+ * registerUser() calls (most specs mint 2-5 disposable owners just to get an
+ * authenticated session) overrun the register bucket over the shard's length no
+ * matter how they are paced — a sustained-demand-exceeds-capacity problem, not
+ * a windowing one (#977 diagnosis). Pacing only moves the 429 to whoever runs
+ * last. The only durable fix is to stop spending the bucket for accounts whose
+ * SUBJECT is not the register UI.
+ *
+ * HOW (no forged JWT; real issuance). This replicates exactly what
+ * AuthService.register() + provisionWorkspace() write — a user row, a
+ * uniquely-slugged workspace, the shared system default domain, and an owner
+ * membership — by direct DB insert (the ruling: "DB-inserted accounts are fine
+ * for API-only setup"). It then inserts ONE refresh-token row the way
+ * TokenService.issueRefreshToken() does (a random opaque token, stored only as
+ * its sha256 hash) and exchanges it at POST /auth/refresh — which is NOT
+ * throttled (no @Throttle on the controller; only the global 120/min applies) —
+ * for a real access token + rotated refresh token. The tokens therefore come
+ * off the real issuance path; nothing is hand-signed. The account is stamped
+ * email_verified_at so #993's unverified-owner link hold does not apply, matching
+ * a registered-then-verified owner.
+ *
+ * Use this for every spec whose subject is NOT the register/login/2FA UI. The
+ * auth-UI specs (j01, j778, j794, j10/j776 2FA, j777, j26-login-next, j15 accept,
+ * j17 (x)) keep registerUser()/the real forms, so the register and login flows
+ * are still exercised end-to-end — just not 150 times a shard.
+ */
+export async function seedUser(intent: string, opts: { plan?: string } = {}): Promise<Session> {
+  const email = makeEmail(intent).toLowerCase();
+  const name = "Journey Tester";
+  const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
+  let userId = "";
+  let workspaceId = "";
+  const rawRefresh = randomBytes(48).toString("base64url");
+  try {
+    await handle.db.transaction(async (tx) => {
+      // 1. The user row — email-verified so #993's unverified-owner link hold
+      //    never applies (a seeded owner is the equivalent of registered+verified).
+      //    passwordHash stays null: a seeded account authenticates ONLY through
+      //    its seeded session, never the password path, which is exactly what
+      //    the auth-volume guard enforces. A null hash makes the login path
+      //    refuse it, so the account can never be driven through the UI login.
+      const [user] = await tx
+        .insert(users)
+        .values({ name, email, passwordHash: null, emailVerifiedAt: new Date() })
+        .returning();
+      userId = user!.id;
+
+      // 2. The workspace, with the same unique-slug ladder the API uses.
+      const base = slugify(name) || "workspace";
+      let workspace: typeof workspaces.$inferSelect | undefined;
+      for (let attempt = 0; attempt < 30 && !workspace; attempt++) {
+        const candidate =
+          attempt === 0 ? base : attempt < 20 ? `${base}-${attempt + 1}` : `${base}-${randomBytes(6).toString("hex")}`;
+        [workspace] = await tx
+          .insert(workspaces)
+          .values({ name: `${name}'s workspace`, slug: candidate, defaultRedirect: "302", ...(opts.plan ? { plan: opts.plan } : {}) })
+          .onConflictDoNothing({ target: workspaces.slug })
+          .returning();
+      }
+      if (!workspace) throw new Error(`seedUser: could not allocate a unique workspace slug for "${base}"`);
+      workspaceId = workspace.id;
+
+      // 3. The shared system default domain (idempotent — the API's first
+      //    registration creates it, the rest find it), then point the workspace at it.
+      await tx
+        .insert(domains)
+        .values({
+          workspaceId: null,
+          domain: DEFAULT_DOMAIN,
+          isSystem: true,
+          status: "live",
+          ssl: "active",
+          verifiedAt: new Date(),
+        })
+        .onConflictDoNothing();
+      const [systemDomain] = await tx
+        .select({ id: domains.id })
+        .from(domains)
+        .where(sql`lower(${domains.domain}) = ${DEFAULT_DOMAIN.toLowerCase()}`)
+        .limit(1);
+      if (systemDomain) {
+        await tx.update(workspaces).set({ defaultDomainId: systemDomain.id }).where(eq(workspaces.id, workspace.id));
+      }
+
+      // 4. The owner membership.
+      await tx.insert(memberships).values({
+        workspaceId: workspace.id,
+        userId,
+        email,
+        role: "owner",
+        status: "active",
+        acceptedAt: new Date(),
+      });
+
+      // 5. A refresh-token row (hashed, exactly as TokenService.issueRefreshToken
+      //    stores it) that /auth/refresh will exchange for a real session below.
+      //    A fresh familyId, 30-day expiry matching the default JWT_REFRESH_TTL_DAYS.
+      await tx.insert(refreshTokens).values({
+        userId,
+        familyId: randomUUID(),
+        tokenHash: sha256Hex(rawRefresh),
+        expiresAt: new Date(Date.now() + 30 * 86_400_000),
+      });
+    });
+  } finally {
+    await handle.close();
+  }
+
+  // 6. Exchange the seeded refresh token for a REAL access token at the
+  //    UNTHROTTLED /auth/refresh route. No forged JWT — the server signs it.
+  const res = await fetch(`${API_URL}/auth/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refreshToken: rawRefresh }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`seedUser: POST /auth/refresh → ${res.status}; body=${text.slice(0, 400)}`);
+  }
+  const body = JSON.parse(text) as { accessToken?: string; refreshToken?: string };
+  if (!body.accessToken || !body.refreshToken) {
+    throw new Error(`seedUser: /auth/refresh returned no tokens; keys=${Object.keys(body).join(",")}`);
+  }
+  const payload = JSON.parse(Buffer.from(body.accessToken.split(".")[1], "base64").toString());
+  return {
+    accessToken: body.accessToken,
+    refreshToken: body.refreshToken,
+    email,
+    userId: userId || (payload.sub ?? ""),
+    workspaceId: workspaceId || (payload.wid ?? ""),
+  };
+}
+
+/**
+ * Register a DB-seeded owner whose workspace is already on a paid plan (#977).
+ * The seeded equivalent of registerPaidOwner for custom-domain journeys whose
+ * subject is not the auth UI.
+ */
+export async function seedPaidOwner(intent: string): Promise<Session> {
+  return seedUser(intent, { plan: "Enterprise" });
 }
 
 /**
