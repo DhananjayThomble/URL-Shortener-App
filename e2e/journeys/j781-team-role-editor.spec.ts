@@ -22,6 +22,25 @@ const need = (b: Box | null): Box => {
 };
 const centre = (b: Box) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
 
+/* Read a locator's bounding box only once it has SETTLED. The role editor opens
+   and expands asynchronously, so a boundingBox captured the instant it appears
+   can be a mid-layout position; the real controls then sit several-to-17px away
+   once it settles, and a baseline captured early makes the later identity check
+   land on empty space (the (#781) j781 flake: buttonAt returned null). Poll until
+   two consecutive reads agree, so the baseline is the settled layout. */
+async function stableBox(locator: import("@playwright/test").Locator): Promise<Box> {
+  let prev = need(await locator.boundingBox());
+  for (let i = 0; i < 20; i++) {
+    await locator.page().waitForTimeout(100);
+    const cur = need(await locator.boundingBox());
+    if (Math.abs(cur.x - prev.x) < 0.5 && Math.abs(cur.y - prev.y) < 0.5 && Math.abs(cur.width - prev.width) < 0.5 && Math.abs(cur.height - prev.height) < 0.5) {
+      return cur;
+    }
+    prev = cur;
+  }
+  return prev;
+}
+
 async function buttonAt(page: Page, p: { x: number; y: number }): Promise<string | null> {
   return page.evaluate(({ x, y }) => {
     const el = document.elementFromPoint(x, y)?.closest("button");
@@ -57,8 +76,11 @@ test.describe("Journey 781 — /team role editor layout (#781) @mobile", () => {
     const admin = group.getByRole("button", { name: "Admin" });
     const done = row.getByRole("button", { name: "Done" });
     await done.scrollIntoViewIfNeeded();
-    const adminBefore = need(await admin.boundingBox());
-    const doneBefore = need(await done.boundingBox());
+    // Capture the baseline from the SETTLED editor, not the instant it appears,
+    // so the old centres the identity check reuses below are the real control
+    // positions (an early read drifts ~17px while the editor expands).
+    const adminBefore = await stableBox(admin);
+    const doneBefore = await stableBox(done);
     await page.screenshot({ path: `.qa-runs/781/${info.project.name}-1-editor-open.png` });
 
     const sent = page.waitForResponse((r) => r.request().method() === "PATCH" && /\/members\/[^/]+$/.test(r.url()));
@@ -124,7 +146,8 @@ test.describe("Journey 781 — /team role editor layout (#781) @mobile", () => {
     await row.getByRole("button", { name: "Change role" }).click();
     const done = row.getByRole("button", { name: "Done" });
     await done.scrollIntoViewIfNeeded();
-    const doneBefore = need(await done.boundingBox());
+    // Settled baseline (see stableBox): an early read drifts while the editor expands.
+    const doneBefore = await stableBox(done);
     await row.getByRole("group", { name: /Role for/ }).getByRole("button", { name: "Admin" }).click();
     await expect(page.getByRole("alert").filter({ hasText: /only owner/i })).toBeVisible();
     await expect(done).toBeVisible();
