@@ -1,0 +1,14 @@
+-- Down migration for 0037_coupon_redeemed_count (#1024).
+--
+-- drizzle-kit's migrator is forward-only, so this is the authoritative reviewed
+-- reverse: 0037 ADDED one column (redeemed_count) to the coupons table for the
+-- atomic cross-workspace cap. Reversing it drops the column and leaves the
+-- schema byte-identical to before. The cap then falls back to the live
+-- coupon_redemptions row count exactly as it was pre-#1024; no data is lost
+-- (the real redemption rows are untouched).
+--
+-- Slot 0037: after #1020's 0036 (kill switches).
+--
+-- To roll back by hand: delete the 0037 row from __drizzle_migrations and run
+-- the statement below.
+ALTER TABLE "coupons" DROP COLUMN IF EXISTS "redeemed_count";
