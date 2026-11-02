@@ -151,3 +151,15 @@ route({
     },
   },
 });
+
+
+/* #970 — the public pricing table, built from the public-visible plans' live
+   feature matrix and limits. Unauthenticated, cached. */
+route({
+  method: "get",
+  path: "/public/pricing",
+  tag,
+  summary: "The public pricing table (plans, feature matrix and limits)",
+  public: true,
+  responses: { 200: { description: "The pricing comparison table", schema: refs.PricingTable } },
+});

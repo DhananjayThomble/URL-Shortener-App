@@ -16,3 +16,12 @@ route({
   body: refs.UpdateWorkspaceInput,
   responses: { 200: { description: "The updated workspace", schema: refs.Workspace } },
 });
+
+
+route({
+  method: "get",
+  path: "/workspaces/current/usage",
+  tag: "Workspace",
+  summary: "This workspace's usage against its plan limits, with 80%/100% warnings (#970)",
+  responses: { 200: { description: "Usage rows and active warnings", schema: refs.WorkspaceUsage } },
+});

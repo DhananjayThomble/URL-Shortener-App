@@ -20,6 +20,7 @@ import { zodBody } from "../common/zod.pipe.js";
 import { REQUIRED_ROLES, REQUIRED_SCOPE, satisfiesRole, type RequestActor } from "../auth/auth.guard.js";
 import { DomainsController } from "./domains.controller.js";
 import { DomainsService } from "./domains.service.js";
+import { openEntitlementsStub } from "../plans/entitlements.test-stub.js";
 
 /* ============================================================
    #648 — PATCH /domains/:id sets, changes and clears a domain's root and
@@ -76,7 +77,7 @@ describeDb("DomainsService.update / PATCH /domains/:id (#648)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
     controller = new DomainsController(service);
 
     // #966: add() now gates on the plan; a paid plan so the create-time tests

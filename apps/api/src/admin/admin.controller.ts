@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, Query, Res, UseGuards } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import {
   AddBlockedDomainInput,
@@ -40,6 +40,17 @@ import { AdminModerationService } from "./admin.moderation.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { PlatformSettingsService } from "./platform-settings.service.js";
+import { PlansAdminService } from "../plans/plans-admin.service.js";
+import {
+  CreatePlanInput,
+  MigrateWorkspaceVersionInput,
+  SetOverrideInput,
+  UpdatePlanInput,
+  UpdatePlanMatrixInput,
+  type OverrideView,
+  type PlanList,
+  type PlanView,
+} from "@snapurl/contract";
 
 /* ============================================================
    #968 + #974 + #969 + #971 + #973 — the platform-admin API surface (/api/v1/admin/*).
@@ -62,6 +73,7 @@ export class AdminController {
     private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
     private readonly settings: PlatformSettingsService,
+    private readonly plansAdmin: PlansAdminService,
   ) {}
 
   /** Who the caller is, confirmed as a platform admin. The client uses a 200
@@ -188,6 +200,93 @@ export class AdminController {
     @AdminRequestIp() ip: string | null,
   ): Promise<AdminViewAsWorkspace> {
     return this.management.viewAsWorkspace(id, actor(admin, ip));
+  }
+
+  /* ── plans, versions and per-workspace overrides (#970) ── */
+
+  /** Every plan with its current version's feature matrix and limits. */
+  @Get("plans")
+  listPlans(): Promise<PlanList> {
+    return this.plansAdmin.list();
+  }
+
+  /** Create a plan and its first version. */
+  @Post("plans")
+  @HttpCode(201)
+  createPlan(
+    @Body(zodBody(CreatePlanInput)) input: CreatePlanInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<PlanView> {
+    return this.plansAdmin.create(input, actor(admin, ip));
+  }
+
+  /** Edit a plan's metadata (name, description, badge, sort, visibility). Does
+   *  not version the feature matrix — that is the matrix route. */
+  @Patch("plans/:id")
+  updatePlan(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(UpdatePlanInput)) input: UpdatePlanInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<PlanView> {
+    return this.plansAdmin.update(id, input, actor(admin, ip));
+  }
+
+  /** Edit a live plan's feature matrix / limits. Creates a new version; existing
+   *  workspaces stay grandfathered on the old one. */
+  @Put("plans/:id/matrix")
+  editPlanMatrix(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(UpdatePlanMatrixInput)) input: UpdatePlanMatrixInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<PlanView> {
+    return this.plansAdmin.editMatrix(id, input, actor(admin, ip));
+  }
+
+  /** The per-workspace overrides on a workspace. */
+  @Get("workspaces/:id/overrides")
+  listOverrides(@Param("id", ParseUUIDPipe) id: string): Promise<{ items: OverrideView[] }> {
+    return this.plansAdmin.listOverrides(id);
+  }
+
+  /** Set (or replace) a per-workspace feature/limit override, optionally with an
+   *  expiry. An override beats the plan. */
+  @Post("workspaces/:id/overrides")
+  @HttpCode(201)
+  setOverride(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(SetOverrideInput)) input: SetOverrideInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<OverrideView> {
+    return this.plansAdmin.setOverride(id, input, actor(admin, ip));
+  }
+
+  /** Remove a per-workspace override by id. */
+  @Delete("workspaces/:id/overrides/:overrideId")
+  @HttpCode(204)
+  async removeOverride(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("overrideId", ParseUUIDPipe) overrideId: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<void> {
+    await this.plansAdmin.removeOverride(id, overrideId, actor(admin, ip));
+  }
+
+  /** Pin (or unpin) a workspace to a specific plan version — the grandfather
+   *  migration control. */
+  @Post("workspaces/:id/migrate-version")
+  @HttpCode(204)
+  async migrateWorkspaceVersion(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(MigrateWorkspaceVersionInput)) input: MigrateWorkspaceVersionInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<void> {
+    await this.plansAdmin.migrateWorkspaceVersion(id, input, actor(admin, ip));
   }
 
   /* ── system health and operations (#974) ── */

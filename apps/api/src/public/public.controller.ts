@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { SubmitFormInput, SubmitReportInput, UnlockLinkInput, type PlatformBanner } from "@snapurl/contract";
+import { SubmitFormInput, SubmitReportInput, UnlockLinkInput, type PlatformBanner, type PricingTable } from "@snapurl/contract";
 import { zodBody } from "../common/zod.pipe.js";
 import { Public } from "../auth/auth.guard.js";
 import { PublicService } from "./public.service.js";
@@ -8,6 +8,7 @@ import { FormsService } from "../forms/forms.service.js";
 import { ReportsService } from "../reports/reports.service.js";
 import { BioPagesService } from "../bio-pages/bio-pages.service.js";
 import { PlatformSettingsService } from "../admin/platform-settings.service.js";
+import { PlansService } from "../plans/plans.service.js";
 
 /* Every route here is unauthenticated, and each one says so individually.
    @Public() on the controller would mean one forgotten decorator on a future
@@ -20,7 +21,18 @@ export class PublicController {
     private readonly reports: ReportsService,
     private readonly bio: BioPagesService,
     private readonly settings: PlatformSettingsService,
+    private readonly plans: PlansService,
   ) {}
+
+  /* #970 — the public pricing table, built from the public-visible plans' live
+     feature matrix and limits. Unauthenticated: it is what a visitor compares
+     before signing up. A cached read (PlansService short cache), so it is cheap
+     to poll and never a per-request DB hit. */
+  @Public()
+  @Get("pricing")
+  pricing(): Promise<PricingTable> {
+    return this.plans.pricingTable();
+  }
 
   /* #972 — the site-wide banner, readable without auth so it shows for every
      visitor (signed-in or not). A cached field read, so polling it is cheap;

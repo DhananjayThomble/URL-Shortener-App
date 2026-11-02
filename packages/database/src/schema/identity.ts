@@ -134,6 +134,15 @@ export const workspaces = pgTable(
     slug: varchar("slug", { length: 80 }).notNull(),
     plan: varchar("plan", { length: 40 }).notNull().default("Free"),
 
+    /** #970 — the plan VERSION this workspace is grandfathered on, or null to
+     *  follow its plan's current version. When an admin edits a live plan's
+     *  features or limits a new version is created and the plan moves forward;
+     *  a workspace pinned here keeps resolving against its old version until an
+     *  admin migrates it. A plain uuid (not an FK) so dropping a version row
+     *  never cascades a workspace away — the resolver falls back to the plan's
+     *  current version if the pinned version has gone. */
+    planVersionId: uuid("plan_version_id"),
+
     defaultDomainId: uuid("default_domain_id"),
     defaultRedirect: varchar("default_redirect", { length: 3 }).notNull().default("302"),
 
