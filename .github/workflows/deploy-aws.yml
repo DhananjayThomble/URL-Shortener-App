@@ -301,6 +301,8 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           # Optional: unset leaves Safe Browsing off. Not in the required list.
           SAFE_BROWSING_SECRET_NAME: ${{ vars.SAFE_BROWSING_SECRET_NAME }}
+          # #995 — optional: unset leaves error tracking off (no DSN resolves).
+          SENTRY_DSN_SECRET_NAME: ${{ vars.SENTRY_DSN_SECRET_NAME }}
           # The workflow-dispatch input and a prior step's output are passed
           # through env so the shell expands them as quoted variables, rather
           # than the expression being spliced into the script source as raw
@@ -317,7 +319,11 @@ jobs:
           [ -n "${BUDGET_EMAIL}" ]           && ctx+=(-c "budgetEmail=${BUDGET_EMAIL}")
           [ -n "${GOOGLE_OAUTH_CLIENT_ID}" ] && ctx+=(-c "googleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}")
           [ -n "${SAFE_BROWSING_SECRET_NAME}" ] && ctx+=(-c "safeBrowsingSecretName=${SAFE_BROWSING_SECRET_NAME}")
+          [ -n "${SENTRY_DSN_SECRET_NAME}" ] && ctx+=(-c "sentryDsnSecretName=${SENTRY_DSN_SECRET_NAME}")
           ctx+=(-c "deployedGitSha=${DEPLOYED_GIT_SHA}")
+          # #995 — tag error-tracking events with the deployed sha (bin also
+          # falls back to deployedGitSha, so this is explicit, not new state).
+          [ -n "${DEPLOYED_GIT_SHA}" ] && ctx+=(-c "sentryRelease=${DEPLOYED_GIT_SHA}")
 
           npx cdk diff "${ctx[@]}" "${STACK}" 2>&1 | tee /tmp/cdk-diff.txt
 
@@ -489,11 +495,15 @@ jobs:
           BUDGET_EMAIL: ${{ vars.BUDGET_EMAIL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           SAFE_BROWSING_SECRET_NAME: ${{ vars.SAFE_BROWSING_SECRET_NAME }}
+          # #995 — optional: unset leaves error tracking off. deploy.sh appends
+          # -c sentryDsnSecretName when this is present.
+          SENTRY_DSN_SECRET_NAME: ${{ vars.SENTRY_DSN_SECRET_NAME }}
           STACK: ${{ inputs.stack }}
           DEPLOYED_GIT_SHA: ${{ steps.rev.outputs.sha }}
         run: |
           bash infra/deploy.sh "${STACK}" \
-            -c "deployedGitSha=${DEPLOYED_GIT_SHA}"
+            -c "deployedGitSha=${DEPLOYED_GIT_SHA}" \
+            -c "sentryRelease=${DEPLOYED_GIT_SHA}"
 
       # Read the URLs from the stack itself rather than hardcoding them, so the
       # smoke gate always targets what was actually just deployed.

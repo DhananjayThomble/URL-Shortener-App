@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotFoundException, type ArgumentsHost } from "@nestjs/common";
 import { PostgresErrorFilter } from "./postgres-error.filter.js";
+import { __resetApiTelemetryForTests } from "./telemetry.js";
 
 /* ============================================================
    PostgresErrorFilter must never attempt a second send once a response's
@@ -15,7 +16,10 @@ import { PostgresErrorFilter } from "./postgres-error.filter.js";
    gets its ordering right.
    ============================================================ */
 
-function hostFor(raw: { headersSent: boolean; writableEnded: boolean; destroy: () => void }) {
+function hostFor(
+  raw: { headersSent: boolean; writableEnded: boolean; destroy: () => void },
+  request: Record<string, unknown> = {},
+) {
   const reply = {
     raw,
     status: vi.fn(() => reply),
@@ -24,11 +28,13 @@ function hostFor(raw: { headersSent: boolean; writableEnded: boolean; destroy: (
   const host = {
     switchToHttp: () => ({
       getResponse: () => reply,
-      getRequest: () => ({}),
+      getRequest: () => request,
     }),
   } as unknown as ArgumentsHost;
   return { host, reply };
 }
+
+afterEach(() => __resetApiTelemetryForTests());
 
 describe("PostgresErrorFilter", () => {
   it("does not call reply.status().send() when the head is already sent", () => {
@@ -68,5 +74,46 @@ describe("PostgresErrorFilter", () => {
     expect(reply.status).toHaveBeenCalledWith(404);
     expect(reply.send).toHaveBeenCalled();
     expect(destroy).not.toHaveBeenCalled();
+  });
+
+  /* #995 — the error-tracking path. An unexpected 500 is captured to Sentry
+     (through the telemetry singleton) with the request id linked, and the event
+     id is handed back to the client as errorEventId. With telemetry off (the
+     default, no DSN) nothing is captured and the body has no errorEventId. */
+  it("off by default: an unhandled 500 captures nothing and returns no errorEventId", () => {
+    const filter = new PostgresErrorFilter();
+    const { host, reply } = hostFor({ headersSent: false, writableEnded: false, destroy: vi.fn() }, { id: "req-1" });
+
+    filter.catch(new Error("kaboom"), host);
+
+    expect(reply.status).toHaveBeenCalledWith(500);
+    const body = reply.send.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body.statusCode).toBe(500);
+    expect(body.errorEventId).toBeUndefined();
+  });
+
+  it("with telemetry on: captures one event with the request id and returns its errorEventId", async () => {
+    const { initNodeTelemetry } = await import("@snapurl/telemetry");
+    const { __setApiTelemetryForTests } = await import("./telemetry.js");
+    const sentry = {
+      init: vi.fn(),
+      setUser: vi.fn(),
+      addEventProcessor: vi.fn(),
+      captureException: vi.fn(() => "evt_api_1"),
+    };
+    // Build a handle over the mock Sentry and install it as the singleton so
+    // the filter's telemetry().captureException routes through the mock.
+    __setApiTelemetryForTests(initNodeTelemetry({ service: "api", dsn: "https://pub@o1.ingest.sentry.io/1", sentry }));
+
+    const filter = new PostgresErrorFilter();
+    const { host, reply } = hostFor({ headersSent: false, writableEnded: false, destroy: vi.fn() }, { id: "req-42" });
+
+    filter.catch(new Error("kaboom"), host);
+
+    expect(sentry.captureException).toHaveBeenCalledTimes(1);
+    const hint = sentry.captureException.mock.calls[0]?.[1] as { tags?: Record<string, unknown> };
+    expect(hint.tags?.request_id).toBe("req-42");
+    const body = reply.send.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body.errorEventId).toBe("evt_api_1");
   });
 });

@@ -32,6 +32,7 @@ import {
 } from "./click-reservation.js";
 import { CacheStoreSaltCache, PostgresSaltCache, type SaltSource } from "./salt.js";
 import { sendError } from "./error-page.js";
+import { initRedirectTelemetry, telemetry } from "./telemetry.js";
 
 /* ============================================================
    The redirect service.
@@ -138,6 +139,18 @@ const LINK_CACHE_TTL_SECONDS = Number(process.env.LINK_CACHE_TTL_SECONDS ?? 10);
    hop-count is disabled as unsafe, and `true` would surface the client-typed
    leftmost X-Forwarded-For entry — the exact forgery #279 fixes. */
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, trustProxy: false });
+
+/* #995 — capture an unexpected error on the hot path to Sentry before Fastify's
+   default handler turns it into a 500. A no-op when telemetry is off (no DSN).
+   The event is linked to Fastify's request.id — the same id the request logger
+   stamps on every line — so an event and its logs share one correlation id.
+   We re-throw into Fastify's own handler so the response behaviour is exactly
+   as before; this only ADDS the capture. */
+app.setErrorHandler((err, request, reply) => {
+  telemetry().captureException(err, { requestId: request.id });
+  // Hand back to Fastify's default error handling unchanged.
+  reply.send(err);
+});
 /* The replica URL and SSL settings are plumbed through for consistency with the
    other apps, but the redirect deliberately uses the PRIMARY `db` handle (not
    readDb) everywhere: the click-limit gate reads a link's click count and then
@@ -156,6 +169,13 @@ let JWT_SECRET = JWT_SECRET_DEFAULT;
 /** Resolve secrets, open the connection and wire up the adapters. Called once
  *  at the start of main(), before the server starts accepting requests. */
 async function init(): Promise<void> {
+  /* #995 — initialise error tracking first, so an error thrown anywhere in the
+     rest of init() (or later on the hot path) is captured. OFF unless a DSN is
+     set; never throws. */
+  const { error: sentryError, enabled: sentryEnabled } = await initRedirectTelemetry();
+  if (sentryError) app.log.warn(`Could not read the Sentry DSN secret: ${sentryError.message}`);
+  if (!sentryEnabled) app.log.info("Error tracking is off (no SENTRY_DSN).");
+
   JWT_SECRET = (await resolveJwtSecret("JWT_ACCESS_SECRET_ARN", "JWT_ACCESS_SECRET")) ?? "";
 
   /* Which of the three hot-path stores each adapter reads from decides whether

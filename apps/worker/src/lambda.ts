@@ -2,6 +2,7 @@ import { deserializeClickEvent, insertClickEvents, resolveDatabaseUrl, runMigrat
 import { initDb, log, runFrequent, runMaintenance, runProjection } from "./main.js";
 import { backfillClickPartitions } from "./jobs/rollup.js";
 import { backfillDomainMeta } from "./jobs/outbox.js";
+import { initWorkerTelemetry, telemetry } from "./telemetry.js";
 
 /* The worker as a Lambda, dispatched by a `task` discriminator.
  *
@@ -137,7 +138,27 @@ async function drainClickBatch(db: Database, records: SqsRecord[]): Promise<SqsB
   return { batchItemFailures };
 }
 
+/**
+ * The Lambda entrypoint. Wraps the dispatch (dispatchEvent) so an error thrown
+ * out of any task is captured to Sentry (#995) with the task name linked,
+ * then RE-THROWN so Lambda still marks the invocation failed and the schedule's
+ * retry (or the SQS redrive) behaves exactly as before. A no-op capture when
+ * telemetry is off (no DSN). Telemetry is initialised at cold start by initDb()
+ * on every path; initialised here too for the rare branch that throws before
+ * initDb runs, so the capture always has a live handle.
+ */
 export const handler = async (event: WorkerEvent | SqsEvent = {}) => {
+  await initWorkerTelemetry();
+  try {
+    return await dispatchEvent(event);
+  } catch (err) {
+    const task = Array.isArray((event as SqsEvent).Records) ? "sqs" : (event as WorkerEvent).task ?? "frequent";
+    telemetry().captureException(err, { requestId: `worker:${task}` });
+    throw err;
+  }
+};
+
+const dispatchEvent = async (event: WorkerEvent | SqsEvent = {}) => {
   /* The SQS event source mapping path: detected by the Records array BEFORE the
      task discriminator, because an SQS event carries no `task`. */
   if (Array.isArray((event as SqsEvent).Records)) {

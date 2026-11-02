@@ -184,6 +184,33 @@ export const EnvSchema = z.object({
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
+  /* #995 — production error tracking (Sentry). OFF BY DEFAULT: with no
+     SENTRY_DSN set nothing is initialised, no transport is created and no
+     network call is made, so a self-hosted / OSS build behaves exactly as
+     today. The DSN is resolved from Secrets Manager at cold start on AWS (via
+     SENTRY_DSN_SECRET_ARN, exactly like the DB/JWT/Safe-Browsing/Razorpay
+     secrets) and from the gitignored .env locally — both optional passthroughs.
+     The DSN is not strictly a secret (the web build ships one publicly), but it
+     is resolved through the same opt-in path so operators configure it in one
+     place. */
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_DSN_SECRET_ARN: z.string().optional(),
+  /* The release id tagged on every event — the app version plus the commit, so
+     an event points at the exact build. Set by the deploy (CDK passes the image
+     tag / commit sha); defaults to unset, in which case events carry no release
+     tag, which is fine for local dev. */
+  SENTRY_RELEASE: z.string().optional(),
+  /* The deployment environment tag. Defaults to NODE_ENV when unset. */
+  SENTRY_ENVIRONMENT: z.string().optional(),
+  /* Errors sample rate 0..1 — the conservative fraction of error events kept,
+     to keep the free tier safe. Defaults to 1 (keep all errors): errors are the
+     whole point and are low-volume; a busy deployment lowers this. The #1020
+     runtime kill switch can only ever LOWER the effective rate below this. */
+  SENTRY_ERRORS_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
+  /* Traces (performance) sample rate 0..1. Defaults to 0 — errors only, no
+     performance transactions — which is what keeps the free tier safe. */
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+
   /* #986 — billing (epic #991). OFF BY DEFAULT: with BILLING_PROVIDER=none the
      whole billing surface is unreachable (the controller 404s) and a
      self-hosted / open-source build behaves exactly as today. Turn it on with

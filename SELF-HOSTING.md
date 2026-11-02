@@ -374,6 +374,44 @@ Deployment env on Helm).
   matches the default retention) and only bites when partition count runs ahead
   of the storage budget; tighten it if your storage is tighter than the default
   window assumes.
+
+## Error tracking
+
+Error tracking is **optional and off by default**. SnapURL can report crashes in
+the api, redirect and worker services (and the web app) to
+[Sentry](https://sentry.io) — which has a free developer tier and can be
+[self-hosted](https://develop.sentry.dev/self-hosted/) — but it stays
+**completely off until you set a DSN**. With no DSN configured, nothing is
+initialised, no transport is created and no network call is made, so a
+self-hosted install needs none of this.
+
+To turn it on, set `SENTRY_DSN` to your project's DSN (the same value works for
+a self-hosted Sentry). On the single-node compose this one variable turns on the
+api, redirect and worker together. The remaining knobs are optional:
+
+- **`SENTRY_RELEASE`** — a release tag on every event (typically the version or
+  commit), so an event points at the exact build. Unset means events carry no
+  release.
+- **`SENTRY_ENVIRONMENT`** — the environment tag; defaults to the Node
+  environment (`production` on the compose) when unset.
+- **`SENTRY_ERRORS_SAMPLE_RATE`** (default `1`) — the fraction of error events
+  kept, `0`–`1`. Lower it on a busy install to stay inside a free tier.
+- **`SENTRY_TRACES_SAMPLE_RATE`** (default `0`) — the fraction of performance
+  traces kept. Zero means errors only, which keeps event volume (and cost) low.
+
+What leaves the process is deliberately minimal: events are scrubbed of
+passwords, tokens, cookies, Authorization headers, query strings and request
+bodies before they are sent, and only a user id and workspace id are attached —
+never an email or an IP address. Each event is linked to the request id the
+logs already carry, so an event and its log line share one correlation id.
+
+For the web app the DSN is a build-time, browser-visible value (set it in the
+web build's environment); when you build the web app in CI you can also upload
+its source maps to Sentry so stack traces are un-minified, which happens only
+when a Sentry auth token is present in the build environment and is skipped
+cleanly otherwise. See [`web/.env.example`](./web/.env.example) for the web
+variables.
+
 ## Browser extension
 
 The [SnapURL browser extension](./apps/extension/README.md) is a Manifest V3
