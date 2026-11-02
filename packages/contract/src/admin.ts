@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { KillSwitchesSetting } from "./kill-switches.js";
 
 /* ============================================================
    #968 — the platform-admin area (/api/v1/admin/*).
@@ -700,6 +701,12 @@ export const PlatformSettingsValues = z.object({
   newAccountLimits: NewAccountLimitsSetting,
   botProtection: BotProtectionSetting,
   disposableEmails: DisposableEmailSetting,
+  // #1020 — the typed kill-switch set, read on the hot paths (billing, custom
+  // domains, mail) through the same short cache as every other setting. Its own
+  // typed PATCH lives on /admin/killswitches (not PlatformSettingsInput), but
+  // the effective value rides in the shared snapshot so a consumer reads one
+  // cache.
+  killSwitches: KillSwitchesSetting,
 });
 export type PlatformSettingsValues = z.infer<typeof PlatformSettingsValues>;
 

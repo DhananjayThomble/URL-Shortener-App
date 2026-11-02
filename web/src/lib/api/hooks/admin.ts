@@ -20,6 +20,7 @@ import {
   AdminViewAsWorkspace,
   AdminWorkspaceDetail,
   AdminWorkspaceList,
+  KillSwitchesView,
   PlatformAnalytics,
   PlatformSettings,
   type AdminAbuseQueueQuery,
@@ -30,6 +31,7 @@ import {
   type AdminLinkDisableInput,
   type AdminLinkSearchQuery,
   type AdminUpdateWorkspaceInput,
+  type KillSwitchesPatchBody,
   type PlatformSettingsInput,
 } from "@snapurl/contract";
 import { z } from "zod";
@@ -261,6 +263,29 @@ export function useAdminUpdateSettings() {
     onSuccess: (settings) => {
       qc.setQueryData(qk.adminSettings, settings);
       qc.invalidateQueries({ queryKey: qk.platformBanner });
+      qc.invalidateQueries({ queryKey: qk.adminAudit() });
+    },
+  });
+}
+
+/* #1020 — runtime kill switches. Read the effective state (values, defaults,
+   provenance, cache TTL); PATCH folds a partial change + a required reason and
+   records an audit row. The audit viewer is invalidated so its change history
+   refreshes. */
+export function useAdminKillSwitches() {
+  return useQuery({
+    queryKey: qk.adminKillSwitches,
+    queryFn: () => request("/admin/killswitches", KillSwitchesView),
+  });
+}
+
+export function useAdminUpdateKillSwitches() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: KillSwitchesPatchBody) =>
+      request("/admin/killswitches", KillSwitchesView, { method: "PATCH", body: input }),
+    onSuccess: (view) => {
+      qc.setQueryData(qk.adminKillSwitches, view);
       qc.invalidateQueries({ queryKey: qk.adminAudit() });
     },
   });

@@ -90,7 +90,7 @@ describe("registry parity: the reflected inventory equals the OpenAPI registry",
     ).toEqual({ missingFromRegistry: [], missingFromControllers: [] });
   });
 
-  it("the inventory has the 139 routes the design records (Appendix A + #968 /admin/me + #974 system-health + #969 users/workspaces + #971 moderation + #973 admin analytics + its CSV export + #972 settings + banner + #986 billing checkout/subscription/webhook + #970 plans/versions/overrides + pricing + usage + #987 plan prices + #989 admin subscriptions/revenue/billing-events/refund + #988 billing invoices/cancel/change + #992 admin plan-change + plan-history + coupons list/create/pause/delete/redemptions + #997 public feedback + admin feedback inbox list/detail/update + #992 PR-C billing-details owner GET+PUT + admin view)", () => {
-    expect(inventoryCount).toBe(139);
+  it("the inventory has the 141 routes the design records (Appendix A + #968 /admin/me + #974 system-health + #969 users/workspaces + #971 moderation + #973 admin analytics + its CSV export + #972 settings + banner + #986 billing checkout/subscription/webhook + #970 plans/versions/overrides + pricing + usage + #987 plan prices + #989 admin subscriptions/revenue/billing-events/refund + #988 billing invoices/cancel/change + #992 admin plan-change + plan-history + coupons list/create/pause/delete/redemptions + #997 public feedback + admin feedback inbox list/detail/update + #992 PR-C billing-details owner GET+PUT + admin view + #1020 admin kill-switches GET+PATCH)", () => {
+    expect(inventoryCount).toBe(141);
   });
 });

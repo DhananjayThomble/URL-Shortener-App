@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { users } from "./identity.js";
 
@@ -104,3 +104,38 @@ export const platformSettings = pgTable("platform_settings", {
   updatedByLabel: varchar("updated_by_label", { length: 255 }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+
+/* ============================================================
+   #1020 — outbound-email rate accounting for the email.outbound kill switch.
+
+   The email.outbound switch carries hourly and daily caps (platform-wide), and
+   auth-critical mail (verification, password reset) may bypass the OFF switch
+   but is STILL counted and refused past the caps. Nothing else in the schema
+   records outbound-email volume, so this tiny append-only ledger does: one row
+   per message actually sent, carrying only the send instant and whether it was
+   an auth-critical (bypass-eligible) send. The cap check counts rows in the
+   trailing hour / day before a send; the row is written when a send is allowed.
+
+   Deliberately minimal — NO recipient, subject or body. A cap is a count, so
+   the ledger needs only the timestamps; keeping PII out of it means the table
+   can be read by the admin panel and pruned freely without a privacy concern.
+   Pruned by the hourly maintenance job (rows older than the longest window are
+   dead weight). Platform-scoped, so it lives here beside the other admin tables
+   rather than in a workspace-scoped file.
+   ============================================================ */
+export const emailSendLog = pgTable(
+  "email_send_log",
+  {
+    id: id(),
+    /** When the message was sent. The only thing the rolling-window cap reads. */
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+    /** True for auth-critical mail (verification / password reset): it bypasses
+     *  the email.outbound OFF switch but is still counted here and capped. */
+    authCritical: boolean("auth_critical").notNull().default(false),
+  },
+  (t) => [
+    // The cap counts rows newer than a cutoff, so index sent_at descending.
+    index("email_send_log_sent_at_idx").on(t.sentAt.desc()),
+  ],
+);

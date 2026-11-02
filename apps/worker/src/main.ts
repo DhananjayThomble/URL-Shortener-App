@@ -14,7 +14,14 @@ import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyval
    fast path never fills, silently, with redirects still served by the Lambda. */
 import "@aws-sdk/signature-v4a";
 import { resolve as dnsResolve } from "node:dns/promises";
-import { createDatabase, resolveDatabaseUrl, resolveSafeBrowsingApiKey, type Database } from "@snapurl/database";
+import {
+  createDatabase,
+  pruneEmailSendLog,
+  readKillSwitchesFailClosed,
+  resolveDatabaseUrl,
+  resolveSafeBrowsingApiKey,
+  type Database,
+} from "@snapurl/database";
 import { DynamoDbCacheStore, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { makeSafeBrowsingScanner, type UrlScanner } from "./jobs/safe-browsing.js";
@@ -357,7 +364,18 @@ export async function runFrequent(database: Database) {
      takes the rollup down. */
   let rescan = { scanned: 0, flagged: 0 };
   try {
-    rescan = await rescanLinks(database, await scannerFor(), DEFAULT_RESCAN_CONFIG);
+    /* #1020 — the linkScanning.rescans kill switch. Background rescans cost a
+       Safe Browsing lookup per due link; an operator can pause them at runtime.
+       Read fail-closed from platform_settings (the worker has no Nest DI); the
+       switch ships ON, so an unreadable store keeps scanning. OFF skips the
+       pass entirely — the edge still gates already-flagged links, so pausing
+       rescans never un-blocks a link that was already found unsafe. */
+    const switches = await readKillSwitchesFailClosed(database);
+    if (switches["linkScanning.rescans"].on) {
+      rescan = await rescanLinks(database, await scannerFor(), DEFAULT_RESCAN_CONFIG);
+    } else {
+      log.info("link rescans are switched off (linkScanning.rescans) — skipping the pass");
+    }
   } catch (err) {
     log.error({ err }, "link rescan pass failed");
   }
@@ -384,9 +402,12 @@ export async function runFrequent(database: Database) {
 /** Runs hourly: housekeeping, and the jobs that keep the privacy promise. */
 export async function runMaintenance(database: Database) {
   const failed: string[] = [];
-  /** Kept next to the calls below so the all-failed check cannot drift from the
-   *  number of jobs actually run. */
-  const MAINTENANCE_JOB_COUNT = 9;
+  /** Count of jobs that actually RAN this pass (some, like the plan-change
+   *  sweep, are skipped when a kill switch is off). The all-failed check below
+   *  compares failures against this, so a pass that legitimately skipped a job
+   *  is never mistaken for a half-run one, and a DB-down pass (every job that
+   *  ran threw) is still caught. */
+  let attempted = 0;
 
   /** Run one maintenance job without letting it take the others down.
    *
@@ -400,6 +421,7 @@ export async function runMaintenance(database: Database) {
    *  Failures are collected and reported together, so a pass that half-worked
    *  says so instead of looking like a pass that had nothing to do. */
   const step = async <T>(name: string, job: () => Promise<T>, fallback: T): Promise<T> => {
+    attempted += 1;
     try {
       return await job();
     } catch (err) {
@@ -436,7 +458,30 @@ export async function runMaintenance(database: Database) {
      period end or a comp end date, not a per-second signal — and the sweep is
      idempotent, so a missed pass simply applies on the next one. Isolated like
      every sibling: a failure costs this job, not the privacy jobs. */
-  const planChanges = await step("applyDuePlanChanges", () => applyDuePlanChanges(database), 0);
+  /* #1020 — read the kill switches once for this pass (fail-closed: paid
+     switches OFF when the store is unreadable). The plan-change sweep and the
+     billing reconciliation below honour billing.planChanges, so an operator
+     pausing plan changes also stops the worker from applying scheduled ones. */
+  const killSwitches = await step("readKillSwitches", () => readKillSwitchesFailClosed(database), null);
+  const planChangesOn = killSwitches ? killSwitches["billing.planChanges"].on : false;
+
+  /* #1020 — gated on billing.planChanges: when plan changes are off, the worker
+     does not apply scheduled period-end changes or comp reverts either (a
+     switched-off feature changes nothing, in the worker as in the API). The due
+     changes simply apply on a later pass once the switch is back on — the sweep
+     is idempotent and dated, so nothing is lost. */
+  const planChanges = planChangesOn
+    ? await step("applyDuePlanChanges", () => applyDuePlanChanges(database), 0)
+    : 0;
+  if (!planChangesOn) {
+    log.info("plan changes are switched off (billing.planChanges) — skipping the due-change sweep");
+  }
+
+  /* #1020 — prune the outbound-email rolling-window ledger (#1020) so it never
+     grows without bound; it is only ever read as a trailing count. Keep two
+     days (longer than the longest cap window, with margin). */
+  const emailLog = await step("pruneEmailSendLog", () => pruneEmailSendLog(database, 2 * 24 * 60 * 60_000), 0);
+  void emailLog;
 
   /* #996: lift the projection-outbox and webhook backlog ROW COUNTS out to
      CloudWatch as an EMF metric line, so the launch-readiness alarms can watch
@@ -479,7 +524,11 @@ export async function runMaintenance(database: Database) {
      to investigate and replay a missed webhook); the job never flips a plan
      itself, because a verified webhook is the only mover (#986). */
   const reconcileHour = Number(process.env.BILLING_RECONCILE_HOUR ?? 3);
-  if (new Date().getUTCHours() === reconcileHour) {
+  /* #1020 — reconciliation reads the provider for every tracked subscription;
+     it honours billing.planChanges (the plan-moving dimension it reconciles).
+     When plan changes are off, skip the pass — the operator has paused that
+     surface, and the daily net is lost only until the switch returns. */
+  if (planChangesOn && new Date().getUTCHours() === reconcileHour) {
     try {
       const source = await statusSourceFor();
       if (source) {
@@ -514,7 +563,7 @@ export async function runMaintenance(database: Database) {
    * Throwing hands the decision back to the scheduler, which is better placed to
    * make it: the EventBridge rule carries retryAttempts: 2, so a transient
    * outage gets two more chances inside the minute instead of waiting an hour. */
-  if (failed.length === MAINTENANCE_JOB_COUNT) {
+  if (attempted > 0 && failed.length === attempted) {
     throw new Error(`every maintenance job failed (${failed.join(", ")}) — the database is likely unreachable`);
   }
 
