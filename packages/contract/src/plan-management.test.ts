@@ -13,17 +13,16 @@ function base(over: Record<string, unknown> = {}) {
   return {
     toPlanKey: "pro",
     timing: "immediate",
-    settlement: "charge",
     reason: "Customer upgraded over the phone.",
     ...over,
   };
 }
 
 describe("AdminPlanChangeInput", () => {
-  it("accepts an immediate charge with a reason", () => {
+  it("accepts an immediate change with no settlement (defaults to a comp)", () => {
     const v = AdminPlanChangeInput.parse(base());
     expect(v.toPlanKey).toBe("pro");
-    expect(v.settlement).toBe("charge");
+    expect(v.settlement).toBeUndefined();
     expect(v.compEndsAt).toBeNull();
   });
 
@@ -41,6 +40,10 @@ describe("AdminPlanChangeInput", () => {
     expect(v.settlement).toBeUndefined();
   });
 
+  it('rejects "charge" as a settlement (PR-A has no charge — that is PR-C)', () => {
+    expect(() => AdminPlanChangeInput.parse(base({ settlement: "charge" }))).toThrow();
+  });
+
   /** The zod error path for the first issue of a failed parse, so a test can
    *  assert WHICH field the validation blamed (not just that it threw). */
   function firstIssuePath(value: unknown): (string | number)[] {
@@ -49,27 +52,20 @@ describe("AdminPlanChangeInput", () => {
     return r.success ? [] : r.error.issues[0]!.path;
   }
 
-  it("rejects an immediate change with no settlement, blaming the settlement field", () => {
-    expect(() => AdminPlanChangeInput.parse(base({ settlement: undefined }))).toThrow(
-      /charge or comp/,
-    );
-    expect(firstIssuePath(base({ settlement: undefined }))).toEqual(["settlement"]);
-  });
-
-  it("rejects a comp end date on a non-comp settlement, blaming compEndsAt", () => {
-    expect(() =>
-      AdminPlanChangeInput.parse(base({ settlement: "charge", compEndsAt: "2026-12-31T00:00:00.000Z" })),
-    ).toThrow(/comp end date only applies/);
-    expect(firstIssuePath(base({ settlement: "charge", compEndsAt: "2026-12-31T00:00:00.000Z" }))).toEqual([
-      "compEndsAt",
-    ]);
-  });
-
-  it("rejects a comp scheduled for period end, blaming the settlement field", () => {
+  it("rejects a settlement on a period-end change, blaming the settlement field", () => {
     expect(() =>
       AdminPlanChangeInput.parse(base({ timing: "period_end", settlement: "comp" })),
     ).toThrow(/takes effect immediately/);
     expect(firstIssuePath(base({ timing: "period_end", settlement: "comp" }))).toEqual(["settlement"]);
+  });
+
+  it("rejects a comp end date on a period-end change, blaming compEndsAt", () => {
+    expect(() =>
+      AdminPlanChangeInput.parse(base({ timing: "period_end", compEndsAt: "2026-12-31T00:00:00.000Z" })),
+    ).toThrow(/only applies to an immediate comp/);
+    expect(firstIssuePath(base({ timing: "period_end", compEndsAt: "2026-12-31T00:00:00.000Z" }))).toEqual([
+      "compEndsAt",
+    ]);
   });
 
   it("trims the plan key", () => {

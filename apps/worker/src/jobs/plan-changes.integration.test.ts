@@ -5,6 +5,7 @@ import {
   createDatabase,
   eq,
   planChangeRequests,
+  subscriptions,
   workspacePlanHistory,
   workspaces,
   type Database,
@@ -48,6 +49,7 @@ describeDb("applyDuePlanChanges (#992 worker sweep)", () => {
     for (const id of workspaceIds) {
       await db.delete(workspacePlanHistory).where(eq(workspacePlanHistory.workspaceId, id));
       await db.delete(planChangeRequests).where(eq(planChangeRequests.workspaceId, id));
+      await db.delete(subscriptions).where(eq(subscriptions.workspaceId, id));
       await db.delete(workspaces).where(eq(workspaces.id, id));
     }
     await handle?.close();
@@ -76,6 +78,16 @@ describeDb("applyDuePlanChanges (#992 worker sweep)", () => {
       actorLabel: "system",
       effectiveAt,
       updatedAt: new Date(),
+    });
+  }
+
+  async function giveSubscription(workspaceId: string, status: string): Promise<void> {
+    await db.insert(subscriptions).values({
+      workspaceId,
+      planKey: "pro",
+      interval: "monthly",
+      provider: "razorpay",
+      status,
     });
   }
 
@@ -113,6 +125,28 @@ describeDb("applyDuePlanChanges (#992 worker sweep)", () => {
     await applyDuePlanChanges(db);
     const [wsRow] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
     expect(wsRow!.plan).toBe("Pro"); // unchanged
+  });
+
+  it("SKIPS a due request when the workspace gained an active subscription, recording why", async () => {
+    const ws = await makeWorkspace("Pro");
+    await scheduleRequest(ws, "period_end", "starter", new Date(Date.now() - DAY));
+    await giveSubscription(ws, "active"); // a live subscription now owns the plan
+
+    await applyDuePlanChanges(db);
+    // The plan was NOT moved to Starter (the webhook owns it).
+    const [wsRow] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
+    expect(wsRow!.plan).toBe("Pro");
+    // The request was claimed (so it does not re-fire) and a skip row recorded.
+    const [req] = await db
+      .select({ appliedAt: planChangeRequests.appliedAt })
+      .from(planChangeRequests)
+      .where(eq(planChangeRequests.workspaceId, ws));
+    expect(req!.appliedAt).not.toBeNull();
+    const hist = await db
+      .select({ reason: workspacePlanHistory.reason })
+      .from(workspacePlanHistory)
+      .where(eq(workspacePlanHistory.workspaceId, ws));
+    expect(hist.some((h) => (h.reason ?? "").toLowerCase().includes("skipped"))).toBe(true);
   });
 
   it("writes a comp_revert history row for a comp_revert request", async () => {

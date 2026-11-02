@@ -317,10 +317,11 @@ export class AdminController {
 
   /* ── admin plan change + plan history (#992) ── */
 
-  /** #992 §1 — move a workspace's plan: immediately or at the end of the current
-   *  period, and (immediate) charge the prorated difference or comp it until a
-   *  date. A reason is required; the change is audited and lands in the
-   *  workspace's plan history. Returns the proration breakdown for a charge. */
+  /** #992 §1 (PR-A) — move a workspace's plan: immediately as a comp (grant
+   *  without payment, optional revert date) or at the end of the current period.
+   *  A reason is required; the change is audited and lands in the workspace's
+   *  plan history. Refused with 409 when a live provider subscription owns the
+   *  plan (needs the provider-backed path, PR-C). A real prorated charge is PR-C. */
   @Post("workspaces/:id/plan-change")
   changeWorkspacePlan(
     @Param("id", ParseUUIDPipe) id: string,

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import {
   adminAuditLog,
   and,
@@ -18,38 +18,34 @@ import { PlanManagementService } from "./plan-management.service.js";
 import type { AdminActor } from "../admin/admin-management.service.js";
 
 /* ============================================================
-   #992 — admin plan change + plan history, asserted on seeded rows (shared DB,
-   never on table counts).
+   #992 — admin plan change + plan history (PR-A slice), asserted on seeded rows
+   (shared DB, never on table counts).
 
-   Oracles are the issue's acceptance lines (§1, §7):
-     - an admin immediate upgrade with charge produces the EXACT prorated amount
-       (paise) and a plan_change history row;
-     - a comp with an end date moves the plan now, writes a comp_grant row and
-       schedules a comp_revert request for that date; applyDueChanges reverts it
-       once the date passes;
-     - a period-end change schedules a request at the period end, applied only
-       when the sweep runs after it;
+   Oracles (issue §1, §7, plus the PR-A review constraints):
+     - an immediate COMP moves the plan now, writes a comp_grant row, and (with
+       an end date) schedules a comp_revert the sweep applies after the date;
+     - a period-end change schedules a request applied only when the sweep runs
+       after the period end;
+     - an admin move on a workspace with an ACTIVE or TRIALING provider
+       subscription is REFUSED with a 409 (a webhook would overwrite the label);
+     - the sweep SKIPS (and records why) a scheduled change whose workspace
+       gained a live subscription after scheduling;
      - every admin action lands an admin_audit_log row.
 
-   Prices come from the seeded catalogue (starter ₹59/mo = 5900 paise, pro
-   ₹199/mo = 19900 paise), so a midpoint upgrade starter→pro charges exactly
-   (19900 − 5900) × 0.5 = 7000 paise.
-
-   Red-on-broken: break the proration multiply and the exact-amount assertion
-   fails; drop the comp-revert scheduling and the scheduled-request assertion
-   fails; drop writeAdminAuditEntry and the audit assertion fails; make
-   applyDueChanges non-idempotent and the double-sweep assertion fails.
+   Red-on-broken: drop the live-subscription refusal and the 409 test fails;
+   drop the sweep re-check and the skip test applies the move anyway; drop the
+   comp-revert scheduling and that assertion fails; make applyDueChanges
+   non-idempotent and the double-sweep assertion fails; drop writeAdminAuditEntry
+   and the audit assertion fails.
 
    DB-gated: skips with no DATABASE_URL.
    ============================================================ */
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeDb = DATABASE_URL ? describe : describe.skip;
-
-/** A 30-day period centred so a change "now" lands exactly at the midpoint. */
 const DAY = 24 * 3600_000;
 
-describeDb("PlanManagementService (#992)", () => {
+describeDb("PlanManagementService (#992 PR-A)", () => {
   let handle: ReturnType<typeof createDatabase>;
   let db: Database;
   let plans: PlansService;
@@ -61,18 +57,18 @@ describeDb("PlanManagementService (#992)", () => {
 
   const workspaceIds: string[] = [];
 
-  /** Fixed "now" the service reads, so proration is deterministic. */
+  /** Fixed "now" the service reads, so scheduling is deterministic. */
   let nowMs = Date.UTC(2026, 5, 15, 12, 0, 0);
   const setNow = (ms: number) => {
     nowMs = ms;
   };
+  const resetNow = () => setNow(Date.UTC(2026, 5, 15, 12, 0, 0));
 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
     plans = new PlansService(db);
-    // Make sure the catalogue is seeded so starter/pro prices resolve.
-    await plans.seedIfEmpty();
+    await plans.seedIfEmpty(); // starter/pro/team present for the key checks
     svc = new PlanManagementService(db, plans);
     svc.setClockForTesting(() => new Date(nowMs));
 
@@ -96,21 +92,30 @@ describeDb("PlanManagementService (#992)", () => {
     await handle?.close();
   });
 
-  /** A workspace with a monthly subscription whose period is [now−15d, now+15d],
-   *  so a change at `now` is the exact midpoint (unused fraction 0.5). */
-  async function makeWorkspaceOnStarter(): Promise<string> {
+  /** A plain workspace with NO provider subscription — an admin move is allowed.
+   *  Starts on Free. */
+  async function makeFreeWorkspace(): Promise<string> {
     const id = randomUUID();
-    await db.insert(workspaces).values({ id, name: "t", slug: `pm-${id.slice(0, 8)}`, plan: "Starter" });
-    await db.insert(subscriptions).values({
-      workspaceId: id,
-      planKey: "starter",
-      interval: "monthly",
-      provider: "razorpay",
-      status: "active",
-      currentPeriodEnd: new Date(nowMs + 15 * DAY),
-    });
+    await db.insert(workspaces).values({ id, name: "t", slug: `pm-${id.slice(0, 8)}`, plan: "Free" });
     workspaceIds.push(id);
     return id;
+  }
+
+  /** Give a workspace a provider subscription in the given status. */
+  async function giveSubscription(workspaceId: string, status: string, planKey = "starter"): Promise<void> {
+    await db.insert(subscriptions).values({
+      workspaceId,
+      planKey,
+      interval: "monthly",
+      provider: "razorpay",
+      status,
+      currentPeriodEnd: new Date(nowMs + 15 * DAY),
+    });
+  }
+
+  async function plan(workspaceId: string): Promise<string> {
+    const [row] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, workspaceId));
+    return row!.plan;
   }
 
   async function historyKinds(workspaceId: string): Promise<string[]> {
@@ -129,40 +134,8 @@ describeDb("PlanManagementService (#992)", () => {
     return rows.length;
   }
 
-  it("immediate upgrade with charge produces the exact prorated paise and a history row", async () => {
-    const ws = await makeWorkspaceOnStarter();
-    const result = await svc.adminChangePlan(
-      ws,
-      { toPlanKey: "pro", timing: "immediate", settlement: "charge", compEndsAt: null, reason: "Phone upgrade" },
-      actor,
-    );
-
-    expect(result.outcome).toBe("applied");
-    expect(result.settlement).toBe("charge");
-    // starter 5900 → pro 19900, midpoint (0.5): credit 2950, charge 9950, net 7000.
-    expect(result.proration).not.toBeNull();
-    expect(result.proration!.unusedFraction).toBeCloseTo(0.5, 6);
-    expect(result.proration!.oldPlanCreditMinor).toBe(2950);
-    expect(result.proration!.newPlanChargeMinor).toBe(9950);
-    expect(result.proration!.amountMinor).toBe(7000);
-    expect(result.proration!.direction).toBe("upgrade");
-
-    // The plan label moved and a plan_change row exists with the exact amount.
-    const [wsRow] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
-    expect(wsRow!.plan).toBe("Pro");
-    const [hist] = await db
-      .select()
-      .from(workspacePlanHistory)
-      .where(and(eq(workspacePlanHistory.workspaceId, ws), eq(workspacePlanHistory.kind, "plan_change")));
-    expect(hist!.amountMinor).toBe("7000");
-    expect(hist!.reason).toBe("Phone upgrade");
-    expect(hist!.settlement).toBe("charge");
-
-    expect(await auditCount("admin.workspace.plan_change", ws)).toBe(1);
-  });
-
-  it("a comp with an end date grants now and schedules a revert the sweep applies after the date", async () => {
-    const ws = await makeWorkspaceOnStarter();
+  it("an immediate comp with an end date grants now and schedules a revert the sweep applies after the date", async () => {
+    const ws = await makeFreeWorkspace();
     const compEndsAt = new Date(nowMs + 10 * DAY).toISOString();
     const result = await svc.adminChangePlan(
       ws,
@@ -175,80 +148,85 @@ describeDb("PlanManagementService (#992)", () => {
     expect(result.proration).toBeNull();
     expect(result.compEndsAt).toBe(compEndsAt);
 
-    // Plan moved to pro; a comp_grant row written; a comp_revert request pending.
-    const [wsRow] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
-    expect(wsRow!.plan).toBe("Pro");
+    expect(await plan(ws)).toBe("Pro");
     expect(await historyKinds(ws)).toContain("comp_grant");
+    expect(await auditCount("admin.workspace.plan_comp", ws)).toBe(1);
 
     const pending = await db
       .select()
       .from(planChangeRequests)
       .where(and(eq(planChangeRequests.workspaceId, ws), eq(planChangeRequests.kind, "comp_revert")));
     expect(pending.length).toBe(1);
-    expect(pending[0]!.toPlanKey).toBe("starter"); // reverts to what it was on
+    expect(pending[0]!.toPlanKey).toBe("free"); // reverts to what it was on
     expect(pending[0]!.appliedAt).toBeNull();
 
-    // Before the date: the sweep applies nothing for this workspace.
+    // Before the date: the sweep reverts nothing for this workspace.
     await svc.applyDueChanges();
-    const [stillPro] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
-    expect(stillPro!.plan).toBe("Pro");
+    expect(await plan(ws)).toBe("Pro");
 
-    // After the date: the sweep reverts it and records a comp_revert history row.
+    // After the date: reverted, and a comp_revert history row written.
     setNow(nowMs + 11 * DAY);
     const applied = await svc.applyDueChanges();
     expect(applied).toBeGreaterThanOrEqual(1);
-    const [reverted] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
-    expect(reverted!.plan).toBe("Starter");
+    expect(await plan(ws)).toBe("Free");
     expect(await historyKinds(ws)).toContain("comp_revert");
 
-    // Idempotent: a second sweep applies nothing more for this workspace.
-    const again = await svc.applyDueChanges();
+    // Idempotent: the request is applied, a second sweep does not re-run it.
     const revertRows = await db
-      .select({ id: planChangeRequests.id })
+      .select({ appliedAt: planChangeRequests.appliedAt })
       .from(planChangeRequests)
-      .where(and(eq(planChangeRequests.workspaceId, ws), eq(planChangeRequests.kind, "comp_revert"), eq(planChangeRequests.toPlanKey, "starter")));
-    // the one request is now applied, not re-applied.
+      .where(and(eq(planChangeRequests.workspaceId, ws), eq(planChangeRequests.kind, "comp_revert")));
     expect(revertRows.length).toBe(1);
-    void again;
-    setNow(Date.UTC(2026, 5, 15, 12, 0, 0));
+    expect(revertRows[0]!.appliedAt).not.toBeNull();
+    resetNow();
+  });
+
+  it("an immediate comp with no settlement field defaults to a comp", async () => {
+    const ws = await makeFreeWorkspace();
+    const result = await svc.adminChangePlan(
+      ws,
+      { toPlanKey: "pro", timing: "immediate", settlement: undefined, compEndsAt: null, reason: "default comp" },
+      actor,
+    );
+    expect(result.outcome).toBe("applied");
+    expect(result.settlement).toBe("comp");
+    expect(await plan(ws)).toBe("Pro");
+    expect(await historyKinds(ws)).toContain("comp_grant");
   });
 
   it("a period-end change schedules at the period end and the sweep applies it only after", async () => {
-    const ws = await makeWorkspaceOnStarter();
+    const ws = await makeFreeWorkspace();
     const result = await svc.adminChangePlan(
       ws,
-      { toPlanKey: "free", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "Downgrade at renewal" },
+      { toPlanKey: "team", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "Scheduled upgrade" },
       actor,
     );
     expect(result.outcome).toBe("scheduled");
     expect(result.timing).toBe("period_end");
-    // effectiveAt is the subscription's period end (now + 15d).
-    expect(new Date(result.effectiveAt).getTime()).toBe(nowMs + 15 * DAY);
+    expect(await auditCount("admin.workspace.plan_change_scheduled", ws)).toBe(1);
 
     const pending = await db
       .select()
       .from(planChangeRequests)
       .where(and(eq(planChangeRequests.workspaceId, ws), eq(planChangeRequests.kind, "period_end")));
     expect(pending.length).toBe(1);
-    expect(await auditCount("admin.workspace.plan_change_scheduled", ws)).toBe(1);
+    const effectiveMs = pending[0]!.effectiveAt.getTime();
 
-    // Sweep before the period end: still on Starter.
+    // Sweep before the effective instant: still on Free.
     await svc.applyDueChanges();
-    const [before] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
-    expect(before!.plan).toBe("Starter");
+    expect(await plan(ws)).toBe("Free");
 
-    // Sweep after: moved to Free with a plan_change history row.
-    setNow(nowMs + 16 * DAY);
+    // Sweep after: moved to Team with a plan_change history row.
+    setNow(effectiveMs + DAY);
     await svc.applyDueChanges();
-    const [after] = await db.select({ plan: workspaces.plan }).from(workspaces).where(eq(workspaces.id, ws));
-    expect(after!.plan).toBe("Free");
+    expect(await plan(ws)).toBe("Team");
     expect(await historyKinds(ws)).toContain("plan_change");
-    setNow(Date.UTC(2026, 5, 15, 12, 0, 0));
+    resetNow();
   });
 
   it("re-scheduling a period-end change replaces the pending request (one per kind)", async () => {
-    const ws = await makeWorkspaceOnStarter();
-    await svc.adminChangePlan(ws, { toPlanKey: "free", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "first" }, actor);
+    const ws = await makeFreeWorkspace();
+    await svc.adminChangePlan(ws, { toPlanKey: "starter", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "first" }, actor);
     await svc.adminChangePlan(ws, { toPlanKey: "team", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "second" }, actor);
     const pending = await db
       .select()
@@ -259,15 +237,80 @@ describeDb("PlanManagementService (#992)", () => {
     expect(pending[0]!.reason).toBe("second");
   });
 
-  it("rejects an unknown target plan", async () => {
-    const ws = await makeWorkspaceOnStarter();
+  it("refuses an admin move (comp, immediate, period-end) on an active provider subscription with a 409", async () => {
+    const ws = await makeFreeWorkspace();
+    await giveSubscription(ws, "active");
     await expect(
-      svc.adminChangePlan(ws, { toPlanKey: "nope-not-a-plan", timing: "immediate", settlement: "charge", compEndsAt: null, reason: "x" }, actor),
+      svc.adminChangePlan(ws, { toPlanKey: "pro", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "x" }, actor),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      svc.adminChangePlan(ws, { toPlanKey: "pro", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "x" }, actor),
+    ).rejects.toBeInstanceOf(ConflictException);
+    // The plan was not moved and no request was written.
+    expect(await plan(ws)).toBe("Free");
+    const reqs = await db.select({ id: planChangeRequests.id }).from(planChangeRequests).where(eq(planChangeRequests.workspaceId, ws));
+    expect(reqs.length).toBe(0);
+  });
+
+  it("refuses a move on a TRIALING subscription too", async () => {
+    const ws = await makeFreeWorkspace();
+    await giveSubscription(ws, "trialing");
+    await expect(
+      svc.adminChangePlan(ws, { toPlanKey: "pro", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "x" }, actor),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("ALLOWS a move on a non-live subscription (e.g. cancelled) — it does not own the plan", async () => {
+    const ws = await makeFreeWorkspace();
+    await giveSubscription(ws, "cancelled");
+    const result = await svc.adminChangePlan(
+      ws,
+      { toPlanKey: "pro", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "comp over cancelled" },
+      actor,
+    );
+    expect(result.outcome).toBe("applied");
+    expect(await plan(ws)).toBe("Pro");
+  });
+
+  it("the sweep SKIPS a scheduled change whose workspace gained a live subscription after scheduling, recording why", async () => {
+    const ws = await makeFreeWorkspace();
+    // Schedule a period-end change while unsubscribed (allowed).
+    await svc.adminChangePlan(ws, { toPlanKey: "team", timing: "period_end", settlement: undefined, compEndsAt: null, reason: "sched" }, actor);
+    const [req] = await db
+      .select()
+      .from(planChangeRequests)
+      .where(and(eq(planChangeRequests.workspaceId, ws), eq(planChangeRequests.kind, "period_end")));
+    const effectiveMs = req!.effectiveAt.getTime();
+
+    // A provider subscription appears before the change is due.
+    await giveSubscription(ws, "active", "pro");
+
+    // Sweep after the due instant: must NOT move the plan; records a skip row.
+    setNow(effectiveMs + DAY);
+    await svc.applyDueChanges();
+    expect(await plan(ws)).toBe("Free"); // NOT moved to Team
+    const [after] = await db
+      .select({ appliedAt: planChangeRequests.appliedAt })
+      .from(planChangeRequests)
+      .where(eq(planChangeRequests.id, req!.id));
+    expect(after!.appliedAt).not.toBeNull(); // claimed so it does not re-fire
+    const skip = await db
+      .select({ reason: workspacePlanHistory.reason })
+      .from(workspacePlanHistory)
+      .where(eq(workspacePlanHistory.workspaceId, ws));
+    expect(skip.some((r) => (r.reason ?? "").toLowerCase().includes("skipped"))).toBe(true);
+    resetNow();
+  });
+
+  it("rejects an unknown target plan", async () => {
+    const ws = await makeFreeWorkspace();
+    await expect(
+      svc.adminChangePlan(ws, { toPlanKey: "nope-not-a-plan", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "x" }, actor),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it("rejects a comp end date in the past", async () => {
-    const ws = await makeWorkspaceOnStarter();
+    const ws = await makeFreeWorkspace();
     const past = new Date(nowMs - DAY).toISOString();
     await expect(
       svc.adminChangePlan(ws, { toPlanKey: "pro", timing: "immediate", settlement: "comp", compEndsAt: past, reason: "x" }, actor),
@@ -276,21 +319,20 @@ describeDb("PlanManagementService (#992)", () => {
 
   it("404s plan-change and history for an unknown workspace", async () => {
     await expect(
-      svc.adminChangePlan(randomUUID(), { toPlanKey: "pro", timing: "immediate", settlement: "charge", compEndsAt: null, reason: "x" }, actor),
+      svc.adminChangePlan(randomUUID(), { toPlanKey: "pro", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "x" }, actor),
     ).rejects.toBeInstanceOf(NotFoundException);
     await expect(svc.history(randomUUID())).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("history returns the workspace's rows newest-first", async () => {
-    const ws = await makeWorkspaceOnStarter();
-    await svc.adminChangePlan(ws, { toPlanKey: "pro", timing: "immediate", settlement: "charge", compEndsAt: null, reason: "one" }, actor);
+    const ws = await makeFreeWorkspace();
+    await svc.adminChangePlan(ws, { toPlanKey: "pro", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "one" }, actor);
     setNow(nowMs + 60_000);
-    await svc.adminChangePlan(ws, { toPlanKey: "team", timing: "immediate", settlement: "charge", compEndsAt: null, reason: "two" }, actor);
+    await svc.adminChangePlan(ws, { toPlanKey: "team", timing: "immediate", settlement: "comp", compEndsAt: null, reason: "two" }, actor);
     const list = await svc.history(ws);
     expect(list.items.length).toBeGreaterThanOrEqual(2);
-    // newest first: the most recent change (to team) is first.
     expect(list.items[0]!.toPlanKey).toBe("team");
     expect(list.items[0]!.reason).toBe("two");
-    setNow(Date.UTC(2026, 5, 15, 12, 0, 0));
+    resetNow();
   });
 });

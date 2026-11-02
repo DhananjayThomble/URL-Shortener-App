@@ -1,13 +1,16 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   AdminPlanChangeInput,
   type AdminPlanChangeResult,
   type PlanHistoryEntry,
   type PlanHistoryList,
-  type PriceCurrency,
-  type ProrationBreakdown,
-  prorate,
-  type ProrationResult,
 } from "@snapurl/contract";
 import {
   and,
@@ -30,24 +33,31 @@ import { PlansService } from "./plans.service.js";
 /* ============================================================
    #992 — admin plan-change + per-workspace plan history (billing 6/6).
 
-   The one place an ADMIN moves a workspace's plan with the SaaS options the
-   issue calls for (§1): immediately or at the end of the current period, and —
-   for an immediate change — either charging the prorated difference or comping
-   it (granting the plan with no payment, optionally until a date after which the
-   workspace reverts). Every change records a reason, lands in the admin audit
-   log, and is written to the workspace's plan history.
+   The one place an ADMIN moves a workspace's plan with the SaaS options this
+   PR-A slice carries (§1): immediately as a COMP (granting the plan with no
+   payment, optionally until a date after which the workspace reverts) or at the
+   end of the current period. Every change records a reason, lands in the admin
+   audit log, and is written to the workspace's plan history.
 
    This EXTENDS the #969 manual plan set rather than adding a second path: #969
-   wrote workspaces.plan and an audit row with no billing meaning; this computes
-   the proration, schedules or applies the move, and records the richer history.
-   A workspace's plan column holds a display label (#986's planLabel), so the key
-   is the join point and the label is derived here in one place.
+   wrote workspaces.plan and an audit row with no billing meaning; this schedules
+   or applies the move and records the richer history. A workspace's plan column
+   holds a display label (#986's planLabel), so the key is the join point and the
+   label is derived here in one place.
 
-   Invariant kept from #986: a PAID plan still only becomes entitled from a
-   verified webhook OR an explicit admin comp. A "charge" settlement here records
-   the admin's INTENT and the prorated amount in history and moves the plan
-   label, but it does not fabricate a provider payment — the actual charge is the
-   provider's, and the comp is the one audited exception that grants without one.
+   Two invariants from #986/#988:
+   - A PAID plan only becomes entitled from a verified webhook; the comp is the
+     one audited exception that grants without a payment. A real prorated CHARGE
+     is NOT in PR-A — it must run through the provider and apply on the webhook,
+     which is PR-C; a settlement that merely relabelled the plan here would be a
+     free upgrade dressed up as a charge.
+   - A workspace with an ACTIVE or TRIALING provider subscription has its plan
+     OWNED by that subscription: the next webhook re-mirrors sub.planKey onto
+     workspaces.plan, so an admin label move would be silently undone. The admin
+     path refuses such a workspace with a 409, and the scheduled-change sweep
+     re-checks and skips (recording why) if a subscription appeared after
+     scheduling. The proration engine (@snapurl/contract) ships in PR-A for PR-C
+     and self-serve to use; PR-A itself invokes no charge.
    ============================================================ */
 
 /** Display label for workspaces.plan from a plan key, matching #986's
@@ -58,10 +68,6 @@ export function planLabelFromKey(planKey: string): string {
   if (k.length === 0) return "Free";
   return k.charAt(0).toUpperCase() + k.slice(1).toLowerCase();
 }
-
-/** The primary interval a workspace is billed on, defaulting to monthly when it
- *  has no paid subscription (a free→paid move prices against monthly). */
-type Interval = "monthly" | "yearly";
 
 @Injectable()
 export class PlanManagementService {
@@ -82,8 +88,17 @@ export class PlanManagementService {
   }
 
   /**
-   * Apply an admin plan change to a workspace (issue §1). Returns what was
-   * applied or scheduled plus the proration breakdown for an immediate charge.
+   * Apply an admin plan change to a workspace (issue §1), PR-A slice.
+   *
+   * An immediate change is a COMP (grant without payment, optional revert date);
+   * a period-end change is scheduled. A real prorated CHARGE is not in PR-A — it
+   * must run through the provider and apply on the verified webhook (PR-C).
+   *
+   * Refused with a 409 when the workspace has an ACTIVE or TRIALING provider
+   * subscription: a provider webhook re-mirrors sub.planKey onto workspaces.plan
+   * on its next event, which would silently undo this admin move (or revert a
+   * comp) and leave the subscription and the plan disagreeing. Such a workspace
+   * needs a provider-backed change (PR-C), not a label move here.
    */
   async adminChangePlan(
     workspaceId: string,
@@ -93,6 +108,16 @@ export class PlanManagementService {
     const input = AdminPlanChangeInput.parse(rawInput);
 
     const ws = await this.requireWorkspace(workspaceId);
+
+    // A workspace whose plan is owned by a live provider subscription cannot be
+    // moved by a label write here — the next webhook would overwrite it. Refuse
+    // with a named 409 pointing at the provider-backed path (PR-C).
+    if (await this.hasLiveProviderSubscription(workspaceId)) {
+      throw new ConflictException(
+        "This workspace has an active provider subscription; its plan must change through a provider-backed billing action, not an admin plan move.",
+      );
+    }
+
     const fromPlanKey = await this.currentPlanKey(workspaceId, ws.plan);
 
     // The target plan must be a known catalogue key (fail closed: an unknown key
@@ -106,73 +131,8 @@ export class PlanManagementService {
     if (input.timing === "period_end") {
       return this.schedulePeriodEnd(workspaceId, fromPlanKey, toPlanKey, input.reason, actor);
     }
-    // Immediate.
-    if (input.settlement === "comp") {
-      return this.applyComp(workspaceId, fromPlanKey, toPlanKey, input.compEndsAt, input.reason, actor);
-    }
-    return this.applyImmediateCharge(workspaceId, fromPlanKey, toPlanKey, input.reason, actor);
-  }
-
-  /* ── immediate: charge the prorated difference ── */
-
-  private async applyImmediateCharge(
-    workspaceId: string,
-    fromPlanKey: string,
-    toPlanKey: string,
-    reason: string,
-    actor: AdminActor,
-  ): Promise<AdminPlanChangeResult> {
-    const { interval, periodStartMs, periodEndMs } = await this.currentPeriod(workspaceId);
-    const currency = this.currencyFor(toPlanKey, fromPlanKey);
-    const oldPeriodPriceMinor = await this.periodPriceMinor(fromPlanKey, interval, currency);
-    const newPeriodPriceMinor = await this.periodPriceMinor(toPlanKey, interval, currency);
-
-    const now = this.now();
-    const result: ProrationResult = prorate({
-      oldPeriodPriceMinor,
-      newPeriodPriceMinor,
-      periodStartMs,
-      periodEndMs,
-      changeAtMs: now.getTime(),
-      currency,
-    });
-    const breakdown = toBreakdown(result);
-
-    await this.db.transaction(async (tx) => {
-      await this.moveWorkspacePlan(tx, workspaceId, toPlanKey);
-      await this.writeHistory(tx, {
-        workspaceId,
-        kind: "plan_change",
-        fromPlanKey,
-        toPlanKey,
-        timing: "immediate",
-        settlement: "charge",
-        amountMinor: String(result.amountMinor),
-        currency,
-        reason,
-        actor,
-        effectiveAt: now,
-        metadata: { proration: breakdown },
-      });
-      await this.audit(tx, workspaceId, actor, "admin.workspace.plan_change", {
-        from: fromPlanKey,
-        to: toPlanKey,
-        timing: "immediate",
-        settlement: "charge",
-        amountMinor: result.amountMinor,
-        reason,
-      });
-    });
-
-    return {
-      outcome: "applied",
-      toPlanKey,
-      timing: "immediate",
-      settlement: "charge",
-      effectiveAt: now.toISOString(),
-      compEndsAt: null,
-      proration: breakdown,
-    };
+    // Immediate — always a comp in PR-A.
+    return this.applyComp(workspaceId, fromPlanKey, toPlanKey, input.compEndsAt, input.reason, actor);
   }
 
   /* ── immediate: comp (grant without payment, optional revert) ── */
@@ -252,8 +212,7 @@ export class PlanManagementService {
     reason: string,
     actor: AdminActor,
   ): Promise<AdminPlanChangeResult> {
-    const { periodEndMs } = await this.currentPeriod(workspaceId);
-    const effectiveAt = new Date(periodEndMs);
+    const effectiveAt = await this.nextPeriodEnd(workspaceId);
 
     await this.db.transaction(async (tx) => {
       await this.upsertPendingRequest(tx, {
@@ -306,6 +265,13 @@ export class PlanManagementService {
 
     let applied = 0;
     for (const req of due) {
+      // Re-check at apply time: if a live provider subscription appeared on this
+      // workspace AFTER the change was scheduled, the next webhook would
+      // overwrite workspaces.plan — so skip this request rather than apply a
+      // move that would be silently undone. Claim the row (mark it applied so it
+      // does not re-fire every sweep) and record WHY it was skipped in history.
+      const liveSub = await this.hasLiveProviderSubscription(req.workspaceId);
+
       const didApply = await this.db.transaction(async (tx) => {
         // Claim the row: only proceed if THIS tx flips appliedAt from null.
         const [claimed] = await tx
@@ -314,6 +280,26 @@ export class PlanManagementService {
           .where(and(eq(planChangeRequests.id, req.id), isNull(planChangeRequests.appliedAt)))
           .returning({ id: planChangeRequests.id });
         if (!claimed) return false;
+
+        if (liveSub) {
+          // Skipped: a provider subscription now owns this workspace's plan.
+          await this.writeHistory(tx, {
+            workspaceId: req.workspaceId,
+            kind: "plan_change",
+            fromPlanKey: req.fromPlanKey,
+            toPlanKey: req.toPlanKey,
+            timing: req.kind === "comp_revert" ? null : "period_end",
+            settlement: null,
+            amountMinor: null,
+            currency: null,
+            reason: `Skipped: a provider subscription now owns this workspace's plan (was: ${req.reason ?? ""})`,
+            actorId: req.actorId,
+            actorLabel: req.actorLabel,
+            effectiveAt: now,
+            metadata: { skipped: true, requestKind: req.kind, requestedToPlanKey: req.toPlanKey },
+          });
+          return false; // claimed+recorded, but not counted as an applied move
+        }
 
         await this.moveWorkspacePlan(tx, req.workspaceId, req.toPlanKey);
         await this.writeHistory(tx, {
@@ -369,51 +355,37 @@ export class PlanManagementService {
     return (planLabel ?? "free").trim().toLowerCase() || "free";
   }
 
-  /** The current paid period bounds + interval for proration. When the workspace
-   *  has a subscription with a period end we use it and derive the start from
-   *  the interval; otherwise we assume a monthly period starting now (a free→
-   *  paid immediate move prorates the whole new period). */
-  private async currentPeriod(workspaceId: string): Promise<{
-    interval: Interval;
-    periodStartMs: number;
-    periodEndMs: number;
-  }> {
-    const nowMs = this.now().getTime();
+  /** Whether the workspace has a provider subscription in a state that OWNS its
+   *  plan — active or trialing. While one exists, a verified provider webhook
+   *  re-mirrors sub.planKey onto workspaces.plan on its next event, so an admin
+   *  label move here would be silently undone: the admin path refuses, and the
+   *  scheduled-change sweep skips. Any other subscription state (created,
+   *  cancelled, expired, …) does not own the plan, so an admin move is allowed. */
+  private async hasLiveProviderSubscription(workspaceId: string): Promise<boolean> {
     const [sub] = await this.db
-      .select({
-        interval: subscriptions.interval,
-        currentPeriodEnd: subscriptions.currentPeriodEnd,
-      })
+      .select({ status: subscriptions.status })
       .from(subscriptions)
       .where(eq(subscriptions.workspaceId, workspaceId))
       .limit(1);
+    return !!sub && (sub.status === "active" || sub.status === "trialing");
+  }
 
-    const interval: Interval = sub?.interval === "yearly" ? "yearly" : "monthly";
-    const periodMs = interval === "yearly" ? 365 * 24 * 3600_000 : 30 * 24 * 3600_000;
-
-    if (sub?.currentPeriodEnd) {
-      const periodEndMs = sub.currentPeriodEnd.getTime();
-      return { interval, periodStartMs: periodEndMs - periodMs, periodEndMs };
+  /** When a period-end change should take effect: the end of the workspace's
+   *  current paid period if a subscription row carries one, else ~30 days out (a
+   *  monthly period) from now. A live-subscription workspace never reaches here
+   *  (it is refused upstream), so this covers a lapsed/created row's period end
+   *  or a free workspace with none. */
+  private async nextPeriodEnd(workspaceId: string): Promise<Date> {
+    const [sub] = await this.db
+      .select({ currentPeriodEnd: subscriptions.currentPeriodEnd })
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+    const now = this.now();
+    if (sub?.currentPeriodEnd && sub.currentPeriodEnd.getTime() > now.getTime()) {
+      return sub.currentPeriodEnd;
     }
-    return { interval, periodStartMs: nowMs, periodEndMs: nowMs + periodMs };
-  }
-
-  /** The full-period list price of a plan key at an interval, minor units. An
-   *  unpriced plan (free, or a plan with no price for that interval/currency)
-   *  reads as 0 — a free plan costs nothing, so the proration against it is just
-   *  the other plan's prorated amount. */
-  private async periodPriceMinor(planKey: string, interval: Interval, currency: PriceCurrency): Promise<number> {
-    const price = await this.plans.livePriceMinor(planKey, interval, currency);
-    return price ?? 0;
-  }
-
-  /** The currency to prorate in: the target plan's primary, else the source
-   *  plan's, else INR. */
-  private currencyFor(toPlanKey: string, fromPlanKey: string): PriceCurrency {
-    void fromPlanKey;
-    // Both plans are priced in the same primary currency in this build (INR);
-    // read the target's primary so a USD-priced plan prorates in USD.
-    return "INR";
+    return new Date(now.getTime() + 30 * 24 * 3600_000);
   }
 
   private async moveWorkspacePlan(tx: Transaction, workspaceId: string, toPlanKey: string): Promise<void> {
@@ -524,18 +496,6 @@ export class PlanManagementService {
     if (!ws) throw new NotFoundException("No such workspace.");
     return ws;
   }
-}
-
-/** Map a ProrationResult onto the wire breakdown shape. */
-function toBreakdown(r: ProrationResult): ProrationBreakdown {
-  return {
-    amountMinor: r.amountMinor,
-    oldPlanCreditMinor: r.oldPlanCreditMinor,
-    newPlanChargeMinor: r.newPlanChargeMinor,
-    unusedFraction: r.unusedFraction,
-    direction: r.direction,
-    currency: r.currency,
-  };
 }
 
 /** Map a stored history row onto the wire entry. */

@@ -565,10 +565,11 @@ route({
   params: IdParam,
   body: refs.AdminPlanChangeInput,
   responses: {
-    200: { description: "What was applied or scheduled, with the proration breakdown for a charge", schema: refs.AdminPlanChangeResult },
+    200: { description: "What was applied (immediate comp) or scheduled (period end)", schema: refs.AdminPlanChangeResult },
     400: { description: "An unknown plan, an invalid change, or a comp end date not in the future" },
     403: { description: "The caller is not a platform admin" },
     404: { description: "No such workspace" },
+    409: { description: "The workspace has an active provider subscription; it needs a provider-backed change" },
   },
 });
 
