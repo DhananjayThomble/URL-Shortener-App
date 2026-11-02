@@ -1,0 +1,29 @@
+Vendored disposable-email blocklist — provenance
+=================================================
+
+Data file:  disposable-email-blocklist.conf (one registrable host per line,
+            lower-cased, sorted, no comments or blank lines).
+
+Upstream:   disposable-email-domains/disposable-email-domains
+            https://github.com/disposable-email-domains/disposable-email-domains
+            File: disposable_email_blocklist.conf
+
+Pinned commit (the exact snapshot vendored here — NEVER a moving ref):
+            fe48a3092fd7749893732f1c089730acccd78817
+
+Pinned on:  2026-11-02   (upstream commit date 2026-11-02T06:45:14Z)
+Entry count at pin: 10123 upstream, 10123 vendored (see the generated module's VENDORED count; the raw
+            .conf is kept byte-for-identical to upstream for a clean diff, so
+            allow-listed domains are filtered out only when the .ts module is
+            generated — see scripts/refresh-disposable-emails.mjs).
+
+Licence:    CC0-1.0 (public domain). The upstream list carries no copyright and
+            imposes no attribution or share-alike obligation. The full
+            dedication is reproduced in ../disposable-email-domains.LICENCE.
+
+Refresh:    scripts/refresh-disposable-emails.mjs pulls a chosen upstream commit,
+            applies the built-in allow list (disposable-email-allowlist.ts), and
+            rewrites both this .conf and the generated disposable-email-domains.ts.
+            It is run BY HAND or by the weekly refresh workflow
+            (.github/workflows/disposable-email-refresh.yml), which opens a PR a
+            human reviews. The list is NEVER fetched while the app runs.
