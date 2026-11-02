@@ -212,11 +212,34 @@ export const ChangePlanInput = z.object({
 });
 export type ChangePlanInput = z.infer<typeof ChangePlanInput>;
 
+/** #992 §6 — the fixed set of reasons a cancellation can cite, so the admin
+ *  panel groups them without parsing free text. `other` pairs with the optional
+ *  comment for anything not listed. */
+export const CANCELLATION_REASONS = [
+  "too_expensive",
+  "missing_features",
+  "switched_service",
+  "no_longer_needed",
+  "technical_issues",
+  "other",
+] as const;
+export const CancellationReason = z.enum(CANCELLATION_REASONS);
+export type CancellationReason = (typeof CANCELLATION_REASONS)[number];
+
 /** POST /billing/cancel — schedule the subscription to end. `atPeriodEnd` true
  *  (the default the UI sends) keeps the plan live until the paid period ends;
  *  false cancels immediately. Either way the plan only actually moves when the
- *  provider's cancellation webhook arrives verified. */
+ *  provider's cancellation webhook arrives verified.
+ *
+ *  #992 §6 — an optional reason picker and free-text comment. Both are optional
+ *  so an existing caller (and a cancel with no survey) still works; when given,
+ *  they are recorded on the subscription and shown to the admin, who sees WHY a
+ *  workspace cancelled. */
 export const CancelSubscriptionInput = z.object({
   atPeriodEnd: z.boolean().default(true),
+  /** Why the owner is cancelling, from the fixed set, or omitted. */
+  reason: CancellationReason.optional(),
+  /** An optional free-text comment (required nowhere; capped). */
+  comment: z.string().trim().max(1000).optional(),
 });
 export type CancelSubscriptionInput = z.infer<typeof CancelSubscriptionInput>;
