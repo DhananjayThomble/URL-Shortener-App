@@ -554,6 +554,37 @@ route({
   },
 });
 
+/* #992 — admin plan change + per-workspace plan history. */
+
+route({
+  method: "post",
+  path: "/admin/workspaces/{id}/plan-change",
+  tag: "Admin",
+  summary:
+    "Change a workspace's plan: immediately (charge prorated difference or comp until a date) or at period end — reason required, audited, in plan history",
+  params: IdParam,
+  body: refs.AdminPlanChangeInput,
+  responses: {
+    200: { description: "What was applied (immediate comp) or scheduled (period end)", schema: refs.AdminPlanChangeResult },
+    400: { description: "An unknown plan, an invalid change, or a comp end date not in the future" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace" },
+    409: { description: "The workspace has an active provider subscription; it needs a provider-backed change" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/workspaces/{id}/plan-history",
+  tag: "Admin",
+  summary: "A workspace's plan history: every change, comp, payment, refund and cancellation, newest first",
+  params: IdParam,
+  responses: {
+    200: { description: "The workspace's plan history", schema: refs.PlanHistoryList },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such workspace" },
+  },
+});
 
 /* ── billing views + admin refund (#989) ── */
 
