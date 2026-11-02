@@ -185,16 +185,22 @@ export type KillSwitchesInput = z.infer<typeof KillSwitchesInput>;
  *  a fresh deploy's mail and error reporting, so their failure mode keeps the
  *  shipped behaviour and only an explicit operator OFF stops them.
  *
- *  Caps ship generous-but-finite: a real stop is the operator lowering them,
- *  while the default never gets in the way of normal traffic. */
+ *  Caps ship as conservative INITIAL HARD LIMITS (#1030), not generous ceilings:
+ *  a fresh install starts tight on purpose and the operator RAISES them from the
+ *  admin panel as real usage grows. 10,000 custom domains would mean 10,000
+ *  CloudFront SaaS tenants (#967), each with its own cost, so the shipped total
+ *  is deliberately small. These defaults apply ONLY to a fresh install or an
+ *  unset value — a cap the operator has already stored WINS and is never pulled
+ *  back down to a default (see foldKillSwitches, which overlays stored values on
+ *  top of these). */
 export const DEFAULT_KILL_SWITCHES: KillSwitchesSetting = {
   "billing.checkout": { on: false },
   "billing.planChanges": { on: false },
   "billing.coupons": { on: false },
   "billing.trials": { on: false },
   "billing.refunds": { on: false },
-  "customDomains.create": { on: false, domainCaps: { totalMax: 10_000, perDay: 500 } },
-  "email.outbound": { on: true, emailCaps: { perHour: 5_000, perDay: 50_000 } },
+  "customDomains.create": { on: false, domainCaps: { totalMax: 25, perDay: 5 } },
+  "email.outbound": { on: true, emailCaps: { perHour: 200, perDay: 2_000 } },
   errorTracking: { on: true, errorCaps: { sampleRate: 1 } },
   "linkScanning.rescans": { on: true },
 };

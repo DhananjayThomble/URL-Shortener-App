@@ -196,6 +196,10 @@ function KillSwitchForm({ view }: { view: KillSwitchesView }) {
       <Card>
         <CardHeader title="Hard caps" />
         <CardBody className="space-y-4">
+          <p className="text-[11.5px] text-ink-3">
+            These ship as conservative <strong>initial hard limits</strong> &mdash; you raise them here on purpose as
+            real usage grows. A cap you have already saved stays put; only unset values use the shipped default.
+          </p>
           <div>
             <p className="text-sm font-medium text-ink-2">Custom domains</p>
             <div className="mt-1 flex flex-wrap gap-4">
