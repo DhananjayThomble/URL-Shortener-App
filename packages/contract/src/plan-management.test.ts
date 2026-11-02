@@ -6,6 +6,7 @@ import {
   PLAN_HISTORY_KINDS,
   PlanHistoryEntry,
   PlanHistoryKind,
+  PlanHistoryList,
 } from "./plan-management.js";
 
 function base(over: Record<string, unknown> = {}) {
@@ -40,22 +41,40 @@ describe("AdminPlanChangeInput", () => {
     expect(v.settlement).toBeUndefined();
   });
 
-  it("rejects an immediate change with no settlement", () => {
+  /** The zod error path for the first issue of a failed parse, so a test can
+   *  assert WHICH field the validation blamed (not just that it threw). */
+  function firstIssuePath(value: unknown): (string | number)[] {
+    const r = AdminPlanChangeInput.safeParse(value);
+    expect(r.success).toBe(false);
+    return r.success ? [] : r.error.issues[0]!.path;
+  }
+
+  it("rejects an immediate change with no settlement, blaming the settlement field", () => {
     expect(() => AdminPlanChangeInput.parse(base({ settlement: undefined }))).toThrow(
       /charge or comp/,
     );
+    expect(firstIssuePath(base({ settlement: undefined }))).toEqual(["settlement"]);
   });
 
-  it("rejects a comp end date on a non-comp settlement", () => {
+  it("rejects a comp end date on a non-comp settlement, blaming compEndsAt", () => {
     expect(() =>
       AdminPlanChangeInput.parse(base({ settlement: "charge", compEndsAt: "2026-12-31T00:00:00.000Z" })),
     ).toThrow(/comp end date only applies/);
+    expect(firstIssuePath(base({ settlement: "charge", compEndsAt: "2026-12-31T00:00:00.000Z" }))).toEqual([
+      "compEndsAt",
+    ]);
   });
 
-  it("rejects a comp scheduled for period end", () => {
+  it("rejects a comp scheduled for period end, blaming the settlement field", () => {
     expect(() =>
       AdminPlanChangeInput.parse(base({ timing: "period_end", settlement: "comp" })),
     ).toThrow(/takes effect immediately/);
+    expect(firstIssuePath(base({ timing: "period_end", settlement: "comp" }))).toEqual(["settlement"]);
+  });
+
+  it("trims the plan key", () => {
+    const v = AdminPlanChangeInput.parse(base({ toPlanKey: "  pro  " }));
+    expect(v.toPlanKey).toBe("pro");
   });
 
   it("rejects an empty reason", () => {
@@ -140,6 +159,35 @@ describe("PlanHistoryEntry", () => {
       createdAt: "2026-11-02T00:00:00.000Z",
     });
     expect(e.amountMinor).toBeNull();
+  });
+});
+
+describe("PlanHistoryList", () => {
+  it("requires items to be an array of entries", () => {
+    const ok = PlanHistoryList.parse({
+      items: [
+        {
+          id: "1",
+          kind: "payment",
+          fromPlanKey: null,
+          toPlanKey: null,
+          timing: null,
+          settlement: null,
+          amountMinor: "100",
+          currency: "INR",
+          reason: null,
+          actor: null,
+          effectiveAt: "2026-11-02T00:00:00.000Z",
+          createdAt: "2026-11-02T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(ok.items).toHaveLength(1);
+    expect(ok.items[0]!.kind).toBe("payment");
+    // A non-array items, or a missing items, is rejected (proves items is part
+    // of the shape, not stripped).
+    expect(() => PlanHistoryList.parse({ items: "nope" })).toThrow();
+    expect(() => PlanHistoryList.parse({})).toThrow();
   });
 });
 
