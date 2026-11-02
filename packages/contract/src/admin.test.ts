@@ -1090,23 +1090,47 @@ describe("DisposableEmailSetting (#993)", () => {
     expect(DisposableEmailSetting.safeParse({ extraDomains: ["x".repeat(254)] }).success).toBe(false);
     expect(DisposableEmailSetting.safeParse({ extraDomains: Array(5_001).fill("a.test") }).success).toBe(false);
   });
+
+  it("#1007 — defaults allowDomains to an empty list when absent", () => {
+    const parsed = DisposableEmailSetting.parse({ extraDomains: [] });
+    expect(parsed.allowDomains).toEqual([]);
+  });
+
+  it("#1007 — accepts and trims an allowDomains list", () => {
+    const parsed = DisposableEmailSetting.parse({
+      extraDomains: [],
+      allowDomains: ["  real-provider.test  ", "proton.me"],
+    });
+    expect(parsed.allowDomains).toEqual(["real-provider.test", "proton.me"]);
+  });
+
+  it("#1007 — rejects empty, over-long, or an over-long allowDomains list", () => {
+    expect(DisposableEmailSetting.safeParse({ extraDomains: [], allowDomains: [""] }).success).toBe(false);
+    expect(DisposableEmailSetting.safeParse({ extraDomains: [], allowDomains: ["x".repeat(254)] }).success).toBe(false);
+    expect(
+      DisposableEmailSetting.safeParse({ extraDomains: [], allowDomains: Array(5_001).fill("a.test") }).success,
+    ).toBe(false);
+  });
 });
 
-describe("SignupRefusalReason (#993)", () => {
-  it("accepts exactly the five reason codes", () => {
-    for (const r of [
+describe("SignupRefusalReason (#993, #1007)", () => {
+  it("accepts exactly the six reason codes", () => {
+    const codes = [
       "disposable_email",
       "bot_challenge_missing",
       "bot_challenge_failed",
       "new_account_cap_day",
       "new_account_cap_hour",
-    ]) {
+      "email_domain_no_mail",
+    ];
+    for (const r of codes) {
       expect(SignupRefusalReason.safeParse(r).success).toBe(true);
     }
+    expect(SignupRefusalReason.options).toHaveLength(codes.length);
   });
 
   it("rejects an unknown reason code", () => {
-    for (const r of ["spam", "bot", "cap", "", "DISPOSABLE_EMAIL"]) {
+    for (const r of ["spam", "bot", "cap", "", "DISPOSABLE_EMAIL", "email_domain_ok"]) {
       expect(SignupRefusalReason.safeParse(r).success).toBe(false);
     }
   });

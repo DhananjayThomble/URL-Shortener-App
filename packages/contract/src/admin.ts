@@ -615,7 +615,16 @@ export type BotProtectionSetting = z.infer<typeof BotProtectionSetting>;
  *  list catches it. Lower-cased, de-duped and bounded by the API on write. A
  *  bare host each (no scheme/path/@), the same shape the blocklist enforces. */
 export const DisposableEmailSetting = z.object({
+  /** The operator's additions to the block list — extra throwaway domains to
+   *  refuse, on top of the vendored list. */
   extraDomains: z.array(z.string().trim().min(1).max(253)).max(5_000),
+  /** #1007 — the operator's ALLOW list: domains that must never be refused,
+   *  overriding BOTH the vendored block list AND `extraDomains`. For a real
+   *  provider wrongly swept into the ~10k vendored list, an admin adds it here
+   *  and the fix is live within the settings-cache window, no release needed.
+   *  Beats the built-in allow list too (it is simply folded in with it). Bare
+   *  hosts, lower-cased, de-duped and bounded by the API on write. */
+  allowDomains: z.array(z.string().trim().min(1).max(253)).max(5_000).default([]),
 });
 export type DisposableEmailSetting = z.infer<typeof DisposableEmailSetting>;
 
@@ -630,13 +639,19 @@ export type DisposableEmailSetting = z.infer<typeof DisposableEmailSetting>;
  *                               challenge token.
  *   - bot_challenge_failed    — the token was present but siteverify rejected it.
  *   - new_account_cap_day     — the N+1th link in a new account's rolling day.
- *   - new_account_cap_hour    — the N+1th link in a new account's rolling hour. */
+ *   - new_account_cap_hour    — the N+1th link in a new account's rolling hour.
+ *   - email_domain_no_mail    — the email domain DEFINITIVELY cannot receive
+ *                               mail: DNS reported no MX and no A/AAAA record
+ *                               (NXDOMAIN, or NODATA for all three). A DNS
+ *                               timeout or error never produces this — the
+ *                               check fails open (#1007). */
 export const SignupRefusalReason = z.enum([
   "disposable_email",
   "bot_challenge_missing",
   "bot_challenge_failed",
   "new_account_cap_day",
   "new_account_cap_hour",
+  "email_domain_no_mail",
 ]);
 export type SignupRefusalReason = z.infer<typeof SignupRefusalReason>;
 

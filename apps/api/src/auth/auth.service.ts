@@ -47,8 +47,10 @@ import { MailService } from "../mail/mail.service.js";
 import { PlatformSettingsService } from "../admin/platform-settings.service.js";
 import { BotProtectionService } from "./bot-protection.service.js";
 import { SignupRefusalService } from "./signup-refusal.service.js";
-import { isDisposableEmail } from "../common/disposable-email.js";
+import { MailDomainService } from "./mail-domain.service.js";
+import { emailDomain, hostCoveredByAny, isDisposableEmail } from "../common/disposable-email.js";
 import { VENDORED_DISPOSABLE_EMAIL_DOMAINS } from "../common/disposable-email-domains.js";
+import { DISPOSABLE_EMAIL_ALLOWLIST } from "../common/disposable-email-allowlist.js";
 
 /** "Dhananjay Thomble" → "DT". The UI renders these in avatars. The rule lives in
  *  @snapurl/domain so the web editor's live preview computes the identical value
@@ -92,6 +94,7 @@ export class AuthService {
     private readonly settings: PlatformSettingsService,
     private readonly botProtection: BotProtectionService,
     private readonly refusals: SignupRefusalService,
+    private readonly mailDomain: MailDomainService,
   ) {}
 
   /* #993 — the two new-account admission checks shared by the password register
@@ -119,14 +122,33 @@ export class AuthService {
       );
     }
 
-    /* Disposable-email refusal: the vendored list plus the operator's runtime
-       additions, matched case-insensitively and across sub-domains. */
+    /* Disposable-email refusal: the vendored block list plus the operator's
+       runtime additions, matched case-insensitively and across sub-domains.
+       #1007 — the allow list BEATS the block list: the built-in allow list
+       (major providers + privacy relays) and the operator's admin allow entries
+       are folded in, and a host they cover is never refused, whatever the block
+       list says. So a real provider wrongly caught by the ~10k vendored list, or
+       by an over-broad admin addition, still gets through. */
     const { disposableEmails } = await this.settings.getValues();
     const domains = [...VENDORED_DISPOSABLE_EMAIL_DOMAINS, ...disposableEmails.extraDomains];
-    if (isDisposableEmail(email, domains)) {
+    const allow = [...DISPOSABLE_EMAIL_ALLOWLIST, ...disposableEmails.allowDomains];
+    if (isDisposableEmail(email, domains, allow)) {
       await this.refusals.record("disposable_email", email, remoteIp ?? null);
       throw new BadRequestException(
         "That looks like a temporary email address. Sign up with a permanent email you can receive mail at.",
+      );
+    }
+
+    /* #1007 — the mail-domain check. Refuse only when DNS DEFINITIVELY says the
+       domain cannot receive mail (no MX and no A/AAAA). It fails OPEN: a timeout
+       or any DNS error passes, so a resolver hiccup never blocks a real sign-up.
+       Runs last, after the cheaper list check, and only for a host the lists let
+       through. Allow-listed hosts are already known-good, so skip the lookup. */
+    const host = emailDomain(email);
+    if (host !== "" && !hostCoveredByAny(host, allow) && (await this.mailDomain.hasNoMailRecords(host))) {
+      await this.refusals.record("email_domain_no_mail", email, remoteIp ?? null);
+      throw new BadRequestException(
+        "We couldn't find a mail server for that email's domain. Check the address and try again.",
       );
     }
   }

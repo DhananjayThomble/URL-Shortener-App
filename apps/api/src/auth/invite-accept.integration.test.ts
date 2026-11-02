@@ -4,7 +4,7 @@ import { JwtService } from "@nestjs/jwt";
 import { and, auditLog, createDatabase, eq, inArray, memberships, sql, users, workspaces, type Database } from "@snapurl/database";
 import { AuthService, INVITE_TTL_MS } from "./auth.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
-import { botProtectionStub, signupRefusalStub } from "../test/signup-controls.stub.js";
+import { botProtectionStub, mailDomainStub, signupRefusalStub } from "../test/signup-controls.stub.js";
 import { TokenService } from "./token.service.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -101,7 +101,7 @@ describeDb("AuthService.acceptInvite (#668)", () => {
     db = handle.db;
     tokens = new TokenService(db, env, new JwtService());
     mail = new FakeMail();
-    auth = new AuthService(db, env, tokens, {} as TotpService, {} as OAuthService, mail as unknown as MailService, openPlatformSettingsStub(), botProtectionStub(), signupRefusalStub());
+    auth = new AuthService(db, env, tokens, {} as TotpService, {} as OAuthService, mail as unknown as MailService, openPlatformSettingsStub(), botProtectionStub(), signupRefusalStub(), mailDomainStub());
     members = new MembersService(db, db, mail as unknown as MailService);
     const owner = await newUser("owner");
     ownerWid = owner.wid;

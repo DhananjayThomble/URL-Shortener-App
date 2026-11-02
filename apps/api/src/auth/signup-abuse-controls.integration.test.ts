@@ -8,7 +8,8 @@ import { TokenService } from "./token.service.js";
 import { LinksService } from "../links/links.service.js";
 import { PostgresLinkResolver } from "../../../redirect/src/resolver.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
-import { botProtectionStub, signupRefusalStub } from "../test/signup-controls.stub.js";
+import { botProtectionStub, mailDomainStub, signupRefusalStub } from "../test/signup-controls.stub.js";
+import type { MailDomainService } from "./mail-domain.service.js";
 import { toActor } from "../common/activity.js";
 import type { TotpService } from "./totp.service.js";
 import type { OAuthService } from "./oauth.service.js";
@@ -73,6 +74,7 @@ function makeAuth(
     botOk?: boolean;
     botReason?: "missing" | "failed";
     refusals?: SignupRefusalService;
+    mailDomain?: MailDomainService;
   } = {},
 ) {
   const tokens = new TokenService(db, env, new JwtService());
@@ -89,6 +91,7 @@ function makeAuth(
     openPlatformSettingsStub(opts.settings),
     botStub,
     opts.refusals ?? signupRefusalStub(),
+    opts.mailDomain ?? mailDomainStub(),
   );
 }
 
