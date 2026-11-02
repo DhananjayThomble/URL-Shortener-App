@@ -151,7 +151,10 @@ export class DomainsService {
        The caps are platform-wide: `totalMax` over every non-system domain,
        `perDay` over those created in the trailing 24h. */
     if (this.killSwitches) {
-      await this.killSwitches.assertOn("customDomains.create");
+      // #1032 — attribute the refusal (if any) to the acting owner + workspace
+      // so the audit row carries who hit the switched-off/ capped add path.
+      const refusalSubject = { actorId: actor.userId, actorLabel: actor.label, workspaceId };
+      await this.killSwitches.assertOn("customDomains.create", refusalSubject);
       const switches = await this.killSwitches.current();
       const since = new Date(Date.now() - 24 * 60 * 60_000);
       const [[total], [today]] = await Promise.all([
@@ -164,7 +167,7 @@ export class DomainsService {
           .from(domains)
           .where(and(eq(domains.isSystem, false), gte(domains.createdAt, since))),
       ]);
-      this.killSwitches.assertCustomDomainUnderCaps(switches, total?.n ?? 0, today?.n ?? 0);
+      await this.killSwitches.assertCustomDomainUnderCaps(switches, total?.n ?? 0, today?.n ?? 0, refusalSubject);
     }
 
     /* Plan gate (#966, now through #970's single engine). Custom domains are a

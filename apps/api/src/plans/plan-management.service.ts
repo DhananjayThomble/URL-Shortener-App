@@ -126,7 +126,11 @@ export class PlanManagementService {
     // #1020 — the plan-changes kill switch. OFF refuses an admin plan change
     // (comp or charge) with a named 503 before anything is written or asked of
     // the provider, so nothing moves.
-    await this.killSwitches?.assertOn("billing.planChanges");
+    // #1032 — attribute the refusal to the acting platform admin + workspace.
+    await this.killSwitches?.assertOn("billing.planChanges", {
+      actorId: actor.admin.id,
+      workspaceId,
+    });
 
     const input = AdminPlanChangeInput.parse(rawInput);
 

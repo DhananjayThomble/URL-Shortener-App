@@ -17,12 +17,20 @@ import { resolve as dnsResolve } from "node:dns/promises";
 import {
   createDatabase,
   pruneEmailSendLog,
+  pruneKillSwitchRefusalWindows,
   readKillSwitchesRow,
+  recordKillSwitchRefusal,
   resolveDatabaseUrl,
   resolveSafeBrowsingApiKey,
   type Database,
 } from "@snapurl/database";
-import { failClosedKillSwitches, foldKillSwitches, type KillSwitchesSetting } from "@snapurl/contract";
+import {
+  failClosedKillSwitches,
+  foldKillSwitches,
+  killSwitchRefusalDedupeKey,
+  type KillSwitchesSetting,
+  type KillSwitchKey,
+} from "@snapurl/contract";
 import { DynamoDbCacheStore, type CacheStore } from "@snapurl/cache";
 import { ensureClickPartitions, pruneRetention, rollupClicks, rotateSalts } from "./jobs/rollup.js";
 import { makeSafeBrowsingScanner, type UrlScanner } from "./jobs/safe-browsing.js";
@@ -68,6 +76,27 @@ async function readKillSwitchesFailClosed(database: Database): Promise<KillSwitc
     return foldKillSwitches(await readKillSwitchesRow(database));
   } catch {
     return failClosedKillSwitches();
+  }
+}
+
+/* #1032 — a worker-job refusal is audited the same way an API refusal is: one
+   admin_audit_log row with action admin.killswitch.refused, the switch key and
+   the feature_off reason, deduped to one row per (switch, "anon") per minute. A
+   worker skip has no actor or workspace behind it (it is a platform-wide
+   background pass), so the subject is empty and the row is attributed to the
+   switch alone. FAIL SAFE: a failed audit write is logged and swallowed so it
+   can never turn a skip into work or crash the maintenance pass — the job was
+   already going to skip, and the audit is observability only. */
+async function auditWorkerKillSwitchRefusal(database: Database, switchKey: KillSwitchKey): Promise<void> {
+  try {
+    const dedupeKey = killSwitchRefusalDedupeKey(switchKey, "feature_off", {}, Date.now());
+    await recordKillSwitchRefusal(database, {
+      dedupeKey,
+      switchKey,
+      reason: "feature_off",
+    });
+  } catch (err) {
+    log.error({ err, switchKey }, "could not audit worker kill-switch refusal — skipping anyway");
   }
 }
 const ROLLUP_SECONDS = Number(process.env.ROLLUP_INTERVAL_SECONDS ?? 30);
@@ -398,6 +427,8 @@ export async function runFrequent(database: Database) {
       rescan = await rescanLinks(database, await scannerFor(), DEFAULT_RESCAN_CONFIG);
     } else {
       log.info("link rescans are switched off (linkScanning.rescans) — skipping the pass");
+      // #1032 — a worker-job refusal is audited like an API one.
+      await auditWorkerKillSwitchRefusal(database, "linkScanning.rescans");
     }
   } catch (err) {
     log.error({ err }, "link rescan pass failed");
@@ -498,6 +529,12 @@ export async function runMaintenance(database: Database) {
     : 0;
   if (!planChangesOn) {
     log.info("plan changes are switched off (billing.planChanges) — skipping the due-change sweep");
+    // #1032 — audit the worker-job refusal (only when the switch read actually
+    // succeeded; a null read is a fail-closed DB outage, not an operator OFF,
+    // and auditing it would need the very DB that just failed).
+    if (killSwitches) {
+      await auditWorkerKillSwitchRefusal(database, "billing.planChanges");
+    }
   }
 
   /* #1020 — prune the outbound-email rolling-window ledger (#1020) so it never
@@ -505,6 +542,19 @@ export async function runMaintenance(database: Database) {
      days (longer than the longest cap window, with margin). */
   const emailLog = await step("pruneEmailSendLog", () => pruneEmailSendLog(database, 2 * 24 * 60 * 60_000), 0);
   void emailLog;
+
+  /* #1032 — prune the kill-switch refusal aggregation windows. Each window is a
+     one-minute (switch, reason, subject) bucket; once well past it is dead
+     weight (only the refusal upsert and this pruner touch it). Keep an hour of
+     windows, comfortably longer than the one-minute window, so a just-closed
+     window is never pruned out from under a late refusal. Isolated like every
+     sibling prune: a failure costs this step, not the privacy jobs. */
+  const refusalWindows = await step(
+    "pruneKillSwitchRefusalWindows",
+    () => pruneKillSwitchRefusalWindows(database, 60 * 60_000),
+    0,
+  );
+  void refusalWindows;
 
   /* #996: lift the projection-outbox and webhook backlog ROW COUNTS out to
      CloudWatch as an EMF metric line, so the launch-readiness alarms can watch

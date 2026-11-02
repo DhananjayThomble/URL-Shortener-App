@@ -1,0 +1,15 @@
+-- Down migration for 0038_killswitch_refusal_window (#1032).
+--
+-- drizzle-kit's migrator is forward-only, so this is the authoritative reviewed
+-- reverse: 0038 ADDED one table (kill_switch_refusal_window), the dedupe ledger
+-- that aggregates kill-switch refusals to one admin_audit_log row per
+-- (switch, reason, subject) per minute. Reversing it drops the table and leaves
+-- the schema byte-identical to before. The refusal audit ROWS themselves live
+-- in the existing admin_audit_log table and need no schema change, so there is
+-- nothing else to reverse — existing admin.killswitch.refused rows are kept.
+--
+-- Slot 0038: after #1030's 0037 (coupon redeemed count).
+--
+-- To roll back by hand: delete the 0038 row from __drizzle_migrations and run
+-- the statement below.
+DROP TABLE IF EXISTS "kill_switch_refusal_window";

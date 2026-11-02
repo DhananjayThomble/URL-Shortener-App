@@ -6,7 +6,12 @@ import {
   ErrorTrackingCaps,
   KILL_SWITCH_KEYS,
   KILL_SWITCH_LABELS,
+  KILL_SWITCH_REFUSAL_WINDOW_MS,
+  KILL_SWITCH_REFUSED_ACTION,
+  KILL_SWITCH_REFUSED_TARGET_TYPE,
   KillSwitchRefusalReason,
+  killSwitchRefusalDedupeKey,
+  killSwitchRefusalWindowStart,
   KillSwitchState,
   KillSwitchesInput,
   KillSwitchesPatchBody,
@@ -171,9 +176,12 @@ describe("DEFAULT_KILL_SWITCHES", () => {
     expect(DEFAULT_KILL_SWITCHES["linkScanning.rescans"].on).toBe(true);
   });
 
-  it("ships finite caps on the capped switches", () => {
-    expect(DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps).toEqual({ totalMax: 10_000, perDay: 500 });
-    expect(DEFAULT_KILL_SWITCHES["email.outbound"].emailCaps).toEqual({ perHour: 5_000, perDay: 50_000 });
+  it("ships conservative initial hard caps on the capped switches (#1030)", () => {
+    // #1030 — tightened from the #1020 shipped caps (customDomains 10,000/500,
+    // email 5,000/50,000). These are deliberately small initial limits the
+    // operator raises on purpose from the admin panel.
+    expect(DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps).toEqual({ totalMax: 25, perDay: 5 });
+    expect(DEFAULT_KILL_SWITCHES["email.outbound"].emailCaps).toEqual({ perHour: 200, perDay: 2_000 });
     expect(DEFAULT_KILL_SWITCHES.errorTracking.errorCaps).toEqual({ sampleRate: 1 });
   });
 });
@@ -313,6 +321,27 @@ describe("foldKillSwitches", () => {
     folded["billing.checkout"].on = false;
     expect(DEFAULT_KILL_SWITCHES["billing.checkout"].on).toBe(false);
   });
+
+  it("a stored cap override WINS over the tightened default; unset keys fall back (#1030)", () => {
+    // The operator raised the caps above the #1030 initial hard limits. The
+    // stored value must survive the fold unchanged — it is NOT pulled back down
+    // to the shipped default — while a switch the operator never stored still
+    // gets the new default.
+    const folded = foldKillSwitches({
+      "customDomains.create": { on: true, domainCaps: { totalMax: 500, perDay: 50 } },
+      "email.outbound": { on: true, emailCaps: { perHour: 10_000, perDay: 100_000 } },
+    });
+    // Stored overrides win over the defaults.
+    expect(folded["customDomains.create"]).toEqual({ on: true, domainCaps: { totalMax: 500, perDay: 50 } });
+    expect(folded["email.outbound"].emailCaps).toEqual({ perHour: 10_000, perDay: 100_000 });
+    // These differ from the tightened defaults — proving the fall-back did not clobber them.
+    expect(folded["customDomains.create"].domainCaps).not.toEqual(
+      DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps,
+    );
+    // A switch with no stored value falls back to the new default.
+    expect(folded["billing.checkout"]).toEqual(DEFAULT_KILL_SWITCHES["billing.checkout"]);
+    expect(folded.errorTracking).toEqual(DEFAULT_KILL_SWITCHES.errorTracking);
+  });
 });
 
 describe("failClosedKillSwitches", () => {
@@ -367,5 +396,108 @@ describe("KillSwitchesView", () => {
       cacheTtlMs: 60_000,
     };
     expect(KillSwitchesView.safeParse(view).success).toBe(true);
+  });
+});
+
+
+/* #1032 — refusal-audit constants and dedupe helpers. These pin the stable
+   action key and target type (the admin audit viewer filters on them), the
+   window length, the minute-flooring, and the dedupe key's subject precedence
+   (workspace, else actor, else "anon") and per-minute rollover — the whole
+   point of the aggregation is that two refusals collapse to one key exactly
+   when they should, so every branch of the key is asserted. */
+describe("KILL_SWITCH_REFUSED_ACTION", () => {
+  it("is the stable audit action key the viewer filters on", () => {
+    expect(KILL_SWITCH_REFUSED_ACTION).toBe("admin.killswitch.refused");
+  });
+
+  it("fits the admin_audit_log action column (<= 80 chars)", () => {
+    expect(KILL_SWITCH_REFUSED_ACTION.length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("KILL_SWITCH_REFUSED_TARGET_TYPE", () => {
+  it("is the kill_switch target type", () => {
+    expect(KILL_SWITCH_REFUSED_TARGET_TYPE).toBe("kill_switch");
+  });
+});
+
+describe("KILL_SWITCH_REFUSAL_WINDOW_MS", () => {
+  it("is one minute", () => {
+    expect(KILL_SWITCH_REFUSAL_WINDOW_MS).toBe(60_000);
+  });
+});
+
+describe("killSwitchRefusalWindowStart", () => {
+  it("floors to the start of the containing minute window", () => {
+    expect(killSwitchRefusalWindowStart(60_000)).toBe(60_000);
+    expect(killSwitchRefusalWindowStart(60_001)).toBe(60_000);
+    expect(killSwitchRefusalWindowStart(119_999)).toBe(60_000);
+    expect(killSwitchRefusalWindowStart(120_000)).toBe(120_000);
+  });
+
+  it("maps everything inside one window to the same start", () => {
+    expect(killSwitchRefusalWindowStart(60_000)).toBe(killSwitchRefusalWindowStart(119_999));
+  });
+
+  it("maps adjacent windows to different starts", () => {
+    expect(killSwitchRefusalWindowStart(59_999)).not.toBe(killSwitchRefusalWindowStart(60_000));
+  });
+});
+
+describe("killSwitchRefusalDedupeKey", () => {
+  it("includes the switch, reason, subject and window, pipe-joined", () => {
+    const key = killSwitchRefusalDedupeKey("billing.checkout", "feature_off", { workspaceId: "ws1" }, 60_000);
+    expect(key).toBe("billing.checkout|feature_off|ws1|60000");
+  });
+
+  it("prefers the workspace id as the subject", () => {
+    const key = killSwitchRefusalDedupeKey(
+      "billing.checkout",
+      "feature_off",
+      { workspaceId: "ws1", actorId: "u1" },
+      0,
+    );
+    expect(key).toBe("billing.checkout|feature_off|ws1|0");
+  });
+
+  it("falls back to the actor id when there is no workspace", () => {
+    const key = killSwitchRefusalDedupeKey("billing.refunds", "feature_off", { actorId: "u1" }, 0);
+    expect(key).toBe("billing.refunds|feature_off|u1|0");
+  });
+
+  it("falls back to \"anon\" when neither workspace nor actor is known", () => {
+    const key = killSwitchRefusalDedupeKey("linkScanning.rescans", "feature_off", {}, 0);
+    expect(key).toBe("linkScanning.rescans|feature_off|anon|0");
+  });
+
+  it("collapses two refusals in the same minute to the same key", () => {
+    const a = killSwitchRefusalDedupeKey("email.outbound", "cap_reached", { workspaceId: "ws1" }, 61_000);
+    const b = killSwitchRefusalDedupeKey("email.outbound", "cap_reached", { workspaceId: "ws1" }, 119_999);
+    expect(a).toBe(b);
+  });
+
+  it("rolls over to a new key in the next minute", () => {
+    const a = killSwitchRefusalDedupeKey("email.outbound", "cap_reached", { workspaceId: "ws1" }, 59_999);
+    const b = killSwitchRefusalDedupeKey("email.outbound", "cap_reached", { workspaceId: "ws1" }, 60_000);
+    expect(a).not.toBe(b);
+  });
+
+  it("separates different reasons for the same switch and subject", () => {
+    const off = killSwitchRefusalDedupeKey("customDomains.create", "feature_off", { workspaceId: "ws1" }, 0);
+    const cap = killSwitchRefusalDedupeKey("customDomains.create", "cap_reached", { workspaceId: "ws1" }, 0);
+    expect(off).not.toBe(cap);
+  });
+
+  it("separates different switches for the same reason and subject", () => {
+    const a = killSwitchRefusalDedupeKey("billing.checkout", "feature_off", { workspaceId: "ws1" }, 0);
+    const b = killSwitchRefusalDedupeKey("billing.coupons", "feature_off", { workspaceId: "ws1" }, 0);
+    expect(a).not.toBe(b);
+  });
+
+  it("separates two different workspaces so each gets its own row", () => {
+    const a = killSwitchRefusalDedupeKey("billing.checkout", "feature_off", { workspaceId: "ws1" }, 0);
+    const b = killSwitchRefusalDedupeKey("billing.checkout", "feature_off", { workspaceId: "ws2" }, 0);
+    expect(a).not.toBe(b);
   });
 });
