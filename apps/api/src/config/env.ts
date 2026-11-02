@@ -107,6 +107,13 @@ export const EnvSchema = z.object({
   THROTTLE_TTL_SECONDS: z.coerce.number().int().default(60),
   THROTTLE_LIMIT: z.coerce.number().int().default(120),
 
+  /* #994 point 3 — auto-quarantine. When a single link accumulates this many
+     DISTINCT abuse reports (counting dismissed ones out, and deduping repeat
+     reports from the same contact), it is automatically disabled pending admin
+     review and its owner is notified. Default 3; set to 0 to turn
+     auto-quarantine off entirely (reports still queue for manual review). */
+  ABUSE_QUARANTINE_THRESHOLD: z.coerce.number().int().min(0).default(3),
+
   /* Which CacheStore backs the rate-limit counters (and, in the redirect
      service, hot-link caching). 'memory' is the default: a per-instance
      in-memory counter, byte-for-byte the single-node/CI behaviour. 'redis'
