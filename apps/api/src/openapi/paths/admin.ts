@@ -586,6 +586,18 @@ route({
   },
 });
 
+route({
+  method: "get",
+  path: "/admin/workspaces/{id}/billing-details",
+  tag: "Admin",
+  summary: "View a workspace's billing details — company, tax id/GSTIN, address (read-only)",
+  params: IdParam,
+  responses: {
+    200: { description: "The workspace's billing details (all-null when none set)", schema: refs.BillingDetails },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
 /* ── billing views + admin refund (#989) ── */
 
 route({

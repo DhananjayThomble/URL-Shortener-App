@@ -6,6 +6,7 @@ import {
   memberships,
   payments,
   subscriptions,
+  workspacePlanHistory,
   workspaces,
   type Database,
 } from "@snapurl/database";
@@ -373,7 +374,11 @@ export class BillingService {
    * `cancelAtPeriodEnd` locally for the UI to reflect the pending state and
    * leaves the entitlement untouched until the webhook arrives.
    */
-  async cancelSubscription(workspaceId: string, atPeriodEnd: boolean): Promise<WorkspaceSubscription> {
+  async cancelSubscription(
+    workspaceId: string,
+    atPeriodEnd: boolean,
+    survey: { reason: string | null; comment: string | null } = { reason: null, comment: null },
+  ): Promise<WorkspaceSubscription> {
     const [row] = await this.db
       .select()
       .from(subscriptions)
@@ -389,17 +394,45 @@ export class BillingService {
 
     await this.provider.cancel(row.providerSubscriptionId, atPeriodEnd);
 
-    // Reflect the pending cancellation for the UI. The plan key and entitled
-    // status are untouched — the workspace keeps its plan until the verified
-    // webhook lapses it. An immediate cancel (atPeriodEnd=false) still waits on
-    // the webhook to move the plan; cancel_at_period_end is a TIMESTAMP (the
-    // moment a cancellation was scheduled), not a boolean — the wire shape's
-    // boolean cancelAtPeriodEnd is derived from it being non-null
-    // (currentSubscription coerces it with Boolean(...)).
-    await this.db
-      .update(subscriptions)
-      .set({ cancelAtPeriodEnd: new Date(), updatedAt: new Date() })
-      .where(eq(subscriptions.id, row.id));
+    const now = new Date();
+    await this.db.transaction(async (tx) => {
+      // Reflect the pending cancellation for the UI, and record the #992 §6
+      // cancellation survey (reason + comment) so the admin panel can show WHY a
+      // workspace cancelled. The plan key and entitled status are untouched —
+      // the workspace keeps its plan until the verified webhook lapses it. An
+      // immediate cancel (atPeriodEnd=false) still waits on the webhook to move
+      // the plan; cancel_at_period_end is a TIMESTAMP (the moment a cancellation
+      // was scheduled), not a boolean — the wire shape's boolean is derived from
+      // it being non-null (currentSubscription coerces it with Boolean(...)).
+      await tx
+        .update(subscriptions)
+        .set({
+          cancelAtPeriodEnd: now,
+          cancellationReason: survey.reason,
+          cancellationComment: survey.comment,
+          updatedAt: now,
+        })
+        .where(eq(subscriptions.id, row.id));
+
+      // #992 §6/§7 — a cancellation lands in the plan history timeline, carrying
+      // the survey so the admin reads it alongside every other plan event. The
+      // reason column holds the picked reason; the comment rides in metadata.
+      await tx.insert(workspacePlanHistory).values({
+        workspaceId,
+        kind: "cancellation",
+        fromPlanKey: row.planKey,
+        toPlanKey: null,
+        timing: atPeriodEnd ? "period_end" : "immediate",
+        settlement: null,
+        amountMinor: null,
+        currency: null,
+        reason: survey.reason,
+        actorId: null,
+        actorLabel: "owner",
+        metadata: { atPeriodEnd, comment: survey.comment },
+        effectiveAt: now,
+      });
+    });
 
     return this.currentSubscription(workspaceId);
   }

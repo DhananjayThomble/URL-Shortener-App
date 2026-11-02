@@ -77,6 +77,8 @@ import {
   type PlanView,
 } from "@snapurl/contract";
 import { PlanManagementService } from "../plans/plan-management.service.js";
+import { BillingDetailsService } from "../billing/billing-details.service.js";
+import type { BillingDetails } from "@snapurl/contract";
 
 /* ============================================================
    #968 + #974 + #969 + #971 + #973 — the platform-admin API surface (/api/v1/admin/*).
@@ -104,6 +106,7 @@ export class AdminController {
     private readonly settings: PlatformSettingsService,
     private readonly plansAdmin: PlansAdminService,
     private readonly planManagement: PlanManagementService,
+    private readonly billingDetails: BillingDetailsService,
   ) {}
 
   /** Who the caller is, confirmed as a platform admin. The client uses a 200
@@ -354,6 +357,15 @@ export class AdminController {
   @Get("workspaces/:id/plan-history")
   workspacePlanHistory(@Param("id", ParseUUIDPipe) id: string): Promise<PlanHistoryList> {
     return this.planManagement.history(id);
+  }
+
+  /** #992 §5 — VIEW a workspace's billing details (company, tax id/GSTIN,
+   *  address, billing email). A read (no audit). The owner edits them through
+   *  the owner-facing billing surface; the admin only views. An all-null record
+   *  when the workspace has entered none. */
+  @Get("workspaces/:id/billing-details")
+  workspaceBillingDetails(@Param("id", ParseUUIDPipe) id: string): Promise<BillingDetails> {
+    return this.billingDetails.get(id);
   }
 
   /* ── system health and operations (#974) ── */

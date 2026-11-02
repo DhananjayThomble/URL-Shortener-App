@@ -69,6 +69,32 @@ route({
 });
 
 route({
+  method: "get",
+  path: "/billing/details",
+  tag: "Billing",
+  summary: "The workspace's billing details — company, tax id/GSTIN, address (owner only)",
+  responses: {
+    200: { description: "The billing details (all-null record when none set)", schema: refs.BillingDetails },
+    403: { description: "Only the workspace owner can view billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
+  method: "put",
+  path: "/billing/details",
+  tag: "Billing",
+  summary: "Set the workspace's billing details (owner only)",
+  body: refs.BillingDetailsInput,
+  responses: {
+    200: { description: "The saved billing details", schema: refs.BillingDetails },
+    400: { description: "Invalid billing details (e.g. a malformed Indian GSTIN)" },
+    403: { description: "Only the workspace owner can change billing" },
+    404: { description: "Billing is disabled on this deployment" },
+  },
+});
+
+route({
   method: "post",
   path: "/billing/webhook",
   tag: "Billing",
