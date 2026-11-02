@@ -15,6 +15,7 @@ import { BillingService } from "./billing.service.js";
 import { RazorpayBillingProvider, type RazorpayClient } from "./razorpay.provider.js";
 import { NoneBillingProvider } from "./none-billing.provider.js";
 import { parsePlanIds } from "./billing-plans.js";
+import { PlansService } from "../plans/plans.service.js";
 
 /* ============================================================
    #986 — the webhook-moves-the-plan invariant, end to end, against the real DB.
@@ -100,7 +101,7 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
       },
       fakeClient,
     );
-    service = new BillingService(db, provider);
+    service = new BillingService(db, provider, new PlansService(db));
   });
 
   afterAll(async () => {
@@ -200,7 +201,7 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
   });
 
   it("the none provider reports the surface unreachable", () => {
-    const off = new BillingService(db, new NoneBillingProvider());
+    const off = new BillingService(db, new NoneBillingProvider(), new PlansService(db));
     expect(off.enabled).toBe(false);
     expect(off.verifyWebhook("{}", "x")).toBeNull();
   });

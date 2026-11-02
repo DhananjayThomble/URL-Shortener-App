@@ -103,6 +103,8 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       keyId: FAKE_KEY_ID,
       planKey: "pro" as const,
       interval: "monthly" as const,
+      amountMinor: 19900,
+      currency: "INR",
     }),
   };
   return { svc: svc as unknown as BillingService, handled };
