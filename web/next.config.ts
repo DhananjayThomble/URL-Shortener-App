@@ -1,4 +1,13 @@
 import type { NextConfig } from "next";
+// @sentry/nextjs's published `types` export condition resolves to its
+// browser-flavoured entry, which omits the build-time `withSentryConfig`
+// (it lives on the node/server runtime entry). The value is present at runtime;
+// we give it a precise local signature so this config stays type-safe without
+// importing an internal subpath.
+import * as SentryNext from "@sentry/nextjs";
+const withSentryConfig = (SentryNext as unknown as {
+  withSentryConfig: (config: NextConfig, options: Record<string, unknown>) => NextConfig;
+}).withSentryConfig;
 
 /* This app is a pure client of the NestJS API. There are intentionally no
    route handlers under src/app/api — all data access goes through
@@ -74,4 +83,34 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/* #995 — Sentry source-map upload, CI only and ONLY when a SENTRY_AUTH_TOKEN
+ * secret exists; skip cleanly otherwise.
+ *
+ * withSentryConfig wraps the build to upload the browser source maps so stack
+ * traces in Sentry are un-minified. That upload needs an auth token and the
+ * org/project coordinates. A self-hoster, a local build, and any CI run without
+ * the secret must build EXACTLY as before — no upload step, no failure, no
+ * network call — so when SENTRY_AUTH_TOKEN is absent we return the plain config
+ * untouched and never call withSentryConfig at all. (The error-tracking SDK
+ * itself is independent of this: it is gated on the DSN at runtime, not on this
+ * build-time token.) */
+function withSourceMapUpload(config: NextConfig): NextConfig {
+  const authToken = process.env.SENTRY_AUTH_TOKEN;
+  if (!authToken) return config;
+
+  return withSentryConfig(config, {
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    authToken,
+    // Upload source maps, then hide them from the public bundle so minified
+    // output ships without exposing source. Quiet unless something fails.
+    sourcemaps: { deleteSourcemapsAfterUpload: true },
+    silent: !process.env.CI,
+    // The release the maps attach to — match the runtime release tag.
+    release: { name: process.env.NEXT_PUBLIC_SENTRY_RELEASE ?? appVersion },
+    // Do not let a telemetry/upload problem fail a product build.
+    telemetry: false,
+  });
+}
+
+export default withSourceMapUpload(nextConfig);
