@@ -15,6 +15,7 @@ import type {
   WorkspaceSubscription,
 } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
+import { PlansService } from "../plans/plans.service.js";
 import { BILLING_PROVIDER, type BillingProvider, type NormalizedBillingEvent } from "./billing-provider.js";
 
 /* ============================================================
@@ -46,6 +47,9 @@ export class BillingService {
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
+    /** #987 — read the LIVE price for the (plan, interval) at checkout time from
+     *  the editable catalogue. PlansService is global. */
+    private readonly plans: PlansService,
   ) {}
 
   /** Whether the billing surface is reachable at all. The controller reads this
@@ -75,6 +79,12 @@ export class BillingService {
     interval: BillingInterval,
   ): Promise<CheckoutSession> {
     const result = await this.provider.createCheckout({ workspaceId, customerEmail, planKey, interval });
+
+    // #987 — read the live price the catalogue holds for this plan RIGHT NOW,
+    // so the confirmation reflects an admin's edit without a redeploy. The
+    // provider's own plan id (resolved in createCheckout) is still what is
+    // charged; this amount is informational for the confirmation screen.
+    const amountMinor = await this.plans.livePriceMinor(planKey, interval);
 
     // Upsert the local row in a pending state. One row per workspace (unique
     // index), so a re-started checkout overwrites the pending handle rather
@@ -109,6 +119,8 @@ export class BillingService {
       keyId: result.keyId,
       planKey,
       interval,
+      amountMinor,
+      currency: "INR",
     };
   }
 

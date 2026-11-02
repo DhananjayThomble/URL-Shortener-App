@@ -1,10 +1,13 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import {
   baselineEntitlements,
+  emptyPlanPrices,
   FEATURE_NAMES,
   FeatureMatrix,
   LIMIT_NAMES,
   LimitMatrix,
+  PlanPrices,
+  priceFor,
   resolveEntitlements,
   type FeatureName,
   type LimitName,
@@ -69,6 +72,18 @@ export interface CatalogPlan {
   currentVersion: number;
   features: FeatureMatrix;
   limits: LimitMatrix;
+  /** #987 — the current version's prices. An empty price set for an unpriced
+   *  plan (free, enterprise) so callers never handle "absent". */
+  prices: PlanPrices;
+}
+
+/** Parse a stored `pricing` jsonb into a PlanPrices, falling back to the empty
+ *  (unpriced) set when it is null or malformed — a bad price never crashes a
+ *  hot read, it just reads as "not priced". */
+export function parsePricing(raw: unknown): PlanPrices {
+  if (raw === null || raw === undefined) return emptyPlanPrices();
+  const parsed = PlanPrices.safeParse(raw);
+  return parsed.success ? parsed.data : emptyPlanPrices();
 }
 
 /** How long the loaded catalogue is served before the next read reloads it.
@@ -135,6 +150,9 @@ export class PlansService {
             version: 1,
             features: FeatureMatrix.parse(seed.features),
             limits: LimitMatrix.parse(seed.limits),
+            // #987 — the plan's starting prices. A seed without prices (free,
+            // enterprise) stores null; the read side reads that as unpriced.
+            pricing: seed.prices ? PlanPrices.parse(seed.prices) : null,
           })
           .returning({ id: planVersions.id });
         await tx.update(plans).set({ currentVersionId: version!.id }).where(eq(plans.id, plan!.id));
@@ -181,9 +199,26 @@ export class PlansService {
           highlightBadge: p.highlightBadge,
           features: matrices.features,
           limits: matrices.limits,
+          // #987 — the plan's LIVE prices, so /pricing reflects an admin edit
+          // within the cache window with no redeploy.
+          prices: p.prices,
         };
       });
     return { plans: plansOut, featureOrder: [...FEATURE_NAMES], limitOrder: [...LIMIT_NAMES] };
+  }
+
+  /** #987 — the LIVE price for a (plan key, interval, currency) from the cached
+   *  catalogue, or null when the plan or that (interval, currency) is not
+   *  priced. Checkout reads this so a price edit takes effect within the cache
+   *  window with no redeploy. `currency` defaults to the plan's primary. */
+  async livePriceMinor(
+    planKey: string,
+    interval: "monthly" | "yearly",
+    currency?: "INR" | "USD",
+  ): Promise<number | null> {
+    const plan = await this.getByKey(planKey);
+    if (!plan) return null;
+    return priceFor(plan.prices, interval, currency);
   }
 
   /** The compiled-in seed plans shaped as CatalogPlan, for the unseeded-DB
@@ -202,6 +237,7 @@ export class PlansService {
       currentVersion: 1,
       features: s.features,
       limits: s.limits,
+      prices: s.prices ?? emptyPlanPrices(),
     }));
   }
 
@@ -343,11 +379,15 @@ export class PlansService {
         version: planVersions.version,
         features: planVersions.features,
         limits: planVersions.limits,
+        pricing: planVersions.pricing,
       })
       .from(planVersions);
 
     const versionsByKey = new Map<string, ResolvableVersion>();
-    const byId = new Map<string, { version: number; features: FeatureMatrix; limits: LimitMatrix }>();
+    const byId = new Map<
+      string,
+      { version: number; features: FeatureMatrix; limits: LimitMatrix; prices: PlanPrices }
+    >();
     for (const v of versionRows) {
       const matrices: ResolvableVersion = {
         features: FeatureMatrix.safeParse(v.features).data ?? {},
@@ -356,7 +396,7 @@ export class PlansService {
       // Reachable both by (planId, version number) and by (planId, row id).
       versionsByKey.set(`num:${v.planId}:${v.version}`, matrices);
       versionsByKey.set(`id:${v.planId}:${v.id}`, matrices);
-      byId.set(v.id, { version: v.version, ...matrices });
+      byId.set(v.id, { version: v.version, ...matrices, prices: parsePricing(v.pricing) });
     }
 
     const catalog = new Map<string, CatalogPlan>();
@@ -374,6 +414,7 @@ export class PlansService {
         currentVersion: current?.version ?? 0,
         features: current?.features ?? {},
         limits: current?.limits ?? {},
+        prices: current?.prices ?? emptyPlanPrices(),
       });
     }
 
