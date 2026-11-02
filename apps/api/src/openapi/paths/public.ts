@@ -152,6 +152,21 @@ route({
   },
 });
 
+/* #997 — the in-app "Report a problem" intake. @Public so it works for a
+   signed-out visitor; a signed-in user's context is attached server-side from
+   their session, never the body. 10/min per IP. */
+route({
+  method: "post",
+  path: "/public/feedback",
+  tag,
+  summary: "Submit an in-app problem report (10/min per IP; works signed-out)",
+  public: true,
+  body: refs.SubmitFeedbackInput,
+  responses: {
+    200: { description: "The created report id", schema: refs.SubmitFeedbackResult },
+  },
+});
+
 
 /* #970 — the public pricing table, built from the public-visible plans' live
    feature matrix and limits. Unauthenticated, cached. */

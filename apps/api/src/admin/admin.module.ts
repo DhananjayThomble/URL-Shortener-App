@@ -6,6 +6,7 @@ import { AdminController } from "./admin.controller.js";
 import { AdminService } from "./admin.service.js";
 import { AdminHealthService } from "./admin.health.service.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
+import { AdminFeedbackService } from "./admin.feedback.service.js";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminManagementService } from "./admin-management.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
@@ -49,6 +50,7 @@ import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admi
     AdminService,
     AdminHealthService,
     AdminModerationService,
+    AdminFeedbackService,
     AdminGuard,
     AdminManagementService,
     PlansAdminService,

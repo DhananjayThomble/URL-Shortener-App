@@ -30,6 +30,7 @@ import { HealthController } from "./common/health.controller.js";
 import { CommonModule } from "./common/common.module.js";
 import { FormsModule } from "./forms/forms.module.js";
 import { ReportsModule } from "./reports/reports.module.js";
+import { FeedbackModule } from "./feedback/feedback.module.js";
 import { PostgresErrorFilter } from "./common/postgres-error.filter.js";
 import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.js";
 
@@ -95,6 +96,7 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
     BioPagesModule,
     FormsModule,
     ReportsModule,
+    FeedbackModule,
     PublicModule,
     AdminModule,
     BillingModule,

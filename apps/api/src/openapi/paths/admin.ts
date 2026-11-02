@@ -605,3 +605,46 @@ route({
     404: { description: "No such payment" },
   },
 });
+
+
+/* #997 — the "Report a problem" feedback inbox. Behind AdminGuard like every
+   /admin/* route, so each entry documents the 403 alongside its success shape. */
+
+route({
+  method: "get",
+  path: "/admin/feedback",
+  tag: "Admin",
+  summary: "The in-app feedback inbox, newest first (optionally filtered by status)",
+  query: refs.FeedbackListQuery,
+  responses: {
+    200: { description: "A page of feedback reports (screenshot blob omitted; hasScreenshot only)", schema: refs.FeedbackPage },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/feedback/{id}",
+  tag: "Admin",
+  summary: "One feedback report in full, including its screenshot",
+  params: IdParam,
+  responses: {
+    200: { description: "The feedback report with its screenshot data URL", schema: refs.FeedbackDetail },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such report" },
+  },
+});
+
+route({
+  method: "patch",
+  path: "/admin/feedback/{id}",
+  tag: "Admin",
+  summary: "Move a report's status and/or set operator notes (audited)",
+  params: IdParam,
+  body: refs.UpdateFeedbackInput,
+  responses: {
+    200: { description: "The updated feedback report", schema: refs.FeedbackDetail },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such report" },
+  },
+});

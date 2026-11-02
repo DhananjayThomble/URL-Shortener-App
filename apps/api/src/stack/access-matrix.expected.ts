@@ -100,6 +100,11 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "POST /api/v1/public/forms/{slug}", expect: { any: "allow" }, status: "approved",
     note: "Observed 400 (validation) for a live-route body; @Public, reachable by anyone." },
   { route: "POST /api/v1/public/links/{slug}/report", expect: { any: "allow" }, status: "approved" },
+  // #997 — the in-app "Report a problem" intake. @Public, so reachable by
+  // anyone (signed-in or signed-out): a signed-out visitor on a public page
+  // must be able to file a report. A signed-in caller's context is attached
+  // server-side from the session, never the body, so the route needs no auth.
+  { route: "POST /api/v1/public/feedback", expect: { any: "allow" }, status: "approved" },
   // #972 — the site-wide banner, @Public so reachable by anyone (signed-in or
   // not); it returns the public banner shape only, never anything gated.
   { route: "GET /api/v1/public/platform/banner", expect: { any: "allow" }, status: "approved" },
@@ -218,6 +223,14 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "DELETE /api/v1/admin/blocked-domains/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/flagged-links", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/custom-domains", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #997 — the "Report a problem" admin inbox (list, detail, status/notes
+  // update). Same platform-admin gate as every /admin/* route: AdminGuard fails
+  // closed, so every authenticated matrix principal is 403, anon is 401, and
+  // API keys are 403 (no user behind the key). The PATCH write never reaches
+  // its handler for any matrix principal.
+  { route: "GET /api/v1/admin/feedback", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/feedback/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PATCH /api/v1/admin/feedback/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #973 — platform-wide analytics + its CSV export. Same platform-admin gate:
   // AdminGuard fails closed, so every authenticated principal is 403, anon is
   // 401, and API keys are 403 (no user behind the key). The CSV export is a
@@ -273,5 +286,7 @@ export const ACCESS_MATRIX: Row[] = [
 // route + 8 for #970's plans/versions/overrides admin routes + 2 for #970's
 // public /pricing and GET /workspaces/current/usage + 3 for #986's billing
 // checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
-// + 4 for #989's admin subscriptions/revenue/billing-events/refund).
-export const EXPECTED_ROUTE_COUNT = 122;
+// + 4 for #989's admin subscriptions/revenue/billing-events/refund
+// + 1 for #997's public POST /public/feedback
+// + 3 for #997's admin feedback inbox (list, detail, status/notes update)).
+export const EXPECTED_ROUTE_COUNT = 126;
