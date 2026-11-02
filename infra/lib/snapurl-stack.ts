@@ -24,6 +24,10 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as apigw from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as budgets from "aws-cdk-lib/aws-budgets";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as synthetics from "aws-cdk-lib/aws-synthetics";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as rds from "aws-cdk-lib/aws-rds";
@@ -1533,10 +1537,23 @@ export class SnapUrlStack extends Stack {
        useless and a subscription to an empty address fails at deploy, so when
        the email is unset the topic and budget are simply not created and the
        stack still deploys. Set it with `-c budgetEmail=you@example.com`. */
+    /* #996 captures the alarm-delivery topic so the CloudWatch alarms block
+       below can reuse the SAME topic the budget notifications already use —
+       "reuse the existing budget-alert topic and email" is the issue's
+       explicit instruction. The construct itself (BudgetAlarmTopic, its email
+       subscription, its budgets-principal grant) is UNCHANGED, so its logical
+       id is unchanged and `cdk diff` sees no modification to it; only new Alarm
+       resources that reference its ARN are added. Undefined when budgetEmail is
+       unset: with no destination there is no topic, and the alarms below are
+       then created without an action (they still exist and still flip to ALARM,
+       there is just nothing subscribed to tell) — matching how the budget block
+       already degrades. */
+    let alarmTopic: sns.Topic | undefined;
     if (props.budgetEmail) {
       const budgetTopic = new sns.Topic(this, "BudgetAlarmTopic", {
         displayName: "SnapURL budget alarms",
       });
+      alarmTopic = budgetTopic;
       budgetTopic.addSubscription(new subscriptions.EmailSubscription(props.budgetEmail));
 
       /* AWS Budgets publishes to the topic, so the topic policy must allow the
@@ -1575,6 +1592,283 @@ export class SnapUrlStack extends Stack {
         ],
       });
     }
+
+    /* ---------------------------------------------------------
+       #996 — uptime check and CloudWatch alarms
+
+       "Know within minutes when short links stop working, before users tell
+       you." Everything below is strictly ADDITIVE: new Alarm resources (each
+       referencing a metric an EXISTING resource already publishes), an optional
+       Synthetics canary, and — reusing the budget topic above, not a new one —
+       alarm actions. No existing resource is modified, so `cdk diff` shows only
+       additions. See docs/runbooks/*.md for what each alarm means.
+
+       Delivery: every alarm's ALARM action is the SAME SNS topic the budget
+       notifications use (alarmTopic, captured above). When budgetEmail is unset
+       there is no topic and the alarms are created without an action — they
+       still exist and still flip to ALARM in the console, there is just nobody
+       subscribed to notify, exactly how the budget degrades. The alarm metrics
+       and thresholds are what the infra test asserts.
+
+       treatMissingData: NOT_BREACHING on every alarm. These resources are
+       quiet by design on a hobby-scale deployment — minutes pass with zero
+       Lambda errors, zero API 5xx, an empty outbox — and CloudWatch reports a
+       period with no datapoints as "missing", not "0". Left at the default
+       (MISSING -> INSUFFICIENT_DATA, which some notification setups treat as an
+       alarm) a healthy idle system would page constantly; NOT_BREACHING means
+       "no news is good news", and a real error still produces a datapoint that
+       breaches. */
+
+    const alarmAction = alarmTopic ? new cwActions.SnsAction(alarmTopic) : undefined;
+
+    /** Create a CloudWatch alarm wired to the shared SNS topic (when one
+     *  exists), with the uniform missing-data treatment. Returns the alarm so a
+     *  caller can tweak it, though none need to. */
+    const makeAlarm = (
+      id: string,
+      props2: {
+        metric: cloudwatch.IMetric;
+        threshold: number;
+        evaluationPeriods: number;
+        comparisonOperator?: cloudwatch.ComparisonOperator;
+        datapointsToAlarm?: number;
+        alarmDescription: string;
+      },
+    ): cloudwatch.Alarm => {
+      const alarm = new cloudwatch.Alarm(this, id, {
+        metric: props2.metric,
+        threshold: props2.threshold,
+        evaluationPeriods: props2.evaluationPeriods,
+        datapointsToAlarm: props2.datapointsToAlarm,
+        comparisonOperator:
+          props2.comparisonOperator ?? cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: props2.alarmDescription,
+      });
+      if (alarmAction) {
+        alarm.addAlarmAction(alarmAction);
+        alarm.addOkAction(alarmAction);
+      }
+      return alarm;
+    };
+
+    const ALARM_PERIOD = Duration.minutes(5);
+
+    /* ---- Lambda errors and throttles (api, redirect, worker) ----
+       One errors alarm and one throttles alarm per function. Errors fires on a
+       single faulted invocation in a 5-minute window (threshold >= 1): a
+       redirect or API Lambda should not be throwing at all, so even one is
+       worth a look. Throttles means the function hit its reserved-concurrency
+       ceiling and requests were rejected — on the redirect path that is dropped
+       traffic, so the same low bar applies. */
+    for (const [name, fn] of [
+      ["Api", apiFn],
+      ["Redirect", redirectFn],
+      ["Worker", workerFn],
+    ] as const) {
+      makeAlarm(`${name}FnErrorsAlarm`, {
+        metric: fn.metricErrors({ period: ALARM_PERIOD, statistic: "Sum" }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        alarmDescription: `${name} Lambda reported a faulted invocation. Runbook: docs/runbooks/lambda-errors.md`,
+      });
+      makeAlarm(`${name}FnThrottlesAlarm`, {
+        metric: fn.metricThrottles({ period: ALARM_PERIOD, statistic: "Sum" }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        alarmDescription: `${name} Lambda was throttled (hit its concurrency ceiling). Runbook: docs/runbooks/lambda-throttles.md`,
+      });
+    }
+
+    /* ---- API 5xx rate ----
+       The HTTP API's own 5xx count (AWS/ApiGatewayV2, dimension ApiId). A
+       handful of 5xx in five minutes is the signal that the API is failing
+       requests rather than one request being unlucky; threshold 5 over one
+       period. */
+    makeAlarm("Api5xxAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "AWS/ApiGatewayV2",
+        metricName: "5xx",
+        dimensionsMap: { ApiId: httpApi.apiId },
+        period: ALARM_PERIOD,
+        statistic: "Sum",
+      }),
+      threshold: 5,
+      evaluationPeriods: 1,
+      alarmDescription: "API returned 5xx responses. Runbook: docs/runbooks/api-5xx.md",
+    });
+
+    /* ---- Redirect p99 latency ----
+       The redirect is the hot path; its tail latency is what a user feels. The
+       p99 of RedirectFn's Duration over 5 minutes crossing 1s for two
+       consecutive periods means the edge/origin is slow, not that one cold
+       start was unlucky. Lambda Duration is the cleanest native p99 signal
+       here — CloudFront publishes no percentile latency metric. */
+    makeAlarm("RedirectP99LatencyAlarm", {
+      metric: redirectFn.metricDuration({ period: ALARM_PERIOD, statistic: "p99" }),
+      threshold: 1000,
+      evaluationPeriods: 2,
+      alarmDescription:
+        "Redirect p99 latency over 1s. Runbook: docs/runbooks/redirect-latency.md",
+    });
+
+    /* ---- Projection-outbox and webhook backlogs ----
+       These are COUNTS OF ROWS in Postgres, not an AWS-native metric, so the
+       worker lifts them to CloudWatch as an EMF metric each maintenance pass
+       (apps/worker/src/jobs/backlog-metrics.ts); BACKLOG_METRICS_NAMESPACE
+       below is what turns that emission on. The alarms watch the two counts
+       that mean "work is piling up and not draining":
+         • OutboxStuck  — outbox rows that EXHAUSTED their retries. Any at all
+           means the edge may be serving stale link config; threshold >= 1.
+         • WebhookFailed — webhook deliveries that gave up. A few failed
+           customer endpoints is normal; a backlog of them is not, so a higher
+           bar (>= 20) over two periods. */
+    const backlogNamespace = "SnapURL/Backlog";
+    makeAlarm("OutboxBacklogAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: backlogNamespace,
+        metricName: "OutboxStuck",
+        period: Duration.minutes(15),
+        statistic: "Maximum",
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription:
+        "Projection-outbox rows have given up — the edge may serve stale link config. Runbook: docs/runbooks/outbox-backlog.md",
+    });
+    makeAlarm("WebhookBacklogAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: backlogNamespace,
+        metricName: "WebhookFailed",
+        period: Duration.minutes(15),
+        statistic: "Maximum",
+      }),
+      threshold: 20,
+      evaluationPeriods: 2,
+      alarmDescription:
+        "Webhook deliveries are backing up as failed. Runbook: docs/runbooks/webhook-backlog.md",
+    });
+
+    /* ---- SES bounce and complaint rates ----
+       Account-level reputation metrics (AWS/SES). AWS suspends sending at a
+       bounce rate of 10% and a complaint rate of 0.5%, so the alarms fire
+       WELL below those: 5% bounce and 0.1% complaint, each a RATE (0-1) over a
+       long window, so a single bad address does not trip it but a trend toward
+       suspension does. These exist whether or not mail is actually being sent;
+       with no sends the metric is missing and NOT_BREACHING keeps them green. */
+    makeAlarm("SesBounceRateAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "AWS/SES",
+        metricName: "Reputation.BounceRate",
+        period: Duration.hours(1),
+        statistic: "Maximum",
+      }),
+      threshold: 0.05,
+      evaluationPeriods: 1,
+      alarmDescription:
+        "SES bounce rate approaching the level AWS suspends sending at. Runbook: docs/runbooks/ses-reputation.md",
+    });
+    makeAlarm("SesComplaintRateAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "AWS/SES",
+        metricName: "Reputation.ComplaintRate",
+        period: Duration.hours(1),
+        statistic: "Maximum",
+      }),
+      threshold: 0.001,
+      evaluationPeriods: 1,
+      alarmDescription:
+        "SES complaint rate approaching the level AWS suspends sending at. Runbook: docs/runbooks/ses-reputation.md",
+    });
+
+    /* ---- RDS CPU and connections ----
+       The database is a single t4g.micro with no read replica, so it is the one
+       resource with no horizontal headroom. Sustained high CPU (> 80% for three
+       5-minute periods) or a connection count approaching the instance's limit
+       (> 80 — a t4g.micro's max_connections is ~112) are the two ways it runs
+       out of room before anything else does. */
+    makeAlarm("RdsCpuAlarm", {
+      metric: database.metricCPUUtilization({ period: ALARM_PERIOD, statistic: "Average" }),
+      threshold: 80,
+      evaluationPeriods: 3,
+      alarmDescription: "RDS CPU sustained above 80%. Runbook: docs/runbooks/rds-cpu.md",
+    });
+    makeAlarm("RdsConnectionsAlarm", {
+      metric: database.metricDatabaseConnections({ period: ALARM_PERIOD, statistic: "Maximum" }),
+      threshold: 80,
+      evaluationPeriods: 3,
+      alarmDescription:
+        "RDS connection count approaching the instance limit. Runbook: docs/runbooks/rds-connections.md",
+    });
+
+    /* ---- The uptime canary (domain-gated) ----
+       A CloudWatch Synthetics canary that, every 5 minutes, follows the
+       dedicated canary short link and asserts the EXACT 302 + Location, then
+       checks API health (infra/functions/canary/uptime-canary.js). It is gated
+       on domainName because without a real short domain there is no stable
+       public URL to probe — the raw *.cloudfront.net name exists, but the
+       canary link is created on the configured domain (scripts/
+       create-canary-link.sh). The canary's own SuccessPercent < 100 is the
+       "redirect is broken" alarm: it fires when the 302, the Location, or API
+       health is anything other than exactly right.
+
+       Cost note (also in docs/DECISIONS.md): a Synthetics canary run is
+       $0.0012; at 5-minute cadence ~8,640 runs/month ≈ $10.40/month, plus a few
+       cents of Lambda/S3. A Route 53 health check is $0.50/month but can only
+       substring-match a response body — it cannot follow or inspect a redirect
+       Location — so it cannot verify the 302 TARGET the issue requires. The
+       canary is picked for that reason, not on price. */
+    if (props.domainName) {
+      const canaryArtifacts = new s3.Bucket(this, "UptimeCanaryArtifacts", {
+        encryption: s3.BucketEncryption.S3_MANAGED,
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        enforceSSL: true,
+        removalPolicy: RemovalPolicy.DESTROY,
+        autoDeleteObjects: true,
+        lifecycleRules: [{ expiration: Duration.days(31) }],
+      });
+
+      const canary = new synthetics.Canary(this, "UptimeCanary", {
+        canaryName: "snapurl-uptime",
+        runtime: synthetics.Runtime.SYNTHETICS_NODEJS_PUPPETEER_9_1,
+        schedule: synthetics.Schedule.rate(Duration.minutes(5)),
+        artifactsBucketLocation: { bucket: canaryArtifacts },
+        test: synthetics.Test.custom({
+          code: synthetics.Code.fromAsset(path.join(__dirname, "..", "functions", "canary")),
+          handler: "uptime-canary.handler",
+        }),
+        environmentVariables: {
+          /* The canary link and its expected target. The slug and destination
+             match scripts/create-canary-link.sh's defaults; override both
+             together if that script is run with non-default values. */
+          CANARY_REDIRECT_URL: `https://${props.domainName}/__uptime`,
+          CANARY_EXPECTED_LOCATION: "https://snapurl.in/__canary-ok",
+          /* The API's health endpoint. httpApi.apiEndpoint is the raw execute-api
+             origin; the NestJS app mounts under /api/v1 (env.API_PREFIX), so the
+             public health route is /api/v1/health (HealthController @Get on the
+             "health" controller). */
+          CANARY_API_HEALTH_URL: `${httpApi.apiEndpoint}/api/v1/health`,
+        },
+        startAfterCreation: true,
+      });
+
+      makeAlarm("UptimeCanaryAlarm", {
+        metric: canary.metricSuccessPercent({ period: ALARM_PERIOD, statistic: "Average" }),
+        threshold: 100,
+        comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        alarmDescription:
+          "Uptime canary failed: the redirect 302/Location or API health is wrong. Runbook: docs/runbooks/uptime-canary.md",
+      });
+    }
+
+    /* The CloudWatch namespace the worker emits backlog metrics under. Set on
+       workerFn ONLY (the metrics are produced by the worker's maintenance pass),
+       so every other profile leaves it unset and emits nothing — see
+       apps/worker/src/jobs/backlog-metrics.ts. Added after the alarms so the
+       namespace string is shared with OutboxBacklogAlarm / WebhookBacklogAlarm
+       above by the one `backlogNamespace` const. */
+    workerFn.addEnvironment("BACKLOG_METRICS_NAMESPACE", backlogNamespace);
 
     /* ---------------------------------------------------------
        Outputs
