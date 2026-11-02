@@ -76,6 +76,19 @@ describe("StartCheckoutInput", () => {
     expect(StartCheckoutInput.safeParse({ planKey: "pro" }).success).toBe(false);
     expect(StartCheckoutInput.safeParse({ interval: "monthly" }).success).toBe(false);
   });
+
+  it("#992 — accepts an optional coupon code, trimmed and length-capped", () => {
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "WELCOME10" }).success).toBe(true);
+    // Trimmed to a non-empty value.
+    const r = StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "  SAVE  " });
+    expect(r.success && r.data.couponCode).toBe("SAVE");
+    // An all-whitespace code trims to empty and is rejected (min 1).
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "   " }).success).toBe(false);
+    // Over the 40-char cap.
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly", couponCode: "x".repeat(41) }).success).toBe(false);
+    // Absent is fine (optional).
+    expect(StartCheckoutInput.safeParse({ planKey: "pro", interval: "monthly" }).success).toBe(true);
+  });
 });
 
 describe("CheckoutSession", () => {
@@ -117,6 +130,28 @@ describe("CheckoutSession", () => {
 
   it("rejects the free plan on a checkout session", () => {
     expect(CheckoutSession.safeParse({ ...valid, planKey: "free" }).success).toBe(false);
+  });
+
+  it("#992 — coupon defaults to null and, when present, needs a code + non-negative discount", () => {
+    // Absent coupon defaults to null.
+    const r = CheckoutSession.safeParse(valid);
+    expect(r.success && r.data.coupon).toBe(null);
+    // A well-formed applied coupon.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: { code: "SAVE", discountMinor: 5000 } }).success).toBe(true);
+    // Explicit null is accepted.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: null }).success).toBe(true);
+    // A negative discount is rejected.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: { code: "SAVE", discountMinor: -1 } }).success).toBe(false);
+    // A coupon missing its code is rejected.
+    expect(CheckoutSession.safeParse({ ...valid, coupon: { discountMinor: 1 } }).success).toBe(false);
+  });
+
+  it("#992 — trialEndsAt defaults to null and, when present, must be an ISO datetime", () => {
+    const r = CheckoutSession.safeParse(valid);
+    expect(r.success && r.data.trialEndsAt).toBe(null);
+    expect(CheckoutSession.safeParse({ ...valid, trialEndsAt: "2026-12-01T00:00:00.000Z" }).success).toBe(true);
+    expect(CheckoutSession.safeParse({ ...valid, trialEndsAt: null }).success).toBe(true);
+    expect(CheckoutSession.safeParse({ ...valid, trialEndsAt: "not-a-date" }).success).toBe(false);
   });
 });
 

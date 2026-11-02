@@ -106,6 +106,10 @@ export class PlansAdminService {
           highlightBadge: input.highlightBadge,
           sortOrder: input.sortOrder,
           visibility: input.visibility,
+          // #992 — per-plan trial config. The contract defaults these (0 days,
+          // card required), so an existing create call is unchanged.
+          trialDays: input.trialDays,
+          trialRequiresCard: input.trialRequiresCard ? 1 : 0,
         })
         .returning({ id: plans.id });
       const [version] = await tx
@@ -147,6 +151,9 @@ export class PlansAdminService {
     if (input.highlightBadge !== undefined) patch.highlightBadge = input.highlightBadge;
     if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
     if (input.visibility !== undefined) patch.visibility = input.visibility;
+    // #992 — per-plan trial config, each applied only when the input names it.
+    if (input.trialDays !== undefined) patch.trialDays = input.trialDays;
+    if (input.trialRequiresCard !== undefined) patch.trialRequiresCard = input.trialRequiresCard ? 1 : 0;
 
     await this.db.transaction(async (tx) => {
       await tx.update(plans).set(patch).where(eq(plans.id, planId));
@@ -162,6 +169,8 @@ export class PlansAdminService {
           highlightBadge: before.highlightBadge,
           sortOrder: before.sortOrder,
           visibility: before.visibility,
+          trialDays: before.trialDays,
+          trialRequiresCard: before.trialRequiresCard === 1,
         },
         after: {
           displayName: input.displayName ?? before.displayName,
@@ -169,6 +178,8 @@ export class PlansAdminService {
           highlightBadge: input.highlightBadge === undefined ? before.highlightBadge : input.highlightBadge,
           sortOrder: input.sortOrder ?? before.sortOrder,
           visibility: input.visibility ?? before.visibility,
+          trialDays: input.trialDays ?? before.trialDays,
+          trialRequiresCard: input.trialRequiresCard ?? before.trialRequiresCard === 1,
         },
         requestIp: actor.ip,
       });
@@ -515,6 +526,8 @@ export class PlansAdminService {
         sortOrder: plans.sortOrder,
         visibility: plans.visibility,
         currentVersionId: plans.currentVersionId,
+        trialDays: plans.trialDays,
+        trialRequiresCard: plans.trialRequiresCard,
       })
       .from(plans)
       .orderBy(asc(plans.sortOrder), asc(plans.key));
@@ -548,6 +561,11 @@ export class PlansAdminService {
         features: matrices.features,
         limits: matrices.limits,
         prices: parsePricing(cur?.pricing),
+        // #992 — the plan's trial config (trial_days = 0 means no trial). The
+        // DB columns are NOT NULL with 0/1 defaults, so an existing plan reads
+        // as "no trial, card required" until an admin sets it.
+        trialDays: p.trialDays,
+        trialRequiresCard: p.trialRequiresCard === 1,
       };
     });
   }
@@ -570,6 +588,8 @@ export class PlansAdminService {
         sortOrder: plans.sortOrder,
         visibility: plans.visibility,
         currentVersionId: plans.currentVersionId,
+        trialDays: plans.trialDays,
+        trialRequiresCard: plans.trialRequiresCard,
       })
       .from(plans)
       .where(eq(plans.id, planId))

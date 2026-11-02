@@ -75,6 +75,11 @@ export interface CatalogPlan {
   /** #987 — the current version's prices. An empty price set for an unpriced
    *  plan (free, enterprise) so callers never handle "absent". */
   prices: PlanPrices;
+  /** #992 — the plan's trial length in days (0 = no trial) and whether a card
+   *  is required up front. Checkout reads these to start a trial subscription.
+   *  Defaults 0 / true, so a plan with no trial configured behaves as before. */
+  trialDays: number;
+  trialRequiresCard: boolean;
 }
 
 /** Parse a stored `pricing` jsonb into a PlanPrices, falling back to the empty
@@ -238,6 +243,10 @@ export class PlansService {
       features: s.features,
       limits: s.limits,
       prices: s.prices ?? emptyPlanPrices(),
+      // #992 — the compiled-in seed has no trial configured; an admin sets one
+      // on the live plan row, which the DB catalogue then carries.
+      trialDays: 0,
+      trialRequiresCard: true,
     }));
   }
 
@@ -369,6 +378,8 @@ export class PlansService {
         sortOrder: plans.sortOrder,
         visibility: plans.visibility,
         currentVersionId: plans.currentVersionId,
+        trialDays: plans.trialDays,
+        trialRequiresCard: plans.trialRequiresCard,
       })
       .from(plans);
 
@@ -415,6 +426,9 @@ export class PlansService {
         features: current?.features ?? {},
         limits: current?.limits ?? {},
         prices: current?.prices ?? emptyPlanPrices(),
+        // #992 — trial config off the plan row (NOT NULL, defaults 0/1).
+        trialDays: p.trialDays,
+        trialRequiresCard: p.trialRequiresCard === 1,
       });
     }
 

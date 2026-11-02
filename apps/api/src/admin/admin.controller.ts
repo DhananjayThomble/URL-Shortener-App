@@ -43,6 +43,13 @@ import {
   type FeedbackDetail,
   type FeedbackPage,
 } from "@snapurl/contract";
+import {
+  CreateCouponInput,
+  SetCouponPausedInput,
+  type CouponList,
+  type CouponRedemptionList,
+  type CouponView,
+} from "@snapurl/contract";
 import { zodBody, zodQuery } from "../common/zod.pipe.js";
 import { AdminGuard, Admin, AdminRequestIp } from "./admin.guard.js";
 import type { AdminIdentity } from "./admin.service.js";
@@ -52,6 +59,7 @@ import { AdminFeedbackService } from "./admin.feedback.service.js";
 import { AdminManagementService, type AdminActor } from "./admin-management.service.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { AdminBillingService } from "./billing/admin-billing.service.js";
+import { AdminCouponsService } from "./billing/admin-coupons.service.js";
 import { PlatformSettingsService } from "./platform-settings.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
 import {
@@ -92,6 +100,7 @@ export class AdminController {
     private readonly management: AdminManagementService,
     private readonly adminAnalytics: AdminAnalyticsService,
     private readonly adminBilling: AdminBillingService,
+    private readonly adminCoupons: AdminCouponsService,
     private readonly settings: PlatformSettingsService,
     private readonly plansAdmin: PlansAdminService,
     private readonly planManagement: PlanManagementService,
@@ -579,6 +588,56 @@ export class AdminController {
     @AdminRequestIp() ip: string | null,
   ): Promise<AdminRefundResult> {
     return this.adminBilling.refund(id, input.reason, actor(admin, ip));
+  }
+
+  /* ---- #992 coupons: create, list, pause/resume, delete, redemptions ---- */
+
+  /** Every coupon, newest first, each with its live redemption count. A read
+   *  (no audit). */
+  @Get("coupons")
+  listCoupons(): Promise<CouponList> {
+    return this.adminCoupons.list();
+  }
+
+  /** Create a coupon. Admin-only (guard) and AUDITED. A duplicate code is a
+   *  409 (the unique index, mapped by the Postgres-error filter). */
+  @Post("coupons")
+  createCoupon(
+    @Body(zodBody(CreateCouponInput)) input: CreateCouponInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<CouponView> {
+    return this.adminCoupons.create(input, actor(admin, ip));
+  }
+
+  /** Pause or resume a coupon (no new redemptions while paused; past ones keep
+   *  running). Admin-only and AUDITED. */
+  @Post("coupons/:id/pause")
+  setCouponPaused(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(SetCouponPausedInput)) input: SetCouponPausedInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<CouponView> {
+    return this.adminCoupons.setPaused(id, input.paused, actor(admin, ip));
+  }
+
+  /** Delete a coupon (its redemptions cascade). Admin-only and AUDITED. */
+  @Delete("coupons/:id")
+  @HttpCode(200)
+  async deleteCoupon(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminActionResult> {
+    await this.adminCoupons.remove(id, actor(admin, ip));
+    return { id, action: "delete", ok: true };
+  }
+
+  /** The redemptions of one coupon, newest first. A read (no audit). */
+  @Get("coupons/:id/redemptions")
+  couponRedemptions(@Param("id", ParseUUIDPipe) id: string): Promise<CouponRedemptionList> {
+    return this.adminCoupons.redemptions(id);
   }
 }
 

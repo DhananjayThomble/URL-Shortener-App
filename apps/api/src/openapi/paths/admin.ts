@@ -638,6 +638,74 @@ route({
 });
 
 
+/* ── coupons (#992): create, list, pause/resume, delete, see redemptions ── */
+
+route({
+  method: "get",
+  path: "/admin/coupons",
+  tag: "Admin",
+  summary: "Every coupon, newest first, each with its live redemption count",
+  responses: {
+    200: { description: "The coupon catalogue", schema: refs.CouponList },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/coupons",
+  tag: "Admin",
+  summary: "Create a coupon (admin-only, audited)",
+  body: refs.CreateCouponInput,
+  responses: {
+    200: { description: "The created coupon", schema: refs.CouponView },
+    400: { description: "The coupon is invalid (e.g. percent over 100, fixed with no currency)" },
+    403: { description: "The caller is not a platform admin" },
+    409: { description: "A coupon with that code already exists" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/coupons/{id}/pause",
+  tag: "Admin",
+  summary: "Pause or resume a coupon — no new redemptions while paused (admin-only, audited)",
+  params: IdParam,
+  body: refs.SetCouponPausedInput,
+  responses: {
+    200: { description: "The updated coupon", schema: refs.CouponView },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such coupon" },
+  },
+});
+
+route({
+  method: "delete",
+  path: "/admin/coupons/{id}",
+  tag: "Admin",
+  summary: "Delete a coupon and its redemptions (admin-only, audited)",
+  params: IdParam,
+  responses: {
+    200: { description: "The coupon was deleted", schema: refs.AdminActionResult },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such coupon" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/coupons/{id}/redemptions",
+  tag: "Admin",
+  summary: "The redemptions of one coupon, newest first",
+  params: IdParam,
+  responses: {
+    200: { description: "The coupon's redemptions", schema: refs.CouponRedemptionList },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such coupon" },
+  },
+});
+
+
 /* #997 — the "Report a problem" feedback inbox. Behind AdminGuard like every
    /admin/* route, so each entry documents the 403 alongside its success shape. */
 

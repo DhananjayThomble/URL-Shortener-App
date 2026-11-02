@@ -173,10 +173,49 @@ describe("RazorpayBillingProvider — checkout, enabled, and errors", () => {
       workspaceId: "ws_1",
       customerEmail: "owner@example.com",
     });
-    expect(result).toEqual({ subscriptionId: "sub_fake_created", keyId: FAKE_KEY_ID });
+    // #992 — a plain checkout (no trial) returns a null trialEndsAt and never
+    // passes start_at/offer_id to the client.
+    expect(result).toEqual({ subscriptionId: "sub_fake_created", keyId: FAKE_KEY_ID, trialEndsAt: null });
     expect(fakeClient.createSubscription).toHaveBeenCalledWith(
       expect.objectContaining({ planId: "plan_fake_pro_m", notes: expect.objectContaining({ workspaceId: "ws_1" }) }),
     );
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.startAt).toBeUndefined();
+    expect(call.offerId).toBeUndefined();
+  });
+
+  it("#992 — a trial plan defers the first charge: start_at ≈ now + trialDays and trialEndsAt returned", async () => {
+    const { provider, fakeClient } = makeProvider();
+    const before = Date.now();
+    const result = await provider.createCheckout({
+      planKey: "pro",
+      interval: "monthly",
+      workspaceId: "ws_1",
+      customerEmail: "owner@example.com",
+      trialDays: 14,
+      trialRequiresCard: false,
+    });
+    const after = Date.now();
+    // trialEndsAt is ~14 days out, and start_at (epoch seconds) matches it.
+    const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    const end = result.trialEndsAt!.getTime();
+    expect(end).toBeGreaterThanOrEqual(before + fourteenDaysMs);
+    expect(end).toBeLessThanOrEqual(after + fourteenDaysMs);
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.startAt).toBe(Math.floor(end / 1000));
+  });
+
+  it("#992 — passes the coupon's offer id to the client when one is given", async () => {
+    const { provider, fakeClient } = makeProvider();
+    await provider.createCheckout({
+      planKey: "pro",
+      interval: "monthly",
+      workspaceId: "ws_1",
+      customerEmail: "owner@example.com",
+      offerId: "offer_abc123",
+    });
+    const call = (fakeClient.createSubscription as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.offerId).toBe("offer_abc123");
   });
 
   it("throws PlanNotConfiguredError for a plan with no configured id", async () => {

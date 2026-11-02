@@ -24,6 +24,12 @@ export interface CheckoutResult {
   subscriptionId: string;
   /** The PUBLIC key id (ships in the page). */
   keyId: string;
+  /** #992 — when the checkout started a trial, the instant the trial ends (the
+   *  provider's first-charge date), else null. The provider decides this from
+   *  the trial days passed in; SnapURL records it on the row and echoes it for
+   *  the confirmation screen, but entitlement still comes from the verified
+   *  `trialing` webhook, never from this value. */
+  trialEndsAt?: Date | null;
 }
 
 /* ============================================================
@@ -102,9 +108,17 @@ export interface CreateCheckoutParams {
   workspaceId: string;
   /** The billing owner's email, for the provider's customer record. */
   customerEmail: string;
-  /** #992 (forward-compat, unused in #986) — an optional offer/coupon id to
-   *  apply to the new subscription. Ignored by the #986 Razorpay implementation. */
+  /** #992 — an optional offer/coupon id to apply to the new subscription. The
+   *  provider applies the discount; SnapURL only validated + recorded the
+   *  redemption and passes the id here. Undefined = no coupon. */
   offerId?: string;
+  /** #992 — the plan's trial length in days (0 = no trial). When > 0 the
+   *  provider starts the subscription with a trial: the first charge is deferred
+   *  by this many days and the subscription reports `trialing` until then. */
+  trialDays?: number;
+  /** #992 — whether a card is required up front for the trial. Forwarded to the
+   *  provider's checkout so a no-card trial does not demand payment details. */
+  trialRequiresCard?: boolean;
 }
 
 /**

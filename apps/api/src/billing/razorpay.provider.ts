@@ -39,6 +39,16 @@ export interface RazorpayClient {
     totalCount: number;
     notes: Record<string, string>;
     customerEmail: string;
+    /** #992 — an offer/coupon id the provider applies to the subscription, or
+     *  undefined for none. */
+    offerId?: string;
+    /** #992 — epoch SECONDS to defer the first charge to (a trial). Undefined
+     *  starts charging immediately (no trial). */
+    startAt?: number;
+    /** #992 — whether the checkout must collect a card up front. When false
+     *  (a no-card trial) Razorpay authenticates the mandate without an upfront
+     *  charge. */
+    requiresCard?: boolean;
   }): Promise<{ id: string }>;
   cancelSubscription(subscriptionId: string, cancelAtCycleEnd: boolean): Promise<void>;
   refundPayment(paymentId: string): Promise<void>;
@@ -91,6 +101,9 @@ export interface RazorpayProviderConfig {
  *  bounded total_count; 120 is ten years of monthly cycles — effectively
  *  open-ended for the product, renewed well before it lapses. */
 const TOTAL_CYCLES = 120;
+
+/** Milliseconds in a day, for computing a trial's end from its day length. */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Map a Razorpay webhook event type to the subscription status it implies.
  *  An event with no lifecycle meaning (a payment-only event) maps to null —
@@ -167,6 +180,14 @@ export class RazorpayBillingProvider implements BillingProvider {
     if (!planId) {
       throw new PlanNotConfiguredError(params.planKey, params.interval);
     }
+
+    // #992 — a plan with trialDays > 0 starts the subscription with the first
+    // charge deferred: Razorpay's `start_at` (epoch seconds) pushes the first
+    // billing to that instant, and the subscription reports `trialing` until
+    // then. The trial end IS that start instant. 0 (or absent) = charge now.
+    const trialDays = params.trialDays ?? 0;
+    const trialEndsAt = trialDays > 0 ? new Date(Date.now() + trialDays * DAY_MS) : null;
+
     const subscription = await this.client.createSubscription({
       planId,
       totalCount: TOTAL_CYCLES,
@@ -174,10 +195,16 @@ export class RazorpayBillingProvider implements BillingProvider {
       // local row is written can still be tied back to the workspace.
       notes: { workspaceId: params.workspaceId, planKey: params.planKey, interval: params.interval },
       customerEmail: params.customerEmail,
+      // #992 — the coupon's provider offer, when a coupon was applied. The
+      // service only passes an id for a validated + recorded coupon.
+      offerId: params.offerId,
+      // #992 — defer the first charge for a trial; omit for an immediate charge.
+      startAt: trialEndsAt ? Math.floor(trialEndsAt.getTime() / 1000) : undefined,
+      requiresCard: params.trialRequiresCard,
     });
     // keyId is non-null here: enabled gates the route, so createCheckout is only
     // reached when all three credentials are present.
-    return { subscriptionId: subscription.id, keyId: this.config.keyId! };
+    return { subscriptionId: subscription.id, keyId: this.config.keyId!, trialEndsAt };
   }
 
   async cancel(providerSubscriptionId: string, atPeriodEnd: boolean): Promise<void> {
