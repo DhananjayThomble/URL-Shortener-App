@@ -7,15 +7,18 @@ import {
   Headers,
   HttpCode,
   Post,
+  Put,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyRequest } from "fastify";
 import {
+  BillingDetailsInput,
   CancelSubscriptionInput,
   ChangePlanInput,
   StartCheckoutInput,
+  type BillingDetails,
   type BillingInvoice,
   type CheckoutSession,
   type WorkspaceSubscription,
@@ -23,6 +26,7 @@ import {
 import { zodBody } from "../common/zod.pipe.js";
 import { Actor, Public, type RequestActor } from "../auth/auth.guard.js";
 import { BillingService, NoActiveSubscriptionError, SamePlanError } from "./billing.service.js";
+import { BillingDetailsService } from "./billing-details.service.js";
 import { BillingEnabledGuard } from "./billing-enabled.guard.js";
 import { PlanNotConfiguredError } from "./razorpay.provider.js";
 
@@ -66,7 +70,35 @@ declare module "fastify" {
 @Controller("billing")
 @UseGuards(BillingEnabledGuard)
 export class BillingController {
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly billingDetails: BillingDetailsService,
+  ) {}
+
+  /**
+   * #992 §5 — the workspace's billing details (company, tax id/GSTIN, address,
+   * billing email). Owner-only read; an all-null record when none set yet.
+   */
+  @Get("details")
+  async getDetails(@Actor() actor: RequestActor): Promise<BillingDetails> {
+    assertOwner(actor);
+    return this.billingDetails.get(actor.workspaceId);
+  }
+
+  /**
+   * #992 §5 — set the workspace's billing details. Owner-only. A partial body
+   * updates only the fields given; an explicit null clears a field. The details
+   * are attached to the provider's customer best-effort so its invoices carry
+   * them — a provider failure never loses the owner's input.
+   */
+  @Put("details")
+  async setDetails(
+    @Actor() actor: RequestActor,
+    @Body(zodBody(BillingDetailsInput)) input: BillingDetailsInput,
+  ): Promise<BillingDetails> {
+    assertOwner(actor);
+    return this.billingDetails.set(actor.workspaceId, input);
+  }
 
   @Post("checkout")
   async startCheckout(
@@ -120,7 +152,10 @@ export class BillingController {
   ): Promise<WorkspaceSubscription> {
     assertOwner(actor);
     try {
-      return await this.billing.cancelSubscription(actor.workspaceId, input.atPeriodEnd);
+      return await this.billing.cancelSubscription(actor.workspaceId, input.atPeriodEnd, {
+        reason: input.reason ?? null,
+        comment: input.comment ?? null,
+      });
     } catch (err) {
       if (err instanceof NoActiveSubscriptionError) throw new BadRequestException(err.message);
       throw err;

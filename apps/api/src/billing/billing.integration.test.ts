@@ -9,6 +9,7 @@ import {
   payments,
   subscriptions,
   users,
+  workspacePlanHistory,
   workspaces,
   type Database,
 } from "@snapurl/database";
@@ -587,5 +588,43 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
     await expect(service.changePlan(workspaceId, "pro", "monthly")).rejects.toThrow(/already on/i);
     // team:yearly has no configured plan id in this test's map → PlanNotConfigured.
     await expect(service.changePlan(workspaceId, "team", "yearly")).rejects.toThrow(/No Razorpay plan is configured/i);
+  });
+
+  /* #992 §6 — the cancellation survey. Oracles: a reason + comment passed to
+     cancel are recorded on the subscription row AND land as a cancellation row
+     in the plan history (the admin reads WHY a workspace left), and the plan is
+     still NOT lapsed — only the verified webhook does that. */
+  it("#992 cancel records the reason + comment on the subscription and in plan history, without lapsing the plan", async () => {
+    const { workspaceId } = await activate("cancelreason");
+    await service.cancelSubscription(workspaceId, true, {
+      reason: "too_expensive",
+      comment: "Found a cheaper option.",
+    });
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.cancellationReason).toBe("too_expensive");
+    expect(row!.cancellationComment).toBe("Found a cheaper option.");
+    expect(row!.cancelAtPeriodEnd).not.toBeNull();
+
+    const hist = await db
+      .select()
+      .from(workspacePlanHistory)
+      .where(eq(workspacePlanHistory.workspaceId, workspaceId));
+    const cancelRow = hist.find((h) => h.kind === "cancellation");
+    expect(cancelRow).toBeDefined();
+    expect(cancelRow!.reason).toBe("too_expensive");
+    expect((cancelRow!.metadata as { comment?: string })?.comment).toBe("Found a cheaper option.");
+
+    // Still entitled to the paid plan — only the verified webhook lapses it.
+    const sub = await service.currentSubscription(workspaceId);
+    expect(sub.planKey).toBe("pro");
+  });
+
+  it("#992 cancel with no survey still works (reason/comment default to null)", async () => {
+    const { workspaceId } = await activate("cancelnosurvey");
+    await service.cancelSubscription(workspaceId, true);
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).limit(1);
+    expect(row!.cancellationReason).toBeNull();
+    expect(row!.cancellationComment).toBeNull();
   });
 });

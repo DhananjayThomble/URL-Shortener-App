@@ -40,8 +40,13 @@ describe("AdminPlanChangeInput", () => {
     expect(v.settlement).toBeUndefined();
   });
 
-  it('rejects "charge" as a settlement (PR-A has no charge — that is PR-C)', () => {
-    expect(() => AdminPlanChangeInput.parse(base({ settlement: "charge" }))).toThrow();
+  it('accepts "charge" as a settlement (PR-C: provider-backed change)', () => {
+    const immediate = AdminPlanChangeInput.parse(base({ settlement: "charge" }));
+    expect(immediate.settlement).toBe("charge");
+    // A charge can also be scheduled at period end (a provider-backed
+    // downgrade), unlike a comp end date.
+    const scheduled = AdminPlanChangeInput.parse(base({ timing: "period_end", settlement: "charge" }));
+    expect(scheduled.settlement).toBe("charge");
   });
 
   /** The zod error path for the first issue of a failed parse, so a test can
@@ -52,11 +57,11 @@ describe("AdminPlanChangeInput", () => {
     return r.success ? [] : r.error.issues[0]!.path;
   }
 
-  it("rejects a settlement on a period-end change, blaming the settlement field", () => {
-    expect(() =>
-      AdminPlanChangeInput.parse(base({ timing: "period_end", settlement: "comp" })),
-    ).toThrow(/takes effect immediately/);
-    expect(firstIssuePath(base({ timing: "period_end", settlement: "comp" }))).toEqual(["settlement"]);
+  it("accepts a period-end comp with no settlement (PR-A) and a period-end charge (PR-C)", () => {
+    expect(AdminPlanChangeInput.parse(base({ timing: "period_end" })).settlement).toBeUndefined();
+    expect(AdminPlanChangeInput.parse(base({ timing: "period_end", settlement: "charge" })).settlement).toBe(
+      "charge",
+    );
   });
 
   it("rejects a comp end date on a period-end change, blaming compEndsAt", () => {
@@ -64,6 +69,15 @@ describe("AdminPlanChangeInput", () => {
       AdminPlanChangeInput.parse(base({ timing: "period_end", compEndsAt: "2026-12-31T00:00:00.000Z" })),
     ).toThrow(/only applies to an immediate comp/);
     expect(firstIssuePath(base({ timing: "period_end", compEndsAt: "2026-12-31T00:00:00.000Z" }))).toEqual([
+      "compEndsAt",
+    ]);
+  });
+
+  it("rejects a comp end date on an immediate charge, blaming compEndsAt", () => {
+    expect(() =>
+      AdminPlanChangeInput.parse(base({ settlement: "charge", compEndsAt: "2026-12-31T00:00:00.000Z" })),
+    ).toThrow(/only applies to an immediate comp/);
+    expect(firstIssuePath(base({ settlement: "charge", compEndsAt: "2026-12-31T00:00:00.000Z" }))).toEqual([
       "compEndsAt",
     ]);
   });
@@ -116,6 +130,27 @@ describe("AdminPlanChangeResult", () => {
     });
     expect(r.outcome).toBe("scheduled");
     expect(r.proration).toBeNull();
+  });
+
+  it('parses a "requested" provider-backed charge (plan moves on the webhook)', () => {
+    const r = AdminPlanChangeResult.parse({
+      outcome: "requested",
+      toPlanKey: "team",
+      timing: "immediate",
+      settlement: "charge",
+      effectiveAt: "2026-11-02T00:00:00.000Z",
+      compEndsAt: null,
+      proration: {
+        amountMinor: 20000,
+        oldPlanCreditMinor: 5000,
+        newPlanChargeMinor: 25000,
+        unusedFraction: 0.5,
+        direction: "upgrade",
+        currency: "INR",
+      },
+    });
+    expect(r.outcome).toBe("requested");
+    expect(r.proration?.direction).toBe("upgrade");
   });
 });
 

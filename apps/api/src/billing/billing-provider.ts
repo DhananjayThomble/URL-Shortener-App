@@ -161,6 +161,34 @@ export interface SyncPlanPriceParams {
   amountMinor: number;
 }
 
+/**
+ * #992 §5 — the billing details attached to a provider customer so the
+ * invoices it raises carry them. Only the facts an invoice prints: the billing
+ * email, the company/legal name, the tax id (a GSTIN in India), and the
+ * address split into its lines. Every field is optional — the service passes
+ * whatever the owner has entered, and a provider fills in what it supports. No
+ * secret and no card data.
+ */
+export interface SyncBillingDetailsParams {
+  /** The provider's customer id for this workspace's subscription, when known.
+   *  Null when the workspace has no provider customer yet (nothing to sync). */
+  providerCustomerId: string | null;
+  /** The provider subscription id, so a provider that attaches details to the
+   *  subscription rather than the customer can resolve it. */
+  providerSubscriptionId: string | null;
+  billingEmail: string | null;
+  companyName: string | null;
+  taxId: string | null;
+  address: {
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+    country: string | null;
+  } | null;
+}
+
 export interface BillingProvider {
   /** Which provider this is. The core reads it to decide reachability and to
    *  stamp stored rows. */
@@ -210,6 +238,16 @@ export interface BillingProvider {
    * provider plan id it created/updated, when it has one, for the caller to log.
    */
   syncPlanPrice?(params: SyncPlanPriceParams): Promise<{ providerPlanId: string } | void>;
+
+  /**
+   * #992 §5 — push the workspace's billing details (company, tax id, address,
+   * billing email) to the provider so its invoices/customer carry them.
+   * OPTIONAL on the interface, exactly like syncPlanPrice: a provider that
+   * cannot hold them simply omits it, and the owner's edit still lands in the
+   * SnapURL record — the provider sync is best-effort and never gates the DB
+   * write.
+   */
+  syncBillingDetails?(params: SyncBillingDetailsParams): Promise<void>;
 
   /** Refund a payment at the provider. */
   refund(providerPaymentId: string): Promise<void>;

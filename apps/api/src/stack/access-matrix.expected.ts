@@ -258,6 +258,7 @@ export const ACCESS_MATRIX: Row[] = [
   // every authed principal 403, every API key 403.
   { route: "POST /api/v1/admin/workspaces/{id}/plan-change", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/workspaces/{id}/plan-history", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/billing-details", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #989 — admin billing views + the admin refund. Same AdminGuard fail-closed
   // gate: 401 anon (the auth guard runs before the admin guard), 403 for every
   // authed non-platform-admin principal, 403 for API keys (no @Scope reaches an
@@ -296,6 +297,15 @@ export const ACCESS_MATRIX: Row[] = [
     note: "Billing off: 404 (BillingEnabledGuard before the body pipe, so a malformed body is still 404 not 400). #988 owner-only session write (handler-enforced) when billing ON." },
   { route: "POST /api/v1/billing/change", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
     note: "Billing off: 404 (guard before the body pipe). #988 owner-only session write (handler-enforced) when billing ON." },
+  // #992 PR-C — the owner-facing billing DETAILS surface (company, tax id/GSTIN,
+  // address). Same shape as the other billing routes: 404 for every authed
+  // principal while billing is off (BillingEnabledGuard before the body pipe),
+  // 401 anon, 403 API keys (no @Scope); owner-only is handler-enforced so with
+  // billing ON it is owner allow, admin/editor/viewer 403 — never a 403 leak.
+  { route: "GET /api/v1/billing/details", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off: 404 for every authed principal (unreachable), 401 anon, 403 API keys (no @Scope). #992 owner-only read (handler-enforced) when billing ON." },
+  { route: "PUT /api/v1/billing/details", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off: 404 (guard before the body pipe, so a malformed body is still 404 not 400). #992 owner-only write (handler-enforced) when billing ON." },
   { route: "POST /api/v1/billing/webhook", expect: { any: 404 }, status: "approved",
     note: "@Public: Razorpay signs the body, there is no session. Billing off in staging, so it 404s; with billing on it is a signature-verified endpoint (400 on a bad/absent signature, 200 on a verified event)." },
 ];
@@ -309,7 +319,9 @@ export const ACCESS_MATRIX: Row[] = [
 // checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
 // + 4 for #989's admin subscriptions/revenue/billing-events/refund
 // + 3 for #988's billing invoices/cancel/change
-// + 2 for #992's admin plan-change and plan-history routes
+// + 2 for #992 PR-A's admin plan-change and plan-history routes
 // + 1 for #997's public POST /public/feedback
-// + 3 for #997's admin feedback inbox (list, detail, status/notes update)).
-export const EXPECTED_ROUTE_COUNT = 136;
+// + 3 for #997's admin feedback inbox (list, detail, status/notes update)
+// + 3 for #992 PR-C's billing-details routes (owner GET+PUT /billing/details,
+//   admin GET /admin/workspaces/{id}/billing-details)).
+export const EXPECTED_ROUTE_COUNT = 139;

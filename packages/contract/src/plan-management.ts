@@ -49,21 +49,27 @@ export const PLAN_HISTORY_KIND_LABELS: Record<PlanHistoryKind, string> = {
 };
 
 /**
- * Admin plan change for a workspace (issue §1), PR-A slice.
+ * Admin plan change for a workspace (issue §1).
  *
- * Move a workspace to `toPlanKey`, either IMMEDIATELY as a COMP (granting the
- * plan with no payment, optionally until a date after which the workspace
- * reverts) or at the END OF THE CURRENT PERIOD. A reason is always required —
- * the issue mandates it, and it lands in the audit log and the billing history.
+ * Move a workspace to `toPlanKey`, either IMMEDIATELY or at the END OF THE
+ * CURRENT PERIOD, settled one of two ways:
+ *   - "comp": grant the plan with no payment, optionally until a date after
+ *     which the workspace reverts (PR-A). The only settlement for a workspace
+ *     with NO live provider subscription.
+ *   - "charge": a provider-backed change (PR-C). The prorated difference is
+ *     charged (immediate) or the switch is scheduled at the provider (period
+ *     end); the plan moves ONLY when the verified webhook confirms it, exactly
+ *     as #988's owner-facing changePlan. Used for a workspace WITH a live
+ *     provider subscription — where a plain label move would be undone by the
+ *     next webhook.
  *
- * NOTE (PR-A scope): the "charge the prorated difference" settlement is NOT in
- * this slice. A real charge must run through the provider and apply the plan
- * only on the verified webhook (the #986/#988 rule), which belongs to the
- * provider-backed PR-C; a settlement that merely relabelled the plan here would
- * be a free upgrade dressed up as a charge. So PR-A's only immediate settlement
- * is a comp; PR-C re-introduces a charge settlement additively. `settlement` is
- * kept on the input (constrained to "comp") so PR-C widens it without a shape
- * break for existing callers.
+ * A reason is always required — the issue mandates it, and it lands in the audit
+ * log and the billing history.
+ *
+ * `settlement` is optional for backward compatibility: an immediate change with
+ * no settlement defaults to a comp (PR-A's original behaviour). The service
+ * resolves which settlement is valid for the workspace (a charge needs a live
+ * provider subscription; a comp must not have one) and refuses a mismatch.
  */
 export const AdminPlanChangeInput = z
   .object({
@@ -71,30 +77,26 @@ export const AdminPlanChangeInput = z
     toPlanKey: z.string().trim().min(1).max(40),
     /** When the change takes effect. */
     timing: PlanChangeTiming,
-    /** How an IMMEDIATE change is settled. In PR-A the only value is "comp"
-     *  (see the note above); it is ignored for a period_end change. Optional:
-     *  an immediate change defaults to a comp. */
-    settlement: z.literal("comp").optional(),
+    /** How the change is settled — "comp" (grant without payment) or "charge"
+     *  (provider-backed, prorated/scheduled, applied on the confirming webhook).
+     *  Optional: an immediate change with no settlement defaults to a comp, the
+     *  PR-A behaviour, so existing callers are unaffected. */
+    settlement: PlanChangeSettlement.optional(),
     /** For a comp: the instant the comp ends and the workspace reverts, or null
-     *  for an open-ended comp. Only meaningful for an immediate (comp) change. */
+     *  for an open-ended comp. Only meaningful for an immediate comp. */
     compEndsAt: z.string().datetime().nullable().default(null),
     /** The reason for the change — required, recorded in the audit log and the
      *  billing history. */
     reason: z.string().trim().min(1).max(500),
   })
   .superRefine((v, ctx) => {
-    if (v.timing === "period_end" && v.settlement !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["settlement"],
-        message: "A comp takes effect immediately; schedule a plain change for the period end instead.",
-      });
-    }
-    if (v.timing === "period_end" && v.compEndsAt !== null) {
+    // A comp end date only makes sense for an immediate comp. A period-end
+    // change or a charge carries none.
+    if (v.compEndsAt !== null && (v.timing === "period_end" || v.settlement === "charge")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["compEndsAt"],
-        message: "A comp end date only applies to an immediate comp, not a period-end change.",
+        message: "A comp end date only applies to an immediate comp, not a period-end or charge change.",
       });
     }
   });
@@ -116,8 +118,11 @@ export type ProrationBreakdown = z.infer<typeof ProrationBreakdown>;
 /** The result of an admin plan change: what was applied (or scheduled), and the
  *  proration breakdown when the change was an immediate charge. */
 export const AdminPlanChangeResult = z.object({
-  /** "applied" for an immediate change, "scheduled" for a period-end one. */
-  outcome: z.enum(["applied", "scheduled"]),
+  /** "applied" for an immediate comp (the plan moved now), "scheduled" for a
+   *  period-end comp, and "requested" for a provider-backed CHARGE — the
+   *  provider was asked and the target recorded, but the plan moves only when
+   *  the confirming webhook arrives (#988's rule), so nothing moved yet. */
+  outcome: z.enum(["applied", "scheduled", "requested"]),
   toPlanKey: z.string(),
   timing: PlanChangeTiming,
   settlement: PlanChangeSettlement.nullable(),

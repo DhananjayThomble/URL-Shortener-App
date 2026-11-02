@@ -246,6 +246,13 @@
       "when": 1793615605534,
       "tag": "0034_trials_coupons",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793620763711,
+      "tag": "0035_billing_details",
+      "breakpoints": true
     }
   ]
 }

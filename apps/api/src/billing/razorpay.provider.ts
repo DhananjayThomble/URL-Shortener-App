@@ -74,6 +74,17 @@ export interface RazorpayClient {
     name: string;
     notes: Record<string, string>;
   }): Promise<{ id: string }>;
+  /** #992 §5 — attach the workspace's billing details to the provider customer
+   *  (name, email, GSTIN, address) so the invoices it raises carry them.
+   *  Optional so a fake that does not exercise the sync need not implement it. */
+  updateCustomer?(params: {
+    customerId: string | null;
+    subscriptionId: string | null;
+    name: string | null;
+    email: string | null;
+    gstin: string | null;
+    address: Record<string, string | null> | null;
+  }): Promise<void>;
 }
 
 /** The subset of a Razorpay invoice entity #988 reads. Everything is optional
@@ -274,6 +285,40 @@ export class RazorpayBillingProvider implements BillingProvider {
 
   async refund(providerPaymentId: string): Promise<void> {
     await this.client.refundPayment(providerPaymentId);
+  }
+
+  /**
+   * #992 §5 — push billing details to the Razorpay customer so its invoices
+   * carry the company name, GSTIN and address. Best-effort: a client that does
+   * not implement updateCustomer (or a workspace with no provider customer/
+   * subscription to attach to) is a no-op — the SnapURL record is already the
+   * source of truth and the owner's edit has already landed there.
+   */
+  async syncBillingDetails(
+    params: import("./billing-provider.js").SyncBillingDetailsParams,
+  ): Promise<void> {
+    if (!this.client.updateCustomer) return;
+    // Nothing to attach to: no provider customer and no subscription.
+    if (!params.providerCustomerId && !params.providerSubscriptionId) return;
+    await this.client.updateCustomer({
+      customerId: params.providerCustomerId,
+      subscriptionId: params.providerSubscriptionId,
+      name: params.companyName,
+      email: params.billingEmail,
+      // Razorpay carries an Indian business's GSTIN on the customer; a generic
+      // tax id goes in the same field for a non-Indian customer.
+      gstin: params.taxId,
+      address: params.address
+        ? {
+            line1: params.address.line1,
+            line2: params.address.line2,
+            city: params.address.city,
+            state: params.address.state,
+            zipcode: params.address.postalCode,
+            country: params.address.country,
+          }
+        : null,
+    });
   }
 
   /**
