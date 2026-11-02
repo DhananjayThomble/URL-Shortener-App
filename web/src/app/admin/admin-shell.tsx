@@ -29,6 +29,8 @@ const NAV: NavItem[] = [
   { href: "/admin/analytics", label: "Analytics" },
   // #972 — runtime platform settings.
   { href: "/admin/settings", label: "Settings" },
+  // #1020 — runtime kill switches.
+  { href: "/admin/kill-switches", label: "Kill switches" },
   // #974 — system health and operations.
   { href: "/admin/health", label: "System health" },
 ];

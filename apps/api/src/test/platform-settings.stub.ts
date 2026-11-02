@@ -1,5 +1,5 @@
 import type { PlatformSettingsService } from "../admin/platform-settings.service.js";
-import type { PlatformSettingsValues } from "@snapurl/contract";
+import { DEFAULT_KILL_SWITCHES, type PlatformSettingsValues } from "@snapurl/contract";
 
 /* #972 — a PlatformSettingsService stub for integration tests that construct
    AuthService / LinksService directly (not through Nest DI) and do not
@@ -33,10 +33,14 @@ export function openPlatformSettingsStub(
     newAccountLimits: { windowDays: 7, perDay: 20, perHour: 10 },
     botProtection: { provider: "none" as const },
     disposableEmails: { extraDomains: [] as string[], allowDomains: [] as string[] },
+    // #1020 — the shipped kill-switch defaults (billing/domains OFF, the
+    // background switches ON). A test about a switch overrides this.
+    killSwitches: structuredClone(DEFAULT_KILL_SWITCHES),
     ...overrides,
   };
   return {
     getValues: async () => values,
     getBanner: async () => ({ message: "", level: "info" as const }),
+    getKillSwitches: async () => values.killSwitches,
   } as unknown as PlatformSettingsService;
 }

@@ -1,13 +1,14 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
-import { and, domainProjectionOp, domains, eq, isNull, links, normaliseHost, projectionOutbox, sql, workspaces, type Database } from "@snapurl/database";
+import { and, domainProjectionOp, domains, eq, gte, isNull, links, normaliseHost, projectionOutbox, sql, workspaces, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain, UpdateDomainInput } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { auditInTransaction, recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
 import { EntitlementsService } from "../plans/entitlements.service.js";
+import { KillSwitchService } from "../admin/kill-switch.service.js";
 import { ENV, type Env } from "../config/env.js";
 import { routingRecordFor } from "./domains.routing.js";
 
@@ -102,6 +103,14 @@ export class DomainsService {
     private readonly projectionNudge: ProjectionNudgeService,
     private readonly entitlements: EntitlementsService,
     @Inject(ENV) private readonly env: Env,
+    /** #1020 — the customDomains.create kill switch + its platform-wide hard
+     *  caps (total + new-per-day). This is the outer brake #967's CloudFront
+     *  SaaS tenant creation will also sit behind; it gates the create path only
+     *  — an existing domain's list/verify/update/remove are never switched off.
+     *  @Optional and last so a focused unit test of a non-add path can
+     *  construct DomainsService without it; under real DI it is always injected
+     *  and the gate is active (the HTTP/stack tests exercise it). */
+    @Optional() private readonly killSwitches?: KillSwitchService,
   ) {}
 
   private readonly logger = new Logger(DomainsService.name);
@@ -133,6 +142,30 @@ export class DomainsService {
 
   async add(workspaceId: string, input: AddDomainInput, actor: Actor): Promise<Domain> {
     const domain = input.domain.toLowerCase().trim();
+
+    /* #1020 — the customDomains.create kill switch + hard caps, the OUTER brake
+       the operator can throw at runtime. Checked FIRST, before the plan gate:
+       an off switch or a hit cap refuses adding a NEW custom domain for every
+       workspace regardless of plan, and changes nothing (the check is before
+       the insert). An existing domain is untouched — this gates `add` alone.
+       The caps are platform-wide: `totalMax` over every non-system domain,
+       `perDay` over those created in the trailing 24h. */
+    if (this.killSwitches) {
+      await this.killSwitches.assertOn("customDomains.create");
+      const switches = await this.killSwitches.current();
+      const since = new Date(Date.now() - 24 * 60 * 60_000);
+      const [[total], [today]] = await Promise.all([
+        this.db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(domains)
+          .where(eq(domains.isSystem, false)),
+        this.db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(domains)
+          .where(and(eq(domains.isSystem, false), gte(domains.createdAt, since))),
+      ]);
+      this.killSwitches.assertCustomDomainUnderCaps(switches, total?.n ?? 0, today?.n ?? 0);
+    }
 
     /* Plan gate (#966, now through #970's single engine). Custom domains are a
        gated feature; a Free workspace uses the shared snapurl.in domain. The

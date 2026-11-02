@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import {
   and,
   billingEvents,
@@ -21,6 +21,7 @@ import type {
 import { DB } from "../database/database.module.js";
 import { PlansService } from "../plans/plans.service.js";
 import { MailService } from "../mail/mail.service.js";
+import { KillSwitchService } from "../admin/kill-switch.service.js";
 import { CouponsService } from "./coupons.service.js";
 import { BILLING_PROVIDER, type BillingProvider, type NormalizedBillingEvent } from "./billing-provider.js";
 import {
@@ -119,6 +120,14 @@ export class BillingService {
      *  redemption at checkout; the discount itself is applied by the provider
      *  via the coupon's offer id. */
     private readonly coupons: CouponsService,
+    /** #1020 — the runtime kill switches. checkout, plan changes, coupons,
+     *  trials and refunds are each behind their own switch; the webhook path
+     *  (handleWebhook) deliberately NEVER touches this service, so a payment the
+     *  provider already took is still recorded while every billing switch is
+     *  off. @Optional and last so a focused unit test can construct
+     *  BillingService without it; under real DI it is always injected and the
+     *  gates are active (the HTTP/stack tests exercise them). */
+    @Optional() private readonly killSwitches?: KillSwitchService,
   ) {}
 
   /** Whether the billing surface is reachable at all. The controller reads this
@@ -148,6 +157,11 @@ export class BillingService {
    * refunded (there is nothing to return) and is rejected.
    */
   async refundPayment(paymentId: string): Promise<RefundOutcome> {
+    // #1020 — the refunds kill switch. OFF refuses an admin refund with a named
+    // 503 BEFORE any provider call or local status flip, so no money moves and
+    // the payment row is untouched.
+    await this.killSwitches?.assertOn("billing.refunds");
+
     const [row] = await this.db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
     if (!row) return { outcome: "not_found" };
     if (row.status === "refunded") {
@@ -184,6 +198,12 @@ export class BillingService {
     interval: BillingInterval,
     couponCode?: string,
   ): Promise<CheckoutSession> {
+    // #1020 — the checkout kill switch. OFF refuses a new subscription/upgrade
+    // with a named 503 and creates NOTHING at the provider (the check is before
+    // any provider call). A verified webhook for an ALREADY-taken payment still
+    // processes while this is off — that path does not come through here.
+    await this.killSwitches?.assertOn("billing.checkout");
+
     // #987 — read the live price the catalogue holds for this plan RIGHT NOW,
     // so the confirmation reflects an admin's edit without a redeploy. The
     // provider's own plan id (resolved in createCheckout) is still what is
@@ -194,7 +214,13 @@ export class BillingService {
     // subscription (first charge deferred). A plan with trialDays 0 (the
     // default) starts charging immediately, exactly as before.
     const plan = await this.plans.getByKey(planKey);
-    const trialDays = plan?.trialDays ?? 0;
+    const planTrialDays = plan?.trialDays ?? 0;
+    // #1020 — the trials kill switch. OFF does NOT refuse the checkout; it just
+    // forces a no-trial (immediate-charge) subscription, so a customer can
+    // still subscribe while new trials are paused. A plan with no trial is
+    // unaffected.
+    const trialsOn = this.killSwitches ? await this.killSwitches.isOn("billing.trials") : true;
+    const trialDays = trialsOn ? planTrialDays : 0;
     const trialRequiresCard = plan?.trialRequiresCard ?? true;
 
     // #992 — validate the coupon BEFORE creating the provider subscription, so
@@ -202,6 +228,12 @@ export class BillingService {
     // discount preview is computed off the live price. Validation does not
     // record a redemption — that is committed only after the subscription
     // exists, below, so a provider failure leaves no phantom redemption.
+    if (couponCode) {
+      // #1020 — the coupons kill switch. OFF refuses a checkout that presents a
+      // coupon with a named 503 and creates nothing; a checkout with no coupon
+      // is unaffected, so turning coupons off does not stop plain subscriptions.
+      await this.killSwitches?.assertOn("billing.coupons");
+    }
     const resolvedCoupon = couponCode
       ? await this.coupons.validate(couponCode, planKey, interval, amountMinor ?? 0)
       : null;
@@ -452,6 +484,12 @@ export class BillingService {
     planKey: PaidPlanKey,
     interval: BillingInterval,
   ): Promise<WorkspaceSubscription> {
+    // #1020 — the plan-changes kill switch. OFF refuses an owner plan change
+    // with a named 503 and asks the provider nothing (the check is before any
+    // provider call), so no plan moves. The confirming webhook path is separate
+    // and still processes a payment already taken.
+    await this.killSwitches?.assertOn("billing.planChanges");
+
     const [row] = await this.db
       .select()
       .from(subscriptions)
