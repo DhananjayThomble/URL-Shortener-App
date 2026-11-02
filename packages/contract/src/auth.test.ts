@@ -108,12 +108,17 @@ describe("isTotpDisableCredentialRejection", () => {
    schema is caught. */
 
 describe("AuthUser / AuthSession / TokenPair / UserWorkspace shapes", () => {
-  const user = { id: "u1", name: "Jo", email: "jo@acme.com", initials: "J", role: "editor" as const };
+  const user = { id: "u1", name: "Jo", email: "jo@acme.com", initials: "J", role: "editor" as const, plan: "Free" };
   it("AuthUser requires its fields and a valid role", () => {
     expect(AuthUser.parse(user).role).toBe("editor");
     expect(AuthUser.safeParse({ ...user, role: "root" }).success).toBe(false);
     const { id: _id, ...noId } = user;
     expect(AuthUser.safeParse(noId).success).toBe(false);
+  });
+  it("AuthUser requires the plan (#966)", () => {
+    expect(AuthUser.parse(user).plan).toBe("Free");
+    const { plan: _plan, ...noPlan } = user;
+    expect(AuthUser.safeParse(noPlan).success).toBe(false);
   });
   it("AuthSession nests AuthUser plus both tokens", () => {
     const s = { accessToken: "a", refreshToken: "r", user };
@@ -159,7 +164,7 @@ describe("AcceptInviteInput / AcceptedInvite", () => {
     expect(AcceptInviteInput.safeParse({ token: "" }).success).toBe(false);
   });
   it("AcceptedInvite returns the joined workspace id and the user", () => {
-    const user = { id: "u1", name: "Jo", email: "jo@acme.com", initials: "J", role: "editor" as const };
+    const user = { id: "u1", name: "Jo", email: "jo@acme.com", initials: "J", role: "editor" as const, plan: "Free" };
     expect(AcceptedInvite.parse({ workspaceId: "w1", user }).workspaceId).toBe("w1");
     expect(AcceptedInvite.safeParse({ workspaceId: "w1" }).success).toBe(false); // no user
   });
@@ -173,7 +178,7 @@ describe("InviteErrorCode enum and LoginResult union", () => {
     expect(InviteErrorCode.safeParse("invite_unknown").success).toBe(false);
   });
   it("LoginResult accepts either a session or a TOTP challenge, not junk", () => {
-    const user = { id: "u1", name: "Jo", email: "jo@acme.com", initials: "J", role: "editor" as const };
+    const user = { id: "u1", name: "Jo", email: "jo@acme.com", initials: "J", role: "editor" as const, plan: "Free" };
     expect(LoginResult.safeParse({ accessToken: "a", refreshToken: "r", user }).success).toBe(true);
     expect(LoginResult.safeParse({ challenge: "totp", challengeToken: "ct" }).success).toBe(true);
     expect(LoginResult.safeParse({ challenge: "sms", challengeToken: "ct" }).success).toBe(false); // literal "totp"

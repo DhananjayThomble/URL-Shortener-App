@@ -60,18 +60,30 @@ function makeFakeDb(mode: "add" | "update") {
   let selectCall = 0;
   const select = () => {
     const which = selectCall++;
-    // add(): the only .limit() select is the uniqueness check → not taken.
-    // update(): first .limit() is the pre-read; the final select resolves a count.
-    const limitRows = mode === "add" ? [] : which === 0 ? [existingRow] : [{ n: 0 }];
+    /* add(): #966 adds two selects before the insert. The query order is now:
+         0. plan read (.limit)      → a paid workspace, so the gate lets add through
+         1. uniqueness check (.limit) → not taken ([])
+       plus the owned-domains count, awaited straight off .where() (the thenable
+       below), which resolves [{ n: 0 }] so the plan's cap is not reached.
+       update(): first .limit() is the pre-read; the final select resolves a count. */
+    const limitRows =
+      mode === "add"
+        ? which === 0
+          ? [{ plan: "Pro" }]
+          : []
+        : which === 0
+          ? [existingRow]
+          : [{ n: 0 }];
     const builder: any = {
       from: () => builder,
       where: () => builder,
       limit: () => Promise.resolve(limitRows),
       groupBy: () => Promise.resolve([]),
       orderBy: () => Promise.resolve([]),
-      // update()'s trailing link-count query is awaited straight off .where(),
-      // so the builder itself must be thenable and resolve the count rows.
-      then: (resolve: (rows: unknown[]) => unknown) => resolve(limitRows),
+      // A query awaited straight off .where() (update()'s link count, and
+      // #966's owned-domains count in add()) makes the builder thenable. It
+      // resolves the count row so `(owned?.n ?? 0)` is 0, below any plan cap.
+      then: (resolve: (rows: unknown[]) => unknown) => resolve(mode === "add" ? [{ n: 0 }] : limitRows),
     };
     return builder;
   };
