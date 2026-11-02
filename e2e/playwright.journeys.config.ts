@@ -36,10 +36,13 @@ const ARTIFACTS = path.join(RUN_DIR, "artifacts");
 
 export default defineConfig({
   testDir: "./journeys",
-  /* #977/#1022 — seed the platform kill switches ON before the first spec, so
-     custom-domain creation (OFF by shipped default) is enabled for the staging
-     platform the journeys drive. Runs once, ahead of any kill-switch cache load. */
+  /* #977/#1022/#1030 — seed the platform kill switches ON with generous caps
+     before the first spec, so custom-domain creation (OFF + tight caps by shipped
+     default) is enabled for the staging platform the journeys drive. Runs once,
+     ahead of any kill-switch cache load; the teardown drops the row afterward so
+     the generous caps never leak to another run on the shared staging DB. */
   globalSetup: "./journeys/global-setup.ts",
+  globalTeardown: "./journeys/global-teardown.ts",
   fullyParallel: false,    // journeys share the web server build; run sequentially
   forbidOnly: !!process.env.CI,
   retries: 0,              // no retries — failures are findings

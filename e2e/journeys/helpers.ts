@@ -291,38 +291,46 @@ export async function registerPaidOwner(email: string, password = RUN_PASSWORD):
 }
 
 /**
- * Turn the platform kill switches ON in the staging DB so the custom-domain
- * journeys can run (#1022 / #1020).
+ * Turn the platform kill switches ON — with GENEROUS caps — in the staging DB
+ * so the custom-domain journeys can run (#1022 / #1020 / #1030).
  *
  * WHY. #1022 added runtime kill switches; DEFAULT_KILL_SWITCHES ships
  * "customDomains.create" (and the billing switches) OFF, so a fresh staging DB
- * refuses POST /domains with a 503 ("Custom domains — add a domain is turned
- * off right now"). Every custom-domain journey (j20/j23/j26/j782/j783/j784, and
- * j17's domain-default steps) then reds — a test-environment gap, not a product
- * bug: production ships OFF on purpose and an operator turns it on, while these
- * journeys exercise the domain UX on a platform where it IS on. The switches
- * themselves are proven on/off in their own domains-kill-switches /
- * kill-switch.service tests.
+ * refuses POST /domains with a 503 ("… add a domain is turned off right now").
+ * #1030 then made the shipped defaults conservative INITIAL HARD LIMITS
+ * (customDomains 25 total / 5 per day; email 200/h / 2000/day), so even with the
+ * switch ON a bare { on: true } folds onto the 5-per-day default and the 6th
+ * POST /domains in a shard 403s "reached its per-day cap of 5". Every
+ * custom-domain journey (j20/j23/j26/j782/j783/j784) mints several domains with
+ * no cleanup between them, so both the OFF default and the tight caps red them —
+ * a test-environment gap, not a product bug: production keeps the OFF default and
+ * the 25/5 + 200/2000 caps (they are proven in domains-kill-switches /
+ * kill-switch.service tests), while these journeys drive a platform where the
+ * feature is on and the harness is never the thing the cap refuses.
  *
- * Seeds the platform_settings "killSwitches" row to every-switch-ON, exactly as
- * the HTTP-stack seed does (apps/api/src/stack/principals.ts under #1022). The
- * value is an INLINE plain literal rather than @snapurl/contract's
- * DEFAULT_KILL_SWITCHES: every switch { on: true } with no caps is a valid
- * KillSwitchState the API folds onto the shipped cap defaults on read, and it
- * keeps contract's runtime zod out of the e2e import graph. Platform-wide and
- * idempotent (upsert on the single "killSwitches" key), so one call per shard
- * is enough and calling it per spec is harmless.
+ * Seeds the platform_settings "killSwitches" row ON with generous caps, exactly
+ * as the HTTP-stack seed does (apps/api/src/stack/principals.ts under
+ * #1022/#1030). The value is an INLINE plain literal rather than
+ * @snapurl/contract's DEFAULT_KILL_SWITCHES: each entry is a valid KillSwitchState
+ * the API folds onto the shipped defaults on read, and it keeps contract's
+ * runtime zod out of the e2e import graph. Platform-wide and idempotent (upsert
+ * on the single "killSwitches" key); the matching resetKillSwitches() teardown
+ * drops the row so these generous caps never leak to another run.
  */
 export async function enableCustomDomains(): Promise<void> {
   const on = { on: true };
+  // #1030 — seed GENEROUS caps so the harness never hits the 25-total/5-per-day
+  // (domains) or 200/h (email) shipped limits across a run. Mirrors principals.ts.
+  const domainsOnGenerous = { on: true, domainCaps: { totalMax: 1_000_000, perDay: 1_000_000 } };
+  const emailOnGenerous = { on: true, emailCaps: { perHour: 1_000_000, perDay: 1_000_000 } };
   const allOn = {
     "billing.checkout": on,
     "billing.planChanges": on,
     "billing.coupons": on,
     "billing.trials": on,
     "billing.refunds": on,
-    "customDomains.create": on,
-    "email.outbound": on,
+    "customDomains.create": domainsOnGenerous,
+    "email.outbound": emailOnGenerous,
     errorTracking: on,
     "linkScanning.rescans": on,
   };
@@ -332,6 +340,22 @@ export async function enableCustomDomains(): Promise<void> {
       .insert(platformSettings)
       .values({ key: "killSwitches", value: allOn, updatedAt: new Date() })
       .onConflictDoUpdate({ target: platformSettings.key, set: { value: allOn, updatedAt: new Date() } });
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Drop the journeys' platform kill-switch seed on teardown (#1030), so the
+ * generous caps enableCustomDomains() wrote never leak to another run that
+ * shares the staging DB. Deleting the "killSwitches" row returns the platform to
+ * the shipped defaults (every capped switch back to its conservative initial
+ * limit). Mirrors the HTTP-stack teardown in principals.ts. Idempotent.
+ */
+export async function resetKillSwitches(): Promise<void> {
+  const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
+  try {
+    await handle.db.delete(platformSettings).where(eq(platformSettings.key, "killSwitches"));
   } finally {
     await handle.close();
   }
