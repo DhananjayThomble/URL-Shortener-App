@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest a new capability or an improvement.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. The most useful feature requests describe the
+        problem first and the solution second — it keeps the door open to a
+        better solution than the one you first thought of.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that SnapURL makes hard or impossible today?
+      placeholder: I want to schedule a link to go live at a future date, but I can only set an expiry.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like SnapURL to do? Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you use today, or other approaches you weighed.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of SnapURL would this touch?
+      options:
+        - Links & redirects
+        - Analytics & conversions
+        - QR codes
+        - Bio pages
+        - Custom domains
+        - Team / access / API keys
+        - Self-hosting / deployment
+        - Dashboard UX
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
