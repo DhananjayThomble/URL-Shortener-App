@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { PageHead } from "@/components/app-shell";
-import { ActionsTd, ActionsTh, Button, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
+import { ActionsTd, ActionsTh, Button, ButtonLink, Card, CardBody, CardHeader, Chip, Field, Input, Skeleton, Table, TableWrap, Td, Th } from "@/components/ui";
 import { useAddDomain, useDeleteDomain, useDomains, useMe, useUpdateDomain, useVerifyDomain } from "@/lib/api/hooks";
 import { AddDomainInput, type Domain } from "@snapurl/contract";
 import { full } from "@/lib/utils";
@@ -188,10 +188,19 @@ export default function DomainsPage() {
       {!canAddDomain ? (
         <Card className="mb-3.5">
           <CardHeader title="Custom domains are a paid feature" />
-          <CardBody className="text-[13px] text-ink-2 leading-[1.6]">
-            Your workspace is on the <b className="text-ink">Free</b> plan, which uses the shared{" "}
-            <span className="font-mono">snapurl.in</span> domain. Upgrade to a paid plan to connect your own domain.
-            Any custom domains you already have keep working.
+          <CardBody className="flex flex-col gap-3 text-[13px] text-ink-2 leading-[1.6]">
+            <p className="m-0">
+              Your workspace is on the <b className="text-ink">Free</b> plan, which uses the shared{" "}
+              <span className="font-mono">snapurl.in</span> domain. Upgrade to a paid plan to connect your own domain.
+              Any custom domains you already have keep working.
+            </p>
+            {/* #988 — the upgrade entry point from the Domains prompt. Points at
+                Settings → Billing, where the owner upgrades. A non-owner lands
+                there and sees no billing controls (owner-only), which is the
+                honest state — they ask an owner to upgrade. */}
+            <ButtonLink href="/settings#billing" variant="primary" className="self-start">
+              See upgrade options
+            </ButtonLink>
           </CardBody>
         </Card>
       ) : null}

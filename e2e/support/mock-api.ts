@@ -96,6 +96,15 @@ export const nestError = (status: number, message: string, error = "Unauthorized
    still override it by passing its own handler for the same key. */
 const DEFAULT_HANDLERS: Record<string, MockReply | MockHandler> = {
   "GET /public/platform/banner": { status: 200, body: { message: "", level: "info" } },
+  /* #988 — the Settings → Billing card (owner-only) polls these on the settings
+     page. The app's DEFAULT is billing OFF (a `none` build 404s the whole
+     surface), and the card renders nothing on a 404 — so a 404 default keeps
+     every settings spec that does not opt into billing seeing exactly what it
+     saw before billing existed (no card, no console error). A billing-ON spec
+     overrides these with 200 handlers. 404 is the body the API's
+     BillingEnabledGuard sends when billing is disabled. */
+  "GET /billing/subscription": nestError(404, "Billing is disabled on this deployment.", "Not Found"),
+  "GET /billing/invoices": nestError(404, "Billing is disabled on this deployment.", "Not Found"),
 };
 
 export async function mockApi(page: Page, handlers: Record<string, MockReply | MockHandler>): Promise<MockApi> {
