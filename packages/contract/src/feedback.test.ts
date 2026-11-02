@@ -36,10 +36,37 @@ describe("ScreenshotDataUrl", () => {
   it("rejects a non-image or non-data-URL string", () => {
     expect(ScreenshotDataUrl.safeParse("https://example.com/x.png").success).toBe(false);
     expect(ScreenshotDataUrl.safeParse("data:image/gif;base64,AAAA").success).toBe(false);
+    expect(ScreenshotDataUrl.safeParse("data:image/jpg;base64,AAAA").success).toBe(false); // jpg != jpeg
     expect(ScreenshotDataUrl.safeParse("data:text/plain;base64,AAAA").success).toBe(false);
     expect(ScreenshotDataUrl.safeParse("data:image/png,AAAA").success).toBe(false); // not base64
     expect(ScreenshotDataUrl.safeParse("AAAA").success).toBe(false);
     expect(ScreenshotDataUrl.safeParse("").success).toBe(false);
+  });
+
+  /* Pin the regex boundaries so a mutant that drops an anchor, loosens the
+     char class, or widens the scheme alternation is caught (not just "a valid
+     one passes, an obviously-wrong one fails"). */
+  it("anchors the pattern at the start — leading junk is rejected", () => {
+    // ^ dropped would let a prefix through.
+    expect(ScreenshotDataUrl.safeParse("xdata:image/png;base64,AAAA").success).toBe(false);
+    expect(ScreenshotDataUrl.safeParse(" data:image/png;base64,AAAA").success).toBe(false);
+  });
+
+  it("anchors the pattern at the end — trailing junk is rejected", () => {
+    // $ dropped would let a suffix through.
+    expect(ScreenshotDataUrl.safeParse("data:image/png;base64,AAAA<script>").success).toBe(false);
+    expect(ScreenshotDataUrl.safeParse("data:image/png;base64,AA AA").success).toBe(false); // space not in base64 class
+  });
+
+  it("requires the exact ;base64, marker", () => {
+    expect(ScreenshotDataUrl.safeParse("data:image/png;base32,AAAA").success).toBe(false);
+    expect(ScreenshotDataUrl.safeParse("data:image/pngbase64,AAAA").success).toBe(false);
+  });
+
+  it("requires a non-empty base64 payload", () => {
+    // the char class is one-or-more: an empty payload must fail.
+    expect(ScreenshotDataUrl.safeParse("data:image/png;base64,").success).toBe(false);
+    expect(ScreenshotDataUrl.safeParse("data:image/png;base64,==").success).toBe(false);
   });
 
   it("rejects a data URL over the size cap but accepts one at the cap", () => {
@@ -160,8 +187,14 @@ describe("UpdateFeedbackInput", () => {
     expect(UpdateFeedbackInput.safeParse({ status: "done", notes: "fixed" }).success).toBe(true);
   });
 
-  it("rejects an empty update (refine: neither field present)", () => {
-    expect(UpdateFeedbackInput.safeParse({}).success).toBe(false);
+  it("rejects an empty update with the refine's own message (kills the blank-options mutant)", () => {
+    const res = UpdateFeedbackInput.safeParse({});
+    expect(res.success).toBe(false);
+    // Asserting the refine's custom message means blanking the refine options
+    // object changes observable behaviour, so that mutant cannot survive.
+    if (!res.success) {
+      expect(res.error.issues[0]!.message).toBe("Nothing to update: pass a status, notes, or both.");
+    }
   });
 
   it("validates status against the enum and bounds notes", () => {
