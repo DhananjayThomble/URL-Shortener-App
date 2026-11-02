@@ -28,8 +28,8 @@ describe("entitlementsFor", () => {
     expect(entitlementsFor("  Pro ").customDomains).toBe(true);
   });
 
-  it("gives each named paid plan custom domains with a positive cap", () => {
-    for (const name of ["Pro", "Team", "Business", "Growth", "Agency", "Enterprise"]) {
+  it("gives each seeded paid plan custom domains with a positive cap", () => {
+    for (const name of ["Starter", "Pro", "Team", "Enterprise"]) {
       const e = entitlementsFor(name);
       expect(e.customDomains).toBe(true);
       expect(e.maxCustomDomains).toBeGreaterThan(0);
@@ -46,11 +46,14 @@ describe("entitlementsFor", () => {
     expect(entitlementsFor(undefined).customDomains).toBe(false);
   });
 
-  it("treats an unknown non-empty plan as a paid tier", () => {
-    // An operator sets plan names by hand; any non-Free name is a paid plan.
+  it("treats an unknown non-empty plan as Free (fail closed, #970)", () => {
+    // #970: the admin panel owns the plan catalogue, so a plan name that is not
+    // a known key is a mistake (typo / deleted plan / stale value) and must NOT
+    // silently grant a paid feature. This flips #966's "unknown = paid".
     const e = entitlementsFor("CustomEnterprisePlus");
-    expect(e.customDomains).toBe(true);
-    expect(e.maxCustomDomains).toBe(PAID_ENTITLEMENTS.maxCustomDomains);
+    expect(e.customDomains).toBe(false);
+    expect(e.maxCustomDomains).toBe(0);
+    expect(e).toBe(FREE_ENTITLEMENTS);
   });
 
   it("gives Enterprise a larger custom-domain cap than the generic paid tier", () => {

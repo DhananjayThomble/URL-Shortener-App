@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { createDatabase, domains, eq, links, projectionOutbox, sql, workspaces, type Database } from "@snapurl/database";
 import { DomainsService } from "./domains.service.js";
+import { openEntitlementsStub } from "../plans/entitlements.test-stub.js";
 
 /* ============================================================
    #840 — DELETE /domains/:id: the in-use pre-check is scoped to the
@@ -68,7 +69,7 @@ describeDb("DomainsService.remove workspace scoping (#840)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge: vi.fn() } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    service = new DomainsService(db, { nudge: vi.fn() } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
 
     await db.insert(workspaces).values({ id: own, name: "own", slug: `rs-own-${stamp}` });
     await db.insert(workspaces).values({ id: other, name: "other", slug: `rs-other-${stamp}` });

@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ForbiddenException } from "@nestjs/common";
 import { createDatabase, domains, eq, projectionOutbox, sql, workspaces, type Database } from "@snapurl/database";
 import { DomainsService } from "./domains.service.js";
+import { PlansService } from "../plans/plans.service.js";
+import { EntitlementsService } from "../plans/entitlements.service.js";
 
 /* ============================================================
    #966 — POST /domains gates custom domains behind plan entitlements.
@@ -45,7 +47,13 @@ describeDb("DomainsService.add plan gate (#966)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge: vi.fn() } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    const entitlements = new EntitlementsService(new PlansService(db));
+    service = new DomainsService(
+      db,
+      { nudge: vi.fn() } as never,
+      entitlements,
+      { DEFAULT_DOMAIN: "snap.example.com" } as never,
+    );
 
     await db.insert(workspaces).values({ id: freeWs, name: "free", slug: `pg-free-${stamp}`, plan: "Free" });
     await db.insert(workspaces).values({ id: paidWs, name: "paid", slug: `pg-paid-${stamp}`, plan: "Pro" });

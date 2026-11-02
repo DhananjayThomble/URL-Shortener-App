@@ -12,6 +12,7 @@ import {
 } from "@snapurl/database";
 import type { Actor } from "../common/activity.js";
 import { DomainsService } from "./domains.service.js";
+import { openEntitlementsStub } from "../plans/entitlements.test-stub.js";
 
 /* ============================================================
    #729 items 1 + 4 — domain-meta version-under-lock, and verify() enqueue.
@@ -65,7 +66,7 @@ describeDb("DomainsService version-under-lock + verify() enqueue (#729 items 1, 
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "snap.example.com" } as never);
+    service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "snap.example.com" } as never);
     await db.insert(workspaces).values({ id: workspaceId, name: "v729", slug: `v729-${stamp}` });
   });
 

@@ -103,6 +103,8 @@ export const ACCESS_MATRIX: Row[] = [
   // #972 — the site-wide banner, @Public so reachable by anyone (signed-in or
   // not); it returns the public banner shape only, never anything gated.
   { route: "GET /api/v1/public/platform/banner", expect: { any: "allow" }, status: "approved" },
+  // #970 — the public pricing table, unauthenticated like every other public route.
+  { route: "GET /api/v1/public/pricing", expect: { any: "allow" }, status: "approved" },
   // ── health ──
   { route: "GET /api/v1/health", expect: { any: "allow" }, status: "approved" },
   // ── links ──
@@ -148,6 +150,9 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "DELETE /api/v1/bio-pages/{id}", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: 403, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // ── workspaces ──
   { route: "GET /api/v1/workspaces/current", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "allow", "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #970 — usage against plan limits. Same access shape as GET /workspaces/current:
+  // any workspace member reads it, API keys 403 (no user/workspace-session behind them).
+  { route: "GET /api/v1/workspaces/current/usage", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "allow", "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "PATCH /api/v1/workspaces/current", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: 403, viewerA: 403, ownerB: "allow", "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // ── conversions ──
   { route: "GET /api/v1/conversions", expect: { anon: 401, ownerA: "allow", adminA: "allow", editorA: "allow", viewerA: "allow", ownerB: "own-only", "keyA-all": "allow", "keyA-links-read": 403, "keyB-all": "own-only" }, status: "approved" },
@@ -219,14 +224,28 @@ export const ACCESS_MATRIX: Row[] = [
   // read behind the same guard, so it shares the row shape.
   { route: "GET /api/v1/admin/analytics", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/analytics/export/{view}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
-  // #986 — billing. OBSERVED with BILLING_PROVIDER unset in the staging stack,
-  // i.e. the default `none`: the controller 404s EVERY billing route for every
-  // caller, so the whole surface is unreachable. This records that observed
-  // billing-OFF behaviour — a 404 here is "billing disabled on this
-  // deployment", not the cross-tenant {id} probe the grammar's 404 usually
-  // means (there is no {id} on any billing route). The webhook is @Public, so
-  // the suite probes it for anon and ownerA only (`any`); it too 404s while
-  // billing is off, and the signature check only runs once billing is on.
+  // #970 — plans, versions and per-workspace overrides. Same AdminGuard
+  // fail-closed gate as every other /admin/* route: none of the matrix
+  // principals is a platform admin (PLATFORM_ADMIN_EMAILS is empty in the
+  // staging stack), so anon is 401, every authenticated principal is 403, and
+  // every API key is 403 (no user behind the key, so never an admin).
+  { route: "GET /api/v1/admin/plans", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/plans", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PATCH /api/v1/admin/plans/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PUT /api/v1/admin/plans/{id}/matrix", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "DELETE /api/v1/admin/workspaces/{id}/overrides/{overrideId}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "POST /api/v1/admin/workspaces/{id}/migrate-version", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #986 — billing (merged from main). OBSERVED with BILLING_PROVIDER unset in
+  // the staging stack, i.e. the default `none`: the controller 404s EVERY
+  // billing route for every caller, so the whole surface is unreachable. This
+  // records that observed billing-OFF behaviour — a 404 here is "billing
+  // disabled on this deployment", not the cross-tenant {id} probe the grammar's
+  // 404 usually means (there is no {id} on any billing route). The webhook is
+  // @Public, so the suite probes it for anon and ownerA only (`any`); it too
+  // 404s while billing is off, and the signature check only runs once billing
+  // is on.
   { route: "POST /api/v1/billing/checkout", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
     note: "Billing off (BILLING_PROVIDER=none) in staging: a session principal gets 404 — BillingEnabledGuard 404s at the controller BEFORE the body pipe runs, so even a malformed body is 404 (unreachable), never a 400 validation error. anon is 401 (the global auth guard runs before the controller guard); API keys are 403 (no @Scope, fail closed). With billing ON this is a session write (owner/admin/editor allow, viewer 403)." },
   { route: "GET /api/v1/billing/subscription", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
@@ -239,5 +258,7 @@ export const ACCESS_MATRIX: Row[] = [
 // + 7 for #974's system-health routes + 11 for #969's users-and-workspaces
 // + 9 for #971's moderation routes + 2 for #973's GET /admin/analytics and its
 // CSV export + 2 for #972's admin settings routes + 1 for #972's public banner
-// route + 3 for #986's billing checkout/subscription/webhook).
-export const EXPECTED_ROUTE_COUNT = 107;
+// route + 8 for #970's plans/versions/overrides admin routes + 2 for #970's
+// public /pricing and GET /workspaces/current/usage + 3 for #986's billing
+// checkout/subscription/webhook).
+export const EXPECTED_ROUTE_COUNT = 117;

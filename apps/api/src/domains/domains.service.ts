@@ -3,11 +3,11 @@ import { randomBytes } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { and, domainProjectionOp, domains, eq, isNull, links, normaliseHost, projectionOutbox, sql, workspaces, type Database } from "@snapurl/database";
 import type { AddDomainInput, Domain, UpdateDomainInput } from "@snapurl/contract";
-import { entitlementsFor } from "@snapurl/contract";
 import { DB } from "../database/database.module.js";
 import { auditInTransaction, recordActivity, type Actor } from "../common/activity.js";
 import { assertNoSsrfDnsTarget } from "../common/ssrf-guard.js";
 import { ProjectionNudgeService } from "../links/projection-nudge.service.js";
+import { EntitlementsService } from "../plans/entitlements.service.js";
 import { ENV, type Env } from "../config/env.js";
 import { routingRecordFor } from "./domains.routing.js";
 
@@ -100,6 +100,7 @@ export class DomainsService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly projectionNudge: ProjectionNudgeService,
+    private readonly entitlements: EntitlementsService,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -133,11 +134,11 @@ export class DomainsService {
   async add(workspaceId: string, input: AddDomainInput, actor: Actor): Promise<Domain> {
     const domain = input.domain.toLowerCase().trim();
 
-    /* Plan gate (#966). Custom domains are a paid-plan feature; a Free
-       workspace uses the shared snapurl.in domain. The entitlements live in
-       ONE place — @snapurl/contract's `entitlementsFor` — so the API and the
-       web Domains page can never disagree, and #970 (editable plans) can swap
-       that lookup for a stored table without touching this call site.
+    /* Plan gate (#966, now through #970's single engine). Custom domains are a
+       gated feature; a Free workspace uses the shared snapurl.in domain. The
+       decision lives in ONE place — EntitlementsService over the DB-backed
+       plan catalogue — so the API, the web Domains page and every other gated
+       path resolve the same entitlements and can never disagree.
 
        This gate is on `add` alone: an existing custom domain on a workspace
        whose plan is (or became) Free is never removed — list/verify/update/
@@ -149,26 +150,26 @@ export class DomainsService {
       .limit(1);
     if (!workspace) throw new NotFoundException("That workspace doesn't exist.");
 
-    const entitlements = entitlementsFor(workspace.plan);
-    if (!entitlements.customDomains) {
+    if (!(await this.entitlements.hasFeature(workspaceId, "customDomains"))) {
       throw new ForbiddenException(
         "Custom domains are a paid-plan feature. Your workspace is on the Free plan, which uses the shared snapurl.in domain. Upgrade to connect your own domain.",
       );
     }
 
-    /* Even on a paid plan, cap how many custom domains one workspace can hold
-       at once (the shared system domain is never counted — it belongs to no
-       workspace). A plan with a non-zero cap that is already at it is told how
-       many it may have, rather than silently refused. */
+    /* Even on a plan that allows custom domains, cap how many one workspace may
+       hold at once (the shared system domain is never counted — it belongs to
+       no workspace). The cap is the plan's `customDomains` limit, resolved
+       through the same engine. A workspace already at its cap is told how many
+       it may have, rather than silently refused. */
     const [owned] = await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(domains)
       .where(and(eq(domains.workspaceId, workspaceId), eq(domains.isSystem, false)));
-    if ((owned?.n ?? 0) >= entitlements.maxCustomDomains) {
+    const maxCustomDomains = (await this.entitlements.limitFor(workspaceId, "customDomains")) ?? Number.POSITIVE_INFINITY;
+    if ((owned?.n ?? 0) >= maxCustomDomains) {
+      const capText = maxCustomDomains === 1 ? "1 custom domain" : `${maxCustomDomains} custom domains`;
       throw new ForbiddenException(
-        `Your plan allows up to ${entitlements.maxCustomDomains} custom domain${
-          entitlements.maxCustomDomains === 1 ? "" : "s"
-        }. Remove one before connecting another, or upgrade for more.`,
+        `Your plan allows up to ${capText}. Remove one before connecting another, or upgrade for more.`,
       );
     }
 

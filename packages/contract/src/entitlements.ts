@@ -59,15 +59,15 @@ export const ENTERPRISE_ENTITLEMENTS: PlanEntitlements = {
 
 /* Explicit, known plan definitions. Keys are compared case-insensitively
    (see `entitlementsFor`). "Free" is pinned restricted here so it is a
-   deliberate decision rather than a fallthrough. Named paid plans are listed
-   so the set is self-documenting and #970 has concrete rows to seed from. */
+   deliberate decision rather than a fallthrough. The seeded paid keys
+   (starter/pro/team/enterprise, matching #986's PLAN_KEYS plus enterprise) are
+   listed so the set is self-documenting and matches the rows #970 seeds into
+   the DB plans table. Any key NOT here resolves to Free — see entitlementsFor. */
 export const PLAN_ENTITLEMENTS: Record<string, PlanEntitlements> = {
   free: FREE_ENTITLEMENTS,
+  starter: PAID_ENTITLEMENTS,
   pro: PAID_ENTITLEMENTS,
   team: PAID_ENTITLEMENTS,
-  business: PAID_ENTITLEMENTS,
-  growth: PAID_ENTITLEMENTS,
-  agency: PAID_ENTITLEMENTS,
   enterprise: ENTERPRISE_ENTITLEMENTS,
 };
 
@@ -79,15 +79,24 @@ export const PLAN_ENTITLEMENTS: Record<string, PlanEntitlements> = {
  *   1. An empty / whitespace-only plan is the Free tier. A blank plan column
  *      must not accidentally unlock a paid feature.
  *   2. A name in `PLAN_ENTITLEMENTS` (case-insensitive, trimmed) uses its row.
- *   3. Any other non-empty name is treated as a paid plan. Operators set plan
- *      names by hand (#966 §4) and will add new ones; a name that isn't Free
- *      and isn't in the table is an operator-chosen paid tier, not a mistake to
- *      lock out. The only name that restricts custom domains is Free itself.
+ *   3. Any OTHER non-empty name resolves to the Free tier — FAIL CLOSED.
+ *
+ * #970 changes step 3 from #966's behaviour. Under #966 an unknown non-empty
+ * name was treated as a generic paid tier, on the assumption an operator typed
+ * a plan name by hand. With #970 the admin panel owns the plan catalogue: a
+ * workspace's plan is an admin-assigned KEY that must exist in the plans table,
+ * so a name that isn't a known key is a mistake (a typo, a deleted plan, a
+ * stale value) and must NOT silently grant a paid feature. The DB-backed
+ * resolver (@snapurl/contract resolveEntitlements + the API PlansService) is
+ * the live path; this static lookup is the compile-time fallback the web and
+ * the pure #966 custom-domains check still use, and it fails closed to match.
  */
 export function entitlementsFor(plan: string | null | undefined): PlanEntitlements {
   const key = (plan ?? "").trim().toLowerCase();
-  if (key === "") return FREE_ENTITLEMENTS;
-  return PLAN_ENTITLEMENTS[key] ?? PAID_ENTITLEMENTS;
+  // Empty, unknown, null and undefined all miss the table and fall to Free —
+  // one fail-closed path, no special-case for "" (which would be an equivalent
+  // branch now that the fallthrough is also Free).
+  return PLAN_ENTITLEMENTS[key] ?? FREE_ENTITLEMENTS;
 }
 
 /** Convenience predicate for the one check #966 is about: may this plan add a

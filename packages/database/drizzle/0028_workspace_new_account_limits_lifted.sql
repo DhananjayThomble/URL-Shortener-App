@@ -9,6 +9,6 @@
 -- and applies online without rewriting the table. Only the admin API sets or
 -- clears it; the link-create path reads it to skip the caps.
 --
--- Numbered 0028 (not 0026/0027): #986 billing took 0026 and #970's plans engine
--- is taking 0027, so this launch-readiness migration sits after both.
+-- Numbered 0028: #986 billing took 0026 and #970's plans engine took 0027, so
+-- this launch-readiness migration sits after both.
 ALTER TABLE "workspaces" ADD COLUMN "new_account_limits_lifted_at" timestamp with time zone;
