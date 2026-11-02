@@ -62,6 +62,7 @@ describe("toLinkItem / fromLinkItem round-trip", () => {
     publicPreview: false,
     archived: true,
     disabled: true,
+    ownerUnverified: true,
     safeBrowsingStatus: "safe",
     utm: { source: "print", medium: "qr", campaign: "spring", content: "a" },
   };
@@ -120,6 +121,23 @@ describe("toLinkItem / fromLinkItem round-trip", () => {
     delete (legacy as Record<string, unknown>).disabled;
     expect(fromLinkItem(legacy).disabled).toBe(false);
   });
+
+  /* #993 — the ownerUnverified flag round-trips the same way, and a LINK item
+     projected BEFORE the attribute existed revives as false so a pre-#993 link
+     (whose owner has long since verified) keeps resolving rather than silently
+     going dark. */
+  it("round-trips ownerUnverified=true", () => {
+    const item = toLinkItem({ ...full, ownerUnverified: true }, "snap.to", "d");
+    expect(item.ownerUnverified).toBe(true);
+    expect(fromLinkItem(item).ownerUnverified).toBe(true);
+  });
+
+  it("revives a legacy item with no ownerUnverified attribute as not held", () => {
+    const item = toLinkItem({ ...full, ownerUnverified: false }, "snap.to", "legacy");
+    const legacy = { ...item };
+    delete (legacy as Record<string, unknown>).ownerUnverified;
+    expect(fromLinkItem(legacy).ownerUnverified).toBe(false);
+  });
 });
 
 /* The edge fast path (#289): the eligibility rule, the KVS key format and the
@@ -147,6 +165,7 @@ const plain: ProjectedLink = {
   publicPreview: false,
   archived: false,
   disabled: false,
+  ownerUnverified: false,
   safeBrowsingStatus: "clean",
   utm: null,
 };
@@ -198,6 +217,14 @@ describe("isEdgeEligible", () => {
      admin just disabled until the entry aged out. */
   it("is false when the link is disabled by an admin", () => {
     expect(isEdgeEligible({ ...plain, disabled: true })).toBe(false);
+  });
+
+  /* #993 — an owner-unverified link is held exactly like a disabled one: the
+     CloudFront Function cannot render the "link not active yet" page, so it
+     must fall through to the Lambda. Without this the KVS would keep redirecting
+     a held link until the entry aged out. */
+  it("is false when the link's owner has not verified their email", () => {
+    expect(isEdgeEligible({ ...plain, ownerUnverified: true })).toBe(false);
   });
 
   it("is false when safe-browsing is not clean", () => {
