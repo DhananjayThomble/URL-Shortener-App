@@ -240,6 +240,11 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "POST /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "DELETE /api/v1/admin/workspaces/{id}/overrides/{overrideId}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "POST /api/v1/admin/workspaces/{id}/migrate-version", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #992 — admin plan change + per-workspace plan history. Same AdminGuard
+  // fail-closed gate: no matrix principal is a platform admin, so anon 401,
+  // every authed principal 403, every API key 403.
+  { route: "POST /api/v1/admin/workspaces/{id}/plan-change", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/plan-history", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #986 — billing (merged from main). OBSERVED with BILLING_PROVIDER unset in
   // the staging stack, i.e. the default `none`: the controller 404s EVERY
   // billing route for every caller, so the whole surface is unreachable. This
@@ -263,5 +268,6 @@ export const ACCESS_MATRIX: Row[] = [
 // CSV export + 2 for #972's admin settings routes + 1 for #972's public banner
 // route + 8 for #970's plans/versions/overrides admin routes + 2 for #970's
 // public /pricing and GET /workspaces/current/usage + 3 for #986's billing
-// checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices).
-export const EXPECTED_ROUTE_COUNT = 118;
+// checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
+// + 2 for #992's admin plan-change and plan-history routes).
+export const EXPECTED_ROUTE_COUNT = 120;

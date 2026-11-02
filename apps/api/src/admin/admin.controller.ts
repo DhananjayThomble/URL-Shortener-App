@@ -42,16 +42,20 @@ import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { PlatformSettingsService } from "./platform-settings.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
 import {
+  AdminPlanChangeInput,
   CreatePlanInput,
   MigrateWorkspaceVersionInput,
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
   UpdatePlanPricesInput,
+  type AdminPlanChangeResult,
   type OverrideView,
+  type PlanHistoryList,
   type PlanList,
   type PlanView,
 } from "@snapurl/contract";
+import { PlanManagementService } from "../plans/plan-management.service.js";
 
 /* ============================================================
    #968 + #974 + #969 + #971 + #973 — the platform-admin API surface (/api/v1/admin/*).
@@ -75,6 +79,7 @@ export class AdminController {
     private readonly adminAnalytics: AdminAnalyticsService,
     private readonly settings: PlatformSettingsService,
     private readonly plansAdmin: PlansAdminService,
+    private readonly planManagement: PlanManagementService,
   ) {}
 
   /** Who the caller is, confirmed as a platform admin. The client uses a 200
@@ -301,6 +306,29 @@ export class AdminController {
     @AdminRequestIp() ip: string | null,
   ): Promise<void> {
     await this.plansAdmin.migrateWorkspaceVersion(id, input, actor(admin, ip));
+  }
+
+  /* ── admin plan change + plan history (#992) ── */
+
+  /** #992 §1 — move a workspace's plan: immediately or at the end of the current
+   *  period, and (immediate) charge the prorated difference or comp it until a
+   *  date. A reason is required; the change is audited and lands in the
+   *  workspace's plan history. Returns the proration breakdown for a charge. */
+  @Post("workspaces/:id/plan-change")
+  changeWorkspacePlan(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body(zodBody(AdminPlanChangeInput)) input: AdminPlanChangeInput,
+    @Admin() admin: AdminIdentity,
+    @AdminRequestIp() ip: string | null,
+  ): Promise<AdminPlanChangeResult> {
+    return this.planManagement.adminChangePlan(id, input, actor(admin, ip));
+  }
+
+  /** #992 §7 — a workspace's plan history: every change, comp, payment, refund
+   *  and cancellation, newest first. */
+  @Get("workspaces/:id/plan-history")
+  workspacePlanHistory(@Param("id", ParseUUIDPipe) id: string): Promise<PlanHistoryList> {
+    return this.planManagement.history(id);
   }
 
   /* ── system health and operations (#974) ── */
