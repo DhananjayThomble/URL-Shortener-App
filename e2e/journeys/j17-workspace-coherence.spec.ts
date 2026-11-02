@@ -18,7 +18,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, RUN_PASSWORD, TOKEN_KEY, REFRESH_KEY, makeEmail, type Session } from "./helpers";
+import { API_URL, RUN_ID, RUN_PASSWORD, TOKEN_KEY, REFRESH_KEY, makeEmail, reserveAuthSlots, reserveLoginSlots, type Session } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -28,10 +28,13 @@ const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
  * throttle (apps/api, @Throttle on the auth routes) that THROTTLE_LIMIT does
  * NOT lift — it is security behaviour (.kiro/specs/real-stack-ci/design.md §1
  * "Throttles"). This spec registers 8 accounts across its tests, so on a
- * single IP the 6th+ would 429. Back off and retry on a 429, the same pattern
- * j790-dead-ends.spec.ts uses, instead of failing the run.
+ * single IP the 6th+ would 429. Reserve a slot on the shared register window
+ * first (#977) so these registers are paced together with every other spec's
+ * on the one shard IP — the scattered per-spec back-offs raced each other and
+ * flaked under shard load. The 429 back-off below stays as a safety net.
  */
 async function register(name: string, email: string): Promise<Session> {
+  await reserveAuthSlots("register");
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${API_URL}/auth/register`, {
       method: "POST",
@@ -278,6 +281,10 @@ test("(x) sign-out + sign-in in tab 1 moves tab 2 off the old workspace; its wri
     await expect(tab1).toHaveURL(/\/login/, { timeout: 15_000 });
     await tab1.getByPlaceholder("you@company.com").fill(member.email);
     await tab1.getByPlaceholder("••••••••").fill(RUN_PASSWORD);
+    // Browser-driven /auth/login (5/min-per-IP, #977): reserve a slot on the
+    // shared login window so this sign-in lands in a window with room rather
+    // than 429ing behind sibling specs' logins on the one shard IP.
+    await reserveLoginSlots(1);
     await tab1.getByRole("button", { name: "Sign in" }).click();
     await expect(tab1).toHaveURL(/\/links$/, { timeout: 20_000 });
     await expect(workspaceButton(tab1, memberWs)).toBeVisible({ timeout: 20_000 });
