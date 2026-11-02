@@ -240,6 +240,11 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "POST /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "DELETE /api/v1/admin/workspaces/{id}/overrides/{overrideId}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "POST /api/v1/admin/workspaces/{id}/migrate-version", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #992 — admin plan change + per-workspace plan history. Same AdminGuard
+  // fail-closed gate: no matrix principal is a platform admin, so anon 401,
+  // every authed principal 403, every API key 403.
+  { route: "POST /api/v1/admin/workspaces/{id}/plan-change", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "GET /api/v1/admin/workspaces/{id}/plan-history", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #989 — admin billing views + the admin refund. Same AdminGuard fail-closed
   // gate: 401 anon (the auth guard runs before the admin guard), 403 for every
   // authed non-platform-admin principal, 403 for API keys (no @Scope reaches an
@@ -285,5 +290,6 @@ export const ACCESS_MATRIX: Row[] = [
 // public /pricing and GET /workspaces/current/usage + 3 for #986's billing
 // checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
 // + 4 for #989's admin subscriptions/revenue/billing-events/refund
-// + 3 for #988's billing invoices/cancel/change).
-export const EXPECTED_ROUTE_COUNT = 125;
+// + 3 for #988's billing invoices/cancel/change
+// + 2 for #992's admin plan-change and plan-history routes).
+export const EXPECTED_ROUTE_COUNT = 127;
