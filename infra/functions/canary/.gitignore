@@ -1,0 +1,7 @@
+# #996 — the Synthetics canary runtime REQUIRES its handler at the path
+# nodejs/node_modules/<handler>.js, but the repo-root .gitignore excludes every
+# `node_modules/`. This un-ignores exactly the canary's own handler (and nothing
+# else under it) so the asset the stack uploads is tracked in git.
+!nodejs/
+!nodejs/node_modules/
+!nodejs/node_modules/uptime-canary.js

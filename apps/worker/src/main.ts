@@ -29,6 +29,7 @@ import { NoProjection, backfillDomainMeta, drainOutbox, pruneOutbox, stuckProjec
 import { DynamoProjection } from "./jobs/dynamo-projection.js";
 import { KvsWriter } from "./jobs/kvs-projection.js";
 import { deliverWebhooks, pruneDeliveries } from "./jobs/webhooks.js";
+import { emitBacklogMetrics } from "./jobs/backlog-metrics.js";
 
 /* ============================================================
    The worker.
@@ -355,7 +356,7 @@ export async function runMaintenance(database: Database) {
   const failed: string[] = [];
   /** Kept next to the calls below so the all-failed check cannot drift from the
    *  number of jobs actually run. */
-  const MAINTENANCE_JOB_COUNT = 7;
+  const MAINTENANCE_JOB_COUNT = 8;
 
   /** Run one maintenance job without letting it take the others down.
    *
@@ -399,6 +400,17 @@ export async function runMaintenance(database: Database) {
   const outbox = await step("pruneOutbox", () => pruneOutbox(database), 0);
   const deliveries = await step("pruneDeliveries", () => pruneDeliveries(database), 0);
   const stuck = await step("stuckProjections", () => stuckProjections(database), 0);
+
+  /* #996: lift the projection-outbox and webhook backlog ROW COUNTS out to
+     CloudWatch as an EMF metric line, so the launch-readiness alarms can watch
+     them — CloudWatch cannot alarm on a count that only lives in Postgres.
+     A no-op (returns null, emits nothing) unless BACKLOG_METRICS_NAMESPACE is
+     set, which only the AWS Lambda worker is (by the CDK stack); every other
+     profile is unchanged. Runs here, on the hourly pass, because the alarm
+     periods are measured in tens of minutes — this is a trend signal, not a
+     per-second gauge. Isolated like every sibling: a failure to read the
+     counts costs this step, not the privacy jobs below-adjacent to it. */
+  const backlog = await step("emitBacklogMetrics", () => emitBacklogMetrics(database), null);
 
   /* #994 point 5 — the domain reputation watch runs DAILY, not hourly: it is
      gated to the configured UTC hour (REPUTATION_WATCH_HOUR, default 0) so a
@@ -456,6 +468,11 @@ export async function runMaintenance(database: Database) {
       ...(partitions.declined > 0 ? { partitionsDeclined: partitions.declined } : {}),
       outboxPruned: outbox,
       deliveriesPruned: deliveries,
+      /* #996: the backlog counts emitted to CloudWatch this pass, present only
+         when the metric is actually being emitted (BACKLOG_METRICS_NAMESPACE
+         set, i.e. the AWS worker). Null on every other profile, so the ordinary
+         local/k8s pass log is unchanged. */
+      ...(backlog ? { backlog } : {}),
       /* Present only when something went wrong, so the happy path stays quiet
          and a partial pass is impossible to mistake for a complete one. */
       ...(failed.length > 0 ? { failedJobs: failed } : {}),
@@ -504,7 +521,7 @@ export async function runMaintenance(database: Database) {
     );
   }
 
-  return { partitions, expired, salts, pruned, outbox, deliveries, stuck, failed };
+  return { partitions, expired, salts, pruned, outbox, deliveries, stuck, backlog, failed };
 }
 
 /** Guard against a slow pass overlapping the next tick. */
