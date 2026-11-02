@@ -126,8 +126,9 @@ describeDb("#986 — a verified webhook is the only thing that moves a plan", ()
       },
       fakeClient,
     );
-    // #970 — changePlan reads plan ranks (sortOrder) through PlansService. The
-    // real service reads the DB catalogue, falling back to the compiled-in seed
+    // #970/#987 — BillingService takes PlansService: #988's changePlan reads
+    // plan ranks (sortOrder) and #987 reads live prices through it. The real
+    // service reads the DB catalogue, falling back to the compiled-in seed
     // (free=0, starter=1, pro=2, team=3) when the plans table is unseeded, which
     // is all these billing tests need to order an upgrade vs a downgrade.
     service = new BillingService(db, provider, new PlansService(db));

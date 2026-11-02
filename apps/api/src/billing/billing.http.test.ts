@@ -105,6 +105,8 @@ function billingServiceStub(provider: RazorpayBillingProvider | NoneBillingProvi
       keyId: FAKE_KEY_ID,
       planKey: "pro" as const,
       interval: "monthly" as const,
+      amountMinor: 19900,
+      currency: "INR",
     }),
     // #988 — the owner-facing routes. The HTTP test's StubAuthGuard injects an
     // owner, so these are reachable here; the owner-only wiring is proved

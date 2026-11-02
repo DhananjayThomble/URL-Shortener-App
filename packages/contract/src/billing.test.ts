@@ -85,10 +85,24 @@ describe("CheckoutSession", () => {
     keyId: "rzp_test_000",
     planKey: "pro" as const,
     interval: "yearly" as const,
+    amountMinor: 199000,
+    currency: "INR",
   };
 
   it("accepts a well-formed session", () => {
     expect(CheckoutSession.safeParse(valid).success).toBe(true);
+  });
+
+  it("#987 — carries the live amount (minor units) and currency; amountMinor may be null", () => {
+    expect(CheckoutSession.safeParse({ ...valid, amountMinor: null }).success).toBe(true);
+    expect(CheckoutSession.safeParse({ ...valid, amountMinor: -1 }).success).toBe(false);
+    expect(CheckoutSession.safeParse({ ...valid, amountMinor: 1.5 }).success).toBe(false);
+    const { amountMinor, ...noAmount } = valid;
+    void amountMinor;
+    expect(CheckoutSession.safeParse(noAmount).success).toBe(false);
+    const { currency, ...noCurrency } = valid;
+    void currency;
+    expect(CheckoutSession.safeParse(noCurrency).success).toBe(false);
   });
 
   it("requires provider to be the literal razorpay", () => {

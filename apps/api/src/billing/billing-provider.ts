@@ -107,6 +107,21 @@ export interface UpdateSubscriptionParams {
   offerId?: string | null;
 }
 
+/**
+ * #987 — a price change the admin made, pushed to the provider so the money
+ * side stays in step with the editable catalogue. `amountMinor` is the integer
+ * minor-unit amount (paise/cents) for this (plan key, interval) in `currency`.
+ * The provider creates or updates its own plan object for the pair and the
+ * SnapURL side keeps only the editable catalogue — no amount is ever read back
+ * from the provider.
+ */
+export interface SyncPlanPriceParams {
+  planKey: PaidPlanKey;
+  interval: BillingInterval;
+  currency: string;
+  amountMinor: number;
+}
+
 export interface BillingProvider {
   /** Which provider this is. The core reads it to decide reachability and to
    *  stamp stored rows. */
@@ -136,6 +151,16 @@ export interface BillingProvider {
    * empty list when the provider has none yet (a fresh checkout with no charge).
    */
   listInvoices(providerSubscriptionId: string): Promise<ProviderInvoice[]>;
+
+  /**
+   * #987 — sync a plan's price for a (key, interval, currency) to the provider
+   * after an admin edits it, so a future checkout charges the new amount.
+   * OPTIONAL on the interface: a provider that cannot (or need not) hold a
+   * price simply omits it, and the admin edit still lands in the catalogue —
+   * the provider sync is best-effort and never gates the DB write. Returns the
+   * provider plan id it created/updated, when it has one, for the caller to log.
+   */
+  syncPlanPrice?(params: SyncPlanPriceParams): Promise<{ providerPlanId: string } | void>;
 
   /** Refund a payment at the provider. */
   refund(providerPaymentId: string): Promise<void>;

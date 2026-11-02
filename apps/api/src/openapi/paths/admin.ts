@@ -481,6 +481,21 @@ route({
 });
 
 route({
+  method: "put",
+  path: "/admin/plans/{id}/prices",
+  tag: "Admin",
+  summary: "Edit a live plan's prices (#987) — creates a new version, grandfathering existing subscribers, synced to the billing provider (audited)",
+  params: IdParam,
+  body: refs.UpdatePlanPricesInput,
+  responses: {
+    200: { description: "The plan at its new version", schema: refs.PlanView },
+    400: { description: "The prices were invalid" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such plan" },
+  },
+});
+
+route({
   method: "get",
   path: "/admin/workspaces/{id}/overrides",
   tag: "Admin",

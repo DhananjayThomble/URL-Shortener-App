@@ -97,6 +97,102 @@ export type LimitValue = number | null;
 export const LimitMatrix = z.partialRecord(z.enum(LIMIT_NAMES), LimitValue);
 export type LimitMatrix = Partial<Record<LimitName, LimitValue>>;
 
+/* ── Prices (#987) ──────────────────────────────────────────
+
+   A plan VERSION carries its prices, so editing a price makes a new version and
+   existing subscribers keep theirs (grandfathering, same rule as the feature
+   matrix). Money is stored in the currency's MINOR unit as an integer (paise for
+   INR, cents for USD) — never a float — so a price is exact and no rounding
+   creeps in. A version holds a price per (interval, currency); INR ships first,
+   an admin may add USD. The "primary" currency is the one /pricing and checkout
+   default to when the caller does not ask for a specific one. */
+
+/** The currencies a price may be quoted in. INR first; USD is admin-addable.
+ *  A fixed enum (not a free string) so a hand-edited row cannot inject a bogus
+ *  currency and the UI/formatter always knows the minor-unit scale. */
+export const PRICE_CURRENCIES = ["INR", "USD"] as const;
+export const PriceCurrency = z.enum(PRICE_CURRENCIES);
+export type PriceCurrency = (typeof PRICE_CURRENCIES)[number];
+
+/** Billing intervals a price is quoted for. Mirrors #986's BILLING_INTERVALS;
+ *  duplicated here (not imported) so the plans contract has no dependency on the
+ *  billing contract and the mutation suite can test it standalone. */
+export const PRICE_INTERVALS = ["monthly", "yearly"] as const;
+export const PriceInterval = z.enum(PRICE_INTERVALS);
+export type PriceInterval = (typeof PRICE_INTERVALS)[number];
+
+/** How many minor units make one major unit, per currency. Both of ours are
+ *  2-decimal currencies (100 paise = ₹1, 100 cents = $1); kept as a table so
+ *  adding a 0- or 3-decimal currency later is a one-line change here. */
+export const CURRENCY_MINOR_UNITS: Record<PriceCurrency, number> = {
+  INR: 100,
+  USD: 100,
+};
+
+/** A single amount: a non-negative integer in the currency's MINOR unit. Capped
+ *  at a sane ceiling so a typo cannot store an absurd amount; 0 is allowed (a
+ *  free interval). */
+export const PriceAmountMinor = z.number().int().min(0).max(100_000_000);
+export type PriceAmountMinor = z.infer<typeof PriceAmountMinor>;
+
+/** The prices for ONE interval: an amount per currency. At least the version's
+ *  primary currency is expected to be present; a currency absent here is simply
+ *  not offered in that currency. */
+export const IntervalPrices = z.partialRecord(PriceCurrency, PriceAmountMinor);
+export type IntervalPrices = Partial<Record<PriceCurrency, PriceAmountMinor>>;
+
+/**
+ * A plan version's full price set. `primaryCurrency` is what /pricing and
+ * checkout default to; `amounts` holds the minor-unit amount per interval per
+ * currency. Partial per interval/currency so a version may price only what it
+ * offers — an unpriced (interval, currency) resolves to "not available" rather
+ * than a guessed amount. A version with no prices at all is a free/unpriced
+ * plan (e.g. the `free` tier), which is valid.
+ */
+export const PlanPrices = z.object({
+  primaryCurrency: PriceCurrency.default("INR"),
+  amounts: z.partialRecord(PriceInterval, IntervalPrices).default({}),
+});
+export type PlanPrices = z.infer<typeof PlanPrices>;
+
+/** An empty (unpriced) price set — the free-plan / no-price default the resolver
+ *  and views start from, so a caller never handles an absent price object. */
+export function emptyPlanPrices(): PlanPrices {
+  return { primaryCurrency: "INR", amounts: {} };
+}
+
+/**
+ * The minor-unit amount for a (interval, currency) on a price set, or null when
+ * that pair is not priced. `currency` defaults to the set's primary. Pure so
+ * /pricing, checkout and the admin view all read a price the same way.
+ */
+export function priceFor(
+  prices: PlanPrices | null | undefined,
+  interval: PriceInterval,
+  currency?: PriceCurrency,
+): number | null {
+  if (!prices) return null;
+  const cur = currency ?? prices.primaryCurrency;
+  const forInterval = prices.amounts[interval];
+  const amount = forInterval?.[cur];
+  return typeof amount === "number" ? amount : null;
+}
+
+/** Format a minor-unit amount as a display string in its currency, e.g.
+ *  (5900, "INR") → "₹59". Whole amounts drop the decimals; a fractional amount
+ *  shows two. Symbol-first for both our currencies. Used by the UI and kept in
+ *  the contract so the server and web format a price identically. */
+export function formatPrice(amountMinor: number, currency: PriceCurrency): string {
+  const minor = CURRENCY_MINOR_UNITS[currency];
+  const major = amountMinor / minor;
+  const symbol = currency === "INR" ? "₹" : "$";
+  const hasFraction = amountMinor % minor !== 0;
+  const body = hasFraction
+    ? major.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : major.toLocaleString("en-IN");
+  return `${symbol}${body}`;
+}
+
 /* ── Visibility, override kinds ─────────────────────────────── */
 
 /** public — on /pricing, open sign-up. hidden — admin-assignable only (custom
@@ -222,6 +318,8 @@ export const PlanView = z.object({
   version: z.number().int(),
   features: z.record(z.enum(FEATURE_NAMES), z.boolean()),
   limits: z.record(z.enum(LIMIT_NAMES), LimitValue),
+  /** The current version's prices (#987). Empty amounts for an unpriced plan. */
+  prices: PlanPrices,
 });
 export type PlanView = z.infer<typeof PlanView>;
 
@@ -267,6 +365,17 @@ export const UpdatePlanMatrixInput = z.object({
   limits: LimitMatrix,
 });
 export type UpdatePlanMatrixInput = z.infer<typeof UpdatePlanMatrixInput>;
+
+/** Edit a live plan's PRICES (#987). Applying this creates a NEW version (same
+ *  feature matrix + limits as the outgoing version, new prices) and moves the
+ *  plan's current version forward, so a price change applies to NEW subscriptions
+ *  only and existing subscribers keep the version they are on — grandfathering,
+ *  exactly like a matrix edit. `prices` is the FULL intended price set for the
+ *  new version, not a patch. */
+export const UpdatePlanPricesInput = z.object({
+  prices: PlanPrices,
+});
+export type UpdatePlanPricesInput = z.infer<typeof UpdatePlanPricesInput>;
 
 /** Set (or clear) a per-workspace override. `value` is a boolean for a feature,
  *  a number or null for a limit; the service validates value-by-kind. A null
@@ -315,7 +424,8 @@ export type MigrateWorkspaceVersionInput = z.infer<typeof MigrateWorkspaceVersio
 
 /* ── Public pricing + usage ─────────────────────────────────── */
 
-/** One plan on the public /pricing comparison table. */
+/** One plan on the public /pricing comparison table. Carries the LIVE prices
+ *  (#987) so /pricing shows an admin's price change with no redeploy. */
 export const PricingPlan = z.object({
   key: z.string(),
   displayName: z.string(),
@@ -323,6 +433,8 @@ export const PricingPlan = z.object({
   highlightBadge: z.string().nullable(),
   features: z.record(z.enum(FEATURE_NAMES), z.boolean()),
   limits: z.record(z.enum(LIMIT_NAMES), LimitValue),
+  /** The plan's current prices (#987). Empty amounts for an unpriced plan. */
+  prices: PlanPrices,
 });
 export type PricingPlan = z.infer<typeof PricingPlan>;
 

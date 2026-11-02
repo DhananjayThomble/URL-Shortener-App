@@ -233,6 +233,9 @@ export const ACCESS_MATRIX: Row[] = [
   { route: "POST /api/v1/admin/plans", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "PATCH /api/v1/admin/plans/{id}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "PUT /api/v1/admin/plans/{id}/matrix", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #987 — edit a plan's prices. Same AdminGuard fail-closed gate as every
+  // other /admin/* route: no matrix principal is a platform admin.
+  { route: "PUT /api/v1/admin/plans/{id}/prices", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "POST /api/v1/admin/workspaces/{id}/overrides", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "DELETE /api/v1/admin/workspaces/{id}/overrides/{overrideId}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
@@ -271,6 +274,6 @@ export const ACCESS_MATRIX: Row[] = [
 // CSV export + 2 for #972's admin settings routes + 1 for #972's public banner
 // route + 8 for #970's plans/versions/overrides admin routes + 2 for #970's
 // public /pricing and GET /workspaces/current/usage + 3 for #986's billing
-// checkout/subscription/webhook + 3 for #988's billing
-// invoices/cancel/change).
-export const EXPECTED_ROUTE_COUNT = 120;
+// checkout/subscription/webhook + 1 for #987's PUT /admin/plans/{id}/prices
+// + 3 for #988's billing invoices/cancel/change).
+export const EXPECTED_ROUTE_COUNT = 121;
