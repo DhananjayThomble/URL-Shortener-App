@@ -40,7 +40,9 @@ describeDb("DomainsService routing record (#784)", () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
     service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "Snap.Example.com:443" } as never);
-    await db.insert(workspaces).values({ id: own, name: "own", slug: `rt-own-${stamp}` });
+    // #966: add() now gates on the plan; a paid plan so these routing tests
+    // exercise connect behaviour, not the plan gate (covered separately).
+    await db.insert(workspaces).values({ id: own, name: "own", slug: `rt-own-${stamp}`, plan: "Pro" });
     await db.insert(workspaces).values({ id: other, name: "other", slug: `rt-other-${stamp}` });
     const [s] = await db
       .insert(domains)
