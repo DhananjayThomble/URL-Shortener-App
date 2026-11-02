@@ -204,6 +204,13 @@
       "when": 1793660000000,
       "tag": "0029_plan_prices_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793600372299,
+      "tag": "0031_plan_management",
+      "breakpoints": true
     }
   ]
 }
