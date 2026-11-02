@@ -191,6 +191,62 @@ describeDb("#993 sign-up and account abuse controls", () => {
     expect(refusals.recorded.map((r) => r.reason)).toContain("disposable_email");
   });
 
+  /* ---- #1007: admin allow list overrides a block ---- */
+
+  it("#1007 — an admin allowDomains entry overrides the same domain on extraDomains", async () => {
+    const refusals = signupRefusalStub();
+    const mail = new FakeMail();
+    // The operator both blocks AND allows the same domain; allow must win, so a
+    // sign-up there succeeds and no refusal is logged.
+    const auth = makeAuth(db, mail, {
+      settings: {
+        disposableEmails: { extraDomains: ["real-provider.test"], allowDomains: ["real-provider.test"] },
+      },
+      refusals,
+    });
+    const email = `legit-${stamp}@real-provider.test`;
+    const session = await auth.register({ name: "Real Person", email, password: "a-long-enough-password" });
+    expect(session.user.email).toBe(email);
+    expect(refusals.recorded.map((r) => r.reason)).not.toContain("disposable_email");
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
+    expect(rows).toHaveLength(1);
+  });
+
+  /* ---- #1007: fail-open mail-domain check ---- */
+
+  it("#1007 — refuses a definitively-no-mail domain and logs email_domain_no_mail", async () => {
+    const refusals = signupRefusalStub();
+    // The DNS stub reports a definitive no-mail answer for the domain.
+    const auth = makeAuth(db, new FakeMail(), {
+      settings: { disposableEmails: { extraDomains: [], allowDomains: [] } },
+      refusals,
+      mailDomain: mailDomainStub(true),
+    });
+    const email = `nobody-${stamp}@no-mail-domain.test`;
+    await expect(
+      auth.register({ name: "No Mail", email, password: "a-long-enough-password" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(refusals.recorded.map((r) => r.reason)).toContain("email_domain_no_mail");
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("#1007 — a mail-domain check that passes (fail-open) lets a normal sign-up through", async () => {
+    const refusals = signupRefusalStub();
+    const mail = new FakeMail();
+    // mailDomainStub() defaults to "has mail records" (returns false), i.e. the
+    // fail-open / has-MX path: the sign-up must proceed.
+    const auth = makeAuth(db, mail, {
+      settings: { disposableEmails: { extraDomains: [], allowDomains: [] } },
+      refusals,
+      mailDomain: mailDomainStub(false),
+    });
+    const email = `ok-${stamp}@a-real-domain.test`;
+    const session = await auth.register({ name: "Fine", email, password: "a-long-enough-password" });
+    expect(session.user.email).toBe(email);
+    expect(refusals.recorded.map((r) => r.reason)).not.toContain("email_domain_no_mail");
+  });
+
   /* ---- 1. unverified-owner edge gate + verify lifts it ---- */
 
   it("holds an unverified owner's link (gate=not_active) and releases it after verification", async () => {

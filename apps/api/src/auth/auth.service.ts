@@ -130,8 +130,11 @@ export class AuthService {
        list says. So a real provider wrongly caught by the ~10k vendored list, or
        by an over-broad admin addition, still gets through. */
     const { disposableEmails } = await this.settings.getValues();
-    const domains = [...VENDORED_DISPOSABLE_EMAIL_DOMAINS, ...disposableEmails.extraDomains];
-    const allow = [...DISPOSABLE_EMAIL_ALLOWLIST, ...disposableEmails.allowDomains];
+    const domains = [...VENDORED_DISPOSABLE_EMAIL_DOMAINS, ...(disposableEmails.extraDomains ?? [])];
+    /* allowDomains defaults to [] in the contract, but guard anyway: a row
+       written by a pre-#1007 deploy and still in the settings cache would lack
+       it, and spreading undefined would throw on the sign-up hot path. */
+    const allow = [...DISPOSABLE_EMAIL_ALLOWLIST, ...(disposableEmails.allowDomains ?? [])];
     if (isDisposableEmail(email, domains, allow)) {
       await this.refusals.record("disposable_email", email, remoteIp ?? null);
       throw new BadRequestException(
