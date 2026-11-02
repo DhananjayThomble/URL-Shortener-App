@@ -136,6 +136,22 @@ export const EnvSchema = z.object({
      not the smoke suite. */
   NEW_ACCOUNT_LINK_WINDOW_DAYS: z.coerce.number().int().min(0).max(365).default(7),
 
+  /* #1007 — the sign-up mail-domain (MX/A/AAAA) check. ON by default; it
+     refuses a sign-up ONLY when DNS DEFINITIVELY reports the email's domain
+     cannot receive mail (no MX and no A/AAAA), and FAILS OPEN on any timeout or
+     DNS error. It is disabled (set to "false") in the compose/local and CI test
+     environments, where real DNS is neither available nor wanted and the
+     harness signs up at example.test domains — the behaviour is proven by the
+     unit tests with a mocked resolver, not by hitting the network. */
+  MAIL_DOMAIN_CHECK_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  /* #1007 — the per-lookup DNS budget for the mail-domain check, in
+     milliseconds. Bounded and short (the brief asks for ~1.5 s) so a slow
+     resolver cannot stall a sign-up: once it elapses the check fails OPEN. */
+  MAIL_DOMAIN_CHECK_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1_500),
+
   /* Which CacheStore backs the rate-limit counters (and, in the redirect
      service, hot-link caching). 'memory' is the default: a per-instance
      in-memory counter, byte-for-byte the single-node/CI behaviour. 'redis'

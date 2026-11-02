@@ -1,0 +1,128 @@
+# Weekly refresh of the vendored disposable-email block list (#1007).
+#
+# Why this exists: apps/api vendors a PINNED snapshot of the upstream CC0
+# disposable-email-domains list (data/disposable-email-blocklist.conf) so the
+# running app never fetches it. A pinned snapshot goes stale — new throwaway
+# providers appear upstream weekly. This job pulls the latest upstream commit,
+# re-applies the built-in allow list, regenerates the vendored artefacts, and —
+# ONLY if something changed — opens a pull request with the added/removed counts.
+#
+# Deliberately NEVER auto-merges. A refresh can both add domains (good) and, in
+# principle, sweep in a real provider (bad); the allow list guards the known
+# providers, but the point of a PR is that a human looks at the diff before it
+# ships. This job proposes; a person decides.
+#
+# The fetch happens HERE, at refresh time, never in the application.
+
+name: Disposable-email list refresh
+
+on:
+  schedule:
+    # Weekly, Monday 05:23 UTC. Off the hour on purpose — scheduled workflows
+    # bunch up on the hour across GitHub and get delayed.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Upstream commit to pin (default: latest on the upstream default branch)."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: disposable-email-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh and open a PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the refresh branch
+      pull-requests: write # open the review PR
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+
+      - name: Resolve the upstream commit to pin
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_SHA}" ]; then
+            sha="${INPUT_SHA}"
+          else
+            sha="$(gh api repos/disposable-email-domains/disposable-email-domains/commits/main --jq .sha)"
+          fi
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error title=Bad upstream SHA::'$sha' is not a 40-hex commit"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Regenerate the vendored list from the pinned snapshot
+        env:
+          SHA: ${{ steps.upstream.outputs.sha }}
+        run: node scripts/refresh-disposable-emails.mjs --sha "$SHA"
+
+      - name: Open a PR if the list changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.upstream.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet; then
+            echo "No change — the vendored list already matches upstream ${SHA}."
+            echo "### Disposable-email refresh: no change" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Summarise what moved: net domain count in the generated module.
+          module="apps/api/src/common/disposable-email-domains.ts"
+          before="$(git show HEAD:"$module" | grep -cE '^  "' || true)"
+          after="$(grep -cE '^  "' "$module" || true)"
+
+          branch="chore/disposable-email-refresh-${SHA:0:12}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add apps/api/src/common/disposable-email-domains.ts \
+                  apps/api/src/common/data/disposable-email-blocklist.conf \
+                  apps/api/src/common/data/disposable-email-blocklist.PROVENANCE
+          git commit -m "chore: refresh vendored disposable-email list (upstream ${SHA:0:12})"
+          git push --set-upstream origin "$branch"
+
+          # Build the PR body line by line (plain text, no backticks or markup
+          # that would trip static analysis), then pass it as --body-file.
+          {
+            echo "Automated weekly refresh of the vendored disposable-email block list (#1007)."
+            echo
+            echo "Upstream commit pinned: ${SHA}"
+            echo "Vendored domains: ${before} -> ${after}."
+            echo
+            echo "The built-in allow list was re-applied, so major providers and privacy"
+            echo "relays stay out of the block list (the disposable-email.test.ts"
+            echo "disjoint-invariant test fails if any slipped in)."
+            echo "Review the diff before merging - this never auto-merges."
+          } > /tmp/pr-body.md
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore: refresh disposable-email list (upstream ${SHA:0:12})" \
+            --body-file /tmp/pr-body.md
+
+          {
+            echo "### Disposable-email refresh: PR opened"
+            echo
+            echo "Upstream: \`$SHA\` — vendored domains $before → $after."
+          } >> "$GITHUB_STEP_SUMMARY"

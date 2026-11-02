@@ -244,6 +244,9 @@ jobs:
       # raised above. Production keeps the 7-day default; the caps are covered by
       # the API integration tests.
       NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
+      # #1007 — the sign-up mail-domain (MX) check is off in CI: tests sign up at
+      # *.test domains with no real DNS, and the check is proven by unit tests.
+      MAIL_DOMAIN_CHECK_ENABLED: "false"
       LOG_LEVEL: warn
       # CI builds the frontend to prove it compiles, not to serve it. Without
       # this, next.config.ts correctly refuses to build without a real API URL.
@@ -519,6 +522,9 @@ jobs:
       # script seeds many links through one account; production keeps the 7-day
       # default, which the API integration tests cover.
       NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
+      # #1007 — mail-domain (MX) check off here too: the smoke harness signs up
+      # at *.test domains with no real DNS.
+      MAIL_DOMAIN_CHECK_ENABLED: "false"
       # debug (not warn) FOR THIS JOB ONLY: the projection writer's failures are
       # logged by drainOutbox at info level (projectionFailures) and a swallowed
       # per-op error is logged by the worker at debug/error — at warn they are

@@ -34,15 +34,36 @@ export function emailDomain(email: string): string {
   return normaliseBlockHost(email.slice(at + 1));
 }
 
-/** Whether `email`'s domain is a disposable one under `domains` (the vendored
- *  list and the operator's additions, already concatenated by the caller).
- *  An address with no usable domain never matches — it is rejected earlier by
- *  the email-shape validation, not treated as disposable here. */
-export function isDisposableEmail(email: string, domains: Iterable<string>): boolean {
-  const host = emailDomain(email);
-  if (host === "") return false;
-  for (const listed of domains) {
+/** Whether `host` (a bare, already-normalised email host) is covered by any
+ *  entry in `list` — an exact match or a sub-domain of one. Exported so a
+ *  caller (the mail-domain check) can skip a DNS lookup for an allow-listed
+ *  host without re-implementing the coverage rule. */
+export function hostCoveredByAny(host: string, list: Iterable<string>): boolean {
+  for (const listed of list) {
     if (hostCoveredBy(host, listed)) return true;
   }
   return false;
+}
+
+/** Whether `email`'s domain is a disposable one under `domains` (the vendored
+ *  list and the operator's additions, already concatenated by the caller).
+ *
+ *  #1007 — an `allow` list BEATS the block list: if the host is allow-listed
+ *  (built-in major providers + privacy relays, plus any operator admin allow
+ *  entry) it is NEVER disposable, whatever the block list says. The allow check
+ *  runs first, so a false positive in a 10k aggregated list, or an over-broad
+ *  admin addition, can never refuse a real provider. `allow` is optional so the
+ *  old two-argument callers keep working (no allow list = block list only).
+ *
+ *  An address with no usable domain never matches — it is rejected earlier by
+ *  the email-shape validation, not treated as disposable here. */
+export function isDisposableEmail(
+  email: string,
+  domains: Iterable<string>,
+  allow: Iterable<string> = [],
+): boolean {
+  const host = emailDomain(email);
+  if (host === "") return false;
+  if (hostCoveredByAny(host, allow)) return false;
+  return hostCoveredByAny(host, domains);
 }
