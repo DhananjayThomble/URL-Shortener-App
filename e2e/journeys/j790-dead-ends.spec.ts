@@ -80,12 +80,13 @@ for (const scheme of ["light", "dark"] as const) {
        reaches Postgres and 500s with an unhandled DB exception logged at error
        level, instead of a 400. Oracle: packages/contract/src/analytics.ts — the
        sibling schema already uses z.string().uuid("linkId must be a link id"),
-       and a bad input is a 400 everywhere else (cf. j754). test.fail until #908
-       lands; it also trips the api error-log gate, which is the gate doing its
-       job. Does not depend on the browser, so it runs once (desktop only). */
+       and a bad input is a 400 everywhere else (cf. j754). #908 has since landed
+       (analytics now validates linkId as a UUID and answers 400), so this asserts
+       the fixed behaviour directly — the former test.fail would now "unexpectedly
+       pass" and red the lane. Does not depend on the browser, so it runs once
+       (desktop only). */
     test(`a non-UUID analytics linkId is a 400, not a 500 (#908)`, async ({}, info) => {
       test.skip(info.project.name !== "desktop", "API-only; run once");
-      test.fail(true, "#908: analytics linkId is not validated as a UUID; a non-UUID 500s");
       const user = await register(makeEmail(`j790-908-${scheme}`));
       const res = await fetch(`${API_URL}/analytics?range=30d&linkId=not-a-uuid`, {
         headers: { authorization: `Bearer ${user.accessToken}` },
