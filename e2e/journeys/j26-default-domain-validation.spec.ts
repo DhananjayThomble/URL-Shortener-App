@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { API_URL, RUN_ID, makeEmail, seedPaidOwner, seedUser, signInViaSeed, type Session } from "./helpers";
+import { API_URL, RUN_ID, enableCustomDomains, makeEmail, seedPaidOwner, seedUser, signInViaSeed, type Session } from "./helpers";
 
 // Run SQL inside the staging Postgres container with `docker exec`, the pattern
 // j15/j16/j23 already use (SQL on stdin). CI has no host `psql` binary; the
@@ -102,6 +102,8 @@ test.describe("Journey 26 — default domain validation (#779)", () => {
     // stranger: the foreign domain the leak checks use). Custom domains are a
     // paid feature (#966), so seed both workspaces onto a paid plan or every
     // POST /domains below 403s.
+    // #1022 — enable the custom-domain kill switch (OFF by default -> 503).
+    await enableCustomDomains();
     owner = await seedPaidOwner(makeEmail("j26-owner"));
     stranger = await seedPaidOwner(makeEmail("j26-other"));
 

@@ -27,7 +27,7 @@
 
 import { execFileSync } from "node:child_process";
 import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
-import { API_URL, makeEmail, REDIRECT_URL, seedPaidOwner, RUN_ID, type Session, signInViaSeed } from "./helpers";
+import { API_URL, enableCustomDomains, makeEmail, REDIRECT_URL, seedPaidOwner, RUN_ID, type Session, signInViaSeed } from "./helpers";
 
 const DEST = "https://example.com/j20-destination";
 const slugFor = (tag: string) => `j20-${tag}-${Math.random().toString(36).slice(2, 8)}`;
@@ -89,6 +89,9 @@ test.describe("Journey 20 — domain picker default (#651)", () => {
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     // #977 — this workspace connects its own custom domains (pending + verified),
     // a paid-plan feature (#966); seed a paid plan so POST /domains succeeds.
+    // #1022 — custom-domain creation also ships behind a kill switch that is OFF
+    // by default (503 on POST /domains); turn it on for the staging platform.
+    await enableCustomDomains();
     session = await seedPaidOwner(makeEmail("j20"));
 
     const ws = await api<{ defaultDomain: string }>(session, "/workspaces/current");

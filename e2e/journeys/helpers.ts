@@ -21,7 +21,7 @@
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
-import { createDatabase, domains, eq, memberships, refreshTokens, sql, users, workspaces } from "@snapurl/database";
+import { createDatabase, domains, eq, memberships, platformSettings, refreshTokens, sql, users, workspaces } from "@snapurl/database";
 
 export const TOKEN_KEY = "snapurl.accessToken";
 export const REFRESH_KEY = "snapurl.refreshToken";
@@ -288,6 +288,53 @@ export async function registerPaidOwner(email: string, password = RUN_PASSWORD):
   const session = await registerUser(email, password);
   await setWorkspacePlan(session.workspaceId);
   return session;
+}
+
+/**
+ * Turn the platform kill switches ON in the staging DB so the custom-domain
+ * journeys can run (#1022 / #1020).
+ *
+ * WHY. #1022 added runtime kill switches; DEFAULT_KILL_SWITCHES ships
+ * "customDomains.create" (and the billing switches) OFF, so a fresh staging DB
+ * refuses POST /domains with a 503 ("Custom domains — add a domain is turned
+ * off right now"). Every custom-domain journey (j20/j23/j26/j782/j783/j784, and
+ * j17's domain-default steps) then reds — a test-environment gap, not a product
+ * bug: production ships OFF on purpose and an operator turns it on, while these
+ * journeys exercise the domain UX on a platform where it IS on. The switches
+ * themselves are proven on/off in their own domains-kill-switches /
+ * kill-switch.service tests.
+ *
+ * Seeds the platform_settings "killSwitches" row to every-switch-ON, exactly as
+ * the HTTP-stack seed does (apps/api/src/stack/principals.ts under #1022). The
+ * value is an INLINE plain literal rather than @snapurl/contract's
+ * DEFAULT_KILL_SWITCHES: every switch { on: true } with no caps is a valid
+ * KillSwitchState the API folds onto the shipped cap defaults on read, and it
+ * keeps contract's runtime zod out of the e2e import graph. Platform-wide and
+ * idempotent (upsert on the single "killSwitches" key), so one call per shard
+ * is enough and calling it per spec is harmless.
+ */
+export async function enableCustomDomains(): Promise<void> {
+  const on = { on: true };
+  const allOn = {
+    "billing.checkout": on,
+    "billing.planChanges": on,
+    "billing.coupons": on,
+    "billing.trials": on,
+    "billing.refunds": on,
+    "customDomains.create": on,
+    "email.outbound": on,
+    errorTracking: on,
+    "linkScanning.rescans": on,
+  };
+  const handle = createDatabase({ url: QA_DATABASE_URL, max: 1 });
+  try {
+    await handle.db
+      .insert(platformSettings)
+      .values({ key: "killSwitches", value: allOn, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: platformSettings.key, set: { value: allOn, updatedAt: new Date() } });
+  } finally {
+    await handle.close();
+  }
 }
 
 /* ------------------------------------------------------------------ */

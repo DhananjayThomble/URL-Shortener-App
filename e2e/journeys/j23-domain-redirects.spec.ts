@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { API_URL, REDIRECT_URL, RUN_ID, makeEmail, seedUser, setWorkspacePlan, signInViaSeed } from "./helpers";
+import { API_URL, REDIRECT_URL, RUN_ID, enableCustomDomains, makeEmail, seedUser, setWorkspacePlan, signInViaSeed } from "./helpers";
 
 const run = promisify(execFile);
 const API_CONTAINER = process.env.QA_API_CONTAINER ?? "snapurl-staging-api-1";
@@ -90,6 +90,9 @@ test.describe("Journey 23 — domain root + 404 redirects (#648)", () => {
     // plan so POST /domains is 201; the invited editor added later inherits the
     // same workspace plan, so it needs no separate seed.
     await setWorkspacePlan(ownerWorkspaceId);
+    // #1022 — custom-domain creation ships behind a kill switch OFF by default
+    // (503 on POST /domains); enable it platform-wide for the staging run.
+    await enableCustomDomains();
 
     const add = await fetch(`${API_URL}/domains`, {
       method: "POST",
