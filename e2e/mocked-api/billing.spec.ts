@@ -154,6 +154,9 @@ test.describe("Settings > Billing (#988)", () => {
           keyId: "rzp_test_e2e",
           planKey: "pro",
           interval: "yearly",
+          // #987 added these to CheckoutSession (live price at checkout time).
+          amountMinor: 199900,
+          currency: "INR",
         },
       },
     });
@@ -183,10 +186,19 @@ test.describe("Settings > Billing (#988)", () => {
     expect(checkoutBody).toEqual({ planKey: "pro", interval: "yearly" });
 
     // …and Razorpay Checkout was opened with the returned subscription id.
+    // openRazorpayCheckout runs AFTER the checkout POST resolves, so poll for
+    // the recorded open() rather than reading once (a single read races the
+    // async hand-off and is empty under slower CI).
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __rzpOpened?: Array<Record<string, unknown>> }).__rzpOpened?.length ?? 0,
+        ),
+      )
+      .toBe(1);
     const opened = await page.evaluate(
       () => (window as unknown as { __rzpOpened?: Array<Record<string, unknown>> }).__rzpOpened ?? [],
     );
-    expect(opened).toHaveLength(1);
     expect(opened[0]!.subscription_id).toBe("sub_e2e_pro");
     expect(opened[0]!.key).toBe("rzp_test_e2e");
   });
