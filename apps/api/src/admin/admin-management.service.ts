@@ -333,15 +333,30 @@ export class AdminManagementService {
     actor: AdminActor,
   ): Promise<AdminWorkspaceDetail> {
     const [before] = await this.db
-      .select({ plan: workspaces.plan, clicksIncluded: workspaces.clicksIncluded })
+      .select({
+        plan: workspaces.plan,
+        clicksIncluded: workspaces.clicksIncluded,
+        newAccountLimitsLiftedAt: workspaces.newAccountLimitsLiftedAt,
+      })
       .from(workspaces)
       .where(eq(workspaces.id, workspaceId))
       .limit(1);
     if (!before) throw new NotFoundException("No such workspace.");
 
-    const patch: { plan?: string; clicksIncluded?: number; updatedAt: Date } = { updatedAt: new Date() };
+    const patch: {
+      plan?: string;
+      clicksIncluded?: number;
+      newAccountLimitsLiftedAt?: Date | null;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
     if (input.plan !== undefined) patch.plan = input.plan;
     if (input.clicksIncluded !== undefined) patch.clicksIncluded = input.clicksIncluded;
+    /* #993 — lift stamps the column with "now"; re-apply clears it to null. A
+       re-lift of an already-lifted workspace just rewrites the timestamp, which
+       is harmless. */
+    if (input.liftNewAccountLimits !== undefined) {
+      patch.newAccountLimitsLiftedAt = input.liftNewAccountLimits ? new Date() : null;
+    }
 
     await this.db.transaction(async (tx) => {
       await tx.update(workspaces).set(patch).where(eq(workspaces.id, workspaceId));
@@ -351,10 +366,16 @@ export class AdminManagementService {
         action: "admin.workspace.update_plan",
         targetType: "workspace",
         targetId: workspaceId,
-        before: { plan: before.plan, clicksIncluded: before.clicksIncluded },
+        before: {
+          plan: before.plan,
+          clicksIncluded: before.clicksIncluded,
+          newAccountLimitsLifted: before.newAccountLimitsLiftedAt !== null,
+        },
         after: {
           plan: input.plan ?? before.plan,
           clicksIncluded: input.clicksIncluded ?? before.clicksIncluded,
+          newAccountLimitsLifted:
+            input.liftNewAccountLimits ?? before.newAccountLimitsLiftedAt !== null,
         },
         requestIp: actor.ip,
       });

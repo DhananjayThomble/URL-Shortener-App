@@ -18,6 +18,8 @@ import {
 import { PostgresLinkResolver } from "../../../redirect/src/resolver.js";
 import { effectiveGate } from "@snapurl/domain";
 import { LinksService } from "../links/links.service.js";
+import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
+import { signupRefusalStub } from "../test/signup-controls.stub.js";
 import { AdminModerationService } from "./admin.moderation.service.js";
 import type { AdminIdentity } from "./admin.service.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
@@ -71,7 +73,7 @@ describeDb("AdminModerationService (#971)", () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
     moderation = new AdminModerationService(db, db, nudgeStub, cacheBustStub);
-    linksService = new LinksService(db, db, safeBrowsingStub, nudgeStub, cacheBustStub);
+    linksService = new LinksService(db, db, safeBrowsingStub, nudgeStub, cacheBustStub, openPlatformSettingsStub(), signupRefusalStub());
     resolver = new PostgresLinkResolver(db);
 
     const [u] = await db

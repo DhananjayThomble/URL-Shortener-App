@@ -22,7 +22,7 @@ describe("blocked visits tile copy", () => {
 
   it("reads as one natural-language list", () => {
     // #971 added "disabled" as a gate reason the redirect records.
-    expect(BLOCKED_VISITS_CAPTION).toBe("Expired, scheduled, over limit, archived, unsafe or disabled");
+    expect(BLOCKED_VISITS_CAPTION).toBe("Expired, scheduled, over limit, archived, unsafe, disabled or not active yet");
   });
 
   it("covers exactly the reasons the redirect can record (drift guard)", () => {

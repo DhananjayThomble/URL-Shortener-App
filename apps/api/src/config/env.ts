@@ -75,6 +75,17 @@ export const EnvSchema = z.object({
      is not true. Either set this or soften the copy. See docs/DECISIONS.md A10. */
   GOOGLE_SAFE_BROWSING_API_KEY: z.string().optional(),
 
+  /* #993 — the bot-protection (sign-up challenge) secret key. The PROVIDER
+     (turnstile/hcaptcha/none) is chosen at runtime from platform settings; this
+     is the matching server-side secret the siteverify call needs. Resolved from
+     SSM like the rest of config on AWS (via the _SECRET_ARN below) and from .env
+     locally. Kept OUT of platform settings on purpose (#972 keeps secrets out of
+     that store). When the provider is on but this is unset, register fails
+     closed — a sign-up gate that cannot verify must refuse, not wave everyone
+     through. See docs/DECISIONS.md D2. */
+  BOT_PROTECTION_SECRET: z.string().optional(),
+  BOT_PROTECTION_SECRET_ARN: z.string().optional(),
+
   /* #968 — the platform-admin allowlist. Comma-separated emails, resolved from
      SSM like the rest of config on AWS and from .env locally. A user is a
      platform admin ONLY if their VERIFIED email is in this list (compared
@@ -113,6 +124,17 @@ export const EnvSchema = z.object({
      review and its owner is notified. Default 3; set to 0 to turn
      auto-quarantine off entirely (reports still queue for manual review). */
   ABUSE_QUARANTINE_THRESHOLD: z.coerce.number().int().min(0).default(3),
+
+  /* #993 — the COMPILED-IN default for the new-account link-cap window, in
+     days. The caps (per-day / per-hour link limits for a workspace's first N
+     days) are a runtime platform setting; this env var is only the fallback
+     the settings store uses when no admin has set newAccountLimits. Production
+     leaves it at 7 (the brief's default). The compose/local test environment
+     sets it to 0 to turn the caps OFF, so the smoke harness — which creates
+     dozens of links through one account — is not throttled, WITHOUT weakening
+     the production default. The caps are proven by the API integration tests,
+     not the smoke suite. */
+  NEW_ACCOUNT_LINK_WINDOW_DAYS: z.coerce.number().int().min(0).max(365).default(7),
 
   /* Which CacheStore backs the rate-limit counters (and, in the redirect
      service, hot-link caching). 'memory' is the default: a per-instance

@@ -1,0 +1,26 @@
+The vendored disposable-email domain list in disposable-email-domains.ts is a
+curated subset of the community-maintained `disposable-email-domains` project:
+
+    https://github.com/disposable-email-domains/disposable-email-domains
+
+That project dedicates its list to the public domain under the Creative Commons
+CC0 1.0 Universal Public Domain Dedication. The full text is reproduced below.
+CC0 imposes no attribution or share-alike obligation; the credit in the source
+file's header is courtesy, not a licence condition.
+
+----------------------------------------------------------------------
+
+Creative Commons CC0 1.0 Universal
+
+CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+
+The person who associated a work with this deed has dedicated the work to the
+public domain by waiving all of his or her rights to the work worldwide under
+copyright law, including all related and neighboring rights, to the extent
+allowed by law.
+
+You can copy, modify, distribute and perform the work, even for commercial
+purposes, all without asking permission.
+
+For the full legal text of the CC0 1.0 dedication, see:
+https://creativecommons.org/publicdomain/zero/1.0/legalcode

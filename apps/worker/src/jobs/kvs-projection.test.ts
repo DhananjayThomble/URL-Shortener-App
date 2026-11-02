@@ -40,6 +40,7 @@ function eligibleLink(overrides: Partial<ProjectedLink> = {}): ProjectedLink {
     publicPreview: true,
     archived: false,
     disabled: false,
+    ownerUnverified: false,
     safeBrowsingStatus: "clean",
     utm: null,
     ...overrides,
@@ -105,6 +106,9 @@ describe("KvsWriter.putIfEligible", () => {
     // #971 — a platform-admin disable makes a link ineligible so the edge drops
     // it and the Lambda serves the "link disabled" page.
     ["disabled", { disabled: true }],
+    // #993 — an owner-unverified hold makes a link ineligible so the edge drops
+    // it and the Lambda serves the "link not active yet" page.
+    ["ownerUnverified", { ownerUnverified: true }],
     ["unsafe", { safeBrowsingStatus: "malware" }],
     /* Transform behaviours the edge cannot reproduce (each independently makes a
        link ineligible so it stays on the authoritative Lambda).

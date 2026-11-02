@@ -3,6 +3,7 @@ import { createDatabase, domains, eq, links, workspaces, type Database } from "@
 import { ListLinksQuery } from "@snapurl/contract";
 import { LinksService } from "./links.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
+import { signupRefusalStub } from "../test/signup-controls.stub.js";
 import type { SafeBrowsingService } from "../safe-browsing/safe-browsing.service.js";
 import type { ProjectionNudgeService } from "./projection-nudge.service.js";
 import type { LinkCacheBustService } from "../common/link-cache-bust.service.js";
@@ -67,7 +68,7 @@ describeDb("LinksService.list — search by tag (#756)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub());
+    service = new LinksService(db, db, safeBrowsingStub, projectionNudgeStub, cacheBustStub, openPlatformSettingsStub(), signupRefusalStub());
 
     const [ws] = await db
       .insert(workspaces)

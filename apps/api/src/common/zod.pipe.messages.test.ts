@@ -11,6 +11,11 @@ import {
 import { ZodValidationPipe, type ValidationErrorBody } from "./zod.pipe.js";
 import { LinksService } from "../links/links.service.js";
 import { openPlatformSettingsStub } from "../test/platform-settings.stub.js";
+import { signupRefusalStub } from "../test/signup-controls.stub.js";
+
+/* #993 — this bulk-create copy suite creates many rows per fresh workspace and
+   is not about the new-account caps, so it turns them off (windowDays 0). */
+const noCaps = { newAccountLimits: { windowDays: 0, perDay: 20, perHour: 10 } };
 import { toActor } from "./activity.js";
 
 /* #792 — the words a person reads when the API rejects their input.
@@ -147,7 +152,7 @@ describe("LinksService.bulkCreate — per-row validation copy", () => {
     transaction: async (fn: (tx: unknown) => unknown) => fn({}),
     select: () => ({ from: async () => [] }),
   };
-  const service = new LinksService(db as never, db as never, {} as never, {} as never, {} as never, openPlatformSettingsStub());
+  const service = new LinksService(db as never, db as never, {} as never, {} as never, {} as never, openPlatformSettingsStub(noCaps), signupRefusalStub());
   const actor = toActor({ userId: null, label: "test" });
   const row = (over: Record<string, unknown>) => ({ domain: "snap.example", ...over });
 

@@ -83,12 +83,33 @@ const settingsStub = {
    guard pipeline under test is byte-identical to the real controller's — only
    the service wiring is hand-fed. @Controller re-declares the same "auth" base
    path on the subclass. */
+/* The subclass hand-feeds both constructor args in super(), so Nest must NOT
+   try to inject them. AuthController carries an @Inject(ENV) PARAMETER decorator
+   (#993, index 1), and parameter-decorator metadata is inherited by the
+   subclass — so without an override Nest reads "(?, Symbol(ENV))" off
+   TestAuthController and fails to resolve AuthService at index 0 (it is a plain
+   stub, not a provider). Declaring the subclass's own constructor with an empty
+   @Inject-free paramtypes is not enough because the inherited param metadata
+   still applies. Setting design:paramtypes to [] on the subclass tells Nest it
+   has no injectable constructor dependencies, so it instantiates it with none
+   and our super() wiring stands. */
 @Controller("auth")
 class TestAuthController extends AuthController {
   constructor() {
-    super(authStub);
+    // #993 — AuthController's ctor gained a second arg (@Inject(ENV) env), read
+    // by ipOf() to resolve the client IP. Hand-feed both so neither is injected.
+    super(authStub, envStub);
   }
 }
+/* Clear BOTH constructor-dependency metadata keys on the subclass so Nest
+   instantiates it with zero injected args (our super() supplies them). The
+   @Inject(ENV) decorator writes "self:paramtypes" (SELF_DECLARED_DEPS_METADATA)
+   on AuthController, which the subclass inherits; "design:paramtypes" is the
+   reflected-type list. Emptying only the latter is not enough — Nest reads the
+   self-declared list first and still tries to inject ENV at index 1 (and an
+   unresolvable AuthService at index 0). */
+Reflect.defineMetadata("design:paramtypes", [], TestAuthController);
+Reflect.defineMetadata("self:paramtypes", [], TestAuthController);
 
 const REGISTER_BODY = { email: "newcomer@example.com", password: "a-long-enough-password", name: "Newcomer" };
 const LOGIN_BODY = { email: "someone@example.com", password: "a-long-enough-password" };

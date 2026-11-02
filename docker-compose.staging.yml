@@ -148,6 +148,13 @@ services:
       # security behaviour and are NOT affected by this var. See
       # .kiro/specs/real-stack-ci/design.md §1 "Throttles".
       THROTTLE_LIMIT: ${THROTTLE_LIMIT:-120}
+      # #993 — the new-account link caps (20/day, 10/hour for a workspace's
+      # first N days) are a launch-abuse brake, not a security boundary. The
+      # real-stack lane seeds dozens of links through freshly-registered
+      # principals, so the window is 0 here (caps off) exactly like the global
+      # THROTTLE_LIMIT is raised above. Production keeps the 7-day default; the
+      # caps are proven by the API integration tests, not the stack suites.
+      NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "3001:3001"
