@@ -19,6 +19,8 @@ export const qk = {
   // #972 — runtime platform settings + the public banner read.
   adminSettings: ["admin-settings"] as const,
   platformBanner: ["platform-banner"] as const,
+  // #1020 — runtime kill switches.
+  adminKillSwitches: ["admin-kill-switches"] as const,
   adminAudit: (filter?: string) => ["admin-audit", filter ?? "all"] as const,
   adminWorkspaceAudit: (workspaceId: string, filter?: string) =>
     ["admin-workspace-audit", workspaceId, filter ?? "all"] as const,

@@ -1,0 +1,14 @@
+-- Down migration for 0036_kill_switches (#1020).
+--
+-- drizzle-kit's migrator is forward-only, so this is the authoritative reviewed
+-- reverse: 0036 ADDED one table (email_send_log) for the email.outbound kill
+-- switch's rolling-window caps. Reversing it drops the table and leaves the
+-- schema byte-identical to before. The kill_switches state itself lives in the
+-- existing platform_settings table (one `killSwitches` row) and needs no
+-- schema change, so there is nothing else to reverse.
+--
+-- Slot 0036: after #992 PR-C's 0035 (billing details).
+--
+-- To roll back by hand: delete the 0036 row from __drizzle_migrations and run
+-- the statement below.
+DROP TABLE IF EXISTS "email_send_log";

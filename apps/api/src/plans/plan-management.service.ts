@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import {
   AdminPlanChangeInput,
@@ -32,6 +33,7 @@ import {
 } from "@snapurl/database";
 import { DB } from "../database/database.module.js";
 import type { AdminActor } from "../admin/admin-management.service.js";
+import { KillSwitchService } from "../admin/kill-switch.service.js";
 import { PlansService } from "./plans.service.js";
 import { BILLING_PROVIDER, type BillingProvider } from "../billing/billing-provider.js";
 
@@ -90,6 +92,11 @@ export class PlanManagementService {
      *  scheduled at cycle end) and the plan moves only on the confirming webhook
      *  (#988's rule), never written here. */
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
+    /** #1020 — the plan-changes kill switch gates the admin plan-change path
+     *  (comp AND provider-backed charge) just as it gates the owner path in
+     *  BillingService. @Optional and last so a focused unit test can construct
+     *  the service without it; under real DI it is always injected. */
+    @Optional() private readonly killSwitches?: KillSwitchService,
   ) {}
 
   /** Test-only: drive the clock deterministically. */
@@ -115,6 +122,11 @@ export class PlanManagementService {
     rawInput: AdminPlanChangeInput,
     actor: AdminActor,
   ): Promise<AdminPlanChangeResult> {
+    // #1020 — the plan-changes kill switch. OFF refuses an admin plan change
+    // (comp or charge) with a named 503 before anything is written or asked of
+    // the provider, so nothing moves.
+    await this.killSwitches?.assertOn("billing.planChanges");
+
     const input = AdminPlanChangeInput.parse(rawInput);
 
     const ws = await this.requireWorkspace(workspaceId);
