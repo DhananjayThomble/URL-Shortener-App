@@ -108,6 +108,7 @@ describe("WorkspaceSubscription", () => {
     status: null,
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
+    notice: null,
   };
 
   it("accepts the unsubscribed (free) shape with null interval/status/period", () => {
@@ -121,6 +122,7 @@ describe("WorkspaceSubscription", () => {
       status: "active" as const,
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
       cancelAtPeriodEnd: true,
+      notice: null,
     };
     expect(WorkspaceSubscription.safeParse(active).success).toBe(true);
   });
@@ -143,5 +145,51 @@ describe("WorkspaceSubscription", () => {
 
   it("allows the free key to carry a non-null status (plan key is independent of status presence)", () => {
     expect(WorkspaceSubscription.safeParse({ ...free, planKey: "free", status: "expired", interval: "monthly", currentPeriodEnd: "2026-01-01T00:00:00.000Z" }).success).toBe(true);
+  });
+
+  /* #989 — the in-app notice block. Present (non-null) when the subscription
+     needs the owner's attention, null otherwise. */
+  it("requires the notice field to be PRESENT (nullable, not optional)", () => {
+    const { notice: _drop, ...withoutNotice } = free as typeof free & { notice: unknown };
+    expect(WorkspaceSubscription.safeParse(withoutNotice).success).toBe(false);
+  });
+
+  it("accepts a null notice (nothing wrong)", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, notice: null }).success).toBe(true);
+  });
+
+  it("accepts a payment_failed notice with a revertsAt instant", () => {
+    const parsed = WorkspaceSubscription.safeParse({
+      ...free,
+      planKey: "pro",
+      status: "halted",
+      interval: "monthly",
+      currentPeriodEnd: "2026-02-01T00:00:00.000Z",
+      notice: { kind: "payment_failed", revertsAt: "2026-02-08T00:00:00.000Z" },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts a cancellation_scheduled notice", () => {
+    expect(
+      WorkspaceSubscription.safeParse({
+        ...free,
+        planKey: "team",
+        status: "active",
+        interval: "yearly",
+        currentPeriodEnd: "2026-06-01T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+        notice: { kind: "cancellation_scheduled", revertsAt: "2026-06-01T00:00:00.000Z" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("allows a null revertsAt inside a notice but requires the kind", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, notice: { kind: "payment_failed", revertsAt: null } }).success).toBe(true);
+    expect(WorkspaceSubscription.safeParse({ ...free, notice: { revertsAt: null } }).success).toBe(false);
+  });
+
+  it("rejects an unknown notice kind", () => {
+    expect(WorkspaceSubscription.safeParse({ ...free, notice: { kind: "upgraded", revertsAt: null } }).success).toBe(false);
   });
 });
