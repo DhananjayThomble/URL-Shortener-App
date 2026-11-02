@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in SnapURL behaves incorrectly.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. A clear, reproducible report
+        is the fastest path to a fix. Please do **not** paste secrets, tokens,
+        `.env` values, or real user data into this issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see? What did you expect to see instead?
+      placeholder: Resolving a short link returned a 500 instead of redirecting.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps, so someone else can see the same thing.
+      placeholder: |
+        1. Create a link to https://example.com
+        2. Open the short link
+        3. See the error
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of SnapURL is affected?
+      options:
+        - Dashboard (web)
+        - API
+        - Redirect service
+        - Worker / background jobs
+        - Self-hosting / Docker Compose
+        - Browser extension
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-running
+    attributes:
+      label: How are you running SnapURL?
+      options:
+        - Self-hosted (single-node Docker Compose)
+        - Self-hosted (Kubernetes / Helm)
+        - Local development (pnpm dev)
+        - The hosted instance (app.snapurl.in)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / image tag
+      description: "The release tag or `SNAPURL_TAG` you run (e.g. v2.0.0, latest), or the commit SHA for a dev checkout."
+      placeholder: v2.0.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "Paste any error output. **Redact** domains, tokens, and anything secret first."
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker/compose versions, browser — whatever is relevant.
+      placeholder: |
+        - OS: Ubuntu 24.04
+        - Docker: 27.3, compose v2.29
+        - Browser: Firefox 141
+    validations:
+      required: false
