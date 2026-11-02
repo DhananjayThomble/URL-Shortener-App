@@ -155,6 +155,9 @@ services:
       # THROTTLE_LIMIT is raised above. Production keeps the 7-day default; the
       # caps are proven by the API integration tests, not the stack suites.
       NEW_ACCOUNT_LINK_WINDOW_DAYS: "0"
+      # #1007 — the mail-domain (MX) check is off in the stack suites: the real
+      # journeys sign up at throwaway *.test domains with no real DNS.
+      MAIL_DOMAIN_CHECK_ENABLED: "false"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "3001:3001"

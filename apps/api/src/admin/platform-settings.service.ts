@@ -119,9 +119,10 @@ export class PlatformSettingsService {
          third-party provider to register. The operator turns on turnstile or
          hcaptcha from the panel once they have configured the secret. */
       botProtection: { provider: "none" },
-      /* #993 — no operator additions by default; the vendored list still
-         applies on top of this (folded in by the caller). */
-      disposableEmails: { extraDomains: [] },
+      /* #993 / #1007 — no operator additions or allow entries by default; the
+         vendored block list and the built-in allow list still apply on top of
+         this (folded in by the caller). */
+      disposableEmails: { extraDomains: [], allowDomains: [] },
     };
   }
 
@@ -258,7 +259,10 @@ export class PlatformSettingsService {
       banner: { ...this.defaults.banner },
       newAccountLimits: { ...this.defaults.newAccountLimits },
       botProtection: { ...this.defaults.botProtection },
-      disposableEmails: { extraDomains: [...this.defaults.disposableEmails.extraDomains] },
+      disposableEmails: {
+        extraDomains: [...this.defaults.disposableEmails.extraDomains],
+        allowDomains: [...this.defaults.disposableEmails.allowDomains],
+      },
     };
     const meta = Object.fromEntries(
       SETTING_KEYS.map((k) => [k, { updatedAt: null, updatedBy: null } as PlatformSettingMeta]),

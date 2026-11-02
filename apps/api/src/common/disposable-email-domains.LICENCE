@@ -1,7 +1,11 @@
-The vendored disposable-email domain list in disposable-email-domains.ts is a
-curated subset of the community-maintained `disposable-email-domains` project:
+The vendored disposable-email domain list in disposable-email-domains.ts (and
+its raw data file data/disposable-email-blocklist.conf) is a pinned snapshot of
+the community-maintained `disposable-email-domains` project:
 
     https://github.com/disposable-email-domains/disposable-email-domains
+
+The exact upstream commit vendored is recorded in
+data/disposable-email-blocklist.PROVENANCE.
 
 That project dedicates its list to the public domain under the Creative Commons
 CC0 1.0 Universal Public Domain Dedication. The full text is reproduced below.

@@ -32,7 +32,7 @@ export function openPlatformSettingsStub(
     banner: { message: "", level: "info" as const },
     newAccountLimits: { windowDays: 7, perDay: 20, perHour: 10 },
     botProtection: { provider: "none" as const },
-    disposableEmails: { extraDomains: [] as string[] },
+    disposableEmails: { extraDomains: [] as string[], allowDomains: [] as string[] },
     ...overrides,
   };
   return {
