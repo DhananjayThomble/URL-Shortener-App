@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ENV, type Env } from "../config/env.js";
 import { BillingController } from "./billing.controller.js";
 import { BillingService } from "./billing.service.js";
+import { BillingEnabledGuard } from "./billing-enabled.guard.js";
 import { BILLING_PROVIDER, type BillingProvider } from "./billing-provider.js";
 import { NoneBillingProvider } from "./none-billing.provider.js";
 import { RazorpayBillingProvider } from "./razorpay.provider.js";
@@ -27,6 +28,7 @@ import { parsePlanIds } from "./billing-plans.js";
   controllers: [BillingController],
   providers: [
     BillingService,
+    BillingEnabledGuard,
     {
       provide: BILLING_PROVIDER,
       inject: [ENV],

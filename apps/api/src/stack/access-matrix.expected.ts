@@ -228,7 +228,7 @@ export const ACCESS_MATRIX: Row[] = [
   // the suite probes it for anon and ownerA only (`any`); it too 404s while
   // billing is off, and the signature check only runs once billing is on.
   { route: "POST /api/v1/billing/checkout", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
-    note: "Billing off (BILLING_PROVIDER=none) in staging: a session principal gets 404 (route unreachable); anon is 401 (auth guard runs before the controller); API keys are 403 (no @Scope, fail closed). With billing ON this is a session write (owner/admin/editor allow, viewer 403)." },
+    note: "Billing off (BILLING_PROVIDER=none) in staging: a session principal gets 404 — BillingEnabledGuard 404s at the controller BEFORE the body pipe runs, so even a malformed body is 404 (unreachable), never a 400 validation error. anon is 401 (the global auth guard runs before the controller guard); API keys are 403 (no @Scope, fail closed). With billing ON this is a session write (owner/admin/editor allow, viewer 403)." },
   { route: "GET /api/v1/billing/subscription", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
     note: "Billing off: 404 for every authed principal (route unreachable), 401 anon, 403 API keys (no @Scope)." },
   { route: "POST /api/v1/billing/webhook", expect: { any: 404 }, status: "approved",
