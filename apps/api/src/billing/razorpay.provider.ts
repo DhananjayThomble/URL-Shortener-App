@@ -6,6 +6,7 @@ import type {
   CheckoutResult,
   CreateCheckoutParams,
   NormalizedBillingEvent,
+  NormalizedPayment,
   SyncPlanPriceParams,
 } from "./billing-provider.js";
 import { resolvePlanId, type PlanIdMap } from "./billing-plans.js";
@@ -94,17 +95,33 @@ export function statusForEvent(eventType: string): SubscriptionStatus | null {
   }
 }
 
-/** Pull the subscription entity out of a Razorpay event payload, tolerant of a
- *  shape that does not carry one. */
-function readSubscriptionEntity(raw: unknown): { id?: string; current_end?: number } | null {
+/** Pull a named entity (`subscription` / `payment`) out of a Razorpay event
+ *  payload, tolerant of a shape that does not carry one. Razorpay nests every
+ *  entity the same way: payload.<name>.entity. */
+function readEntity(raw: unknown, name: "subscription" | "payment"): Record<string, unknown> | null {
   if (typeof raw !== "object" || raw === null) return null;
   const payload = (raw as { payload?: unknown }).payload;
   if (typeof payload !== "object" || payload === null) return null;
-  const sub = (payload as { subscription?: unknown }).subscription;
-  if (typeof sub !== "object" || sub === null) return null;
-  const entity = (sub as { entity?: unknown }).entity;
+  const wrapper = (payload as Record<string, unknown>)[name];
+  if (typeof wrapper !== "object" || wrapper === null) return null;
+  const entity = (wrapper as { entity?: unknown }).entity;
   if (typeof entity !== "object" || entity === null) return null;
-  return entity as { id?: string; current_end?: number };
+  return entity as Record<string, unknown>;
+}
+
+/** Normalise the payment entity a charge/failure event carries, when present.
+ *  Razorpay reports the amount as an integer count of the minor unit; kept as a
+ *  string so it never passes through a float. */
+function readPayment(raw: unknown): NormalizedPayment | null {
+  const entity = readEntity(raw, "payment");
+  if (!entity) return null;
+  const id = entity.id;
+  if (typeof id !== "string" || id === "") return null;
+  const amount = typeof entity.amount === "number" ? String(entity.amount) : typeof entity.amount === "string" ? entity.amount : null;
+  const currency = typeof entity.currency === "string" ? entity.currency : null;
+  const status = typeof entity.status === "string" ? entity.status : null;
+  if (amount === null || currency === null || status === null) return null;
+  return { providerPaymentId: id, amount, currency, status };
 }
 
 export class RazorpayBillingProvider implements BillingProvider {
@@ -194,9 +211,9 @@ export class RazorpayBillingProvider implements BillingProvider {
     const eventType = typeof (raw as { event?: unknown }).event === "string" ? (raw as { event: string }).event : "";
     if (eventType === "") return null;
 
-    const entity = readSubscriptionEntity(raw);
-    const currentPeriodEnd =
-      entity && typeof entity.current_end === "number" ? new Date(entity.current_end * 1000) : null;
+    const entity = readEntity(raw, "subscription");
+    const currentEnd = entity?.current_end;
+    const currentPeriodEnd = typeof currentEnd === "number" ? new Date(currentEnd * 1000) : null;
 
     return {
       // Razorpay delivers the event id in the body's `id` and in the
@@ -206,6 +223,7 @@ export class RazorpayBillingProvider implements BillingProvider {
       providerSubscriptionId: entity && typeof entity.id === "string" ? entity.id : null,
       status: statusForEvent(eventType),
       currentPeriodEnd,
+      payment: readPayment(raw),
       raw,
     };
   }

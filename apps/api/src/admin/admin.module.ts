@@ -21,6 +21,8 @@ import {
   makeSesClient,
   type EmailStatsReader,
 } from "./analytics/email-stats.reader.js";
+import { AdminBillingService } from "./billing/admin-billing.service.js";
+import { ADMIN_BILLING_READER, PostgresAdminBillingReader } from "./billing/admin-billing.reader.js";
 
 /* #968 — the platform-admin module. AdminService resolves the role from the
    live user row + PLATFORM_ADMIN_EMAILS; AdminGuard enforces it on every route.
@@ -38,8 +40,9 @@ import {
    DatabaseModule/ConfigModule. */
 @Module({
   // #987 — BillingModule exports BILLING_PROVIDER so PlansAdminService can push
-  // an edited price to the provider seam. No cycle: billing imports neither
-  // admin nor plans.
+  // an edited price to the provider seam. #989 also imports it so
+  // AdminBillingService can reach BillingService for the audited refund. No
+  // cycle: billing imports neither admin nor plans.
   imports: [AuthModule, WorkspacesModule, BillingModule],
   controllers: [AdminController],
   providers: [
@@ -50,10 +53,19 @@ import {
     AdminManagementService,
     PlansAdminService,
     AdminAnalyticsService,
+    AdminBillingService,
     {
       provide: ADMIN_ANALYTICS_READER,
       inject: [READ_DB],
       useFactory: (readDb: Database) => new PostgresAdminAnalyticsReader(readDb),
+    },
+    // #989 — the admin billing reader off the read replica, same seam as the
+    // analytics reader. The refund WRITE goes through BillingService (imported
+    // from BillingModule), which owns the provider + payments table.
+    {
+      provide: ADMIN_BILLING_READER,
+      inject: [READ_DB],
+      useFactory: (readDb: Database) => new PostgresAdminBillingReader(readDb),
     },
     // SES figures: read the real account when the app is actually sending
     // through SES (MAIL_TRANSPORT=ses), otherwise report "unavailable" — the

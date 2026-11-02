@@ -90,7 +90,7 @@ describe("registry parity: the reflected inventory equals the OpenAPI registry",
     ).toEqual({ missingFromRegistry: [], missingFromControllers: [] });
   });
 
-  it("the inventory has the 118 routes the design records (Appendix A + #968 /admin/me + #974 system-health + #969 users/workspaces + #971 moderation + #973 admin analytics + its CSV export + #972 settings + banner + #986 billing checkout/subscription/webhook + #970 plans/versions/overrides + #970 pricing + usage + #987 plan prices)", () => {
-    expect(inventoryCount).toBe(118);
+  it("the inventory has the 122 routes the design records (Appendix A + #968 /admin/me + #974 system-health + #969 users/workspaces + #971 moderation + #973 admin analytics + its CSV export + #972 settings + banner + #986 billing checkout/subscription/webhook + #970 plans/versions/overrides + pricing + usage + #987 plan prices + #989 admin subscriptions/revenue/billing-events/refund)", () => {
+    expect(inventoryCount).toBe(122);
   });
 });

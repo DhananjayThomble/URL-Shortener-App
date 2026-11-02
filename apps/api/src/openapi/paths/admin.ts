@@ -553,3 +553,55 @@ route({
     404: { description: "No such workspace or version" },
   },
 });
+
+
+/* ── billing views + admin refund (#989) ── */
+
+route({
+  method: "get",
+  path: "/admin/subscriptions",
+  tag: "Admin",
+  summary: "Every subscription with its workspace, plan and lifecycle state",
+  responses: {
+    200: { description: "The subscriptions list", schema: refs.AdminSubscriptionList },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/revenue",
+  tag: "Admin",
+  summary: "Revenue headline: MRR, active subscribers by plan, churn, failed payments, in-grace",
+  responses: {
+    200: { description: "The revenue figures", schema: refs.AdminRevenue },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "get",
+  path: "/admin/workspaces/{id}/billing-events",
+  tag: "Admin",
+  summary: "One workspace's billing-event history, newest first",
+  params: IdParam,
+  responses: {
+    200: { description: "The workspace's billing events", schema: refs.AdminWorkspaceBillingEvents },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "post",
+  path: "/admin/payments/{id}/refund",
+  tag: "Admin",
+  summary: "Refund a payment through the provider, with a reason (admin-only, audited)",
+  params: IdParam,
+  body: refs.AdminRefundInput,
+  responses: {
+    200: { description: "The payment was refunded", schema: refs.AdminRefundResult },
+    400: { description: "The payment cannot be refunded (not captured, or already refunded)" },
+    403: { description: "The caller is not a platform admin" },
+    404: { description: "No such payment" },
+  },
+});
