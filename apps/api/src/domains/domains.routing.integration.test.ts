@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabase, domains, eq, workspaces, type Database } from "@snapurl/database";
 import { Domain } from "@snapurl/contract";
 import { DomainsService } from "./domains.service.js";
+import { openEntitlementsStub } from "../plans/entitlements.test-stub.js";
 
 /* ============================================================
    #784 — GET /domains and POST /domains carry the routing record.
@@ -39,7 +40,7 @@ describeDb("DomainsService routing record (#784)", () => {
   beforeAll(async () => {
     handle = createDatabase({ url: DATABASE_URL!, max: 1 });
     db = handle.db;
-    service = new DomainsService(db, { nudge } as never, { DEFAULT_DOMAIN: "Snap.Example.com:443" } as never);
+    service = new DomainsService(db, { nudge } as never, openEntitlementsStub(), { DEFAULT_DOMAIN: "Snap.Example.com:443" } as never);
     // #966: add() now gates on the plan; a paid plan so these routing tests
     // exercise connect behaviour, not the plan gate (covered separately).
     await db.insert(workspaces).values({ id: own, name: "own", slug: `rt-own-${stamp}`, plan: "Pro" });

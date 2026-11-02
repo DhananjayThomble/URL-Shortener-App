@@ -14,6 +14,7 @@ import { AuthModule } from "./auth/auth.module.js";
 import { AuthGuard } from "./auth/auth.guard.js";
 import { AdminModule } from "./admin/admin.module.js";
 import { PlatformSettingsModule } from "./admin/platform-settings.module.js";
+import { PlansModule } from "./plans/plans.module.js";
 import { SafeBrowsingModule } from "./safe-browsing/safe-browsing.module.js";
 import { WorkspacesModule } from "./workspaces/workspaces.module.js";
 import { LinksModule } from "./links/links.module.js";
@@ -78,6 +79,7 @@ import { ProxyAwareThrottlerGuard } from "./common/proxy-aware-throttler.guard.j
     }),
     DatabaseModule,
     PlatformSettingsModule,
+    PlansModule,
     CommonModule,
     MailModule,
     AuthModule,
