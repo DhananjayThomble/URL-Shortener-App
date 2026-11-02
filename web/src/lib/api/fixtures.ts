@@ -63,7 +63,9 @@ export const WORKSPACE: Workspace = {
   name: "Acme Growth",
   slug: "acme-growth",
   initials: "AC",
-  plan: "Growth",
+  // #970: a KNOWN seeded paid key (an unknown key like the old "Growth" now
+  // fails closed to Free, which would hide the custom-domain add affordance).
+  plan: "Pro",
   defaultDomain: "snap.to",
   defaultRedirect: "302",
   clicksUsed: 412908,

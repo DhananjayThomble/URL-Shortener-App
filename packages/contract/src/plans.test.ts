@@ -13,12 +13,19 @@ import {
   LimitValue,
   MigrateWorkspaceVersionInput,
   OverrideKind,
+  OverrideView,
+  PlanList,
+  PlanView,
   PlanVisibility,
+  PricingPlan,
+  PricingTable,
   resolveEntitlements,
+  UsageRow,
   UsageWarning,
   SetOverrideInput,
   UpdatePlanInput,
   UpdatePlanMatrixInput,
+  WorkspaceUsage,
   usageBand,
   usagePercent,
   USAGE_FULL_PERCENT,
@@ -123,6 +130,38 @@ describe("resolveEntitlements", () => {
     expect((r.features as Record<string, unknown>).bogus).toBeUndefined();
     expect(r.limits.links).toBe(10);
     expect((r.limits as Record<string, unknown>).bogus).toBeUndefined();
+  });
+
+  it("ignores a version feature value that is not a real boolean", () => {
+    // A known feature name whose value is truthy but NOT a boolean must be
+    // ignored (the typeof === "boolean" guard), leaving the baseline (off).
+    const weird = {
+      features: { customDomains: 1 as unknown as boolean, forms: true },
+      limits: {},
+    };
+    const r = resolveEntitlements(weird);
+    expect(r.features.customDomains).toBe(false); // ignored (not a boolean)
+    expect(r.features.forms).toBe(true); // a real boolean applies
+  });
+
+  it("ignores a version limit value that is neither a number nor null", () => {
+    const weird = {
+      features: {},
+      limits: { links: "10" as unknown as number, forms: 5 },
+    };
+    const r = resolveEntitlements(weird);
+    expect(r.limits.links).toBe(0); // ignored (string, not number/null) -> baseline
+    expect(r.limits.forms).toBe(5); // a real number applies
+  });
+
+  it("ignores an override feature value that is not a boolean, and a limit value that is a boolean", () => {
+    const base: ResolvableVersion = { features: { forms: true }, limits: { links: 5 } };
+    const r = resolveEntitlements(base, [
+      { kind: "feature", name: "forms", value: 0 as unknown as boolean }, // not boolean -> ignored
+      { kind: "limit", name: "links", value: true as unknown as number }, // boolean -> ignored
+    ]);
+    expect(r.features.forms).toBe(true); // override ignored, version value stands
+    expect(r.limits.links).toBe(5); // override ignored, version value stands
   });
 
   it("overrides apply AFTER the version (override on a feature the version set)", () => {
@@ -365,5 +404,200 @@ describe("MigrateWorkspaceVersionInput", () => {
   it("rejects a zero or negative version", () => {
     expect(MigrateWorkspaceVersionInput.safeParse({ version: 0 }).success).toBe(false);
     expect(MigrateWorkspaceVersionInput.safeParse({ version: -1 }).success).toBe(false);
+  });
+});
+
+
+/* ── wire-schema constraints (mutation coverage for the input/output shapes) ── */
+
+describe("CreatePlanInput constraints", () => {
+  it("rejects a display name over 80 chars and a description over 280", () => {
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "x".repeat(81) }).success).toBe(false);
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", description: "d".repeat(281) }).success).toBe(false);
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", description: "d".repeat(280) }).success).toBe(true);
+  });
+
+  it("rejects a key over 40 chars", () => {
+    expect(CreatePlanInput.safeParse({ key: "a".repeat(41), displayName: "X" }).success).toBe(false);
+    expect(CreatePlanInput.safeParse({ key: "a".repeat(40), displayName: "X" }).success).toBe(true);
+  });
+
+  it("rejects a highlight badge over 40 chars but accepts null", () => {
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", highlightBadge: "b".repeat(41) }).success).toBe(false);
+    expect(CreatePlanInput.parse({ key: "k", displayName: "X", highlightBadge: null }).highlightBadge).toBe(null);
+  });
+
+  it("bounds sortOrder to 0..10000", () => {
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", sortOrder: -1 }).success).toBe(false);
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", sortOrder: 10_001 }).success).toBe(false);
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", sortOrder: 10_000 }).success).toBe(true);
+  });
+
+  it("rejects a fractional sortOrder (int only)", () => {
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", sortOrder: 1.5 }).success).toBe(false);
+  });
+
+  it("rejects a bad visibility value", () => {
+    expect(CreatePlanInput.safeParse({ key: "k", displayName: "X", visibility: "secret" }).success).toBe(false);
+  });
+});
+
+describe("UpdatePlanInput constraints", () => {
+  it("rejects an empty display name and one over 80", () => {
+    expect(UpdatePlanInput.safeParse({ displayName: "" }).success).toBe(false);
+    expect(UpdatePlanInput.safeParse({ displayName: "x".repeat(81) }).success).toBe(false);
+    expect(UpdatePlanInput.safeParse({ displayName: "ok" }).success).toBe(true);
+  });
+
+  it("rejects a description over 280", () => {
+    expect(UpdatePlanInput.safeParse({ description: "d".repeat(281) }).success).toBe(false);
+    expect(UpdatePlanInput.safeParse({ description: "d".repeat(280) }).success).toBe(true);
+  });
+
+  it("bounds sortOrder to 0..10000 and rejects fractional", () => {
+    expect(UpdatePlanInput.safeParse({ sortOrder: -1 }).success).toBe(false);
+    expect(UpdatePlanInput.safeParse({ sortOrder: 10_001 }).success).toBe(false);
+    expect(UpdatePlanInput.safeParse({ sortOrder: 2.5 }).success).toBe(false);
+    expect(UpdatePlanInput.safeParse({ sortOrder: 5 }).success).toBe(true);
+  });
+
+  it("trims the display name", () => {
+    expect(UpdatePlanInput.parse({ displayName: "  Pro  " }).displayName).toBe("Pro");
+  });
+
+  it("rejects a highlight badge over 40 but accepts null", () => {
+    expect(UpdatePlanInput.safeParse({ highlightBadge: "b".repeat(41) }).success).toBe(false);
+    expect(UpdatePlanInput.parse({ highlightBadge: null }).highlightBadge).toBe(null);
+  });
+});
+
+describe("SetOverrideInput constraints", () => {
+  it("rejects a name over 40 chars and an empty name", () => {
+    expect(SetOverrideInput.safeParse({ kind: "feature", name: "", value: true }).success).toBe(false);
+    // A 41-char name is rejected before the superRefine's unknown-name check.
+    expect(SetOverrideInput.safeParse({ kind: "feature", name: "a".repeat(41), value: true }).success).toBe(false);
+  });
+
+  it("rejects a negative limit value and a fractional one", () => {
+    expect(SetOverrideInput.safeParse({ kind: "limit", name: "links", value: -1 }).success).toBe(false);
+    expect(SetOverrideInput.safeParse({ kind: "limit", name: "links", value: 1.5 }).success).toBe(false);
+    expect(SetOverrideInput.safeParse({ kind: "limit", name: "links", value: 0 }).success).toBe(true);
+  });
+
+  it("trims the name", () => {
+    const parsed = SetOverrideInput.parse({ kind: "feature", name: "  customDomains  ", value: true });
+    expect(parsed.name).toBe("customDomains");
+  });
+
+  it("defaults expiresAt to null and accepts an ISO datetime", () => {
+    expect(SetOverrideInput.parse({ kind: "limit", name: "links", value: 5 }).expiresAt).toBe(null);
+  });
+});
+
+describe("MigrateWorkspaceVersionInput constraints", () => {
+  it("rejects a fractional version", () => {
+    expect(MigrateWorkspaceVersionInput.safeParse({ version: 1.5 }).success).toBe(false);
+  });
+});
+
+describe("OverrideView", () => {
+  it("parses a full feature override view and a limit one", () => {
+    expect(
+      OverrideView.safeParse({ id: "o1", kind: "feature", name: "forms", value: true, expiresAt: null, createdBy: "a@b.c", createdAt: "2026-01-01T00:00:00.000Z" }).success,
+    ).toBe(true);
+    expect(
+      OverrideView.safeParse({ id: "o2", kind: "limit", name: "links", value: 5, expiresAt: "2026-02-01T00:00:00.000Z", createdBy: null, createdAt: "2026-01-01T00:00:00.000Z" }).success,
+    ).toBe(true);
+  });
+
+  it("accepts a null value (unlimited limit override) and rejects a missing field", () => {
+    expect(OverrideView.safeParse({ id: "o", kind: "limit", name: "links", value: null, expiresAt: null, createdBy: null, createdAt: "x" }).success).toBe(true);
+    expect(OverrideView.safeParse({ id: "o", kind: "limit", name: "links", value: 1, expiresAt: null, createdBy: null }).success).toBe(false);
+  });
+
+  it("rejects a bad kind", () => {
+    expect(OverrideView.safeParse({ id: "o", kind: "both", name: "x", value: 1, expiresAt: null, createdBy: null, createdAt: "x" }).success).toBe(false);
+  });
+});
+
+describe("PlanView / PlanList", () => {
+  const view = {
+    id: "p1",
+    key: "pro",
+    displayName: "Pro",
+    description: "",
+    highlightBadge: null,
+    sortOrder: 2,
+    visibility: "public" as const,
+    version: 3,
+    features: Object.fromEntries(FEATURE_NAMES.map((f) => [f, true])),
+    limits: Object.fromEntries(LIMIT_NAMES.map((l) => [l, 10])),
+  };
+
+  it("parses a complete plan view", () => {
+    expect(PlanView.safeParse(view).success).toBe(true);
+  });
+
+  it("rejects a non-int version and a bad visibility", () => {
+    expect(PlanView.safeParse({ ...view, version: 1.5 }).success).toBe(false);
+    expect(PlanView.safeParse({ ...view, visibility: "gone" }).success).toBe(false);
+  });
+
+  it("PlanList wraps an array of views", () => {
+    expect(PlanList.safeParse({ items: [view] }).success).toBe(true);
+    expect(PlanList.safeParse({ items: "nope" }).success).toBe(false);
+  });
+});
+
+describe("PricingPlan / PricingTable", () => {
+  const plan = {
+    key: "pro",
+    displayName: "Pro",
+    description: "d",
+    highlightBadge: "Most popular",
+    features: Object.fromEntries(FEATURE_NAMES.map((f) => [f, false])),
+    limits: Object.fromEntries(LIMIT_NAMES.map((l) => [l, null])),
+  };
+
+  it("parses a pricing plan with a null badge too", () => {
+    expect(PricingPlan.safeParse(plan).success).toBe(true);
+    expect(PricingPlan.safeParse({ ...plan, highlightBadge: null }).success).toBe(true);
+  });
+
+  it("rejects a missing field", () => {
+    const { description, ...rest } = plan;
+    void description;
+    expect(PricingPlan.safeParse(rest).success).toBe(false);
+  });
+
+  it("PricingTable carries the plans and the feature/limit order", () => {
+    const table = { plans: [plan], featureOrder: [...FEATURE_NAMES], limitOrder: [...LIMIT_NAMES] };
+    expect(PricingTable.safeParse(table).success).toBe(true);
+    expect(PricingTable.safeParse({ ...table, featureOrder: ["bogus"] }).success).toBe(false);
+  });
+});
+
+describe("UsageRow / WorkspaceUsage", () => {
+  const row = { name: "links" as const, label: "links", used: 3, limit: 10, percent: 30 };
+
+  it("parses a usage row, incl. unlimited (null limit, null percent)", () => {
+    expect(UsageRow.safeParse(row).success).toBe(true);
+    expect(UsageRow.safeParse({ ...row, limit: null, percent: null }).success).toBe(true);
+  });
+
+  it("rejects a negative used, a negative percent and a bad limit name", () => {
+    expect(UsageRow.safeParse({ ...row, used: -1 }).success).toBe(false);
+    expect(UsageRow.safeParse({ ...row, percent: -1 }).success).toBe(false);
+    expect(UsageRow.safeParse({ ...row, name: "galaxies" }).success).toBe(false);
+  });
+
+  it("WorkspaceUsage carries planKey, rows and warnings", () => {
+    const usage = {
+      planKey: "pro",
+      rows: [row],
+      warnings: [{ limitName: "links" as const, label: "links", band: "warn" as const }],
+    };
+    expect(WorkspaceUsage.safeParse(usage).success).toBe(true);
+    expect(WorkspaceUsage.safeParse({ ...usage, warnings: "nope" }).success).toBe(false);
   });
 });

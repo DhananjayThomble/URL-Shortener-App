@@ -37,9 +37,10 @@ export const MOCK_USER = {
   initials: "MO",
   role: "owner",
   // #966: the Domains page gates the add form on the plan's entitlements.
-  // A paid plan by default so existing specs keep the add affordance; specs
-  // that test the Free gate override `me` with `plan: "Free"`.
-  plan: "Growth",
+  // A seeded paid plan by default so existing specs keep the add affordance;
+  // specs that test the Free gate override `me` with `plan: "Free"`.
+  // #970: must be a KNOWN plan key — an unknown key now fails closed to Free.
+  plan: "Pro",
 } as const;
 
 export const MOCK_WORKSPACE = {
@@ -47,7 +48,7 @@ export const MOCK_WORKSPACE = {
   name: "Mock Workspace",
   slug: "mock-workspace",
   initials: "MW",
-  plan: "Growth",
+  plan: "Pro",
   defaultDomain: "snap.to",
   defaultRedirect: "302",
   clicksUsed: 0,

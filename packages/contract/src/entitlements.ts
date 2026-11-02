@@ -93,7 +93,9 @@ export const PLAN_ENTITLEMENTS: Record<string, PlanEntitlements> = {
  */
 export function entitlementsFor(plan: string | null | undefined): PlanEntitlements {
   const key = (plan ?? "").trim().toLowerCase();
-  if (key === "") return FREE_ENTITLEMENTS;
+  // Empty, unknown, null and undefined all miss the table and fall to Free —
+  // one fail-closed path, no special-case for "" (which would be an equivalent
+  // branch now that the fallthrough is also Free).
   return PLAN_ENTITLEMENTS[key] ?? FREE_ENTITLEMENTS;
 }
 
