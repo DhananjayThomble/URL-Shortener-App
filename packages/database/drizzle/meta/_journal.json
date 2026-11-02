@@ -187,8 +187,15 @@
     {
       "idx": 26,
       "version": "7",
-      "when": 1793575968474,
-      "tag": "0026_workspace_new_account_limits_lifted",
+      "when": 1793574929193,
+      "tag": "0026_billing_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793591858772,
+      "tag": "0028_workspace_new_account_limits_lifted",
       "breakpoints": true
     }
   ]

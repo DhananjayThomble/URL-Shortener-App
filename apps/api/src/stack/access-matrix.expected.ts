@@ -219,10 +219,25 @@ export const ACCESS_MATRIX: Row[] = [
   // read behind the same guard, so it shares the row shape.
   { route: "GET /api/v1/admin/analytics", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "GET /api/v1/admin/analytics/export/{view}", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #986 — billing. OBSERVED with BILLING_PROVIDER unset in the staging stack,
+  // i.e. the default `none`: the controller 404s EVERY billing route for every
+  // caller, so the whole surface is unreachable. This records that observed
+  // billing-OFF behaviour — a 404 here is "billing disabled on this
+  // deployment", not the cross-tenant {id} probe the grammar's 404 usually
+  // means (there is no {id} on any billing route). The webhook is @Public, so
+  // the suite probes it for anon and ownerA only (`any`); it too 404s while
+  // billing is off, and the signature check only runs once billing is on.
+  { route: "POST /api/v1/billing/checkout", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off (BILLING_PROVIDER=none) in staging: a session principal gets 404 — BillingEnabledGuard 404s at the controller BEFORE the body pipe runs, so even a malformed body is 404 (unreachable), never a 400 validation error. anon is 401 (the global auth guard runs before the controller guard); API keys are 403 (no @Scope, fail closed). With billing ON this is a session write (owner/admin/editor allow, viewer 403)." },
+  { route: "GET /api/v1/billing/subscription", expect: { anon: 401, ownerA: 404, adminA: 404, editorA: 404, viewerA: 404, ownerB: 404, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved",
+    note: "Billing off: 404 for every authed principal (route unreachable), 401 anon, 403 API keys (no @Scope)." },
+  { route: "POST /api/v1/billing/webhook", expect: { any: 404 }, status: "approved",
+    note: "@Public: Razorpay signs the body, there is no session. Billing off in staging, so it 404s; with billing on it is a signature-verified endpoint (400 on a bad/absent signature, 200 on a verified event)." },
 ];
 
 // Sanity: one row per inventory route (71 at #891 + 1 for #968's GET /admin/me
 // + 7 for #974's system-health routes + 11 for #969's users-and-workspaces
 // + 9 for #971's moderation routes + 2 for #973's GET /admin/analytics and its
-// CSV export + 2 for #972's admin settings routes + 1 for #972's public banner route).
-export const EXPECTED_ROUTE_COUNT = 104;
+// CSV export + 2 for #972's admin settings routes + 1 for #972's public banner
+// route + 3 for #986's billing checkout/subscription/webhook).
+export const EXPECTED_ROUTE_COUNT = 107;

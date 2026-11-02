@@ -161,6 +161,37 @@ export const EnvSchema = z.object({
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
+  /* #986 — billing (epic #991). OFF BY DEFAULT: with BILLING_PROVIDER=none the
+     whole billing surface is unreachable (the controller 404s) and a
+     self-hosted / open-source build behaves exactly as today. Turn it on with
+     BILLING_PROVIDER=razorpay, which also needs the two keys below (plus
+     RAZORPAY_WEBHOOK_SECRET) — the provider reports itself disabled, and the
+     routes stay 404, until they are present, so a half-configured deploy fails
+     closed rather than half-open. */
+  BILLING_PROVIDER: z.enum(["none", "razorpay"]).default("none"),
+  /* The Razorpay key id is PUBLIC — it ships in the checkout page — so it is
+     not a secret and is passed as a plain env var. The key SECRET and the
+     webhook secret ARE secrets: locally they live in the gitignored
+     apps/api/.env; on AWS they are resolved from Secrets Manager at cold start
+     (RAZORPAY_SECRET_ARN), exactly like the DB/JWT/Safe-Browsing keys. All
+     three are optional passthroughs so the default none profile needs nothing. */
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
+  /** HMAC-SHA256 key Razorpay signs each webhook body with. Verified on every
+   *  incoming webhook; a request whose X-Razorpay-Signature does not match is
+   *  rejected and changes nothing. */
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  /** ARN/name of a Secrets Manager secret (JSON) holding keySecret and
+     webhookSecret, resolved at cold start the same way as the other secrets.
+     Absent on every non-AWS profile. */
+  RAZORPAY_SECRET_ARN: z.string().optional(),
+  /* The provider plan ids per (plan key, interval), resolved from config rather
+     than hardcoded: a plan's price lives at the provider, and #970/#987 make the
+     catalogue editable, so the code only ever names a KEY and looks up the id.
+     Format: comma-separated `planKey:interval=providerPlanId` pairs, e.g.
+     "pro:monthly=plan_ABC,pro:yearly=plan_DEF". Empty by default. */
+  RAZORPAY_PLAN_IDS: z.string().optional(),
+
   /* #394: on the AWS profile, a newly-created/edited link is invisible to the
      redirect for up to ~60s — the projection_outbox row it lands in is only
      drained on the worker's 1-minute EventBridge schedule. Setting this to the

@@ -14,7 +14,12 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { SwaggerModule, type OpenAPIObject } from "@nestjs/swagger";
 import { Logger } from "nestjs-pino";
 import cors from "@fastify/cors";
-import { resolveBotProtectionSecret, resolveSafeBrowsingApiKey, resolveSecrets } from "@snapurl/database";
+import {
+  resolveBotProtectionSecret,
+  resolveRazorpaySecrets,
+  resolveSafeBrowsingApiKey,
+  resolveSecrets,
+} from "@snapurl/database";
 import { AppModule } from "./app.module.js";
 import { ENV, type Env } from "./config/env.js";
 import { resolveCorsOrigins } from "./config/cors-origins.js";
@@ -25,27 +30,42 @@ import { resolveCorsOrigins } from "./config/cors-origins.js";
    this makes no SDK call and touches nothing, so the plain-env path (local dev,
    compose, single-node, Kubernetes) is byte-identical. Nothing in the API reads
    these vars at import time, so running this first is safe. */
-async function hydrateSecretsIntoEnv(): Promise<{ safeBrowsingError?: Error; botProtectionError?: Error }> {
-  const [{ databaseUrl, jwtAccessSecret, jwtRefreshSecret }, safeBrowsing, botProtection] = await Promise.all([
-    resolveSecrets(),
-    /* Optional, so non-fatal: a failure leaves Safe Browsing off and is
-       reported below once the logger exists, instead of failing the boot. */
-    resolveSafeBrowsingApiKey(),
-    /* #993 — optional for the same reason: with the provider switch off (the
-       default) there is no secret to resolve, and a failure leaves the secret
-       unset. A sign-up whose provider is on then fails the challenge closed. */
-    resolveBotProtectionSecret(),
-  ]);
+async function hydrateSecretsIntoEnv(): Promise<{
+  safeBrowsingError?: Error;
+  razorpayError?: Error;
+  botProtectionError?: Error;
+}> {
+  const [{ databaseUrl, jwtAccessSecret, jwtRefreshSecret }, safeBrowsing, razorpay, botProtection] =
+    await Promise.all([
+      resolveSecrets(),
+      /* Optional, so non-fatal: a failure leaves Safe Browsing off and is
+         reported below once the logger exists, instead of failing the boot. */
+      resolveSafeBrowsingApiKey(),
+      /* #986 — same escape hatch: with no RAZORPAY_SECRET_ARN this makes no SDK
+         call and returns the plain env vars. A failure leaves billing's secrets
+         unset (provider disabled, routes 404), reported once the logger exists. */
+      resolveRazorpaySecrets(),
+      /* #993 — optional for the same reason: with the provider switch off (the
+         default) there is no secret to resolve, and a failure leaves the secret
+         unset. A sign-up whose provider is on then fails the challenge closed. */
+      resolveBotProtectionSecret(),
+    ]);
   if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
   if (jwtAccessSecret !== undefined) process.env.JWT_ACCESS_SECRET = jwtAccessSecret;
   if (jwtRefreshSecret !== undefined) process.env.JWT_REFRESH_SECRET = jwtRefreshSecret;
   if (safeBrowsing.apiKey !== undefined) process.env.GOOGLE_SAFE_BROWSING_API_KEY = safeBrowsing.apiKey;
+  if (razorpay.keySecret !== undefined) process.env.RAZORPAY_KEY_SECRET = razorpay.keySecret;
+  if (razorpay.webhookSecret !== undefined) process.env.RAZORPAY_WEBHOOK_SECRET = razorpay.webhookSecret;
   if (botProtection.secret !== undefined) process.env.BOT_PROTECTION_SECRET = botProtection.secret;
-  return { safeBrowsingError: safeBrowsing.error, botProtectionError: botProtection.error };
+  return {
+    safeBrowsingError: safeBrowsing.error,
+    razorpayError: razorpay.error,
+    botProtectionError: botProtection.error,
+  };
 }
 
 async function bootstrap() {
-  const { safeBrowsingError, botProtectionError } = await hydrateSecretsIntoEnv();
+  const { safeBrowsingError, razorpayError, botProtectionError } = await hydrateSecretsIntoEnv();
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
@@ -91,12 +111,22 @@ async function bootstrap() {
      Registration must go through app.useBodyParser, not the raw Fastify instance:
      Nest registers its own application/json parser during init, and adding one
      directly makes that throw FST_ERR_CTP_ALREADY_PRESENT at boot. */
-  app.useBodyParser("application/json", {}, (_req, body, done) => {
+  app.useBodyParser("application/json", {}, (req, body, done) => {
     const buf = body as unknown as Buffer | string | undefined;
-    const empty = buf === undefined || (typeof buf === "string" ? buf === "" : buf.length === 0);
+    /* #986 — stash the RAW request bytes on the request before parsing. The
+       Razorpay webhook's X-Razorpay-Signature is an HMAC over the exact body
+       received, so the verifier needs the unmodified string: a re-serialised
+       JSON.stringify(req.body) would reorder keys / change whitespace and never
+       match. This runs for EVERY application/json request, which is a few bytes
+       kept on the request object and read only by the billing webhook route —
+       every other route ignores req.rawBody, so behaviour there is unchanged.
+       Empty bodies (the #442 path) record undefined, as before. */
+    const raw = buf === undefined ? undefined : typeof buf === "string" ? buf : buf.toString("utf8");
+    (req as { rawBody?: string }).rawBody = raw;
+    const empty = raw === undefined || raw === "";
     if (empty) return done(null, undefined);
     try {
-      done(null, JSON.parse(typeof buf === "string" ? buf : buf.toString("utf8")));
+      done(null, JSON.parse(raw));
     } catch (err) {
       done(err as Error, undefined);
     }
@@ -140,6 +170,15 @@ async function bootstrap() {
   if (safeBrowsingError) {
     // The message names the secret and the SDK error, never the key itself.
     logger.warn(`Could not read the Safe Browsing API key secret: ${safeBrowsingError.message}`);
+  }
+  if (razorpayError) {
+    // Names the secret and the SDK error, never the secret value itself.
+    logger.warn(`Could not read the Razorpay secret: ${razorpayError.message}`);
+  }
+  if (env.BILLING_PROVIDER !== "none" && !(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET && env.RAZORPAY_WEBHOOK_SECRET)) {
+    logger.warn(
+      `BILLING_PROVIDER=${env.BILLING_PROVIDER} but its keys are not all set — billing stays disabled and its routes 404 until RAZORPAY_KEY_ID, the key secret and the webhook secret are present.`,
+    );
   }
   if (botProtectionError) {
     // #993 — names the secret and the SDK error, never the secret value.

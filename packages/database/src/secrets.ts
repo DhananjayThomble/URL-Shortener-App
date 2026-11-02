@@ -190,6 +190,46 @@ export async function resolveBotProtectionSecret(
   }
 }
 
+/**
+ * Resolve the Razorpay key secret and webhook secret (#986), never throwing.
+ *
+ * Like Safe Browsing, these are optional: with billing off (BILLING_PROVIDER=
+ * none) nothing reads them, so a missing or unreadable secret must not fail the
+ * cold start — the error is returned for the caller to log, and both values are
+ * left unset, which keeps the provider disabled and the billing routes 404.
+ *
+ * Escape hatch: with no RAZORPAY_SECRET_ARN set, returns the plain
+ * RAZORPAY_KEY_SECRET / RAZORPAY_WEBHOOK_SECRET env vars (possibly undefined)
+ * and makes no SDK call — local dev, compose, single-node and Kubernetes are
+ * byte-identical to today.
+ *
+ * With the ARN set, the secret's SecretString is a JSON object
+ * `{ "keySecret": "...", "webhookSecret": "..." }`; each field independently
+ * falls back to its plain env var if the JSON omits it.
+ */
+export async function resolveRazorpaySecrets(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ keySecret: string | undefined; webhookSecret: string | undefined; error?: Error }> {
+  const arn = env.RAZORPAY_SECRET_ARN;
+  if (!arn) {
+    return { keySecret: env.RAZORPAY_KEY_SECRET, webhookSecret: env.RAZORPAY_WEBHOOK_SECRET };
+  }
+  try {
+    const raw = await fetchSecretString(arn);
+    const parsed = JSON.parse(raw) as { keySecret?: string; webhookSecret?: string };
+    return {
+      keySecret: parsed.keySecret ?? env.RAZORPAY_KEY_SECRET,
+      webhookSecret: parsed.webhookSecret ?? env.RAZORPAY_WEBHOOK_SECRET,
+    };
+  } catch (err) {
+    return {
+      keySecret: undefined,
+      webhookSecret: undefined,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
+
 /** Test-only: clears the module-level cache and lazily-created client so each
  *  unit test starts from a clean slate. Not part of the runtime contract. */
 export function __resetSecretCacheForTests(): void {

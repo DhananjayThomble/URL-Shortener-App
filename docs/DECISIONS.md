@@ -1857,3 +1857,44 @@ refreshes.
 action `admin.signup.refused`, the reason code as the target) so the admin panel can count and filter
 them: `disposable_email`, `bot_challenge_missing`, `bot_challenge_failed`, `new_account_cap_day`,
 `new_account_cap_hour`. No new table — the #974 audit viewer already reads this trail.
+
+## #996 — Uptime check: a CloudWatch Synthetics canary, not a Route 53 health check
+
+**Picked** a CloudWatch Synthetics canary (`infra/functions/canary/`) that, every
+5 minutes, requests the dedicated canary short link and asserts the **exact 302
+and the exact `Location`** (it does *not* follow the redirect), then checks
+`GET /api/v1/health` is 200.
+
+**Over** a Route 53 health check. The deciding factor is the requirement, not
+price: the issue asks the check to **verify the 302 target**. A Route 53 health
+check can only substring-match the first 5120 bytes of a response body — it
+cannot inspect, let alone assert, a `Location` header, and treats a 3xx as
+"healthy" without looking where it points. It therefore cannot tell a link
+redirecting correctly from one redirecting to the wrong place, which is exactly
+the failure this alarm exists to catch. A Synthetics canary runs a Node script
+and can assert the status code and header precisely.
+
+**Cost.** A Synthetics canary run is **$0.0012**. At a 5-minute cadence that is
+~8,640 runs/month ≈ **$10.40/month**, plus a few cents of the canary Lambda's
+own invocations and the artifacts S3 bucket (lifecycle-expired at 31 days). A
+Route 53 health check is **$0.50/month** (+$1 for HTTPS string matching). So the
+canary is ~$10/month dearer — accepted, because the cheaper option does not meet
+the acceptance criterion. On a $100-credit account that is ~10% of a monthly
+budget line; if cost pressure ever forces it, the fallback is a Route 53 health
+check on API health *only* (which it can do) plus keeping the canary for the
+redirect-target assertion, or dropping the canary cadence to 10 minutes
+(~$5.20/month).
+
+**Analytics exclusion.** The canary link's hits are kept out of user analytics
+with no special-casing of the slug: the canary sends a `User-Agent` carrying a
+bot token, the redirect records every click with `isBot(userAgent)`, and the
+rollup + analytics reader already drop `is_bot = true` rows. The link is seeded
+by `scripts/create-canary-link.sh` (idempotent, fixed slug `__uptime`), not by
+CloudFormation — it is workspace data created through the API.
+
+**Backlog alarms.** The projection-outbox and webhook backlogs are Postgres row
+counts, not an AWS-native metric, so the worker lifts them to CloudWatch via an
+EMF log line (`apps/worker/src/jobs/backlog-metrics.ts`) rather than taking a
+`@aws-sdk/client-cloudwatch` dependency and a `PutMetricData` grant. EMF needs
+no new dependency, no API call, and no IAM change — the worker already writes
+its own log group.
