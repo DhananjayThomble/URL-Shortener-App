@@ -32,5 +32,21 @@ export function makeRazorpayClient(keyId: string, keySecret: string): RazorpayCl
     async refundPayment(paymentId) {
       await rzp.payments.refund(paymentId, {});
     },
+
+    // #987 — create a Razorpay plan for an edited price. Razorpay plans are
+    // immutable, so an edit creates a new plan the next checkout uses.
+    async createPlan(params) {
+      const plan = await rzp.plans.create({
+        period: params.period,
+        interval: params.interval,
+        item: {
+          name: params.name,
+          amount: params.amount,
+          currency: params.currency,
+        },
+        notes: params.notes,
+      });
+      return { id: plan.id };
+    },
   };
 }

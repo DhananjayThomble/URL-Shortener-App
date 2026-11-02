@@ -48,6 +48,9 @@ import { parsePlanIds } from "./billing-plans.js";
       },
     },
   ],
-  exports: [BillingService],
+  // #987 — export the resolved provider too, so PlansAdminService (admin module)
+  // can push an edited price to it through the same seam, without re-resolving
+  // the provider or reaching into billing internals.
+  exports: [BillingService, BILLING_PROVIDER],
 })
 export class BillingModule {}

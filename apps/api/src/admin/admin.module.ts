@@ -11,6 +11,7 @@ import { AdminManagementService } from "./admin-management.service.js";
 import { PlansAdminService } from "../plans/plans-admin.service.js";
 import { AuthModule } from "../auth/auth.module.js";
 import { WorkspacesModule } from "../workspaces/workspaces.module.js";
+import { BillingModule } from "../billing/billing.module.js";
 import { AdminAnalyticsService } from "./analytics/admin-analytics.service.js";
 import { ADMIN_ANALYTICS_READER, PostgresAdminAnalyticsReader } from "./analytics/admin-analytics.reader.js";
 import {
@@ -36,7 +37,10 @@ import {
    email figures sit behind EmailStatsReader. DB and ENV come from the global
    DatabaseModule/ConfigModule. */
 @Module({
-  imports: [AuthModule, WorkspacesModule],
+  // #987 — BillingModule exports BILLING_PROVIDER so PlansAdminService can push
+  // an edited price to the provider seam. No cycle: billing imports neither
+  // admin nor plans.
+  imports: [AuthModule, WorkspacesModule, BillingModule],
   controllers: [AdminController],
   providers: [
     AdminService,

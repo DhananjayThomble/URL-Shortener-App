@@ -73,6 +73,14 @@ export const CheckoutSession = z.object({
   /** Echoed back so the client can show which plan it is confirming. */
   planKey: z.enum(PAID_PLAN_KEYS),
   interval: z.enum(BILLING_INTERVALS),
+  /** #987 — the LIVE price the checkout is being confirmed at, read from the
+   *  editable plan catalogue at checkout time (not baked in at deploy), so an
+   *  admin's price change is reflected without a redeploy. Minor units (paise/
+   *  cents); null when the plan has no price set for this (interval, currency).
+   *  The server still resolves the provider plan id independently — this is for
+   *  the confirmation screen, never a client-named amount. */
+  amountMinor: z.number().int().min(0).nullable(),
+  currency: z.string(),
 });
 export type CheckoutSession = z.infer<typeof CheckoutSession>;
 

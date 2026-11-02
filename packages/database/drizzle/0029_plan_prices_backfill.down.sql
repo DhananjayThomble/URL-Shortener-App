@@ -1,0 +1,21 @@
+-- Down migration for 0029_plan_prices_backfill (#987).
+--
+-- drizzle-kit's migrator is forward-only (it tracks applied migrations in
+-- __drizzle_migrations and never runs a down), so this file is not executed
+-- automatically. It is the authoritative, reviewed reverse.
+--
+-- 0029 only set data on EXISTING rows (it added no schema). The exact reverse
+-- would be to null the pricing back out on the default plans' current version,
+-- but that would also discard a price an admin edited after the migration ran.
+-- Since the column is nullable and a null price reads as "unpriced" (the
+-- pre-#987 behaviour), the safe hand reverse is to clear pricing ONLY on the
+-- three seeded defaults' current version:
+--
+-- UPDATE plan_versions pv
+--    SET pricing = NULL
+--   FROM plans pl
+--  WHERE pv.id = pl.current_version_id
+--    AND lower(pl.key) IN ('starter', 'pro', 'team');
+--
+-- To roll back by hand: delete the 0029 row from __drizzle_migrations and run
+-- the statement above if you want the prices cleared.

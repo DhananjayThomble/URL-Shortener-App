@@ -6,6 +6,7 @@ import type {
   CheckoutResult,
   CreateCheckoutParams,
   NormalizedBillingEvent,
+  SyncPlanPriceParams,
 } from "./billing-provider.js";
 import { resolvePlanId, type PlanIdMap } from "./billing-plans.js";
 
@@ -40,6 +41,19 @@ export interface RazorpayClient {
   }): Promise<{ id: string }>;
   cancelSubscription(subscriptionId: string, cancelAtCycleEnd: boolean): Promise<void>;
   refundPayment(paymentId: string): Promise<void>;
+  /** #987 — create a Razorpay plan object for an edited price. Razorpay plans
+   *  are immutable, so a price change is a NEW plan the next checkout uses;
+   *  existing subscriptions keep the plan they were created against. Returns the
+   *  new provider plan id. Optional so a fake that does not exercise price sync
+   *  need not implement it. */
+  createPlan?(params: {
+    period: "monthly" | "yearly";
+    interval: number;
+    amount: number;
+    currency: string;
+    name: string;
+    notes: Record<string, string>;
+  }): Promise<{ id: string }>;
 }
 
 export interface RazorpayProviderConfig {
@@ -132,6 +146,29 @@ export class RazorpayBillingProvider implements BillingProvider {
 
   async refund(providerPaymentId: string): Promise<void> {
     await this.client.refundPayment(providerPaymentId);
+  }
+
+  /**
+   * #987 — sync an edited price to Razorpay. Razorpay plan objects are
+   * IMMUTABLE, so a price change creates a NEW Razorpay plan; the next checkout
+   * for this (key, interval) is opened against it and existing subscriptions
+   * keep the plan they were created against (grandfathering holds at the
+   * provider too). Returns the new provider plan id for the caller to log.
+   * Best-effort: the admin price edit has already landed in the catalogue; a
+   * client that cannot create a plan simply yields nothing.
+   */
+  async syncPlanPrice(params: SyncPlanPriceParams): Promise<{ providerPlanId: string } | void> {
+    if (!this.client.createPlan) return;
+    const period = params.interval === "yearly" ? "yearly" : "monthly";
+    const created = await this.client.createPlan({
+      period,
+      interval: 1,
+      amount: params.amountMinor,
+      currency: params.currency,
+      name: `${params.planKey} (${params.interval})`,
+      notes: { planKey: params.planKey, interval: params.interval },
+    });
+    return { providerPlanId: created.id };
   }
 
   verifyWebhook(rawBody: string, signature: string | undefined): NormalizedBillingEvent | null {
