@@ -237,9 +237,21 @@ async function createLinkInUi(page: Page, dest: string) {
   await expect(drawer).toBeVisible();
   await drawer.getByLabel("Destination URL").fill(dest);
   // The drawer fills the short-link domain once the workspace's domains have
-  // loaded (they are refetched right after a workspace change); a person
-  // sees the empty select and waits, so do the same.
-  await expect(drawer.getByLabel("Short-link domain")).not.toHaveValue("");
+  // loaded. Right after a workspace change the domains query is refetched, so
+  // the select can flicker: populated -> blanked by the refetch -> repopulated.
+  // Clicking Create during that blank window 400s and leaves the drawer open
+  // (the (w) flake). Wait for the value to SETTLE — non-empty and unchanged
+  // across a sample — not merely non-empty once, so the submit always carries a
+  // real domain. This waits on actual UI state; no fixed timeout or retry.
+  const domainSelect = drawer.getByLabel("Short-link domain");
+  await expect(domainSelect).not.toHaveValue("");
+  await expect(async () => {
+    const first = await domainSelect.inputValue();
+    await page.waitForTimeout(100);
+    const second = await domainSelect.inputValue();
+    expect(first).not.toBe("");
+    expect(second).toBe(first);
+  }).toPass();
 
   /* Capture the POST /links response as it arrives, but DON'T gate on a short
      fixed network window (that 10s race flaked under CI load — #977). Register
