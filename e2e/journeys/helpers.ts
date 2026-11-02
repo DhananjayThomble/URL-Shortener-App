@@ -20,7 +20,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { createDatabase, eq, workspaces } from "@snapurl/database";
 
 export const TOKEN_KEY = "snapurl.accessToken";
@@ -292,6 +292,33 @@ export async function seedAccount(page: Page, session: Session): Promise<void> {
     },
     [TOKEN_KEY, REFRESH_KEY, session.accessToken, session.refreshToken],
   );
+}
+
+/**
+ * Establish an authenticated browser session WITHOUT a UI /auth/login (#977,
+ * Option A). Seeds the session's real tokens into localStorage (seedAccount),
+ * then lands on the dashboard and waits for the app shell. This is the drop-in
+ * replacement for the boilerplate `signIn()` helpers that drove the login form
+ * purely to reach an authenticated state: those UI logins spend the 5/min-per-IP
+ * /auth/login route bucket, and a full shard's worth of them (one per spec on a
+ * single runner IP) overruns it no matter how they are paced. The tokens here
+ * came from the real API issuance path (registerUser / a pooled login), so no
+ * JWT is forged — the only thing removed is a redundant SECOND trip through the
+ * login UI whose behaviour the spec is not testing.
+ *
+ * Use this for every spec whose SUBJECT is not the login/register UI. Specs
+ * that actually test auth (j01, j778, j794, j26-login-next, j10/j776 2FA,
+ * j777, j15 accept, j17 (x)) keep driving the real form.
+ *
+ * `landingPath` defaults to /links; pass another authed route if the spec
+ * starts elsewhere. It asserts the app left /login (the guard accepted the
+ * seeded session), which is the same post-condition the old signIn() helpers
+ * asserted — no weakened assertion, just no network login.
+ */
+export async function signInViaSeed(page: Page, session: Session, landingPath = "/links"): Promise<void> {
+  await seedAccount(page, session);
+  await page.goto(landingPath);
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
 }
 
 /**
