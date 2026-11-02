@@ -220,6 +220,83 @@ export const DEFAULT_KILL_SWITCHES: KillSwitchesSetting = {
 export const KillSwitchRefusalReason = z.enum(["feature_off", "cap_reached"]);
 export type KillSwitchRefusalReason = z.infer<typeof KillSwitchRefusalReason>;
 
+/* ============================================================
+   #1032 — refusals written to the platform audit trail.
+
+   The feature's own contract (above) promised every refusal records a row with
+   action `admin.killswitch.refused` carrying the switch key and the stable
+   reason code. #1020 shipped the throw + the reason codes but never the write;
+   #1032 adds it. These constants and the dedupe helpers are the ONE place the
+   action key, the window and the dedupe key are defined, so the API service,
+   the worker and the admin audit viewer all agree without re-deriving them.
+
+   FLOOD SAFETY. A kill switch exists to stop an abuse wave in its tracks, and
+   an abuse wave is exactly when the most refusals fire — so auditing one row
+   per refusal would let the attacker the switch is holding back flood the audit
+   table instead. The refusal audit is therefore AGGREGATED, not per-event: at
+   most ONE audit row per (switch key, reason, subject) per minute, carrying a
+   COUNT of how many refusals that row stands for. The first refusal in a window
+   writes the row; every later refusal in the same window only bumps the window
+   counter and writes nothing. An attacker hammering a switched-off endpoint
+   thus adds one row a minute, not one per request, while an operator still sees
+   that the switch is actively refusing and roughly how hard.
+   ============================================================ */
+
+/** The stable platform-audit action key every kill-switch refusal records.
+ *  Matches the value the admin audit viewer filters on
+ *  (`GET /admin/audit?action=admin.killswitch.refused`). Defined once here so
+ *  the writer, the worker and any filter reference the same literal. */
+export const KILL_SWITCH_REFUSED_ACTION = "admin.killswitch.refused";
+
+/** The target-type stamped on a refusal audit row, so the viewer can tell a
+ *  refusal row (a kill switch) apart from a settings-change row (killSwitches). */
+export const KILL_SWITCH_REFUSED_TARGET_TYPE = "kill_switch";
+
+/** The aggregation window: one audit row per (switch, reason, subject) per this
+ *  many milliseconds, with a counter. Exactly one minute — short enough that an
+ *  operator watching an incident sees refusals arrive promptly, long enough
+ *  that a flood collapses to a bounded one-row-a-minute trickle. */
+export const KILL_SWITCH_REFUSAL_WINDOW_MS = 60_000;
+
+/** The subject a refusal is attributed to, for dedupe and for the audit row's
+ *  actor/workspace columns. Every field is optional because a refusal may have
+ *  NO known principal (an anonymous caller, or a worker job with no request):
+ *  the row is still written, attributed to the switch alone. No PII beyond ids
+ *  and the actor's own label — never an email body, IP or request payload. */
+export interface KillSwitchRefusalSubject {
+  /** The acting user's id, when a request carried one (null for an API key or
+   *  an anonymous/worker refusal). */
+  actorId?: string | null;
+  /** The acting principal's label (email or api-key label), when known. Used
+   *  only as the audit row's actor label — not parsed, not an address to mail. */
+  actorLabel?: string | null;
+  /** The workspace the refused action was for, when known. */
+  workspaceId?: string | null;
+}
+
+/** The floor of `nowMs` to the start of its aggregation window, as epoch ms.
+ *  Two refusals in the same minute share a bucket and so share one audit row. */
+export function killSwitchRefusalWindowStart(nowMs: number): number {
+  return Math.floor(nowMs / KILL_SWITCH_REFUSAL_WINDOW_MS) * KILL_SWITCH_REFUSAL_WINDOW_MS;
+}
+
+/** The deterministic dedupe key for one refusal: (switch, reason, subject,
+ *  window). Two refusals collapse to one audit row exactly when this string is
+ *  equal. The SUBJECT is the workspace when known, else the actor, else the
+ *  literal "anon" — so a flood from one workspace (or one anonymous source)
+ *  aggregates, while two different workspaces each get their own row and an
+ *  operator can see which workspace is hitting the wall. The window start is
+ *  appended so the key rolls over each minute. */
+export function killSwitchRefusalDedupeKey(
+  switchKey: KillSwitchKey,
+  reason: KillSwitchRefusalReason,
+  subject: KillSwitchRefusalSubject,
+  nowMs: number,
+): string {
+  const subjectId = subject.workspaceId ?? subject.actorId ?? "anon";
+  return `${switchKey}|${reason}|${subjectId}|${killSwitchRefusalWindowStart(nowMs)}`;
+}
+
 /** A human label per switch, for the admin page's row and the refusal message.
  *  Kept beside the keys so the UI and the server name a switch the same way. */
 export const KILL_SWITCH_LABELS: Record<KillSwitchKey, string> = {

@@ -202,7 +202,9 @@ export class BillingService {
     // with a named 503 and creates NOTHING at the provider (the check is before
     // any provider call). A verified webhook for an ALREADY-taken payment still
     // processes while this is off — that path does not come through here.
-    await this.killSwitches?.assertOn("billing.checkout");
+    // #1032 — attribute the refusal to the workspace (no actor id reaches this
+    // method; customerEmail is PII and is deliberately NOT used as a label).
+    await this.killSwitches?.assertOn("billing.checkout", { workspaceId });
 
     // #987 — read the live price the catalogue holds for this plan RIGHT NOW,
     // so the confirmation reflects an admin's edit without a redeploy. The
@@ -232,7 +234,7 @@ export class BillingService {
       // #1020 — the coupons kill switch. OFF refuses a checkout that presents a
       // coupon with a named 503 and creates nothing; a checkout with no coupon
       // is unaffected, so turning coupons off does not stop plain subscriptions.
-      await this.killSwitches?.assertOn("billing.coupons");
+      await this.killSwitches?.assertOn("billing.coupons", { workspaceId });
     }
     const resolvedCoupon = couponCode
       ? await this.coupons.validate(couponCode, planKey, interval, amountMinor ?? 0)
@@ -488,7 +490,7 @@ export class BillingService {
     // with a named 503 and asks the provider nothing (the check is before any
     // provider call), so no plan moves. The confirming webhook path is separate
     // and still processes a payment already taken.
-    await this.killSwitches?.assertOn("billing.planChanges");
+    await this.killSwitches?.assertOn("billing.planChanges", { workspaceId });
 
     const [row] = await this.db
       .select()

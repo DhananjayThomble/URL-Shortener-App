@@ -50,7 +50,7 @@ export function killSwitchStub(options: KillSwitchStubOptions = {}): KillSwitchS
         throw new KillSwitchOffError(key);
       }
     },
-    assertCustomDomainUnderCaps: (_s: KillSwitchesSetting, total: number, today: number) => {
+    assertCustomDomainUnderCaps: async (_s: KillSwitchesSetting, total: number, today: number) => {
       const caps = switches["customDomains.create"].domainCaps!;
       if (total >= caps.totalMax || today >= caps.perDay) {
         throw new Error("cap");
