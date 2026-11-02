@@ -260,6 +260,13 @@
       "when": 1793627136012,
       "tag": "0036_kill_switches",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793639872949,
+      "tag": "0037_coupon_redeemed_count",
+      "breakpoints": true
     }
   ]
 }
