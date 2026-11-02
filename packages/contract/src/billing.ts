@@ -243,3 +243,80 @@ export const CancelSubscriptionInput = z.object({
   comment: z.string().trim().max(1000).optional(),
 });
 export type CancelSubscriptionInput = z.infer<typeof CancelSubscriptionInput>;
+
+
+/* ============================================================
+   #1023 — provider error mapping for the billing WRITE paths.
+
+   A write to the billing provider (change / cancel / admin plan-change charge /
+   admin refund) can fail two honestly-distinct ways, and the owner must be told
+   which — not handed a generic 500 "try again" that invites a retry that cannot
+   succeed:
+
+     - `rejected`    — the provider refused the request itself (a 4xx). This is a
+                       client/state condition: the subscription is not in a state
+                       the operation is valid for (Razorpay's "can't update/cancel
+                       when not Authenticated or Active"), a plan mismatch, etc.
+                       Retrying the same request will not help. Surfaced as a 4xx.
+     - `unavailable` — the provider could not be reached or answered a 5xx /
+                       timed out / the network failed. The request may well be
+                       valid; nothing was changed and a later retry can succeed.
+                       Surfaced as a 503.
+
+   The KIND → HTTP status mapping lives HERE, in the contract, so the API, its
+   tests and any future provider adapter share one definition rather than each
+   re-deciding what a provider 4xx becomes. The adapter classifies a raw provider
+   error into a kind (it alone knows the provider's error shape); this maps the
+   kind to the wire. Neither carries a provider body, id or secret — only the
+   kind, a stable reason code, and an honest message.
+   ============================================================ */
+
+/** The two ways a billing provider WRITE fails, as the API classifies them. */
+export const BILLING_PROVIDER_ERROR_KINDS = ["rejected", "unavailable"] as const;
+export type BillingProviderErrorKind = (typeof BILLING_PROVIDER_ERROR_KINDS)[number];
+
+/** Stable, machine-readable reason codes a client can switch on without parsing
+ *  prose. On the wire as `reason` in the error body. `provider_rejected` pairs
+ *  with a 4xx (the provider refused the request); `provider_unavailable` pairs
+ *  with a 503 (the provider could not be reached / 5xx / timeout). */
+export const BILLING_PROVIDER_ERROR_REASONS = ["provider_rejected", "provider_unavailable"] as const;
+export type BillingProviderErrorReason = (typeof BILLING_PROVIDER_ERROR_REASONS)[number];
+
+/** The reason code for a provider-error kind. */
+export function reasonForProviderErrorKind(kind: BillingProviderErrorKind): BillingProviderErrorReason {
+  return kind === "rejected" ? "provider_rejected" : "provider_unavailable";
+}
+
+/** The HTTP status a provider-error kind surfaces as.
+ *
+ *  A `rejected` (provider 4xx) is a client/state condition, surfaced as 409 by
+ *  default — the subscription is in a state the operation conflicts with — or
+ *  422 when the caller judges the request well-formed but semantically
+ *  unprocessable. An `unavailable` is always 503: the provider is down or
+ *  unreachable and nothing was changed, so a retry is the right next step. */
+export function httpStatusForProviderError(
+  kind: BillingProviderErrorKind,
+  rejectedStatus: 409 | 422 = 409,
+): 409 | 422 | 503 {
+  return kind === "rejected" ? rejectedStatus : 503;
+}
+
+/** The honest default message for a provider-error kind, when the caller does
+ *  not supply a more specific one. Never contains a provider body, id or secret. */
+export function defaultMessageForProviderErrorKind(kind: BillingProviderErrorKind): string {
+  return kind === "rejected"
+    ? "This change can't be completed right now because of the subscription's current state."
+    : "The payment provider is unavailable. Nothing was changed.";
+}
+
+/** The error body shape the billing write paths return for a provider failure.
+ *  `reason` is the stable code above; `message` is honest human copy; no
+ *  provider internals appear. Exported so a client (and the API tests) can
+ *  parse the contract rather than string-matching prose. */
+export const BillingProviderErrorBody = z.object({
+  statusCode: z.union([z.literal(409), z.literal(422), z.literal(503)]),
+  error: z.string(),
+  message: z.string(),
+  reason: z.enum(BILLING_PROVIDER_ERROR_REASONS),
+});
+export type BillingProviderErrorBody = z.infer<typeof BillingProviderErrorBody>;

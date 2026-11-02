@@ -36,6 +36,7 @@ import type { AdminActor } from "../admin/admin-management.service.js";
 import { KillSwitchService } from "../admin/kill-switch.service.js";
 import { PlansService } from "./plans.service.js";
 import { BILLING_PROVIDER, type BillingProvider } from "../billing/billing-provider.js";
+import { rethrowIfProviderError } from "../billing/billing-provider-error.http.js";
 
 /* ============================================================
    #992 — admin plan-change + per-workspace plan history (billing 6/6).
@@ -221,12 +222,25 @@ export class PlanManagementService {
     // Ask the provider to switch. Immediate upgrades prorate now; a period-end
     // change is deferred to the cycle boundary. This is the ONLY side effect
     // before the webhook — the plan does not move here.
-    await this.provider.updateSubscription({
-      providerSubscriptionId: sub.providerSubscriptionId!,
-      planKey: toPlanKey as PaidPlanKey,
-      interval,
-      when: immediate ? "now" : "at_cycle_end",
-    });
+    //
+    // #1023 — a provider failure here becomes a 409/422 (rejected) or 503
+    // (unavailable) with a stable reason, never a generic 500. It is thrown
+    // BEFORE the transaction below, so nothing is written locally — no pending
+    // plan change, no history row, no audit entry — on a provider failure.
+    try {
+      await this.provider.updateSubscription({
+        providerSubscriptionId: sub.providerSubscriptionId!,
+        planKey: toPlanKey as PaidPlanKey,
+        interval,
+        when: immediate ? "now" : "at_cycle_end",
+      });
+    } catch (err) {
+      rethrowIfProviderError(err, {
+        rejectedMessage:
+          "This subscription can't be charged to the new plan right now because of its current state at the payment provider.",
+      });
+      throw err;
+    }
 
     const now = this.now();
     await this.db.transaction(async (tx) => {

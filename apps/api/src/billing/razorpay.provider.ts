@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { SubscriptionStatus } from "@snapurl/contract";
+import { Logger } from "@nestjs/common";
+import type { BillingProviderErrorKind, SubscriptionStatus } from "@snapurl/contract";
 import type {
   BillingProvider,
   BillingProviderName,
@@ -108,6 +109,115 @@ export interface RazorpayProviderConfig {
   planIds: PlanIdMap;
 }
 
+/* ============================================================
+   #1023 — one typed error for a failed provider WRITE.
+
+   Before this, a Razorpay client call that threw propagated raw to the global
+   exception filter and became a generic 500 "try again" — misleading for a
+   provider 4xx (a client/state condition a retry can't fix) and leaking nothing
+   actionable for a genuine outage. Now EVERY provider write failure is caught at
+   the adapter (the only layer that knows the provider's error shape) and turned
+   into ONE BillingProviderError with a `kind`:
+
+     - `rejected`    — the provider answered a 4xx: the request itself was
+                       refused (bad state, plan mismatch). Surfaced as a 4xx.
+     - `unavailable` — a 5xx, a timeout, or a network/connection failure: the
+                       provider could not be reached and nothing was changed.
+                       Surfaced as a 503.
+
+   The error carries ONLY the kind and an honest, provider-free message. The raw
+   provider body / id / any secret stays here and is logged redacted — it never
+   rides on the error to the client. The controller/service maps the kind to the
+   wire status with the contract's httpStatusForProviderError (one definition).
+   ============================================================ */
+export class BillingProviderError extends Error {
+  constructor(
+    readonly kind: BillingProviderErrorKind,
+    /** The provider operation that failed, for the server log only. */
+    readonly operation: string,
+    message?: string,
+  ) {
+    super(message ?? `Billing provider ${operation} ${kind}.`);
+    this.name = "BillingProviderError";
+  }
+}
+
+/** HTTP status codes a provider 4xx is classified from. 429 (rate limited) is
+ *  treated as `unavailable`, not `rejected`: it is transient and a retry can
+ *  succeed, unlike a true 4xx state refusal. */
+function isClientRejection(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
+}
+
+/**
+ * Classify a raw error thrown by a Razorpay client call into a provider-error
+ * kind, WITHOUT letting any provider body reach the caller.
+ *
+ * Razorpay's SDK surfaces an HTTP error as an object carrying `statusCode` (and
+ * a nested `error` body); a network failure surfaces as a Node system error
+ * (ECONNREFUSED / ENOTFOUND / ECONNRESET / EAI_AGAIN) or a timeout
+ * (ETIMEDOUT / AbortError). A provider 4xx (except 429) is `rejected` — the
+ * request was refused and a retry won't help. Everything else — a 5xx, a
+ * timeout, a connection failure, or an error we can't read a status from — is
+ * `unavailable`: the safe default is "the provider might be down and nothing
+ * changed", which invites a retry rather than telling the owner their request
+ * was wrong.
+ */
+export function classifyRazorpayError(err: unknown): BillingProviderErrorKind {
+  if (typeof err === "object" && err !== null) {
+    const e = err as { statusCode?: unknown; status?: unknown; code?: unknown; name?: unknown };
+    const status =
+      typeof e.statusCode === "number" ? e.statusCode : typeof e.status === "number" ? e.status : null;
+    if (status !== null && isClientRejection(status)) return "rejected";
+    // A 5xx (or 429) from the provider is an outage/transient condition.
+    if (status !== null && status >= 500) return "unavailable";
+    // Network / timeout system errors: unreachable provider, nothing changed.
+    const code = typeof e.code === "string" ? e.code : "";
+    const name = typeof e.name === "string" ? e.name : "";
+    if (
+      code === "ECONNREFUSED" ||
+      code === "ENOTFOUND" ||
+      code === "ECONNRESET" ||
+      code === "EAI_AGAIN" ||
+      code === "ETIMEDOUT" ||
+      code === "ECONNABORTED" ||
+      name === "AbortError" ||
+      name === "TimeoutError"
+    ) {
+      return "unavailable";
+    }
+  }
+  // Unknown shape: fail safe to unavailable (never tell the owner their
+  // well-formed request was rejected when we can't actually read a 4xx).
+  return "unavailable";
+}
+
+/** The provider's HTTP status from a raw error, for the REDACTED server log
+ *  only (a status is not sensitive; the body it came with never leaves here). */
+function readProviderStatus(err: unknown): number | null {
+  if (typeof err !== "object" || err === null) return null;
+  const e = err as { statusCode?: unknown; status?: unknown };
+  if (typeof e.statusCode === "number") return e.statusCode;
+  if (typeof e.status === "number") return e.status;
+  return null;
+}
+
+/** The provider's error/system code from a raw error, for the REDACTED server
+ *  log only. Razorpay nests a stable code (e.g. BAD_REQUEST_ERROR) under
+ *  `error.code`; a Node network error carries a top-level `code`. Neither is a
+ *  secret or request data; the DESCRIPTION (which can echo request fields) is
+ *  deliberately NOT read. */
+function readProviderCode(err: unknown): string | null {
+  if (typeof err !== "object" || err === null) return null;
+  const e = err as { code?: unknown; error?: unknown };
+  if (typeof e.code === "string") return e.code;
+  if (typeof e.error === "object" && e.error !== null) {
+    const inner = (e.error as { code?: unknown }).code;
+    if (typeof inner === "string") return inner;
+  }
+  return null;
+}
+
 /** How many billing cycles a subscription is created for. Razorpay requires a
  *  bounded total_count; 120 is ten years of monthly cycles — effectively
  *  open-ended for the product, renewed well before it lapses. */
@@ -204,11 +314,40 @@ function readPayment(raw: unknown): NormalizedPayment | null {
 
 export class RazorpayBillingProvider implements BillingProvider {
   readonly name: BillingProviderName = "razorpay";
+  private readonly logger = new Logger(RazorpayBillingProvider.name);
 
   constructor(
     private readonly config: RazorpayProviderConfig,
     private readonly client: RazorpayClient,
   ) {}
+
+  /**
+   * #1023 — run a provider WRITE, turning any failure into a typed
+   * BillingProviderError. The raw provider error is logged server-side with its
+   * status/code ONLY (never the body, which can echo request fields, nor any
+   * id/secret), and the thrown error carries just the classified kind + an
+   * honest, provider-free message. This is the single chokepoint every billing
+   * write goes through, so the four write endpoints map one error shape.
+   */
+  private async callProvider<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      const kind = classifyRazorpayError(err);
+      // Redacted server-side log: the status/code is enough to debug, and it
+      // carries no provider body, customer data, id or secret.
+      this.logger.error(
+        {
+          operation,
+          kind,
+          providerStatus: readProviderStatus(err),
+          providerCode: readProviderCode(err),
+        },
+        `Razorpay ${operation} failed (${kind})`,
+      );
+      throw new BillingProviderError(kind, operation);
+    }
+  }
 
   /** Enabled only when all three credentials are present. A half-configured
    *  deploy (BILLING_PROVIDER=razorpay but a missing secret) reports disabled,
@@ -250,7 +389,11 @@ export class RazorpayBillingProvider implements BillingProvider {
   }
 
   async cancel(providerSubscriptionId: string, atPeriodEnd: boolean): Promise<void> {
-    await this.client.cancelSubscription(providerSubscriptionId, atPeriodEnd);
+    // #1023 — a provider failure here (e.g. Razorpay 4xx "can't cancel when not
+    // Active") becomes a typed BillingProviderError, never a bare 500.
+    await this.callProvider("cancel", () =>
+      this.client.cancelSubscription(providerSubscriptionId, atPeriodEnd),
+    );
   }
 
   /** #988 — the configured provider plan id for a (key, interval), or null. The
@@ -270,12 +413,17 @@ export class RazorpayBillingProvider implements BillingProvider {
       // a checkout for an unconfigured plan, not a provider error.
       throw new PlanNotConfiguredError(params.planKey, params.interval);
     }
-    await this.client.updateSubscription(params.providerSubscriptionId, {
-      planId,
-      // "now" prorates an upgrade; "cycle_end" defers a downgrade to the period
-      // boundary so the owner keeps what they paid for.
-      scheduleChangeAt: params.when === "now" ? "now" : "cycle_end",
-    });
+    // #1023 — a provider failure here (the issue's exact repro: Razorpay 4xx
+    // "can't update when not Authenticated or Active") becomes a typed
+    // BillingProviderError the owner/admin paths map to a 4xx, not a 500.
+    await this.callProvider("updateSubscription", () =>
+      this.client.updateSubscription(params.providerSubscriptionId, {
+        planId,
+        // "now" prorates an upgrade; "cycle_end" defers a downgrade to the period
+        // boundary so the owner keeps what they paid for.
+        scheduleChangeAt: params.when === "now" ? "now" : "cycle_end",
+      }),
+    );
   }
 
   async listInvoices(providerSubscriptionId: string): Promise<import("./billing-provider.js").ProviderInvoice[]> {
@@ -284,7 +432,11 @@ export class RazorpayBillingProvider implements BillingProvider {
   }
 
   async refund(providerPaymentId: string): Promise<void> {
-    await this.client.refundPayment(providerPaymentId);
+    // #1023 — a provider failure on the admin refund path becomes a typed
+    // BillingProviderError, so the admin sees a 4xx/503 with a reason rather
+    // than a generic 500, and the local payment row stays `captured` (the
+    // service flips it only after this resolves).
+    await this.callProvider("refund", () => this.client.refundPayment(providerPaymentId));
   }
 
   /**

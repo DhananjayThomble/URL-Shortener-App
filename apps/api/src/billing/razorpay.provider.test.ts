@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
+  BillingProviderError,
+  classifyRazorpayError,
   PlanNotConfiguredError,
   RazorpayBillingProvider,
   statusForEvent,
@@ -367,5 +369,112 @@ describe("NoneBillingProvider — billing off", () => {
   it("#988 lists no invoices when billing is off (returns [], never throws)", async () => {
     const none = new NoneBillingProvider();
     expect(await none.listInvoices("sub_x")).toEqual([]);
+  });
+});
+
+
+/* #1023 — classify a raw provider error into a kind, and confirm the three
+   billing WRITE methods (cancel, updateSubscription, refund) turn a provider
+   failure into a typed BillingProviderError that carries NO provider body/id. */
+describe("#1023 classifyRazorpayError", () => {
+  it("a provider 4xx (except 429) is `rejected`", () => {
+    expect(classifyRazorpayError({ statusCode: 400, error: { code: "BAD_REQUEST_ERROR" } })).toBe("rejected");
+    expect(classifyRazorpayError({ statusCode: 404 })).toBe("rejected");
+    expect(classifyRazorpayError({ statusCode: 409 })).toBe("rejected");
+    expect(classifyRazorpayError({ status: 422 })).toBe("rejected");
+  });
+
+  it("a provider 5xx is `unavailable`", () => {
+    expect(classifyRazorpayError({ statusCode: 500 })).toBe("unavailable");
+    expect(classifyRazorpayError({ statusCode: 502 })).toBe("unavailable");
+    expect(classifyRazorpayError({ status: 503 })).toBe("unavailable");
+  });
+
+  it("a 429 rate-limit is `unavailable` (transient, a retry can succeed)", () => {
+    expect(classifyRazorpayError({ statusCode: 429 })).toBe("unavailable");
+  });
+
+  it("a network / timeout system error is `unavailable`", () => {
+    expect(classifyRazorpayError({ code: "ECONNREFUSED" })).toBe("unavailable");
+    expect(classifyRazorpayError({ code: "ENOTFOUND" })).toBe("unavailable");
+    expect(classifyRazorpayError({ code: "ECONNRESET" })).toBe("unavailable");
+    expect(classifyRazorpayError({ code: "EAI_AGAIN" })).toBe("unavailable");
+    expect(classifyRazorpayError({ code: "ETIMEDOUT" })).toBe("unavailable");
+    expect(classifyRazorpayError({ code: "ECONNABORTED" })).toBe("unavailable");
+    expect(classifyRazorpayError({ name: "AbortError" })).toBe("unavailable");
+    expect(classifyRazorpayError({ name: "TimeoutError" })).toBe("unavailable");
+  });
+
+  it("an unreadable / unknown error fails safe to `unavailable` (never a false `rejected`)", () => {
+    expect(classifyRazorpayError(new Error("boom"))).toBe("unavailable");
+    expect(classifyRazorpayError("just a string")).toBe("unavailable");
+    expect(classifyRazorpayError(null)).toBe("unavailable");
+    expect(classifyRazorpayError(undefined)).toBe("unavailable");
+    expect(classifyRazorpayError({ nonsense: true })).toBe("unavailable");
+  });
+});
+
+describe("#1023 provider WRITE methods turn a failure into a typed BillingProviderError", () => {
+  /** A Razorpay-shaped 4xx error whose body echoes request-ish fields — exactly
+   *  what must NOT reach the client. */
+  const razorpay400 = Object.assign(new Error("Request failed"), {
+    statusCode: 400,
+    error: {
+      code: "BAD_REQUEST_ERROR",
+      description: "Can't update subscription when subscription is not in Authenticated or Active state",
+      field: "status",
+    },
+  });
+  const razorpay500 = Object.assign(new Error("Server error"), { statusCode: 500 });
+  const network = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+
+  it("cancel: a provider 4xx becomes a `rejected` BillingProviderError with no provider body", async () => {
+    const { provider } = makeProvider({ cancelSubscription: vi.fn(async () => { throw razorpay400; }) });
+    const err = await provider.cancel("sub_fake_created", true).catch((e) => e);
+    expect(err).toBeInstanceOf(BillingProviderError);
+    expect(err.kind).toBe("rejected");
+    expect(err.operation).toBe("cancel");
+    // The honest message leaks none of the provider's body/description/field.
+    expect(err.message).not.toMatch(/BAD_REQUEST_ERROR/);
+    expect(err.message).not.toMatch(/Authenticated or Active/);
+    expect(JSON.stringify(err)).not.toMatch(/Authenticated or Active/);
+  });
+
+  it("updateSubscription: the issue's repro (provider 4xx) becomes a `rejected` error", async () => {
+    const { provider } = makeProvider({ updateSubscription: vi.fn(async () => { throw razorpay400; }) });
+    const err = await provider
+      .updateSubscription({ providerSubscriptionId: "sub_fake_created", planKey: "pro", interval: "monthly", when: "now" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BillingProviderError);
+    expect(err.kind).toBe("rejected");
+    expect(err.operation).toBe("updateSubscription");
+  });
+
+  it("updateSubscription: a provider 5xx becomes an `unavailable` error", async () => {
+    const { provider } = makeProvider({ updateSubscription: vi.fn(async () => { throw razorpay500; }) });
+    const err = await provider
+      .updateSubscription({ providerSubscriptionId: "sub_fake_created", planKey: "pro", interval: "monthly", when: "now" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BillingProviderError);
+    expect(err.kind).toBe("unavailable");
+  });
+
+  it("refund: a network failure becomes an `unavailable` error", async () => {
+    const { provider } = makeProvider({ refundPayment: vi.fn(async () => { throw network; }) });
+    const err = await provider.refund("pay_fake_1").catch((e) => e);
+    expect(err).toBeInstanceOf(BillingProviderError);
+    expect(err.kind).toBe("unavailable");
+    expect(err.operation).toBe("refund");
+  });
+
+  it("a PlanNotConfiguredError on updateSubscription is NOT swallowed into a provider error", async () => {
+    // The target plan has no configured id — a clean 400 domain error, thrown
+    // before the provider call, must stay a PlanNotConfiguredError.
+    const { provider } = makeProvider();
+    const err = await provider
+      .updateSubscription({ providerSubscriptionId: "sub_fake_created", planKey: "team", interval: "monthly", when: "now" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(PlanNotConfiguredError);
+    expect(err).not.toBeInstanceOf(BillingProviderError);
   });
 });
