@@ -171,9 +171,12 @@ describe("DEFAULT_KILL_SWITCHES", () => {
     expect(DEFAULT_KILL_SWITCHES["linkScanning.rescans"].on).toBe(true);
   });
 
-  it("ships finite caps on the capped switches", () => {
-    expect(DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps).toEqual({ totalMax: 10_000, perDay: 500 });
-    expect(DEFAULT_KILL_SWITCHES["email.outbound"].emailCaps).toEqual({ perHour: 5_000, perDay: 50_000 });
+  it("ships conservative initial hard caps on the capped switches (#1030)", () => {
+    // #1030 — tightened from the #1020 shipped caps (customDomains 10,000/500,
+    // email 5,000/50,000). These are deliberately small initial limits the
+    // operator raises on purpose from the admin panel.
+    expect(DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps).toEqual({ totalMax: 25, perDay: 5 });
+    expect(DEFAULT_KILL_SWITCHES["email.outbound"].emailCaps).toEqual({ perHour: 200, perDay: 2_000 });
     expect(DEFAULT_KILL_SWITCHES.errorTracking.errorCaps).toEqual({ sampleRate: 1 });
   });
 });
@@ -312,6 +315,27 @@ describe("foldKillSwitches", () => {
     const folded = foldKillSwitches({ "billing.checkout": { on: true } });
     folded["billing.checkout"].on = false;
     expect(DEFAULT_KILL_SWITCHES["billing.checkout"].on).toBe(false);
+  });
+
+  it("a stored cap override WINS over the tightened default; unset keys fall back (#1030)", () => {
+    // The operator raised the caps above the #1030 initial hard limits. The
+    // stored value must survive the fold unchanged — it is NOT pulled back down
+    // to the shipped default — while a switch the operator never stored still
+    // gets the new default.
+    const folded = foldKillSwitches({
+      "customDomains.create": { on: true, domainCaps: { totalMax: 500, perDay: 50 } },
+      "email.outbound": { on: true, emailCaps: { perHour: 10_000, perDay: 100_000 } },
+    });
+    // Stored overrides win over the defaults.
+    expect(folded["customDomains.create"]).toEqual({ on: true, domainCaps: { totalMax: 500, perDay: 50 } });
+    expect(folded["email.outbound"].emailCaps).toEqual({ perHour: 10_000, perDay: 100_000 });
+    // These differ from the tightened defaults — proving the fall-back did not clobber them.
+    expect(folded["customDomains.create"].domainCaps).not.toEqual(
+      DEFAULT_KILL_SWITCHES["customDomains.create"].domainCaps,
+    );
+    // A switch with no stored value falls back to the new default.
+    expect(folded["billing.checkout"]).toEqual(DEFAULT_KILL_SWITCHES["billing.checkout"]);
+    expect(folded.errorTracking).toEqual(DEFAULT_KILL_SWITCHES.errorTracking);
   });
 });
 
