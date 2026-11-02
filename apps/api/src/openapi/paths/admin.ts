@@ -45,6 +45,32 @@ route({
   },
 });
 
+/* ── runtime kill switches (#1020) ── */
+
+route({
+  method: "get",
+  path: "/admin/killswitches",
+  tag: "Admin",
+  summary: "The kill-switch state, caps, defaults, last-changed-by and cache TTL",
+  responses: {
+    200: { description: "Effective kill-switch state, defaults and provenance", schema: refs.KillSwitchesView },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
+route({
+  method: "patch",
+  path: "/admin/killswitches",
+  tag: "Admin",
+  summary: "Change one or more kill switches/caps (reason required, audited, applies without a redeploy)",
+  body: refs.KillSwitchesPatchBody,
+  responses: {
+    200: { description: "The updated kill-switch state", schema: refs.KillSwitchesView },
+    400: { description: "No change was provided, a cap was out of range, or the reason was missing" },
+    403: { description: "The caller is not a platform admin" },
+  },
+});
+
 /* ── system health and operations (#974) ── */
 
 route({

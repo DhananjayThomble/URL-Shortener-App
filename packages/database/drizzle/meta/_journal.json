@@ -253,6 +253,13 @@
       "when": 1793620763711,
       "tag": "0035_billing_details",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793627136012,
+      "tag": "0036_kill_switches",
+      "breakpoints": true
     }
   ]
 }

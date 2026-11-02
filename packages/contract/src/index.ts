@@ -17,6 +17,7 @@ export * from "./report.js";
 export * from "./feedback.js";
 export * from "./friendly-errors.js";
 export * from "./admin.js";
+export * from "./kill-switches.js";
 export * from "./admin-analytics.js";
 export * from "./billing.js";
 export * from "./admin-billing.js";

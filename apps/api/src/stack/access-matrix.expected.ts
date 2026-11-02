@@ -181,6 +181,13 @@ export const ACCESS_MATRIX: Row[] = [
   // anon 401, API keys 403. The PATCH write never reaches its handler for these.
   { route: "GET /api/v1/admin/settings", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   { route: "PATCH /api/v1/admin/settings", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  // #1020 — runtime kill switches. Same AdminGuard fail-closed gate as every
+  // other /admin/* route: no matrix principal is a platform admin
+  // (PLATFORM_ADMIN_EMAILS is empty in the staging stack), so anon is 401,
+  // every authed principal is 403, and every API key is 403 (no user behind the
+  // key). The PATCH write never reaches its handler for these principals.
+  { route: "GET /api/v1/admin/killswitches", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
+  { route: "PATCH /api/v1/admin/killswitches", expect: { anon: 401, ownerA: 403, adminA: 403, editorA: 403, viewerA: 403, ownerB: 403, "keyA-all": 403, "keyA-links-read": 403, "keyB-all": 403 }, status: "approved" },
   // #974 — system health and operations. Same gate as every /admin/* route:
   // AdminGuard fails closed, so none of the matrix principals (none is a
   // platform admin) reaches any of these — anon 401, every authed principal
@@ -323,5 +330,6 @@ export const ACCESS_MATRIX: Row[] = [
 // + 1 for #997's public POST /public/feedback
 // + 3 for #997's admin feedback inbox (list, detail, status/notes update)
 // + 3 for #992 PR-C's billing-details routes (owner GET+PUT /billing/details,
-//   admin GET /admin/workspaces/{id}/billing-details)).
-export const EXPECTED_ROUTE_COUNT = 139;
+//   admin GET /admin/workspaces/{id}/billing-details))
+// + 2 for #1020's admin kill-switch routes (GET+PATCH /admin/killswitches).
+export const EXPECTED_ROUTE_COUNT = 141;

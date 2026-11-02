@@ -2,7 +2,9 @@ import { Inject, Injectable } from "@nestjs/common";
 import {
   BannerSetting,
   BotProtectionSetting,
+  DEFAULT_KILL_SWITCHES,
   DisposableEmailSetting,
+  KillSwitchesSetting,
   NewAccountLimitsSetting,
   PlatformBanner,
   PlatformSettings,
@@ -53,6 +55,8 @@ export const SETTING_KEYS = [
   "newAccountLimits",
   "botProtection",
   "disposableEmails",
+  // #1020 — the typed kill-switch set.
+  "killSwitches",
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
@@ -68,6 +72,7 @@ const KEY_SCHEMA: Record<SettingKey, z.ZodTypeAny> = {
   newAccountLimits: NewAccountLimitsSetting,
   botProtection: BotProtectionSetting,
   disposableEmails: DisposableEmailSetting,
+  killSwitches: KillSwitchesSetting,
 };
 
 /** How long a loaded snapshot is served before the next read reloads it. The
@@ -123,6 +128,11 @@ export class PlatformSettingsService {
          vendored block list and the built-in allow list still apply on top of
          this (folded in by the caller). */
       disposableEmails: { extraDomains: [], allowDomains: [] },
+      /* #1020 — billing + custom domains ship OFF (turning them on is an
+         explicit act and fail-closed reads them OFF); the cost-incurring
+         background switches ship ON so a fresh/unreadable store keeps today's
+         mail and error reporting. The shipped caps are generous-but-finite. */
+      killSwitches: structuredClone(DEFAULT_KILL_SWITCHES),
     };
   }
 
@@ -174,9 +184,13 @@ export class PlatformSettingsService {
     // values (defaults folded in), read fresh so a concurrent change is seen.
     const before = (await this.load()).values;
 
-    const entries = SETTING_KEYS.filter((k) => input[k] !== undefined).map(
-      (k) => [k, input[k]] as [SettingKey, unknown],
-    );
+    // killSwitches has its OWN typed PATCH (writeKillSwitches); it is not part
+    // of the generic PlatformSettingsInput, so the generic update never touches
+    // it. Iterate only the keys the generic input carries.
+    const genericKeys = SETTING_KEYS.filter((k): k is Exclude<SettingKey, "killSwitches"> => k !== "killSwitches");
+    const entries = genericKeys
+      .filter((k) => input[k] !== undefined)
+      .map((k) => [k, input[k]] as [SettingKey, unknown]);
 
     await this.db.transaction(async (tx) => {
       const nowDate = new Date();
@@ -215,6 +229,91 @@ export class PlatformSettingsService {
 
     this.invalidate();
     return this.getForAdmin();
+  }
+
+  /* ── #1020 kill switches ── */
+
+  /** The effective kill-switch set in use right now, through the short cache.
+   *  Read on the hot paths (billing, custom-domains, mail) via the SAME cache
+   *  as every other setting — one load serves them all. */
+  async getKillSwitches(): Promise<KillSwitchesSetting> {
+    return (await this.snapshot()).values.killSwitches;
+  }
+
+  /** The full admin view of the kill switches: the effective values, the
+   *  defaults (for the UI's reset/"default" column), and the provenance. Reads
+   *  a FRESH snapshot so an admin opening the page is never up to a minute
+   *  stale. */
+  async getKillSwitchesForAdmin(): Promise<{
+    values: KillSwitchesSetting;
+    defaults: KillSwitchesSetting;
+    meta: PlatformSettingMeta;
+  }> {
+    const snap = await this.load();
+    this.cache = snap;
+    this.loadedAtMs = this.now();
+    return {
+      values: snap.values.killSwitches,
+      defaults: this.defaults.killSwitches,
+      meta: snap.meta.killSwitches,
+    };
+  }
+
+  /**
+   * Write the kill-switch set, folding a partial change onto the current value,
+   * and record ONE before/after audit row — all in a single transaction with
+   * the upsert, exactly like {@link update}. `fold` is given the current
+   * effective value and returns the next full value; the caller (KillSwitchService)
+   * does the field-level folding so this method stays a plain store write.
+   * Busts the cache so the next read reflects the change at once on this
+   * instance; other instances pick it up within the cache window.
+   */
+  async writeKillSwitches(
+    fold: (current: KillSwitchesSetting) => KillSwitchesSetting,
+    actor: AdminActor,
+    reason: string,
+  ): Promise<KillSwitchesSetting> {
+    const before = (await this.load()).values.killSwitches;
+    const after = fold(before);
+
+    await this.db.transaction(async (tx) => {
+      const nowDate = new Date();
+      await tx
+        .insert(platformSettings)
+        .values({
+          key: "killSwitches",
+          value: after,
+          updatedById: actor.admin.id,
+          updatedByLabel: actor.admin.email,
+          updatedAt: nowDate,
+        })
+        .onConflictDoUpdate({
+          target: platformSettings.key,
+          set: {
+            value: after,
+            updatedById: actor.admin.id,
+            updatedByLabel: actor.admin.email,
+            updatedAt: nowDate,
+          },
+        });
+
+      await writeAdminAuditEntry(tx, {
+        actorId: actor.admin.id,
+        actorLabel: actor.admin.email,
+        action: "admin.settings.killSwitches",
+        targetType: "platform_setting",
+        targetId: "killSwitches",
+        // The operator's required reason rides in the before context so the
+        // admin page's change history (read off the audit trail) explains WHY
+        // each change was made, alongside the before/after values.
+        before: { killSwitches: before, reason },
+        after: { killSwitches: after },
+        requestIp: actor.ip,
+      });
+    });
+
+    this.invalidate();
+    return after;
   }
 
   /** Drop the cached snapshot so the next read reloads. Called after a write on
@@ -263,6 +362,7 @@ export class PlatformSettingsService {
         extraDomains: [...this.defaults.disposableEmails.extraDomains],
         allowDomains: [...this.defaults.disposableEmails.allowDomains],
       },
+      killSwitches: structuredClone(this.defaults.killSwitches),
     };
     const meta = Object.fromEntries(
       SETTING_KEYS.map((k) => [k, { updatedAt: null, updatedBy: null } as PlatformSettingMeta]),
