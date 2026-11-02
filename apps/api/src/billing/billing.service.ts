@@ -11,6 +11,7 @@ import {
 } from "@snapurl/database";
 import type {
   BillingInterval,
+  BillingInvoice,
   CheckoutSession,
   PaidPlanKey,
   PlanKey,
@@ -50,6 +51,32 @@ export type RefundOutcome =
   | { outcome: "already_refunded"; payment: PaymentRow }
   | { outcome: "refunded"; payment: PaymentRow; before: PaymentRow };
 
+/* #988 / #970 — the TIMING of a plan change (upgrade now vs downgrade at cycle
+   end) is decided by the plan's `sortOrder` in the live DB catalogue, read
+   through PlansService — NOT a hard-coded rank. An admin can reorder or add
+   plans and the upgrade/downgrade direction stays correct. The fallback below
+   is only reached for a key that is in neither the DB catalogue nor the
+   compiled-in seed, which PlansService already resolves to `free`. */
+const UNKNOWN_PLAN_RANK = 0;
+
+/** Raised when a plan change targets the plan the workspace is already on. The
+ *  controller maps it to a 400 — nothing to change, not a server fault. */
+export class SamePlanError extends Error {
+  constructor(planKey: string, interval: string) {
+    super(`The workspace is already on ${planKey} (${interval}).`);
+    this.name = "SamePlanError";
+  }
+}
+
+/** Raised when a plan change or cancel is asked for but the workspace has no
+ *  active paid subscription to change. The controller maps it to a 400. */
+export class NoActiveSubscriptionError extends Error {
+  constructor() {
+    super("The workspace has no active subscription to change. Start a checkout first.");
+    this.name = "NoActiveSubscriptionError";
+  }
+}
+
 /** Display label for the workspace's `plan` column, derived from the key. The
  *  entitlement of record is the subscription row's planKey; this keeps the
  *  existing settings screen (which reads workspaces.plan) in step. */
@@ -80,8 +107,10 @@ export class BillingService {
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
-    /** #987 — read the LIVE price for the (plan, interval) at checkout time from
-     *  the editable catalogue. PlansService is global. */
+    /** #987 reads the LIVE price for the (plan, interval) at checkout time from
+     *  the editable catalogue; #988 reads the plan rank (sortOrder) to order an
+     *  upgrade vs a downgrade. PlansService is global, so one injection serves
+     *  both. */
     private readonly plans: PlansService,
     private readonly mail: MailService,
   ) {}
@@ -223,6 +252,8 @@ export class BillingService {
         currentPeriodEnd: row?.currentPeriodEnd ? row.currentPeriodEnd.toISOString() : null,
         cancelAtPeriodEnd: Boolean(row?.cancelAtPeriodEnd),
         notice: null,
+        // A lapsed/free workspace carries no in-flight plan change.
+        pendingChange: null,
       };
     }
 
@@ -234,7 +265,150 @@ export class BillingService {
       currentPeriodEnd: row.currentPeriodEnd ? row.currentPeriodEnd.toISOString() : null,
       cancelAtPeriodEnd: Boolean(row.cancelAtPeriodEnd),
       notice: notice ? { kind: notice.kind, revertsAt: notice.revertsAt ? notice.revertsAt.toISOString() : null } : null,
+      // #988 — surface a requested-but-unconfirmed plan change so the UI can
+      // show "pending change to X". The entitlement (planKey) is unchanged
+      // until the confirming webhook; this is only the request.
+      pendingChange:
+        row.pendingPlanKey && row.pendingInterval
+          ? { planKey: row.pendingPlanKey as PaidPlanKey, interval: row.pendingInterval as BillingInterval }
+          : null,
     };
+  }
+
+  /**
+   * #988 — the workspace's invoices, newest first. Reads the stored
+   * subscription row for the provider subscription id and asks the provider;
+   * a workspace with no provider subscription has no invoices (empty list), not
+   * an error. Maps the provider shape onto the contract's BillingInvoice; an
+   * invoice the provider returned with no id is dropped (it is not addressable).
+   */
+  async listInvoices(workspaceId: string): Promise<BillingInvoice[]> {
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+
+    if (!row?.providerSubscriptionId) return [];
+
+    const invoices = await this.provider.listInvoices(row.providerSubscriptionId);
+    return invoices
+      .filter((inv) => inv.id !== "")
+      .map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        status: inv.status,
+        amount: inv.amount,
+        currency: inv.currency,
+        createdAt: new Date(inv.issuedAt * 1000).toISOString(),
+        pdfUrl: inv.pdfUrl,
+      }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * #988 — schedule the workspace's subscription to end. `atPeriodEnd` true (the
+   * default the UI sends) keeps the plan live until the period ends; false
+   * cancels immediately. This asks the provider only — the plan does NOT move
+   * here. The provider's cancellation webhook, verified, is what lapses the
+   * workspace back to free (#986's invariant), so this writes
+   * `cancelAtPeriodEnd` locally for the UI to reflect the pending state and
+   * leaves the entitlement untouched until the webhook arrives.
+   */
+  async cancelSubscription(workspaceId: string, atPeriodEnd: boolean): Promise<WorkspaceSubscription> {
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+
+    // #989 — entitlement is read through isEntitled (grace/cancel windows), not
+    // a raw status set; only an entitled subscription with a provider id can be
+    // cancelled.
+    if (!row?.providerSubscriptionId || !isEntitled(lifecycleShape(row), new Date())) {
+      throw new NoActiveSubscriptionError();
+    }
+
+    await this.provider.cancel(row.providerSubscriptionId, atPeriodEnd);
+
+    // Reflect the pending cancellation for the UI. The plan key and entitled
+    // status are untouched — the workspace keeps its plan until the verified
+    // webhook lapses it. An immediate cancel (atPeriodEnd=false) still waits on
+    // the webhook to move the plan; cancel_at_period_end is a TIMESTAMP (the
+    // moment a cancellation was scheduled), not a boolean — the wire shape's
+    // boolean cancelAtPeriodEnd is derived from it being non-null
+    // (currentSubscription coerces it with Boolean(...)).
+    await this.db
+      .update(subscriptions)
+      .set({ cancelAtPeriodEnd: new Date(), updatedAt: new Date() })
+      .where(eq(subscriptions.id, row.id));
+
+    return this.currentSubscription(workspaceId);
+  }
+
+  /**
+   * #988 — change the workspace between paid plans. Derives the TIMING from the
+   * plan ranking rather than trusting the caller: a move to a higher plan is an
+   * upgrade applied now (prorated); a move to a lower plan is a downgrade
+   * deferred to the cycle end. Asks the provider only — as everywhere, the plan
+   * actually moves when the resulting verified webhook arrives. Returns the
+   * subscription as it stands (still the old plan until the webhook lands),
+   * with the new target recorded on the local row so the UI can show "changing
+   * to X".
+   */
+  async changePlan(
+    workspaceId: string,
+    planKey: PaidPlanKey,
+    interval: BillingInterval,
+  ): Promise<WorkspaceSubscription> {
+    const [row] = await this.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, workspaceId))
+      .limit(1);
+
+    // #989 — entitlement via isEntitled (grace/cancel windows), not a raw
+    // status set; only an entitled subscription with a provider id can change.
+    if (!row?.providerSubscriptionId || !isEntitled(lifecycleShape(row), new Date())) {
+      throw new NoActiveSubscriptionError();
+    }
+
+    // Nothing to do when the target is the plan + interval already in force.
+    if (row.planKey === planKey && row.interval === interval) {
+      throw new SamePlanError(planKey, interval);
+    }
+
+    // Upgrade (higher sortOrder in the live catalogue) takes effect now,
+    // prorated; a downgrade is deferred to the cycle end. Read the ranks from
+    // PlansService so an admin-edited catalogue stays authoritative.
+    const [targetRank, currentRank] = await Promise.all([
+      this.planRank(planKey),
+      this.planRank(row.planKey),
+    ]);
+    const when: "now" | "at_cycle_end" = targetRank > currentRank ? "now" : "at_cycle_end";
+
+    await this.provider.updateSubscription({
+      providerSubscriptionId: row.providerSubscriptionId,
+      planKey,
+      interval,
+      when,
+    });
+
+    // Record the REQUEST, not the entitlement. planKey/interval are the
+    // entitlement of record (handleWebhook mirrors planLabel(planKey) onto
+    // workspaces.plan on every entitled event), so writing them here would let
+    // the next ordinary entitled webhook — an old-plan renewal charge — grant
+    // the target plan with no payment confirmation, and apply a downgrade before
+    // its cycle end. Instead the target is held in pendingPlanKey/pendingInterval
+    // and applied ONLY when a verified webhook reports the subscription on the
+    // target's provider plan id (handleWebhook). The UI reads these to show a
+    // "pending change to X" line; entitlement is untouched until the webhook.
+    await this.db
+      .update(subscriptions)
+      .set({ pendingPlanKey: planKey, pendingInterval: interval, updatedAt: new Date() })
+      .where(eq(subscriptions.id, row.id));
+
+    return this.currentSubscription(workspaceId);
   }
 
   /**
@@ -340,6 +514,29 @@ export class BillingService {
       now,
     );
 
+    // #988 — APPLY A REQUESTED PLAN CHANGE, only when the provider confirms it.
+    // changePlan recorded the target in pendingPlanKey/pendingInterval without
+    // touching the entitlement. The change lands here, and ONLY here, when this
+    // verified+entitled event reports the subscription on the target's provider
+    // plan id. That is the single confirmation that holds for both directions:
+    // an upgrade is switched immediately so the next charge carries the new plan
+    // id; a downgrade is deferred by the provider, so its plan id only changes
+    // at the cycle end — the pending change is never applied early, and an
+    // unrelated renewal of the OLD plan never matches, so it never grants the
+    // target without payment. On a match the target becomes the plan of record
+    // and the pending fields clear; otherwise they are left for a later event.
+    const pendingTargetId =
+      entitled && sub.pendingPlanKey && sub.pendingInterval
+        ? this.provider.resolvePlanId(
+            sub.pendingPlanKey as PaidPlanKey,
+            sub.pendingInterval as BillingInterval,
+          )
+        : null;
+    const applyPending =
+      pendingTargetId !== null && event.providerPlanId !== null && event.providerPlanId === pendingTargetId;
+    const effectivePlanKey = applyPending ? (sub.pendingPlanKey as PlanKey) : (sub.planKey as PlanKey);
+    const effectiveInterval = applyPending ? sub.pendingInterval! : sub.interval;
+
     await this.db.transaction(async (tx) => {
       await tx
         .update(subscriptions)
@@ -348,17 +545,25 @@ export class BillingService {
           currentPeriodEnd,
           cancelAtPeriodEnd,
           graceEndsAt,
+          // Apply the confirmed plan change (and clear the request) only on a
+          // provider-confirmed match; otherwise leave planKey/interval and the
+          // pending request exactly as they were.
+          ...(applyPending
+            ? { planKey: effectivePlanKey, interval: effectiveInterval, pendingPlanKey: null, pendingInterval: null }
+            : {}),
           updatedAt: now,
         })
         .where(eq(subscriptions.id, sub.id));
 
       // Mirror the entitlement onto workspaces.plan for the existing settings
       // screen: the plan key's label while entitled, back to Free when lapsed.
-      // DATA IS KEPT either way — only the plan label (and the paid-feature
-      // gates that read it) change; nothing deletes the workspace's links.
+      // Uses the EFFECTIVE plan key, so a just-confirmed change is reflected and
+      // an unconfirmed one still shows the current plan. DATA IS KEPT either way
+      // — only the plan label (and the paid-feature gates that read it) change;
+      // nothing deletes the workspace's links.
       await tx
         .update(workspaces)
-        .set({ plan: entitled ? planLabel(sub.planKey as PlanKey) : "Free", updatedAt: now })
+        .set({ plan: entitled ? planLabel(effectivePlanKey) : "Free", updatedAt: now })
         .where(eq(workspaces.id, sub.workspaceId));
     });
 
@@ -385,6 +590,16 @@ export class BillingService {
       .update(billingEvents)
       .set({ processedAt: new Date() })
       .where(and(eq(billingEvents.provider, this.provider.name), eq(billingEvents.providerEventId, eventId)));
+  }
+
+  /** #970 — a plan key's rank from the live DB catalogue (its `sortOrder`),
+   *  used only to order a change as an upgrade or a downgrade. An unknown key
+   *  (not in the catalogue or the compiled-in seed) ranks lowest, so a move AWAY
+   *  from it reads as an upgrade and a move TO it as a downgrade — the safe
+   *  direction for an unrecognised plan. */
+  private async planRank(key: string): Promise<number> {
+    const plan = await this.plans.getByKey(key);
+    return plan ? plan.sortOrder : UNKNOWN_PLAN_RANK;
   }
 
   /** Email the workspace's owner that a payment failed and the plan lapses to

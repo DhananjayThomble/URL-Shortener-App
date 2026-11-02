@@ -93,6 +93,20 @@ export const subscriptions = pgTable(
      *  to this column. */
     planVersionId: uuid("plan_version_id"),
 
+    /* ── #988 — a REQUESTED paid-plan change, held until the provider confirms.
+         changePlan asks the provider to switch (upgrade now, downgrade at cycle
+         end) and records the target HERE, NOT on planKey/interval — those stay
+         the entitlement of record until a verified webhook whose provider
+         plan id matches this target applies the change and clears these fields.
+         Writing planKey directly would let the next ordinary entitled webhook
+         (an old-plan renewal) grant the new plan without payment confirmation,
+         and apply a downgrade before its cycle end. Null when no change is
+         pending. ── */
+    /** The plan KEY the owner asked to move to, awaiting the confirming webhook. */
+    pendingPlanKey: varchar("pending_plan_key", { length: 40 }),
+    /** The interval requested with the pending plan change. */
+    pendingInterval: varchar("pending_interval", { length: 10 }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
