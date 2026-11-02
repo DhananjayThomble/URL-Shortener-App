@@ -23,10 +23,12 @@ import {
   eq,
   inArray,
   memberships,
+  platformSettings,
   users,
   workspaces,
   type Database,
 } from "@snapurl/database";
+import { DEFAULT_KILL_SWITCHES } from "@snapurl/contract";
 
 export type PrincipalName =
   | "anon"
@@ -220,6 +222,9 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
 
   const cleanup = async () => {
     try {
+      // #1020 — drop the kill-switch seed row so a later run starts from the
+      // shipped defaults again.
+      await db.delete(platformSettings).where(eq(platformSettings.key, "killSwitches"));
       if (apiKeyIds.length) await db.delete(apiKeys).where(inArray(apiKeys.id, apiKeyIds));
       // memberships and api keys cascade on workspace delete, but delete rows
       // explicitly too so a partial seed still tidies up.
@@ -255,6 +260,25 @@ export async function seedPrincipals(cfg: SeedConfig): Promise<SeededStack> {
        Enterprise (not Pro) so the per-plan domain cap is well clear of the many
        fresh domains the M4/M5 probes mint across the run without cleanup. */
     await db.update(workspaces).set({ plan: "Enterprise" }).where(inArray(workspaces.id, [workspaceA, workspaceB]));
+
+    /* #1020: the kill switches ship billing + customDomains.create OFF by
+       default, and a switched-off feature refuses with a 503 that changes
+       nothing. This suite exercises role/tenancy access control (and the fuzz
+       suite, input fuzzing) — NOT the kill switches, which are proven in their
+       own tests — so turn every switch ON here, exactly as the paid-plan line
+       above does for the #966 gate: with them on, seedResources' freshDomain()
+       can connect its fixture and the access-matrix oracle for the billing and
+       /domains routes ("allow"/404-when-off-handled-elsewhere) is what runs.
+       The kill switches themselves are proven on/off in
+       billing-kill-switches / domains-kill-switches / kill-switch.service tests. */
+    const allOn = structuredClone(DEFAULT_KILL_SWITCHES);
+    for (const key of Object.keys(allOn) as (keyof typeof allOn)[]) {
+      allOn[key] = { ...allOn[key], on: true };
+    }
+    await db
+      .insert(platformSettings)
+      .values({ key: "killSwitches", value: allOn, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: platformSettings.key, set: { value: allOn, updatedAt: new Date() } });
 
     // admin / editor / viewer of A: register a fresh account, add an active
     // membership of A with the target role, then refresh into A so the token

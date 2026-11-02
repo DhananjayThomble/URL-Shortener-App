@@ -231,14 +231,33 @@ export const KILL_SWITCH_LABELS: Record<KillSwitchKey, string> = {
 /** The PATCH /admin/killswitches body: the switch changes plus a REQUIRED,
  *  non-empty `reason` (the issue requires a reason on every change). The reason
  *  is recorded on the audit row so the admin page's change history explains why
- *  each switch moved, not just what moved. */
-export const KillSwitchesPatchBody = KillSwitchesInput.and(
-  z.object({
+ *  each switch moved, not just what moved.
+ *
+ *  Defined as a plain object (NOT KillSwitchesInput.and(...)): a ZodIntersection
+ *  cannot be registered by the OpenAPI generator (zod-to-openapi walks it and
+ *  calls .openapi on a member that lacks it), which reds the real-stack suite's
+ *  schema registration. A flat object with its own refine registers cleanly and
+ *  carries exactly the same wire shape — every switch optional, reason required,
+ *  at least one switch present. */
+export const KillSwitchesPatchBody = z
+  .object({
+    "billing.checkout": KillSwitchStatePatch.optional(),
+    "billing.planChanges": KillSwitchStatePatch.optional(),
+    "billing.coupons": KillSwitchStatePatch.optional(),
+    "billing.trials": KillSwitchStatePatch.optional(),
+    "billing.refunds": KillSwitchStatePatch.optional(),
+    "customDomains.create": KillSwitchStatePatch.optional(),
+    "email.outbound": KillSwitchStatePatch.optional(),
+    errorTracking: KillSwitchStatePatch.optional(),
+    "linkScanning.rescans": KillSwitchStatePatch.optional(),
     /** Why the operator made this change — required, recorded in the audit log,
      *  shown in the page's change history. */
     reason: z.string().trim().min(1, "A reason is required.").max(500),
-  }),
-);
+  })
+  .refine(
+    (v) => KILL_SWITCH_KEYS.some((k) => v[k] !== undefined),
+    { message: "Change at least one kill switch." },
+  );
 export type KillSwitchesPatchBody = z.infer<typeof KillSwitchesPatchBody>;
 
 /** Fold a partial kill-switch change onto the current full set, one key and one
