@@ -131,7 +131,18 @@ cleanup() {
 # instead of erroring (issue #529).
 DB_URL="${DATABASE_URL:-postgres://snapurl:snapurl@localhost:5433/snapurl}"
 DB_CONTAINER="${DB_CONTAINER:-snapurl-postgres}"
-if command -v psql >/dev/null 2>&1; then
+# On a Kubernetes profile (the Helm kind smoke) the DB is an in-cluster pod the
+# runner cannot reach directly: no local psql target and no docker container.
+# $SMOKE_DB_KUBECTL = "<namespace> <pg-pod-selector>" lets dbq run psql INSIDE
+# the pod with its local trust, exactly as the job's own migrate-assert step
+# does. Preferred when set; falls back to psql/docker for the other profiles.
+if [ -n "${SMOKE_DB_KUBECTL:-}" ] && command -v kubectl >/dev/null 2>&1; then
+  # shellcheck disable=SC2086 # intentional word-split of the 2-field setting.
+  set -- $SMOKE_DB_KUBECTL
+  K_DB_NS="${1:-}"; K_DB_SEL="${2:-}"
+  K_DB_POD=$(kubectl get pod -n "$K_DB_NS" -l "$K_DB_SEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  dbq() { kubectl exec -n "$K_DB_NS" "$K_DB_POD" -- psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
+elif command -v psql >/dev/null 2>&1; then
   dbq() { psql "$DB_URL" -tAc "$1" 2>/dev/null; }
 else
   dbq() { docker exec "$DB_CONTAINER" psql -U snapurl -d snapurl -tAc "$1" 2>/dev/null; }
@@ -143,7 +154,9 @@ fi
 # is not exposed, so those checks are SKIPPED (not failed) and the always-run
 # API-based equivalents below carry the load. Detect it once here.
 DB_AVAILABLE=0
-if [ -n "${DATABASE_URL:-}" ]; then
+if [ -n "${SMOKE_DB_KUBECTL:-}" ] && command -v kubectl >/dev/null 2>&1; then
+  if [ -n "${K_DB_POD:-}" ] && dbq "select 1" | grep -q 1; then DB_AVAILABLE=1; fi
+elif [ -n "${DATABASE_URL:-}" ]; then
   if command -v psql >/dev/null 2>&1; then
     if dbq "select 1" | grep -q 1; then DB_AVAILABLE=1; fi
   elif docker exec "$DB_CONTAINER" true >/dev/null 2>&1; then

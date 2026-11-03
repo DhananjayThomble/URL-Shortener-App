@@ -73,6 +73,13 @@ env:
   # localhost:3002, so localhost:3002 satisfies all three by construction —
   # exactly the single-node/CI convention verify.yml uses.
   LINK_HOST: localhost:3002
+  # Where the api pod's file mailer writes its outbox. The smoke harness reads
+  # the email-verification token back out of here (via `kubectl exec`) so the
+  # smoke account's links go live — a new account's links are HELD until the
+  # owner verifies, independently of the new-account link cap (#993/#1037). A
+  # writable emptyDir is mounted here by the chart because the default outbox
+  # dir is unwritable under readOnlyRootFilesystem.
+  MAIL_OUTBOX_DIR: /tmp/outbox
 
 jobs:
   helm-kind:
@@ -300,6 +307,7 @@ jobs:
             --set secrets.existingSecret=snapurl-secrets \
             --set throttle.limit="$THROTTLE_LIMIT_SMOKE" \
             --set-string newAccountLinkWindowDays="0" \
+            --set-string mailOutboxDir="$MAIL_OUTBOX_DIR" \
             --set-string defaultDomain="$LINK_HOST" \
             --set-string redirectOrigin="http://$LINK_HOST" \
             --set-string webOrigin="http://localhost:3000" \
@@ -392,6 +400,13 @@ jobs:
         run: bash scripts/smoke.sh
         env:
           API: http://localhost:3001/api/v1
+          # Let smoke.sh verify the throwaway account's email the way the
+          # compose/local jobs do, but via `kubectl exec` into the api pod's
+          # outbox emptyDir (no local dir, no docker-compose on this profile).
+          # "<namespace> <pod-selector> <outbox-dir>". Without this the account
+          # stays unverified and its links are held ("not active yet"), which
+          # reds the redirect smoke below.
+          SMOKE_OUTBOX_KUBECTL: "${{ env.NS }} app.kubernetes.io/component=api ${{ env.MAIL_OUTBOX_DIR }}"
 
       - name: Smoke — redirect path
         run: bash scripts/smoke-redirect.sh
@@ -399,6 +414,11 @@ jobs:
           API: http://localhost:3001/api/v1
           RD: http://localhost:3002
           LINK_DOMAIN: ${{ env.LINK_HOST }}
+          # Reach the in-cluster DB via `kubectl exec` into the ci-postgres pod
+          # (no runner-reachable psql target on this profile). smoke-redirect.sh
+          # uses it to verify the throwaway account's email so its links go
+          # live, and to run its direct-DB assertions. "<namespace> <selector>".
+          SMOKE_DB_KUBECTL: "${{ env.NS }} app=ci-postgres"
 
       # ---------------------------------------------------------------------
       # Done-when #2 — the point of the whole issue.

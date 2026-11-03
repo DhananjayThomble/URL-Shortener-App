@@ -210,6 +210,16 @@ mail:
   # e.g. "SnapURL <no-reply@example.com>". Empty uses the app default.
   from: ""
 
+# mailOutboxDir: where the file mailer (mail.transport=outbox) writes messages.
+# BLANK by default and SHOULD stay blank for any real deploy — production uses
+# mail.transport=ses and needs no outbox. Set it ONLY for a throwaway test
+# install (the kind smoke) that must read a verification token back out of the
+# outbox: when set, the api pod gets MAIL_OUTBOX_DIR plus a writable emptyDir
+# mounted at this path (the app's default dir is unwritable under
+# readOnlyRootFilesystem). The CI smoke reads the token from here via
+# `kubectl exec`.
+mailOutboxDir: ""
+
 # trace | debug | info | warn | error
 logLevel: info
 
