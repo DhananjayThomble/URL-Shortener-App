@@ -160,6 +160,30 @@ vercel_api_post() {
   return 0
 }
 
+# vercel_api_delete VAR_RC VAR_BODY VAR_CODE -- PATH_WITH_QUERY
+#   DELETE, same auth/capture contract. Used only by the rehearsal to remove
+#   its own non-promoted deployments.
+vercel_api_delete() {
+  local __rc_var="$1" __body_var="$2" __code_var="$3"; shift 3
+  [ "$1" = "--" ] && shift
+  local path="$1"
+  local __resp __body __code __rc __had_e=0
+  case "$-" in *e*) __had_e=1 ;; esac
+  set +e
+  __resp="$(curl -sS -X DELETE -w $'\n%{http_code}' \
+      -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${VERCEL_API_BASE}${path}" 2>&1)"
+  __rc=$?
+  [ "$__had_e" -eq 1 ] && set -e
+  __code="${__resp##*$'\n'}"
+  __body="${__resp%$'\n'*}"
+  printf -v "$__rc_var" '%s' "$__rc"
+  printf -v "$__body_var" '%s' "$__body"
+  printf -v "$__code_var" '%s' "$__code"
+  return 0
+}
+
 # api_ok CODE -- true for a 2xx HTTP status.
 api_ok() { case "$1" in 2??) return 0 ;; *) return 1 ;; esac; }
 
@@ -173,16 +197,34 @@ json_field() {
     });' "$2" 2>/dev/null || true
 }
 
-# first_prod_deployment_url BODY -- from a /v6/deployments response, the url of
-# the newest production deployment (deployments[0].url), with https:// added.
-first_prod_deployment_url() {
-  printf '%s' "$1" | node -e '
+# production_target FIELD BODY -- from a GET /v9/projects/{id} response, read a
+# field of the deployment the production domain is CURRENTLY SERVING
+# (targets.production), not the newest build created with target=production.
+#   FIELD=url   -> the deployment's .vercel.app hostname (what a rollback runbook
+#                  should promote back), with https:// prefixed.
+#   FIELD=id    -> the serving deployment's id (dpl_...).
+#   FIELD=alias -> the production custom alias (the first non-*.vercel.app entry
+#                  in targets.production.alias, e.g. app.snapurl.in), with
+#                  https:// prefixed; this is the live domain the url serves.
+# Empty when the field or targets.production is absent. node, no jq.
+production_target() {
+  local field="$1" body="$2"
+  printf '%s' "$body" | FIELD="$field" node -e '
     let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
       try{
         const o=JSON.parse(s);
-        const d=(o.deployments||[])[0];
-        if(d&&d.url){const u=d.url;process.stdout.write(u.startsWith("http")?u:"https://"+u);}
-        else process.stdout.write("");
+        const p=(o.targets&&o.targets.production)||null;
+        if(!p){process.stdout.write("");return;}
+        const f=process.env.FIELD;
+        if(f==="url"){const u=p.url||"";process.stdout.write(u?(u.startsWith("http")?u:"https://"+u):"");}
+        else if(f==="id"){process.stdout.write(p.id||"");}
+        else if(f==="alias"){
+          // The LIVE custom domain only: a *.vercel.app entry is not what the
+          // domain serves to users, so it does not count as the production
+          // alias for the cross-check (empty => "no custom alias").
+          const a=(p.alias||[]).find(x=>x&&!x.endsWith(".vercel.app"))||"";
+          process.stdout.write(a?(a.startsWith("http")?a:"https://"+a):"");
+        } else process.stdout.write("");
       }catch{process.stdout.write("");}
     });' 2>/dev/null || true
 }
