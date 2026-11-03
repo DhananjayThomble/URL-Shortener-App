@@ -500,8 +500,23 @@ jobs:
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
         run: |
           set -uo pipefail
-          prev="$(pnpm dlx vercel@"${VERCEL_CLI_VERSION}" ls --prod --token "$VERCEL_TOKEN" 2>/dev/null \
-                  | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | head -1 || true)"
+          # This job has NOT run `vercel pull` yet (that is the next step), so
+          # there is no project link in .vercel/ to scope the CLI. The team-
+          # scoped VERCEL_TOKEN then fails the CLI's personal-account lookup
+          # with "User not found. (404)", so pass --scope "$VERCEL_ORG_ID"
+          # explicitly. Capture stderr rather than discarding it: a failed
+          # lookup must surface a reason, not silently record "<none found>"
+          # and leave the rollback runbook without a URL (#1037).
+          ls_out="$(pnpm dlx vercel@"${VERCEL_CLI_VERSION}" ls --prod \
+                    --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" 2>&1)"
+          ls_rc=$?
+          if [ "$ls_rc" -ne 0 ]; then
+            echo "::warning title=Could not list previous production deployment::vercel ls --prod exited ${ls_rc}: ${ls_out}"
+            prev=""
+          else
+            prev="$(printf '%s\n' "$ls_out" \
+                    | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | head -1 || true)"
+          fi
           echo "previous_url=${prev}" >> "$GITHUB_OUTPUT"
           echo "Previous production deployment: ${prev:-<none found>}"
 
@@ -796,7 +811,13 @@ jobs:
             echo "::error title=No web deployment to promote::web-build produced no deployment URL."
             exit 1
           fi
-          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" promote "${DEPLOYMENT_URL}" --token "$VERCEL_TOKEN"
+          # This is a SEPARATE job from web-build, so it has NOT run
+          # `vercel pull` and carries no project link to scope the CLI from.
+          # Without --scope the team-scoped VERCEL_TOKEN fails the personal-
+          # account lookup with "User not found. (404)" (#1037), so pass the
+          # org scope explicitly.
+          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" promote "${DEPLOYMENT_URL}" \
+            --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
           echo "Promoted ${DEPLOYMENT_URL} to production."
 
   # ---------------------------------------------------------------------------

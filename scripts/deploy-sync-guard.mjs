@@ -101,6 +101,57 @@ export function dependsOn(jobsMap, job, dep, seen = new Set()) {
   return false;
 }
 
+/**
+ * #1037 — find every EXECUTED Vercel CLI invocation in a job block and judge
+ * whether each one is correctly scoped.
+ *
+ * An executed invocation is `pnpm dlx vercel@...` (the whole file pins the CLI
+ * that way). This deliberately does NOT match a bare `vercel ...` inside an
+ * `echo "..."` — those are the human rollback runbook the smoke-failed job
+ * prints, not calls the workflow makes.
+ *
+ * A call is OK when EITHER it carries `--scope` on its own command line, OR a
+ * `vercel pull` ran earlier in the SAME job (which writes .vercel/ and scopes
+ * every later call from the project link). `vercel pull` itself must carry
+ * `--scope` or be the thing that establishes the link — here `pull` always
+ * carries VERCEL_ORG_ID/PROJECT_ID via env, so a `pull` with no project link
+ * yet is the one call allowed to self-scope from those; we treat a `pull` as
+ * scope-establishing and require `--scope` only on NON-pull calls that precede
+ * the first `pull`.
+ *
+ * Returns { calls: [{ job, subcommand, line, scoped, afterPull }], unscoped: [...] }
+ * where `unscoped` is the subset that is neither `--scope`'d nor after a pull.
+ */
+export function vercelCalls(blockText, jobName) {
+  // Join shell line-continuations first: a `vercel ... \` invocation spreads its
+  // flags (including `--scope`) across physical lines, so the whole logical
+  // command must be considered as one string. A trailing backslash (optionally
+  // followed by whitespace) continues onto the next line.
+  const logical = blockText.replace(/\\[ \t]*\r?\n\s*/g, " ");
+  const lines = logical.split("\n");
+  const calls = [];
+  let sawPull = false;
+  for (const raw of lines) {
+    // Ignore lines that are purely an echo of a command (the runbook text).
+    const isEcho = /^\s*echo\s/.test(raw);
+    const invocation = /pnpm\s+dlx\s+vercel@/.test(raw);
+    if (isEcho || !invocation) continue;
+    // The subcommand is the first token after the pinned CLI token. In this
+    // codebase every call is `pnpm dlx vercel@"${VERCEL_CLI_VERSION}" <sub>`
+    // with the subcommand immediately after the version token and no leading
+    // global flags, so match it directly. The regex is deliberately
+    // linear-time: a single `\S+` for the version token, one or more spaces,
+    // then the subcommand word — no nested quantifiers that could backtrack.
+    const m = /vercel@\S+\s+([a-z][a-z-]*)/.exec(raw);
+    const subcommand = m ? m[1] : "(unknown)";
+    const scoped = /--scope\b/.test(raw);
+    const call = { job: jobName, subcommand, line: raw.trim(), scoped, afterPull: sawPull };
+    calls.push(call);
+    if (subcommand === "pull") sawPull = true;
+  }
+  return calls;
+}
+
 // --- The five properties. ----------------------------------------------------
 
 /**
@@ -226,6 +277,26 @@ export function evaluateDeploySync(workflowText, vercelJsonText) {
     }
     if (!dependsOn(needsMap, "release", "smoke")) {
       failures.push("(5) 'release' does not depend on 'smoke'; a release could be tagged without the smoke gate passing.");
+    }
+  }
+
+  // ---- Property 6 (#1037): every executed Vercel CLI call is scoped. --------
+  // A team-scoped VERCEL_TOKEN fails the CLI's personal-account lookup with
+  // "User not found. (404)" unless the call is scoped. A call is scoped when
+  // it carries `--scope` on its command line OR a `vercel pull` ran earlier in
+  // the same job (pull writes the project link into .vercel/, which scopes
+  // every later call). `vercel pull` itself establishes the link and is the
+  // one call exempt from needing a prior pull. This is what broke the
+  // `promote` job (separate job, no pull) and silenced the `ls` lookup.
+  for (const [name, block] of jobEntries) {
+    for (const c of vercelCalls(block, name)) {
+      const ok = c.scoped || c.afterPull || c.subcommand === "pull";
+      if (!ok) {
+        failures.push(
+          `(6) Vercel CLI call \`${c.subcommand}\` in job '${name}' is neither --scope'd nor preceded by \`vercel pull\` in the same job; ` +
+            `a team-scoped VERCEL_TOKEN will fail its account lookup (404). Line: ${c.line}`,
+        );
+      }
     }
   }
 

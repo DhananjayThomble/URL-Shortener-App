@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { evaluateDeploySync, parseJobs, jobNeeds, dependsOn } from "./deploy-sync-guard.mjs";
+import { evaluateDeploySync, parseJobs, jobNeeds, dependsOn, vercelCalls } from "./deploy-sync-guard.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
@@ -181,6 +181,144 @@ test("property 5 bites: if release no longer needs smoke at all, FAIL", () => {
     failures.some((f) => f.startsWith("(5)") && /smoke/.test(f)),
     "expected a property-5 smoke failure; got:\n" + failures.join("\n"),
   );
+});
+
+// --- Property 6 (#1037): every executed Vercel CLI call is scoped. -----------
+
+test("property 6 holds on the real deploy-aws.yml (every Vercel call is scoped)", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const { failures } = evaluateDeploySync(workflowText, vercelJsonText);
+  assert.deepEqual(
+    failures.filter((f) => f.startsWith("(6)")),
+    [],
+    "expected no property-6 failures on the shipped file",
+  );
+});
+
+test("property 6 bites: a promote with no --scope and no prior pull FAILs", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  // Strip the --scope from the web-promote call, reproducing the pre-#1037
+  // file. The multi-line promote invocation is `... promote "${DEPLOYMENT_URL}" \
+  //   --scope "$VERCEL_ORG_ID" --token ...`; drop the --scope token.
+  const broken = workflowText.replace(
+    /promote "\$\{DEPLOYMENT_URL\}" \\\n\s*--scope "\$VERCEL_ORG_ID" --token/,
+    'promote "${DEPLOYMENT_URL}" --token',
+  );
+  assert.notEqual(broken, workflowText, "fixture edit must change the text");
+  const { ok, failures } = evaluateDeploySync(broken, vercelJsonText);
+  assert.equal(ok, false);
+  assert.ok(
+    failures.some((f) => f.startsWith("(6)") && /promote/.test(f)),
+    "expected a property-6 promote failure; got:\n" + failures.join("\n"),
+  );
+});
+
+// The red-on-broken proof the issue asks for: origin/main's OWN pre-fix
+// web-build + web-promote, where `ls` and `promote` carry no --scope and run
+// with no prior `vercel pull` in their job. This exact guard would have caught
+// the #1037 incident (promote -> "User not found. (404)").
+const PREFIX_1037_WORKFLOW = `name: Deploy (AWS)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  VERCEL_CLI_VERSION: "65.9.0"
+jobs:
+  plan:
+    name: Plan (cdk diff)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - run: echo plan
+  web-build:
+    name: Build + upload web (Vercel)
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Vercel credentials
+        env:
+          VERCEL_TOKEN: x
+          VERCEL_ORG_ID: y
+          VERCEL_PROJECT_ID: z
+        run: |
+          [ -n "$VERCEL_TOKEN" ] || exit 1
+      - name: Record previous production deployment
+        run: |
+          prev="$(pnpm dlx vercel@"\${VERCEL_CLI_VERSION}" ls --prod --token "$VERCEL_TOKEN" 2>/dev/null)"
+      - name: vercel pull (production)
+        run: pnpm dlx vercel@"\${VERCEL_CLI_VERSION}" pull --yes --environment=production --token "$VERCEL_TOKEN"
+      - name: vercel build (production)
+        run: pnpm dlx vercel@"\${VERCEL_CLI_VERSION}" build --prod --token "$VERCEL_TOKEN"
+      - name: vercel deploy
+        run: pnpm dlx vercel@"\${VERCEL_CLI_VERSION}" deploy --prebuilt --prod --skip-domain --token "$VERCEL_TOKEN"
+  deploy:
+    name: Deploy
+    needs: [plan, web-build]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - run: echo deploy
+  migrate:
+    name: Apply DB migrations
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo migrate
+  web-promote:
+    name: Promote web to production
+    needs: [web-build, deploy, migrate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: vercel promote
+        run: pnpm dlx vercel@"\${VERCEL_CLI_VERSION}" promote "\${DEPLOYMENT_URL}" --token "$VERCEL_TOKEN"
+  smoke:
+    name: Post-deploy smoke
+    needs: [deploy, migrate, web-promote]
+    uses: ./.github/workflows/smoke-deployed.yml
+  release:
+    name: GitHub Release
+    needs: [plan, web-build, deploy, migrate, web-promote, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo release
+`;
+
+test("origin/main's pre-fix Vercel calls FAIL property 6 (would have caught #1037)", () => {
+  const { vercelJsonText } = realFiles();
+  const { ok, failures } = evaluateDeploySync(PREFIX_1037_WORKFLOW, vercelJsonText);
+  assert.equal(ok, false, "pre-fix workflow must fail the guard");
+  const p6 = failures.filter((f) => f.startsWith("(6)"));
+  // Both the pre-pull `ls` and the unscoped `promote` must be flagged.
+  assert.ok(
+    p6.some((f) => /\bls\b/.test(f)),
+    "expected the pre-pull `ls` call to be flagged; got:\n" + p6.join("\n"),
+  );
+  assert.ok(
+    p6.some((f) => /promote/.test(f)),
+    "expected the unscoped `promote` call to be flagged; got:\n" + p6.join("\n"),
+  );
+});
+
+test("vercelCalls classifies scope / prior-pull correctly", () => {
+  const block = `    steps:
+      - name: a
+        run: pnpm dlx vercel@"x" ls --prod --scope "$O" --token t
+      - name: b
+        run: pnpm dlx vercel@"x" pull --yes --token t
+      - name: c
+        run: pnpm dlx vercel@"x" build --prod --token t
+      - name: d
+        run: echo "vercel promote <url> --token t"
+`;
+  const calls = vercelCalls(block, "job");
+  // The echo line is NOT a call.
+  assert.deepEqual(
+    calls.map((c) => c.subcommand),
+    ["ls", "pull", "build"],
+  );
+  assert.equal(calls[0].scoped, true); // ls has --scope
+  assert.equal(calls[0].afterPull, false);
+  assert.equal(calls[2].afterPull, true); // build is after pull
+  assert.equal(calls[2].scoped, false);
 });
 
 // --- A few unit checks on the parser helpers. --------------------------------

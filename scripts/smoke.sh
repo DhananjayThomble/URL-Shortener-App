@@ -72,6 +72,22 @@ if [ -z "$VERIFY_TOKEN" ] && command -v docker >/dev/null 2>&1 && docker compose
     VERIFY_TOKEN=$(docker compose exec -T api sh -c "grep -o 'verify-email?token=[^ ]*' '$TOKEN_FILE' | head -1 | sed 's/verify-email?token=//'" 2>/dev/null | tr -d '\r')
   fi
 fi
+# (c) outbox inside the api POD, on a Kubernetes profile (the Helm kind smoke).
+# There is no local dir and no docker-compose there; the api pod writes its
+# outbox to a writable emptyDir (chart mailOutboxDir), read via `kubectl exec`.
+# $SMOKE_OUTBOX_KUBECTL carries "<namespace> <pod-label-selector> <outbox-dir>".
+if [ -z "$VERIFY_TOKEN" ] && [ -n "${SMOKE_OUTBOX_KUBECTL:-}" ] && command -v kubectl >/dev/null 2>&1; then
+  # shellcheck disable=SC2086 # intentional word-split of the 3-field setting.
+  set -- $SMOKE_OUTBOX_KUBECTL
+  K_NS="${1:-}"; K_SEL="${2:-}"; K_DIR="${3:-/tmp/outbox}"
+  K_POD=$(kubectl get pod -n "$K_NS" -l "$K_SEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -n "$K_POD" ]; then
+    TOKEN_FILE=$(kubectl exec -n "$K_NS" "$K_POD" -- sh -c 'ls -1t '"$K_DIR"'/*'"$SMOKE_EMAIL_SAN"'* 2>/dev/null | head -1' 2>/dev/null | tr -d '\r')
+    if [ -n "$TOKEN_FILE" ]; then
+      VERIFY_TOKEN=$(kubectl exec -n "$K_NS" "$K_POD" -- sh -c "grep -o 'verify-email?token=[^ ]*' '$TOKEN_FILE' | head -1 | sed 's/verify-email?token=//'" 2>/dev/null | tr -d '\r')
+    fi
+  fi
+fi
 if [ -n "$VERIFY_TOKEN" ]; then
   CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/email/verify" -H 'Content-Type: application/json' -d "{\"token\":\"$VERIFY_TOKEN\"}")
   status "email verification succeeds (so the account's links go live)" "200" "$CODE" ""

@@ -78,6 +78,20 @@ spec:
                   name: {{ include "snapurl.secretName" . }}
                   key: database-ca-cert
             {{- end }}
+            {{- if .Values.mailOutboxDir }}
+            # Only set when an outbox dir is configured (blank by default, so
+            # production — which uses mail.transport=ses — never gets it). CI
+            # points this at a writable emptyDir (below) so the outbox mailer
+            # can write under readOnlyRootFilesystem, and the smoke harness
+            # reads the verification token from it via `kubectl exec`.
+            - name: MAIL_OUTBOX_DIR
+              value: {{ .Values.mailOutboxDir | quote }}
+            {{- end }}
+          {{- if .Values.mailOutboxDir }}
+          volumeMounts:
+            - name: mail-outbox
+              mountPath: {{ .Values.mailOutboxDir | quote }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /api/v1/health
@@ -96,6 +110,13 @@ spec:
             failureThreshold: {{ .Values.api.probes.failureThreshold }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
+      {{- if .Values.mailOutboxDir }}
+      # A writable scratch volume for the file mailer's outbox. Only present
+      # when mailOutboxDir is set (CI); production leaves it unset and uses SES.
+      volumes:
+        - name: mail-outbox
+          emptyDir: {}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
