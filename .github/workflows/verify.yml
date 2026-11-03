@@ -312,8 +312,18 @@ jobs:
       # web build + credential check precede the API deploy; promote follows
       # deploy+migrate; release needs promote and smoke). Pure Node, no deps; it
       # parses deploy-aws.yml and web/vercel.json and never runs the pipeline.
-      - name: Deploy web+API-together guard (#1026)
+      - name: Deploy web+API-together guard (#1026, #1041)
         run: node --test scripts/deploy-sync-guard.test.mjs
+
+      # #1041 — the shared Vercel step scripts (scripts/vercel/*.sh) that the
+      # real deploy AND the rehearsal both run. This drives each script's
+      # failure and success paths with a STUBBED `vercel` on PATH, proving the
+      # previous-deployment lookup warns-and-continues (the errexit bug run
+      # 41673569635 hit), and that deploy/promote fail WITH A MESSAGE. It also
+      # runs origin/main's ORIGINAL inline step body under `bash -e` and
+      # asserts it REDS (the red-on-broken proof). Pure Node + bash, no deps.
+      - name: Vercel deploy-step scripts — stubbed failure paths (#1041)
+        run: node --test scripts/vercel/vercel-steps.test.mjs
 
       - name: Start the API and redirect service
         run: |

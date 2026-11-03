@@ -1,0 +1,220 @@
+# Rehearse the web deploy (#1041).
+#
+# WHY THIS EXISTS. deploy-aws.yml runs five Vercel CLI commands (ls, pull,
+# build, deploy, promote). The deploy-sync guard only reads the workflow TEXT,
+# so nothing EXECUTED those commands before a production dispatch — each prod
+# dispatch was the first real run of the next Vercel step, and three in a row
+# failed one step at a time (run 41673569635 died in `vercel ls` under bash -e).
+#
+# This workflow EXECUTES every Vercel CLI command the deploy uses, with the
+# REAL token/org/project, against a NON-PRODUCTION target, so a Vercel-step
+# failure surfaces HERE instead of on the next production deploy. It runs the
+# SAME script files (scripts/vercel/*.sh) the deploy runs — not a copy — so it
+# cannot drift; the deploy-sync guard reds if either stops using them.
+#
+# WHAT IT NEVER DOES. It touches no AWS, no production domain, and no alias. It
+# NEVER runs scripts/vercel/promote.sh (that assigns the production domain). It
+# exercises the promote PATH — the same scope+token+pinned-CLI flags promote
+# uses — with a NON-mutating `vercel inspect` against the rehearsal's own
+# deployment. Vercel is on Hobby (limited deployments), so this is dispatch-led
+# and the PR run is gated to one path.
+#
+# TOKEN SAFETY (#1041 condition 7). VERCEL_TOKEN is reachable only from a
+# non-fork, non-Dependabot run. A fork PR, a pull_request_target (not a trigger
+# here) and a Dependabot run SKIP the real work and finish GREEN — they never
+# see the secret and never red.
+
+name: Rehearse web deploy
+
+on:
+  # Operator-run, the primary path: keeps Hobby deployment usage low and lets a
+  # human pick the ref. This is what produces the recorded rehearsal run id.
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Commit/branch to rehearse. Blank = the dispatched ref."
+        required: false
+        type: string
+        default: ""
+  # Also on PRs that touch the deploy surface, so the rehearsal is exercised in
+  # review — but only on a non-fork, non-Dependabot PR (see the `gate` job),
+  # which is where the secret is reachable. A fork/Dependabot PR skips green.
+  pull_request:
+    paths:
+      - ".github/workflows/rehearse-web-deploy.yml"
+      - ".github/workflows/deploy-aws.yml"
+      - "scripts/vercel/**"
+      - "web/vercel.json"
+
+# No write permissions anywhere; this workflow changes nothing in the repo.
+permissions:
+  contents: read
+
+# One rehearsal at a time per ref — a rehearsal creates a real (non-promoted)
+# Vercel deployment, and overlapping ones waste Hobby quota.
+concurrency:
+  group: rehearse-web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The SAME pin as deploy-aws.yml. The shared scripts read this.
+  VERCEL_CLI_VERSION: "65.9.0"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # GATE — decide whether the real rehearsal may run.
+  # ---------------------------------------------------------------------------
+  # The real work needs VERCEL_TOKEN, which is unreachable from a fork PR or a
+  # Dependabot run. Rather than let those go red, this job decides up front and
+  # the rehearsal job keys off its output. A secret cannot be read in a job `if`
+  # expression, so token presence is detected in a step (where secrets ARE
+  # available) and exported as a NON-secret boolean output.
+  gate:
+    name: Can rehearse?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_real: ${{ steps.decide.outputs.run_real }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          # Reading the secret into env here is safe: this step emits only a
+          # boolean, never the value.
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          run_real=true
+          reason="ok"
+          if [ -z "${VERCEL_TOKEN}" ]; then
+            run_real=false; reason="no VERCEL_TOKEN (fork PR or secret unset)"
+          elif [ "${IS_FORK}" = "true" ]; then
+            run_real=false; reason="fork PR — secrets withheld"
+          elif [ "${ACTOR}" = "dependabot[bot]" ]; then
+            run_real=false; reason="Dependabot run — secrets withheld"
+          fi
+          echo "run_real=${run_real}" >> "$GITHUB_OUTPUT"
+          echo "Rehearsal real-run decision: ${run_real} (${reason})"
+          {
+            echo "### Rehearsal gate"
+            echo
+            echo "- Run real Vercel commands: \`${run_real}\` (${reason})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # REHEARSE — execute every Vercel CLI command the deploy uses, for real.
+  # ---------------------------------------------------------------------------
+  rehearse:
+    name: Execute Vercel steps (non-prod)
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      # A fork/Dependabot/no-token run stops here, GREEN. Every real step below
+      # is guarded on the same condition, so the job succeeds with nothing run.
+      - name: Skip note (secrets unavailable)
+        if: ${{ needs.gate.outputs.run_real != 'true' }}
+        run: |
+          echo "Rehearsal skipped: Vercel secrets are not available to this run (fork/Dependabot/unset)."
+          echo "This is expected and not a failure."
+
+      - name: Checkout
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      - name: Setup pnpm
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - name: Setup node
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: pnpm install --frozen-lockfile
+
+      # 1) THE SAME credential check the deploy runs (shared lib).
+      - name: Require Vercel credentials
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: |
+          set -euo pipefail
+          . scripts/vercel/lib.sh
+          require_vercel_creds
+
+      # 2) THE SAME previous-deployment lookup the deploy runs. This is the step
+      #    that failed in run 41673569635; running it here with the REAL token
+      #    is what captures the real `vercel ls` error text (if any) and proves
+      #    the warn-and-continue behaviour at runtime. It can never fail.
+      - name: Record previous production deployment (shared step)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/record-previous.sh
+
+      # 3) THE SAME pull the deploy runs — writes the project link into .vercel/.
+      - name: vercel pull (shared step)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/pull.sh
+
+      # 4) THE SAME build the deploy runs — produces .vercel/output, no deploy.
+      - name: vercel build (shared step)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/build.sh
+
+      # 5) THE SAME upload the deploy runs: a PREBUILT production deployment with
+      #    --skip-domain, so NO production domain/alias is assigned. This is a
+      #    real but non-promoted deployment at a unique *.vercel.app URL.
+      - name: vercel deploy --prebuilt --prod --skip-domain (shared step)
+        id: deploy_web
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/deploy.sh
+
+      # 6) Exercise the PROMOTE PATH without mutating production. promote.sh is
+      #    deliberately NOT run (it assigns the production domain). Instead run
+      #    `vercel inspect` with the SAME --scope + --token + pinned-CLI flags
+      #    promote.sh uses, against the rehearsal's OWN deployment. This proves
+      #    the exact flag set the promote job relies on works end to end (the
+      #    team-token 404 that broke promote would fail here too), while leaving
+      #    app.snapurl.in untouched.
+      - name: Exercise promote path (non-mutating inspect)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy_web.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          . scripts/vercel/lib.sh
+          : "${DEPLOYMENT_URL:?no rehearsal deployment URL to inspect}"
+          # Same scope+token+pinned-CLI flags as promote.sh — a non-mutating
+          # read that fails identically if the team-token scoping is wrong.
+          # shellcheck disable=SC2046
+          $(vercel_cli) inspect "${DEPLOYMENT_URL}" \
+            --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
+          echo "Promote path exercised (inspect only). Production domain untouched."
+
+      - name: Rehearsal summary
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        env:
+          URL: ${{ steps.deploy_web.outputs.deployment_url }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### Rehearsal executed every Vercel step for real"
+            echo
+            echo "- ls / pull / build / deploy(--skip-domain) / inspect(promote path) all ran with the real token."
+            echo "- Non-promoted deployment: \`${URL:-<none>}\`"
+            echo "- No AWS, no production domain, no alias was touched."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -25,12 +25,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
 const read = (p) => readFileSync(join(repoRoot, p), "utf8");
 
+// The shared step scripts + rehearsal, read once, so the live-file cases drive
+// the full guard (properties 6 and 7 read these). The per-property fixtures
+// below reuse them unchanged except where they deliberately break one.
+function liveOpts() {
+  const names = ["lib.sh", "record-previous.sh", "pull.sh", "build.sh", "deploy.sh", "promote.sh"];
+  const scripts = Object.fromEntries(names.map((n) => [n, read(join("scripts/vercel", n))]));
+  return { scripts, rehearsalText: read(".github/workflows/rehearse-web-deploy.yml") };
+}
+
 // --- The real, post-fix files. -----------------------------------------------
 
-test("the live deploy-aws.yml + web/vercel.json PASS all five properties", () => {
+test("the live deploy-aws.yml + web/vercel.json PASS all properties", () => {
   const workflowText = read(".github/workflows/deploy-aws.yml");
   const vercelJsonText = read("web/vercel.json");
-  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText);
+  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, liveOpts());
   assert.equal(ok, true, "expected the shipped files to pass; failures:\n" + failures.join("\n"));
   assert.deepEqual(failures, []);
 });
@@ -184,32 +193,105 @@ test("property 5 bites: if release no longer needs smoke at all, FAIL", () => {
 });
 
 // --- Property 6 (#1037): every executed Vercel CLI call is scoped. -----------
+// Since #1041 the executed calls live in scripts/vercel/*.sh, so scope is
+// judged there (passed via opts.scripts).
 
-test("property 6 holds on the real deploy-aws.yml (every Vercel call is scoped)", () => {
+test("property 6 holds on the real shared scripts (every Vercel call is scoped)", () => {
   const { workflowText, vercelJsonText } = realFiles();
-  const { failures } = evaluateDeploySync(workflowText, vercelJsonText);
+  const { failures } = evaluateDeploySync(workflowText, vercelJsonText, liveOpts());
   assert.deepEqual(
     failures.filter((f) => f.startsWith("(6)")),
     [],
-    "expected no property-6 failures on the shipped file",
+    "expected no property-6 failures on the shipped scripts",
   );
 });
 
-test("property 6 bites: a promote with no --scope and no prior pull FAILs", () => {
+test("property 6 bites: record-previous.sh or promote.sh without --scope FAILs", () => {
   const { workflowText, vercelJsonText } = realFiles();
-  // Strip the --scope from the web-promote call, reproducing the pre-#1037
-  // file. The multi-line promote invocation is `... promote "${DEPLOYMENT_URL}" \
-  //   --scope "$VERCEL_ORG_ID" --token ...`; drop the --scope token.
-  const broken = workflowText.replace(
-    /promote "\$\{DEPLOYMENT_URL\}" \\\n\s*--scope "\$VERCEL_ORG_ID" --token/,
-    'promote "${DEPLOYMENT_URL}" --token',
-  );
-  assert.notEqual(broken, workflowText, "fixture edit must change the text");
-  const { ok, failures } = evaluateDeploySync(broken, vercelJsonText);
+  const opts = liveOpts();
+  // Strip --scope from promote.sh (a separate job, no prior pull): this is the
+  // exact #1037 regression, now expressed in the shared script.
+  const brokenPromote = opts.scripts["promote.sh"].replace(/--scope "\$VERCEL_ORG_ID"\s*/g, "");
+  assert.notEqual(brokenPromote, opts.scripts["promote.sh"], "fixture edit must change the script");
+  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, {
+    ...opts,
+    scripts: { ...opts.scripts, "promote.sh": brokenPromote },
+  });
   assert.equal(ok, false);
   assert.ok(
     failures.some((f) => f.startsWith("(6)") && /promote/.test(f)),
     "expected a property-6 promote failure; got:\n" + failures.join("\n"),
+  );
+});
+
+// --- Property 7 (#1041): deploy and rehearsal share step CODE. ---------------
+
+test("property 7 holds on the live files (deploy routes through shared scripts, rehearsal runs them)", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const { failures } = evaluateDeploySync(workflowText, vercelJsonText, liveOpts());
+  assert.deepEqual(
+    failures.filter((f) => f.startsWith("(7)")),
+    [],
+    "expected no property-7 failures on the shipped files",
+  );
+});
+
+test("property 7 bites: an INLINE pnpm dlx vercel call in the deploy workflow FAILs", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  // Re-inline a Vercel call in a job (undoing the shared-script routing).
+  const broken = workflowText.replace(
+    "run: bash scripts/vercel/build.sh",
+    'run: pnpm dlx vercel@"${VERCEL_CLI_VERSION}" build --prod --token "$VERCEL_TOKEN"',
+  );
+  assert.notEqual(broken, workflowText, "fixture edit must change the text");
+  const { ok, failures } = evaluateDeploySync(broken, vercelJsonText, liveOpts());
+  assert.equal(ok, false);
+  assert.ok(
+    failures.some((f) => f.startsWith("(7)") && /INLINE/.test(f)),
+    "expected a property-7 inline failure; got:\n" + failures.join("\n"),
+  );
+});
+
+test("property 7 bites: the rehearsal dropping a shared step script FAILs (divergence)", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const opts = liveOpts();
+  // Rehearsal stops running build.sh — it would no longer rehearse the build.
+  const brokenRehearsal = opts.rehearsalText.replace(/run: bash scripts\/vercel\/build\.sh/g, "run: echo skipped");
+  assert.notEqual(brokenRehearsal, opts.rehearsalText, "fixture edit must change the text");
+  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, {
+    ...opts,
+    rehearsalText: brokenRehearsal,
+  });
+  assert.equal(ok, false);
+  assert.ok(
+    failures.some((f) => f.startsWith("(7)") && /build\.sh/.test(f)),
+    "expected a property-7 divergence failure; got:\n" + failures.join("\n"),
+  );
+});
+
+test("property 7 bites: the rehearsal running promote.sh (production-mutating) FAILs", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const opts = liveOpts();
+  const brokenRehearsal = opts.rehearsalText.replace(
+    "run: bash scripts/vercel/deploy.sh",
+    "run: bash scripts/vercel/promote.sh",
+  );
+  assert.notEqual(brokenRehearsal, opts.rehearsalText, "fixture edit must change the text");
+  const { failures } = evaluateDeploySync(workflowText, vercelJsonText, { ...opts, rehearsalText: brokenRehearsal });
+  assert.ok(
+    failures.some((f) => f.startsWith("(7)") && /promote\.sh/.test(f) && /PRODUCTION/.test(f)),
+    "expected a property-7 production-mutating failure; got:\n" + failures.join("\n"),
+  );
+});
+
+test("property 7 bites: a missing rehearsal workflow FAILs", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const opts = liveOpts();
+  const { failures } = evaluateDeploySync(workflowText, vercelJsonText, { ...opts, rehearsalText: "" });
+  // rehearsalText "" is treated as present-but-empty; it misses every script.
+  assert.ok(
+    failures.some((f) => f.startsWith("(7)")),
+    "expected property-7 failures for an empty rehearsal; got:\n" + failures.join("\n"),
   );
 });
 
