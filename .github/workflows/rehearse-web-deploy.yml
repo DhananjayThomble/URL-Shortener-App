@@ -206,31 +206,26 @@ jobs:
           set -euo pipefail
           . scripts/vercel/lib.sh
           : "${DEPLOYMENT_URL:?no rehearsal deployment URL to check}"
-          # The promote path must RESOLVE THE PROJECT to address a specific
-          # deployment. The rehearsal's first run proved that a pre-link call
-          # with `--scope "$VERCEL_ORG_ID"` (a team_<id>) + token still 404s
-          # ("User not found") — so the link established by `vercel pull`
-          # (step 9, same job) is what actually scopes a non-prod-mutating read.
-          # Use that: `vercel ls <projectName>` with NO --scope, relying on the
-          # .vercel link, exactly as a promote job that FIRST pulls would. This
-          # is non-mutating and proves the project resolves and this run's
-          # deployment is listed. (See scripts/vercel/promote.sh: the deploy's
-          # web-promote now pulls before promoting for the same reason.)
+          # Mirror the REAL promote path (scripts/vercel/promote.sh) exactly:
+          # it now does `vercel pull` (step 9, same job here) then addresses the
+          # deployment URL with just `--token` (NO --scope), relying on the
+          # .vercel link the pull wrote. Prove that resolution non-mutatingly
+          # with `vercel inspect <url> --token` — the same link-scoped,
+          # token-only addressing promote uses, against THIS run's own
+          # deployment. A scope/link failure (the class every prior dispatch hit
+          # before promote even ran) fails here identically. `--scope <team_id>`
+          # is deliberately NOT passed: the rehearsal proved it re-enters the
+          # 404-prone user-load path, which is why promote.sh dropped it too.
           . scripts/vercel/lib.sh >/dev/null 2>&1 || true
-          ls_rc=0; ls_out=""
+          ins_rc=0; ins_out=""
           # shellcheck disable=SC2046
-          vercel_capture ls_rc ls_out -- $(vercel_cli) ls --token "$VERCEL_TOKEN"
-          printf '%s\n' "$ls_out"
-          if [ "$ls_rc" -ne 0 ]; then
-            echo "::error title=Promote-path check failed::vercel ls (post-pull, link-scoped) exited ${ls_rc}: ${ls_out}"
+          vercel_capture ins_rc ins_out -- $(vercel_cli) inspect "${DEPLOYMENT_URL}" --token "$VERCEL_TOKEN"
+          printf '%s\n' "$ins_out"
+          if [ "$ins_rc" -ne 0 ]; then
+            echo "::error title=Promote-path check failed::vercel inspect (post-pull, link+token) exited ${ins_rc}: ${ins_out}"
             exit 1
           fi
-          host="${DEPLOYMENT_URL#https://}"
-          if printf '%s\n' "$ls_out" | grep -qF "$host"; then
-            echo "Promote path exercised: project resolves via the pull link and this run's deployment ${host} is listed. Production domain untouched."
-          else
-            echo "Promote path exercised: project resolves via the pull link (vercel ls OK). This run's deployment host not matched verbatim (host-form difference); the resolution the promote path needs is proven. Production domain untouched."
-          fi
+          echo "Promote path exercised: the pull link + token resolve this run's own deployment (vercel inspect OK). Production domain untouched."
 
       - name: Rehearsal summary
         if: ${{ needs.gate.outputs.run_real == 'true' }}
