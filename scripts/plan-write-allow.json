@@ -1,0 +1,36 @@
+{
+  "_comment": "Reviewed allowlist for the plan-write guard (#1043). Every drizzle write to workspaces.plan or subscriptions.planKey/interval under apps/api/src and apps/worker/src must appear here, keyed by file + enclosing function, with a reason recording WHY the write is safe. scripts/plan-write-guard.mjs reds CI on a write site not listed here, and on a listed entry that no longer matches a real site (so the list cannot rot). To add a site: have it reviewed, then add { file, fn, reason }. A `flagged: true` entry is a KNOWN site that is NOT yet webhook-confirmed or 409-guarded on subscribed workspaces; it is tracked by its own issue and listed so the guard stays green, NOT because the write is proven safe.",
+  "sites": [
+    {
+      "file": "apps/api/src/billing/billing.service.ts",
+      "fn": "handleWebhook",
+      "reason": "Verified webhook. handleWebhook is the ONLY path that moves a plan; the event comes from provider.verifyWebhook (non-null) and the plan change applies only on a provider-confirmed match of the subscription's provider plan id. Mirrors the entitlement onto workspaces.plan and sets subscriptions.planKey/interval inside the same tx."
+    },
+    {
+      "file": "apps/api/src/billing/billing.service.ts",
+      "fn": "startCheckout",
+      "reason": "Checkout handle, not entitlement. Upserts the subscriptions row at status 'created' (never an entitled status) so a re-started checkout overwrites the pending handle. planKey/interval record the intended plan; entitlement moves only on the later verified trialing/active webhook. Safe: no paid grant without a confirming webhook."
+    },
+    {
+      "file": "apps/api/src/plans/plan-management.service.ts",
+      "fn": "moveWorkspacePlan",
+      "reason": "409-guarded admin/scheduled path. Called from adminChangePlan (comp), which refuses with a 409 ConflictException when the workspace has an active/trialing provider subscription, and from applyDueChanges, which skips (and records why) when hasLiveProviderSubscription is true. So this label move never runs on a subscribed workspace a webhook would overwrite."
+    },
+    {
+      "file": "apps/worker/src/jobs/plan-changes.ts",
+      "fn": "applyDuePlanChanges",
+      "reason": "409/skip-guarded sweep. The worker's due-change sweep claims each request row, then skips the workspaces.plan write (recording 'a provider subscription now owns this plan') when hasLiveProviderSubscription is true. Only an unsubscribed workspace's scheduled label change is applied."
+    },
+    {
+      "file": "apps/api/src/stack/principals.ts",
+      "fn": "seedPrincipals",
+      "reason": "Test-harness seed, not product code. apps/api/src/stack/principals.ts seeds the real-stack HTTP suite's principals; it puts the two seed workspaces on Enterprise so #966's paid-plan gate lets the access-matrix/fuzz suites exercise POST /domains. Runs only against a throwaway staging DB in CI, never a real tenant."
+    },
+    {
+      "file": "apps/api/src/admin/admin-management.service.ts",
+      "fn": "updateWorkspace",
+      "flagged": true,
+      "reason": "FLAGGED (#969 admin manual plan/limit edit): writes workspaces.plan directly from admin input with NO verified-webhook confirmation and NO 409 guard on a subscribed workspace. The next provider webhook would re-mirror the subscription's own plan and silently undo this move (or this move overrides a paid subscription's plan with no provider backing). Listed so the guard stays green on the current tree; the fix is tracked in its own issue per #1043 and is NOT made here."
+    }
+  ]
+}
