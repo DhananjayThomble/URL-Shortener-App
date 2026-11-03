@@ -206,12 +206,40 @@ test("property 6 holds on the real shared scripts (every Vercel call is scoped)"
   );
 });
 
-test("property 6 bites: record-previous.sh without --scope and no prior pull FAILs", () => {
+// --- Property 8 (#1041 fail 1): no user-lookup CLI command; REST for lookup/promote.
+
+test("property 8 holds on the live scripts (no ls/inspect/promote CLI; REST used)", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const { failures } = evaluateDeploySync(workflowText, vercelJsonText, liveOpts());
+  assert.deepEqual(
+    failures.filter((f) => f.startsWith("(8)")),
+    [],
+    "expected no property-8 failures on the shipped scripts",
+  );
+});
+
+test("property 8 bites: a `vercel promote` CLI call reintroduced in promote.sh FAILs", () => {
   const { workflowText, vercelJsonText } = realFiles();
   const opts = liveOpts();
-  // record-previous.sh runs BEFORE pull, so its `ls` must carry --scope. Strip
-  // it: this reproduces the pre-#1037 unscoped pre-link call the guard forbids.
-  const broken = opts.scripts["record-previous.sh"].replace(/--scope "\$VERCEL_ORG_ID" /g, "");
+  // Replace the REST promote with the old user-lookup CLI call.
+  const broken =
+    opts.scripts["promote.sh"].replace(/vercel_api_post[\s\S]*/, "") +
+    '\n$(vercel_cli) promote "$DEPLOYMENT_URL" --token "$VERCEL_TOKEN"\n';
+  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, {
+    ...opts,
+    scripts: { ...opts.scripts, "promote.sh": broken },
+  });
+  assert.equal(ok, false);
+  assert.ok(
+    failures.some((f) => f.startsWith("(8)") && /promote/.test(f)),
+    "expected a property-8 failure for the reintroduced CLI promote; got:\n" + failures.join("\n"),
+  );
+});
+
+test("property 8 bites: record-previous.sh dropping the REST helper FAILs", () => {
+  const { workflowText, vercelJsonText } = realFiles();
+  const opts = liveOpts();
+  const broken = opts.scripts["record-previous.sh"].replace(/vercel_api_get/g, "some_other_call");
   assert.notEqual(broken, opts.scripts["record-previous.sh"], "fixture edit must change the script");
   const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, {
     ...opts,
@@ -219,8 +247,8 @@ test("property 6 bites: record-previous.sh without --scope and no prior pull FAI
   });
   assert.equal(ok, false);
   assert.ok(
-    failures.some((f) => f.startsWith("(6)") && /record-previous/.test(f)),
-    "expected a property-6 record-previous failure; got:\n" + failures.join("\n"),
+    failures.some((f) => f.startsWith("(8)") && /record-previous/.test(f)),
+    "expected a property-8 failure when the REST lookup helper is gone; got:\n" + failures.join("\n"),
   );
 });
 

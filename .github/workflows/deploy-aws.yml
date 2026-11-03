@@ -497,11 +497,12 @@ jobs:
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
         # Shared with the rehearsal via scripts/vercel/record-previous.sh. The
-        # script runs the `vercel ls` lookup with errexit OFF around the capture
-        # (scripts/vercel/lib.sh vercel_capture) and always exits 0, so a failed
-        # lookup warns with the CLI's REAL error text and continues instead of
-        # killing the deploy — the bug run 41673569635 hit (the step ran under
-        # `bash -e {0}` so the inline `ls_rc=$?` soft-fail branch was dead code).
+        # lookup goes through the Vercel REST API (Bearer + teamId), NOT the CLI
+        # — `vercel ls` 404s "User not found" with this token (the bug run
+        # 41673569635 swallowed). The script captures the HTTP code/body with
+        # errexit OFF and always exits 0, so a failed lookup warns with the real
+        # reason and continues instead of killing the deploy; on success it
+        # records a real previous production URL.
         run: bash scripts/vercel/record-previous.sh
 
       # vercel pull writes the project settings for the production environment
@@ -786,23 +787,24 @@ jobs:
         with:
           node-version: 22
 
-      # vercel promote assigns the production domain to the already-uploaded
-      # deployment. No rebuild, no re-upload — the exact artifact validated in
-      # web-build is what goes live.
-      - name: vercel promote <new build>
+      # Promote the already-uploaded deployment to production (assign the
+      # production domain). No rebuild, no re-upload — the exact artifact
+      # validated in web-build is what goes live.
+      - name: Promote web to production (REST)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           DEPLOYMENT_URL: ${{ needs.web-build.outputs.deployment_url }}
-        # Shared with the rehearsal's promote-PATH exercise via
-        # scripts/vercel/promote.sh. The script fails WITH A MESSAGE on an empty
-        # URL and passes --scope "$VERCEL_ORG_ID" explicitly, because this is a
-        # SEPARATE job from web-build with no prior `vercel pull` and the team-
-        # scoped VERCEL_TOKEN would otherwise fail the account lookup with 404
-        # (#1037). The rehearsal never runs this script (it would mutate
-        # production); it exercises the same scope+token+CLI flags with a
-        # non-mutating `vercel inspect` instead.
+        # scripts/vercel/promote.sh uses the Vercel REST API (Bearer + teamId),
+        # NOT `vercel promote` — that CLI call 404s "User not found" with this
+        # token (prod run 41590226748) because it resolves scope through the
+        # authenticated user. The REST endpoints
+        # (GET /v13/deployments/<url> then POST /v10/projects/<proj>/promote/<id>)
+        # address the team/project directly. The script fails WITH A MESSAGE on
+        # an empty URL or any non-2xx. The rehearsal never runs this script (it
+        # mutates production); it exercises the same REST auth/endpoints
+        # non-mutatingly and FAILS if that path can't be proven.
         run: bash scripts/vercel/promote.sh
 
   # ---------------------------------------------------------------------------

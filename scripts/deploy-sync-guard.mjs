@@ -420,6 +420,37 @@ export function evaluateDeploySync(workflowText, vercelJsonText, opts = {}) {
     }
   }
 
+  // ---- Property 8 (#1041 fail 1): no user-lookup CLI command in the scripts. -
+  // `vercel ls`, `vercel inspect` and `vercel promote` resolve scope through
+  // the authenticated USER, which this repo's token cannot resolve (404 "User
+  // not found" — proven in prod run 41590226748 and the rehearsal). The lookup
+  // and the promote MUST go through the REST API (Bearer + teamId), which does
+  // not do that lookup. Red if any shared script reintroduces one of those CLI
+  // subcommands as an executed call.
+  if (scripts) {
+    const forbidden = ["ls", "inspect", "promote"];
+    for (const [fname, text] of Object.entries(scripts)) {
+      for (const c of vercelCalls(text, `scripts/vercel/${fname}`)) {
+        if (forbidden.includes(c.subcommand)) {
+          failures.push(
+            `(8) scripts/vercel/${fname} runs \`vercel ${c.subcommand}\`, a user-lookup CLI command that 404s with this token; ` +
+              `use the REST API (Bearer + teamId) instead. Line: ${c.line}`,
+          );
+        }
+      }
+    }
+    // And the promote + lookup scripts must actually use the REST helpers.
+    const restUsers = { "record-previous.sh": "vercel_api_get", "promote.sh": "vercel_api_post" };
+    for (const [fname, fn] of Object.entries(restUsers)) {
+      const text = scripts[fname] || "";
+      if (!text.includes(fn)) {
+        failures.push(
+          `(8) scripts/vercel/${fname} does not call ${fn}; the ${fname === "promote.sh" ? "promote" : "previous-deployment lookup"} must go through the REST API, not the user-lookup CLI.`,
+        );
+      }
+    }
+  }
+
   return { ok: failures.length === 0, failures };
 }
 

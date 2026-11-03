@@ -1,27 +1,33 @@
-// Stubbed-vercel failure-path test for the shared Vercel step scripts
+// Stubbed failure-path test for the shared Vercel step scripts
 // (scripts/vercel/*.sh). Runs in the `verify` job, which is in ci-gate's needs,
 // so this is a CI-gate test (#1041, condition 6).
 //
-// It puts a FAKE `vercel` on the scripts' path via the VERCEL_CMD override
-// (scripts/vercel/lib.sh) and drives each script's failure and success paths
-// with no network and no real CLI. It proves:
+// The scripts use two mechanisms, each stubbed WITHOUT a network:
+//   * record-previous.sh and promote.sh use the Vercel REST API (Bearer +
+//     teamId) — the CLI's `ls`/`inspect`/`promote` 404 "User not found" with
+//     this token, so the fix went to REST. These are driven by a fake `curl`
+//     on PATH that emits a canned body + HTTP status code (lib.sh's
+//     `-w '\n%{http_code}'` contract), decided per request from env.
+//   * deploy.sh uses the CLI (`vercel deploy`), driven by a fake `vercel` via
+//     the VERCEL_CMD override (scripts/vercel/lib.sh).
 //
-//   1. record-previous.sh — the bug fix. With a FAILING stub it must WARN with
-//      the CLI's real error text and CONTINUE (exit 0), not die. This is the
-//      behaviour the inline step could not have, because Actions runs a `run:`
-//      block as `bash -e {0}` and errexit killed the `ls_out=$(...)` capture
-//      before the soft-fail branch. The test ALSO runs the ORIGINAL main step
-//      body (read live from origin/main's deploy-aws.yml) the same way Actions
-//      would — `bash -e` — and asserts it REDS, so the red-on-broken proof is
-//      pinned in CI and a regression that reintroduces the pattern reds here.
-//   2. deploy.sh / promote.sh — a hard failure must exit non-zero WITH A
-//      MESSAGE (`::error`), never silently.
+// It proves:
+//   1. record-previous.sh — on an API failure it WARNS with the real HTTP
+//      code+body and CONTINUES (exit 0); on success it records a real previous
+//      production URL. Both paths shown.
+//   2. promote.sh — resolves the deployment id then promotes via REST; a
+//      non-2xx on EITHER call is a hard failure WITH A MESSAGE (never silent);
+//      an empty URL fails with a message; success names the resolved id and
+//      hits /v10/projects/<proj>/promote/<id>?teamId=<team>.
+//   3. deploy.sh — a no-URL deploy fails WITH A MESSAGE.
+//   4. The ORIGINAL origin/main inline `ls` step body REDS under `bash -e`
+//      (the red-on-broken proof), pinned in CI.
 //
-// Pure Node + bash, no deps, like the other scripts/*.test.mjs.
+// Pure Node + bash + a fake curl, no network, no deps.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +35,6 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
 
-// --- a tmp dir holding fake `vercel` executables of various behaviours -------
 const stubDir = mkdtempSync(join(tmpdir(), "vercel-stub-"));
 process.on("exit", () => {
   try {
@@ -38,7 +43,6 @@ process.on("exit", () => {
     /* best effort */
   }
 });
-
 function writeStub(name, body) {
   const p = join(stubDir, name);
   writeFileSync(p, `#!/usr/bin/env bash\n${body}\n`);
@@ -46,102 +50,176 @@ function writeStub(name, body) {
   return p;
 }
 
-// Fails like the real team-token-no-link lookup: 404 on stderr, exit 1.
-const failStub = writeStub(
-  "vercel-fail",
-  `echo "Error: User not found. (404)" >&2\nexit 1`,
-);
-// Succeeds; answers each subcommand with plausible output.
-const okStub = writeStub(
-  "vercel-ok",
-  `case "$1" in
-  ls) echo "  https://snapurl-prev000.vercel.app  12m ago  Production";;
-  deploy) echo "https://snapurl-new999.vercel.app";;
-  promote) echo "Success! promoted";;
-  *) echo "ok $1";;
-esac
-exit 0`,
-);
-// Succeeds but prints NOTHING: the silent-no-URL case for deploy.sh.
-const emptyStub = writeStub("vercel-empty", `exit 0`);
+// A fake `curl` honouring lib.sh's exact invocation:
+//   curl -sS [-X POST] -w '\n%{http_code}' -H ... [-d {}] <URL>
+// It writes the canned body then a newline + status code, matching the real
+// -w trailer the helpers split on. The response is chosen by matching the URL
+// (last arg) and whether -X POST is present, from a tiny rule table passed in
+// CURL_RULES (JSON: [{method, match, code, body}], first match wins). A request
+// log is appended to $CURL_LOG so a test can assert what was called.
+const FAKE_CURL = `
+url="\${@: -1}"
+method=GET
+for a in "$@"; do [ "$a" = "POST" ] && method=POST; done
+[ -n "\${CURL_LOG:-}" ] && echo "\${method} \${url}" >> "\$CURL_LOG"
+printf '%s' "\$CURL_RULES" | CURL_URL="\$url" CURL_METHOD="\$method" node -e '
+  let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+    const rules=JSON.parse(s||"[]");
+    const url=process.env.CURL_URL, method=process.env.CURL_METHOD;
+    const r=rules.find(x=>(!x.method||x.method===method)&&url.includes(x.match))||{code:500,body:"{}"};
+    process.stdout.write((typeof r.body==="string"?r.body:JSON.stringify(r.body)));
+    process.stdout.write("\\n"+r.code);
+  });
+'
+`;
+const fakeCurl = writeStub("curl", FAKE_CURL);
 
-/** Run a script with a chosen stub and env. Returns {status, out}. */
-function runScript(script, stubPath, env = {}) {
+/** Run a script with a curl rule table (and optional CLI stub). */
+function runScript(script, { rules = [], cliStub, env = {} } = {}) {
+  const logPath = join(stubDir, `curl-log-${Math.random().toString(36).slice(2)}`);
   const r = spawnSync("bash", [join("scripts/vercel", script)], {
     cwd: repoRoot,
     encoding: "utf8",
     env: {
       ...process.env,
-      VERCEL_CMD: stubPath,
+      PATH: `${stubDir}:${process.env.PATH}`, // fake curl wins
+      CURL_RULES: JSON.stringify(rules),
+      CURL_LOG: logPath,
+      VERCEL_API_BASE: "https://api.vercel.test",
       VERCEL_CLI_VERSION: "65.9.0",
       VERCEL_TOKEN: "stub-token",
       VERCEL_ORG_ID: "team_stub",
       VERCEL_PROJECT_ID: "prj_stub",
-      // No GITHUB_OUTPUT: the scripts print "[output] k=v" instead of writing.
       GITHUB_OUTPUT: "",
+      ...(cliStub ? { VERCEL_CMD: cliStub } : {}),
       ...env,
     },
   });
-  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+  let log = "";
+  try {
+    log = readFileSync(logPath, "utf8");
+  } catch {
+    /* no requests */
+  }
+  void fakeCurl;
+  return { status: r.status, out: `${r.stdout}${r.stderr}`, log };
 }
 
-// --- record-previous.sh ------------------------------------------------------
+// --- record-previous.sh (REST list-deployments) ------------------------------
 
-test("record-previous.sh: failing vercel warns with the real error text and CONTINUES (exit 0)", () => {
-  const { status, out } = runScript("record-previous.sh", failStub);
+test("record-previous.sh: a failing API warns with the HTTP code+body and CONTINUES (exit 0)", () => {
+  const { status, out } = runScript("record-previous.sh", {
+    rules: [{ match: "/v6/deployments", code: 403, body: '{"error":{"message":"Not authorized"}}' }],
+  });
   assert.equal(status, 0, "the previous-deployment lookup must NEVER fail the deploy");
   assert.match(out, /::warning title=Could not list previous production deployment::/);
-  assert.match(out, /User not found\. \(404\)/, "the CLI's real error text must be surfaced, not swallowed");
-  assert.match(out, /previous_url=\s*$/m, "previous_url must be recorded empty on failure");
+  assert.match(out, /http=403/, "the real HTTP code must be surfaced");
+  assert.match(out, /Not authorized/, "the real error body must be surfaced, not swallowed");
+  assert.match(out, /previous_url=\s*$/m, "previous_url empty on failure");
   assert.match(out, /<none found>/);
 });
 
-test("record-previous.sh: succeeding vercel records the previous URL (exit 0)", () => {
-  const { status, out } = runScript("record-previous.sh", okStub);
+test("record-previous.sh: a successful API records a REAL previous production URL (exit 0)", () => {
+  const { status, out } = runScript("record-previous.sh", {
+    rules: [{ match: "/v6/deployments", code: 200, body: { deployments: [{ url: "snapurl-prev000.vercel.app" }] } }],
+  });
   assert.equal(status, 0);
-  assert.match(out, /previous_url=https:\/\/snapurl-prev000\.vercel\.app/);
+  assert.match(out, /previous_url=https:\/\/snapurl-prev000\.vercel\.app/, "records the newest prod URL");
+  assert.match(out, /Previous production deployment: https:\/\/snapurl-prev000\.vercel\.app/);
 });
 
+// --- promote.sh (REST resolve id -> POST promote) ----------------------------
+
+test("promote.sh: an empty deployment URL fails WITH A MESSAGE", () => {
+  const { status, out } = runScript("promote.sh", { env: { DEPLOYMENT_URL: "" } });
+  assert.notEqual(status, 0);
+  assert.match(out, /::error title=No web deployment to promote::/);
+});
+
+test("promote.sh: a failed deployment-id resolve is a HARD failure WITH A MESSAGE", () => {
+  const { status, out } = runScript("promote.sh", {
+    rules: [{ method: "GET", match: "/v13/deployments/", code: 404, body: '{"error":{"message":"not found"}}' }],
+    env: { DEPLOYMENT_URL: "https://snapurl-x.vercel.app" },
+  });
+  assert.notEqual(status, 0, "promote must NOT silently continue when it cannot resolve the deployment");
+  assert.match(out, /::error title=Promote failed \(resolve deployment\)::/);
+  assert.match(out, /http=404/);
+});
+
+test("promote.sh: a failed promote POST is a HARD failure WITH A MESSAGE", () => {
+  const { status, out } = runScript("promote.sh", {
+    rules: [
+      { method: "GET", match: "/v13/deployments/", code: 200, body: { uid: "dpl_abc123" } },
+      { method: "POST", match: "/promote/", code: 403, body: '{"error":{"message":"forbidden"}}' },
+    ],
+    env: { DEPLOYMENT_URL: "https://snapurl-x.vercel.app" },
+  });
+  assert.notEqual(status, 0);
+  assert.match(out, /::error title=Promote failed::/);
+  assert.match(out, /promote\/dpl_abc123/, "the promote endpoint path must name the resolved id");
+  assert.match(out, /http=403/);
+});
+
+test("promote.sh: resolve-then-promote success exits 0 and hits the right endpoint", () => {
+  const { status, out, log } = runScript("promote.sh", {
+    rules: [
+      { method: "GET", match: "/v13/deployments/", code: 200, body: { uid: "dpl_abc123" } },
+      { method: "POST", match: "/promote/", code: 200, body: "{}" },
+    ],
+    env: { DEPLOYMENT_URL: "https://snapurl-new999.vercel.app" },
+  });
+  assert.equal(status, 0, out);
+  assert.match(out, /Promoted https:\/\/snapurl-new999\.vercel\.app \(deployment dpl_abc123\) to production\./);
+  assert.match(
+    log,
+    /POST https:\/\/api\.vercel\.test\/v10\/projects\/prj_stub\/promote\/dpl_abc123\?teamId=team_stub/,
+    "promote POST must hit /v10/projects/<proj>/promote/<id>?teamId=<team>; saw:\n" + log,
+  );
+});
+
+// --- deploy.sh (CLI) ---------------------------------------------------------
+
+test("deploy.sh: a deploy that prints no URL fails WITH A MESSAGE (not silently)", () => {
+  const emptyStub = writeStub("vercel-empty", `exit 0`);
+  const { status, out } = runScript("deploy.sh", { cliStub: emptyStub });
+  assert.notEqual(status, 0, "a no-URL deploy must be a hard failure");
+  assert.match(out, /::error title=Web deploy produced no URL::/);
+});
+
+test("deploy.sh: a successful deploy records deployment_url", () => {
+  const okStub = writeStub("vercel-ok", `echo "https://snapurl-new999.vercel.app"\nexit 0`);
+  const { status, out } = runScript("deploy.sh", { cliStub: okStub });
+  assert.equal(status, 0);
+  assert.match(out, /deployment_url=https:\/\/snapurl-new999\.vercel\.app/);
+});
+
+// --- red-on-broken: the ORIGINAL inline ls step body under bash -e -----------
+
 test("ORIGINAL inline main step body REDS under `bash -e` (red-on-broken proof)", () => {
-  // Extract origin/main's "Record previous production deployment" step body and
-  // run it exactly as Actions would (bash -e), with the failing stub reachable
-  // as `vercel` AND as the pinned `pnpm dlx vercel@...`. It must exit non-zero
-  // and NOT reach its own soft-fail branch — the whole reason this change
-  // exists. If a future edit makes the inline pattern pass, this test reds and
-  // tells the author the proof no longer demonstrates the bug.
-  let originalBody;
+  let originalBody = null;
   try {
     originalBody = execFileSync("git", ["show", "origin/main:.github/workflows/deploy-aws.yml"], {
       cwd: repoRoot,
       encoding: "utf8",
     });
   } catch {
-    // Fallback: a faithful transcription of origin/main's body. Used only when
-    // origin/main is unavailable (shallow/offline); the live path above is the
-    // real proof in CI.
     originalBody = null;
   }
-
-  // The original body, as a standalone script. When we can read origin/main we
-  // assert it still contains this shape; otherwise we use the transcription.
+  if (originalBody && /ls_out="\$\(pnpm dlx vercel@/.test(originalBody)) {
+    assert.match(
+      originalBody,
+      /ls_out="\$\(pnpm dlx vercel@"\$\{VERCEL_CLI_VERSION\}" ls --prod[\s\S]*?\)"\s*\n\s*ls_rc=\$\?/,
+      "origin/main's inline capture-then-check pattern is the bug being fixed",
+    );
+  }
+  writeStub("vercel", `echo "Error: User not found. (404)" >&2\nexit 1`);
   const inline = [
     `set -uo pipefail`,
-    // pnpm dlx is not available offline; alias it to the failing stub so the
-    // capture fails exactly as the real 404 would.
     `ls_out="$(vercel ls --prod --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" 2>&1)"`,
     `ls_rc=$?`,
     `if [ "$ls_rc" -ne 0 ]; then echo "SOFT_FAIL_BRANCH_RAN rc=$ls_rc"; prev=""; else prev=""; fi`,
     `echo "REACHED_END"`,
   ].join("\n");
-
-  if (originalBody) {
-    assert.match(
-      originalBody,
-      /ls_out="\$\(pnpm dlx vercel@"\$\{VERCEL_CLI_VERSION\}" ls --prod[\s\S]*?\)"\s*\n\s*ls_rc=\$\?/,
-      "origin/main's inline capture-then-check pattern is the bug being fixed; if it is gone, update this proof",
-    );
-  }
-
   const scriptPath = join(stubDir, "inline-orig.sh");
   writeFileSync(scriptPath, inline);
   const r = spawnSync("bash", ["-e", scriptPath], {
@@ -149,50 +227,7 @@ test("ORIGINAL inline main step body REDS under `bash -e` (red-on-broken proof)"
     encoding: "utf8",
     env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}`, VERCEL_ORG_ID: "team_stub", VERCEL_TOKEN: "x" },
   });
-  // The stub named `vercel` must be the one that fails.
   assert.equal(r.status !== 0, true, "the inline body must FAIL under bash -e (errexit kills the capture)");
-  assert.doesNotMatch(
-    `${r.stdout}${r.stderr}`,
-    /SOFT_FAIL_BRANCH_RAN/,
-    "under bash -e the soft-fail branch is DEAD CODE — it must never run",
-  );
+  assert.doesNotMatch(`${r.stdout}${r.stderr}`, /SOFT_FAIL_BRANCH_RAN/, "the soft-fail branch is DEAD CODE under errexit");
   assert.doesNotMatch(`${r.stdout}${r.stderr}`, /REACHED_END/, "the step dies before its end under errexit");
-});
-
-// --- deploy.sh ---------------------------------------------------------------
-
-test("deploy.sh: a deploy that prints no URL fails WITH A MESSAGE (not silently)", () => {
-  const { status, out } = runScript("deploy.sh", emptyStub);
-  assert.notEqual(status, 0, "a no-URL deploy must be a hard failure");
-  assert.match(out, /::error title=Web deploy produced no URL::/);
-});
-
-test("deploy.sh: a successful deploy records deployment_url", () => {
-  const { status, out } = runScript("deploy.sh", okStub);
-  assert.equal(status, 0);
-  assert.match(out, /deployment_url=https:\/\/snapurl-new999\.vercel\.app/);
-});
-
-// --- promote.sh --------------------------------------------------------------
-
-test("promote.sh: an empty deployment URL fails WITH A MESSAGE", () => {
-  const { status, out } = runScript("promote.sh", okStub, { DEPLOYMENT_URL: "" });
-  assert.notEqual(status, 0);
-  assert.match(out, /::error title=No web deployment to promote::/);
-});
-
-test("promote.sh: PULLS first (link-scoped), then promotes the real URL without --scope", () => {
-  // Record the args the stub is called with. promote.sh must establish the
-  // project link via `pull` (no user lookup) BEFORE promoting, and must NOT
-  // pass `--scope <team_id>` to promote (that re-enters the 404-prone
-  // account-load path the rehearsal exposed). The link from pull scopes it.
-  const argStub = writeStub("vercel-args", `echo "ARGS: $*"\nexit 0`);
-  const { status, out } = runScript("promote.sh", argStub, {
-    DEPLOYMENT_URL: "https://snapurl-new999.vercel.app",
-  });
-  assert.equal(status, 0);
-  const lines = out.split("\n").filter((l) => l.startsWith("ARGS: "));
-  assert.equal(lines[0], "ARGS: pull --yes --environment=production --token stub-token", "promote must pull first");
-  assert.match(lines[1], /^ARGS: promote https:\/\/snapurl-new999\.vercel\.app --token /, "promote second");
-  assert.doesNotMatch(out, /promote[^\n]*--scope/, "promote must NOT carry --scope (relies on the pull link)");
 });

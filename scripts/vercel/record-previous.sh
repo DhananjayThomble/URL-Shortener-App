@@ -3,43 +3,40 @@
 # smoke-failure runbook can print the exact command to promote it back.
 #
 # This step MUST NEVER fail the deploy (#1037, #1041). A first-ever deploy has
-# no previous production URL, and a transient `vercel ls` failure is not a
-# reason to block a deploy — but when it fails it must surface the CLI's real
-# error text, not silently record "<none found>".
+# no previous production URL, and a transient lookup failure is not a reason to
+# block a deploy — but when it fails it must surface the real error, not
+# silently record "<none found>".
 #
-# The bug this fixes (run 41673569635): the previous inline step wrote
-# `set -uo pipefail` and then `ls_out="$(vercel ls ...)"; ls_rc=$?`. Because
-# Actions runs the block as `bash -e {0}`, errexit killed the script on the
-# failed command substitution BEFORE `ls_rc=$?`, so the soft-fail branch was
-# dead code and the step exited 1 with no output. vercel_capture runs the CLI
-# with errexit off, so rc and output are always captured and the warn-continue
-# path actually runs.
+# MECHANISM (#1041 fail 1): the Vercel REST API list-deployments endpoint
+#   GET /v6/deployments?projectId=<id>&teamId=<team>&target=production&limit=1
+# with Authorization: Bearer $VERCEL_TOKEN. This addresses the team+project
+# directly and does NOT do the CLI's user lookup, which 404s "User not found."
+# with this token (the exact failure run 41673569635 swallowed and that also
+# breaks `vercel ls`/`inspect`/`promote`). On success it records a REAL previous
+# production URL (condition 2's success path, shown at runtime by the rehearsal
+# against the real project).
 #
-# Inputs (env): VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID (checked by the
-# caller/require step), VERCEL_CLI_VERSION. Output: previous_url (via
-# gha_output). This job has NOT run `vercel pull`, so there is no project link
-# to scope the CLI from — the team-scoped VERCEL_TOKEN would then fail the CLI's
-# personal-account lookup with "User not found. (404)", so --scope is explicit.
+# ERREXIT-PROOF: the API helpers capture rc/body/code with errexit off, and this
+# script exits 0 unconditionally — the lookup can never fail the deploy.
+#
+# Inputs (env): VERCEL_TOKEN, VERCEL_ORG_ID (team id), VERCEL_PROJECT_ID.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/vercel/lib.sh
 . "$here/lib.sh"
 
-: "${VERCEL_ORG_ID:?}" "${VERCEL_TOKEN:?}"
+: "${VERCEL_ORG_ID:?}" "${VERCEL_TOKEN:?}" "${VERCEL_PROJECT_ID:?}"
 
-ls_rc=0
-ls_out=""
-# shellcheck disable=SC2046  # vercel_cli emits a 3-word prefix we want split.
-vercel_capture ls_rc ls_out -- $(vercel_cli) ls --prod \
-  --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
+rc=0 body="" code=""
+vercel_api_get rc body code -- \
+  "/v6/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_ORG_ID}&target=production&state=READY&limit=1"
 
-if [ "$ls_rc" -ne 0 ]; then
-  # Surface the REAL CLI error text (captured, not swallowed) and continue.
-  echo "::warning title=Could not list previous production deployment::vercel ls --prod exited ${ls_rc}: ${ls_out}"
-  prev=""
+prev=""
+if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+  # Surface the real reason (HTTP code + body), then continue.
+  echo "::warning title=Could not list previous production deployment::REST /v6/deployments rc=${rc} http=${code}: ${body}"
 else
-  prev="$(printf '%s\n' "$ls_out" \
-          | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | head -1 || true)"
+  prev="$(first_prod_deployment_url "$body")"
 fi
 
 gha_output previous_url "${prev}"
