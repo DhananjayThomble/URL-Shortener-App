@@ -123,7 +123,7 @@ test("record-previous.sh: resolves the production ALIAS to the LIVE deployment a
   // 1) /domains -> the custom production domain; 2) /v4/aliases/<domain> ->
   // the deployment it ACTUALLY serves. The recorded URL is that alias target,
   // so an unpromoted newer build can never be recorded.
-  const { status, out } = runScript("record-previous.sh", {
+  const { status, out, log } = runScript("record-previous.sh", {
     rules: [
       { match: "/domains", code: 200, body: { domains: [{ name: "app.snapurl.in", verified: true }] } },
       {
@@ -140,6 +140,9 @@ test("record-previous.sh: resolves the production ALIAS to the LIVE deployment a
     /Live production: alias https:\/\/app\.snapurl\.in is served by deployment https:\/\/snapurl-live000\.vercel\.app/,
     "must print the alias<->url cross-check",
   );
+  // Regression guard: the domains request must NOT carry target= alongside
+  // production= (Vercel 400s "Cannot use both"); it broke run 41700173547.
+  assert.doesNotMatch(log, /\/domains\?[^\n]*target=/, "domains request must not combine production= and target=");
 });
 
 test("record-previous.sh: no verified custom production domain => records nothing (exit 0)", () => {

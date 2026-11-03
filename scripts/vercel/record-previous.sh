@@ -8,8 +8,10 @@
 #
 # MECHANISM (#1041 fail 1 + fail 2): resolve the production ALIAS to the
 # deployment it points at, via two REST reads (Bearer + teamId, no user lookup):
-#   1. GET /v9/projects/<id>/domains?production=true&target=production
-#        -> the verified custom production domain (e.g. app.snapurl.in)
+#   1. GET /v9/projects/<id>/domains?production=true
+#        -> the verified custom production domain (e.g. app.snapurl.in).
+#        NOTE: `production` and `target` are mutually exclusive on this endpoint
+#        (400 "Cannot use both"), so only `production=true` is passed.
 #   2. GET /v4/aliases/<domain>
 #        -> deployment.url : the build the domain ACTUALLY serves right now
 #
@@ -40,7 +42,7 @@ warn() { echo "::warning title=Could not read live production deployment::$1"; }
 # 1) The verified custom production domain.
 rc=0 body="" code=""
 vercel_api_get rc body code -- \
-  "/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&production=true&target=production"
+  "/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&production=true"
 if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
   warn "GET /v9/projects/<id>/domains rc=${rc} http=${code}: ${body}"
 else

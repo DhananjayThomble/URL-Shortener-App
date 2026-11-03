@@ -222,7 +222,7 @@ production_domain_name() {
 live_production_deployment_id() {
   local rc body code domain abody
   vercel_api_get rc body code -- \
-    "/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&production=true&target=production"
+    "/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&production=true"
   if [ "$rc" -ne 0 ] || ! api_ok "$code"; then printf ''; return 0; fi
   domain="$(production_domain_name "$body")"
   if [ -z "$domain" ]; then printf ''; return 0; fi
