@@ -136,9 +136,13 @@ export function vercelCalls(blockText, jobName) {
     const isEcho = /^\s*echo\s/.test(raw);
     const invocation = /pnpm\s+dlx\s+vercel@/.test(raw);
     if (isEcho || !invocation) continue;
-    // The subcommand is the first bareword after the pinned CLI token (skipping
-    // any leading global flags).
-    const m = /vercel@\S+"?\s+(?:--\S+(?:\s+\S+)?\s+)*?([a-z][a-z-]*)/.exec(raw);
+    // The subcommand is the first token after the pinned CLI token. In this
+    // codebase every call is `pnpm dlx vercel@"${VERCEL_CLI_VERSION}" <sub>`
+    // with the subcommand immediately after the version token and no leading
+    // global flags, so match it directly. The regex is deliberately
+    // linear-time: a single `\S+` for the version token, one or more spaces,
+    // then the subcommand word — no nested quantifiers that could backtrack.
+    const m = /vercel@\S+\s+([a-z][a-z-]*)/.exec(raw);
     const subcommand = m ? m[1] : "(unknown)";
     const scoped = /--scope\b/.test(raw);
     const call = { job: jobName, subcommand, line: raw.trim(), scoped, afterPull: sawPull };
