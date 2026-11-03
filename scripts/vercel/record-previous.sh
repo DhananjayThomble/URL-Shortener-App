@@ -3,28 +3,25 @@
 # anything changes, so a smoke-failure runbook can promote the live build back.
 #
 # This step MUST NEVER fail the deploy (#1037, #1041). A first-ever deploy has
-# no previous production deployment, and a transient lookup failure is not a
-# reason to block — but on failure it surfaces the real reason, not silence.
+# no live production deployment, and a transient lookup failure is not a reason
+# to block — but on failure it surfaces the real reason, not silence.
 #
-# MECHANISM (#1041 fail 1 + fail 2): the Vercel REST API project endpoint
-#   GET /v9/projects/<id>?teamId=<team>
-# read as targets.production — the deployment the production alias actually
-# points at RIGHT NOW. NOT GET /v6/deployments?target=production, which returns
-# the newest deployment CREATED with target=production: that set includes every
-# unpromoted `deploy --prebuilt --prod --skip-domain` build (each rehearsal, and
-# each FAILED promote), so the newest one is often a build that was never live
-# (#1041 fail 2 — run 41695814906 recorded snapurl-ogx5qk1bz, a PR-branch build
-# from an earlier rehearsal). targets.production cannot be one of those, because
-# it is by definition what the domain serves.
+# MECHANISM (#1041 fail 1 + fail 2): resolve the production ALIAS to the
+# deployment it points at, via two REST reads (Bearer + teamId, no user lookup):
+#   1. GET /v9/projects/<id>/domains?production=true&target=production
+#        -> the verified custom production domain (e.g. app.snapurl.in)
+#   2. GET /v4/aliases/<domain>
+#        -> deployment.url : the build the domain ACTUALLY serves right now
 #
-# CROSS-CHECK: the recorded URL is only trustworthy if it really is what the
-# live alias serves, so this asserts targets.production carries a production
-# alias (the custom domain, e.g. app.snapurl.in) and prints "<url> is served by
-# <alias>". No alias on the production target => treat as "nothing live yet".
-#
-# The REST call uses Bearer + teamId and does NOT do the CLI's user lookup,
-# which 404s "User not found." with this token (the failure run 41673569635
-# swallowed, and that also breaks `vercel ls`/`inspect`/`promote`).
+# Why not GET /v6/deployments?target=production (fail 2): its newest entry is
+# the newest build CREATED with production target, which includes every
+# unpromoted `deploy --prebuilt --prod --skip-domain` build (rehearsals, failed
+# promotes) — so it can point at a build that was never live (run 41695814906
+# recorded snapurl-ogx5qk1bz; run 41698880451 saw targets.production orphaned on
+# snapurl-raxjnarqn with NO alias). Resolving the alias cannot do that: it is,
+# by definition, what the domain serves. The URL recorded here IS the alias
+# target, so the "previous URL == live alias" cross-check is intrinsic — the
+# log prints "alias <domain> is served by deployment <url>".
 #
 # ERREXIT-PROOF: the API helper captures rc/body/code with errexit off, and this
 # script exits 0 unconditionally — the lookup can never fail the deploy.
@@ -37,27 +34,36 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 : "${VERCEL_ORG_ID:?}" "${VERCEL_TOKEN:?}" "${VERCEL_PROJECT_ID:?}"
 
-rc=0 body="" code=""
-vercel_api_get rc body code -- "/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_ORG_ID}"
-
 prev=""
+warn() { echo "::warning title=Could not read live production deployment::$1"; }
+
+# 1) The verified custom production domain.
+rc=0 body="" code=""
+vercel_api_get rc body code -- \
+  "/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&production=true&target=production"
 if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
-  echo "::warning title=Could not read production target::GET /v9/projects rc=${rc} http=${code}: ${body}"
+  warn "GET /v9/projects/<id>/domains rc=${rc} http=${code}: ${body}"
 else
-  url="$(production_target url "$body")"
-  alias_url="$(production_target alias "$body")"
-  if [ -z "$url" ]; then
-    echo "No production target is live yet (first deploy?) — nothing to record."
-  elif [ -z "$alias_url" ]; then
-    # A production target with no custom alias is not something the domain
-    # serves to users; do not record it as the rollback candidate.
-    echo "::warning title=Production target has no alias::targets.production=${url} carries no production alias; not recording it as the live previous deployment."
+  domain="$(production_domain_name "$body")"
+  if [ -z "$domain" ]; then
+    echo "No verified custom production domain on this project yet — nothing live to record."
   else
-    prev="$url"
-    # The cross-check condition 1 asks for: the recorded URL is the one the live
-    # alias serves. Because both come from the SAME targets.production object,
-    # they are consistent by construction; print them together as the proof.
-    echo "Live production: alias ${alias_url} is served by deployment ${prev}"
+    # 2) The deployment that domain actually points at.
+    rc=0 abody="" code=""
+    vercel_api_get rc abody code -- "/v4/aliases/${domain}?teamId=${VERCEL_ORG_ID}"
+    if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+      warn "GET /v4/aliases/${domain} rc=${rc} http=${code}: ${abody}"
+    else
+      url="$(alias_deployment_field url "$abody")"
+      if [ -z "$url" ]; then
+        echo "Production alias ${domain} resolves to no deployment yet — nothing to record."
+      else
+        prev="$url"
+        # The recorded URL IS the alias target, so this line is the cross-check
+        # condition 1 asks for: previous URL == what the live alias serves.
+        echo "Live production: alias https://${domain} is served by deployment ${prev}"
+      fi
+    fi
   fi
 fi
 

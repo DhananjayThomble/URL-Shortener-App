@@ -107,43 +107,34 @@ function runScript(script, { rules = [], cliStub, env = {} } = {}) {
 
 // --- record-previous.sh (REST list-deployments) ------------------------------
 
-test("record-previous.sh: a failing API warns with the HTTP code+body and CONTINUES (exit 0)", () => {
+test("record-previous.sh: a failing domains API warns with HTTP code+body and CONTINUES (exit 0)", () => {
   const { status, out } = runScript("record-previous.sh", {
-    rules: [{ match: "/v9/projects/", code: 403, body: '{"error":{"message":"Not authorized"}}' }],
+    rules: [{ match: "/domains", code: 403, body: '{"error":{"message":"Not authorized"}}' }],
   });
   assert.equal(status, 0, "the previous-deployment lookup must NEVER fail the deploy");
-  assert.match(out, /::warning title=Could not read production target::/);
+  assert.match(out, /::warning title=Could not read live production deployment::/);
   assert.match(out, /http=403/, "the real HTTP code must be surfaced");
   assert.match(out, /Not authorized/, "the real error body must be surfaced, not swallowed");
   assert.match(out, /previous_url=\s*$/m, "previous_url empty on failure");
   assert.match(out, /<none found>/);
 });
 
-test("record-previous.sh: records the LIVE production target (targets.production), cross-checked vs its alias", () => {
-  // targets.production is what the domain serves; its url is recorded and its
-  // custom alias proves the recorded url is the live one. A separate NEWER
-  // target=production build (an unpromoted rehearsal/failed-promote) must NOT
-  // be what gets recorded — this fixture has none, by construction, because we
-  // read the project's live target, not a deployments list.
+test("record-previous.sh: resolves the production ALIAS to the LIVE deployment and records it", () => {
+  // 1) /domains -> the custom production domain; 2) /v4/aliases/<domain> ->
+  // the deployment it ACTUALLY serves. The recorded URL is that alias target,
+  // so an unpromoted newer build can never be recorded.
   const { status, out } = runScript("record-previous.sh", {
     rules: [
+      { match: "/domains", code: 200, body: { domains: [{ name: "app.snapurl.in", verified: true }] } },
       {
-        match: "/v9/projects/",
+        match: "/v4/aliases/app.snapurl.in",
         code: 200,
-        body: {
-          targets: {
-            production: {
-              id: "dpl_live123",
-              url: "snapurl-live000.vercel.app",
-              alias: ["snapurl-live000.vercel.app", "app.snapurl.in"],
-            },
-          },
-        },
+        body: { deployment: { id: "dpl_live123", url: "snapurl-live000.vercel.app" }, deploymentId: "dpl_live123" },
       },
     ],
   });
   assert.equal(status, 0);
-  assert.match(out, /previous_url=https:\/\/snapurl-live000\.vercel\.app/, "records the LIVE target url");
+  assert.match(out, /previous_url=https:\/\/snapurl-live000\.vercel\.app/, "records the alias's live deployment url");
   assert.match(
     out,
     /Live production: alias https:\/\/app\.snapurl\.in is served by deployment https:\/\/snapurl-live000\.vercel\.app/,
@@ -151,19 +142,25 @@ test("record-previous.sh: records the LIVE production target (targets.production
   );
 });
 
-test("record-previous.sh: a production target with NO custom alias is not recorded as live", () => {
+test("record-previous.sh: no verified custom production domain => records nothing (exit 0)", () => {
+  const { status, out } = runScript("record-previous.sh", {
+    rules: [{ match: "/domains", code: 200, body: { domains: [{ name: "snapurl-x.vercel.app", verified: true }] } }],
+  });
+  assert.equal(status, 0);
+  assert.match(out, /No verified custom production domain/);
+  assert.match(out, /previous_url=\s*$/m, "nothing recorded without a custom domain");
+});
+
+test("record-previous.sh: alias resolving to no deployment records nothing (exit 0)", () => {
   const { status, out } = runScript("record-previous.sh", {
     rules: [
-      {
-        match: "/v9/projects/",
-        code: 200,
-        body: { targets: { production: { id: "dpl_x", url: "snapurl-x.vercel.app", alias: ["snapurl-x.vercel.app"] } } },
-      },
+      { match: "/domains", code: 200, body: { domains: [{ name: "app.snapurl.in", verified: true }] } },
+      { match: "/v4/aliases/", code: 200, body: {} },
     ],
   });
   assert.equal(status, 0);
-  assert.match(out, /::warning title=Production target has no alias::/);
-  assert.match(out, /previous_url=\s*$/m, "no custom alias => not recorded");
+  assert.match(out, /resolves to no deployment/);
+  assert.match(out, /previous_url=\s*$/m);
 });
 
 // --- promote.sh (REST resolve id -> POST promote) ----------------------------

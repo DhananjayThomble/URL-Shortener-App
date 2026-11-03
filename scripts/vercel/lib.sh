@@ -197,34 +197,54 @@ json_field() {
     });' "$2" 2>/dev/null || true
 }
 
-# production_target FIELD BODY -- from a GET /v9/projects/{id} response, read a
-# field of the deployment the production domain is CURRENTLY SERVING
-# (targets.production), not the newest build created with target=production.
-#   FIELD=url   -> the deployment's .vercel.app hostname (what a rollback runbook
-#                  should promote back), with https:// prefixed.
-#   FIELD=id    -> the serving deployment's id (dpl_...).
-#   FIELD=alias -> the production custom alias (the first non-*.vercel.app entry
-#                  in targets.production.alias, e.g. app.snapurl.in), with
-#                  https:// prefixed; this is the live domain the url serves.
-# Empty when the field or targets.production is absent. node, no jq.
-production_target() {
+# production_domain_name BODY -- from a GET /v9/projects/{id}/domains response,
+# the first VERIFIED custom production domain name (a non-*.vercel.app entry,
+# e.g. app.snapurl.in). This is the domain users hit, independent of which
+# deployment currently serves it. Empty when none. node, no jq.
+production_domain_name() {
+  printf '%s' "$1" | node -e '
+    let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try{
+        const o=JSON.parse(s);
+        const ds=o.domains||[];
+        const d=ds.find(x=>x&&x.name&&!x.name.endsWith(".vercel.app")&&x.verified!==false)
+              ||ds.find(x=>x&&x.name&&!x.name.endsWith(".vercel.app"));
+        process.stdout.write(d?d.name:"");
+      }catch{process.stdout.write("");}
+    });' 2>/dev/null || true
+}
+
+# live_production_deployment_id -- echo the id of the deployment the production
+# custom domain CURRENTLY serves (domains -> alias -> deployment.id), or empty.
+# This is the authoritative "do not delete this" id for cleanup: it is what the
+# alias points at, which targets.production.id may NOT be (orphaned builds).
+# Inputs (env): VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID. Errexit-safe.
+live_production_deployment_id() {
+  local rc body code domain abody
+  vercel_api_get rc body code -- \
+    "/v9/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}&production=true&target=production"
+  if [ "$rc" -ne 0 ] || ! api_ok "$code"; then printf ''; return 0; fi
+  domain="$(production_domain_name "$body")"
+  if [ -z "$domain" ]; then printf ''; return 0; fi
+  vercel_api_get rc abody code -- "/v4/aliases/${domain}?teamId=${VERCEL_ORG_ID}"
+  if [ "$rc" -ne 0 ] || ! api_ok "$code"; then printf ''; return 0; fi
+  printf '%s' "$(alias_deployment_field id "$abody")"
+}
+
+# alias_deployment_field FIELD BODY -- from a GET /v4/aliases/{alias} response,
+# read the deployment the alias ACTUALLY points at.
+#   FIELD=url -> deployment.url (with https://). FIELD=id -> deployment.id.
+alias_deployment_field() {
   local field="$1" body="$2"
   printf '%s' "$body" | FIELD="$field" node -e '
     let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
       try{
         const o=JSON.parse(s);
-        const p=(o.targets&&o.targets.production)||null;
-        if(!p){process.stdout.write("");return;}
+        const d=o.deployment||{};
         const f=process.env.FIELD;
-        if(f==="url"){const u=p.url||"";process.stdout.write(u?(u.startsWith("http")?u:"https://"+u):"");}
-        else if(f==="id"){process.stdout.write(p.id||"");}
-        else if(f==="alias"){
-          // The LIVE custom domain only: a *.vercel.app entry is not what the
-          // domain serves to users, so it does not count as the production
-          // alias for the cross-check (empty => "no custom alias").
-          const a=(p.alias||[]).find(x=>x&&!x.endsWith(".vercel.app"))||"";
-          process.stdout.write(a?(a.startsWith("http")?a:"https://"+a):"");
-        } else process.stdout.write("");
+        if(f==="url"){const u=d.url||"";process.stdout.write(u?(u.startsWith("http")?u:"https://"+u):"");}
+        else if(f==="id"){process.stdout.write(d.id||o.deploymentId||"");}
+        else process.stdout.write("");
       }catch{process.stdout.write("");}
     });' 2>/dev/null || true
 }
