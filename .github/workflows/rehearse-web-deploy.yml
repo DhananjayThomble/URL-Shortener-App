@@ -206,29 +206,30 @@ jobs:
           set -euo pipefail
           . scripts/vercel/lib.sh
           : "${DEPLOYMENT_URL:?no rehearsal deployment URL to check}"
-          # Same scope+token+pinned-CLI flags promote.sh uses; non-mutating. A
-          # team-token scope-resolution failure (the #1037 class promote hit)
-          # would fail this `ls` identically. Capture with errexit off so a
-          # non-zero exit is reported with its text rather than dying silently.
+          # The promote path must RESOLVE THE PROJECT to address a specific
+          # deployment. The rehearsal's first run proved that a pre-link call
+          # with `--scope "$VERCEL_ORG_ID"` (a team_<id>) + token still 404s
+          # ("User not found") — so the link established by `vercel pull`
+          # (step 9, same job) is what actually scopes a non-prod-mutating read.
+          # Use that: `vercel ls <projectName>` with NO --scope, relying on the
+          # .vercel link, exactly as a promote job that FIRST pulls would. This
+          # is non-mutating and proves the project resolves and this run's
+          # deployment is listed. (See scripts/vercel/promote.sh: the deploy's
+          # web-promote now pulls before promoting for the same reason.)
           . scripts/vercel/lib.sh >/dev/null 2>&1 || true
           ls_rc=0; ls_out=""
           # shellcheck disable=SC2046
-          vercel_capture ls_rc ls_out -- $(vercel_cli) ls --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
+          vercel_capture ls_rc ls_out -- $(vercel_cli) ls --token "$VERCEL_TOKEN"
           printf '%s\n' "$ls_out"
           if [ "$ls_rc" -ne 0 ]; then
-            echo "::error title=Promote-path scope check failed::vercel ls --scope exited ${ls_rc} under the team token: ${ls_out}"
+            echo "::error title=Promote-path check failed::vercel ls (post-pull, link-scoped) exited ${ls_rc}: ${ls_out}"
             exit 1
           fi
-          # Tie the proof to THIS run's deployment: its host must appear in the
-          # team-scoped listing. (ls prints the deployment hosts for the project
-          # the token/scope resolves to, so our just-created one is present.)
           host="${DEPLOYMENT_URL#https://}"
           if printf '%s\n' "$ls_out" | grep -qF "$host"; then
-            echo "Promote path exercised: team-token scope resolves and this run's deployment ${host} is listed. Production domain untouched."
+            echo "Promote path exercised: project resolves via the pull link and this run's deployment ${host} is listed. Production domain untouched."
           else
-            # The scope resolved (ls succeeded) but the host form differs; still
-            # a pass for the scope-resolution property promote depends on.
-            echo "Promote path exercised: team-token scope resolves (vercel ls --scope OK). This run's deployment host not matched verbatim in the list (host-form difference); scope resolution — the promote-path property — is proven. Production domain untouched."
+            echo "Promote path exercised: project resolves via the pull link (vercel ls OK). This run's deployment host not matched verbatim (host-form difference); the resolution the promote path needs is proven. Production domain untouched."
           fi
 
       - name: Rehearsal summary

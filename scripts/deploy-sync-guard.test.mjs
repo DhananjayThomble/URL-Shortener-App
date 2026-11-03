@@ -206,21 +206,21 @@ test("property 6 holds on the real shared scripts (every Vercel call is scoped)"
   );
 });
 
-test("property 6 bites: record-previous.sh or promote.sh without --scope FAILs", () => {
+test("property 6 bites: record-previous.sh without --scope and no prior pull FAILs", () => {
   const { workflowText, vercelJsonText } = realFiles();
   const opts = liveOpts();
-  // Strip --scope from promote.sh (a separate job, no prior pull): this is the
-  // exact #1037 regression, now expressed in the shared script.
-  const brokenPromote = opts.scripts["promote.sh"].replace(/--scope "\$VERCEL_ORG_ID"\s*/g, "");
-  assert.notEqual(brokenPromote, opts.scripts["promote.sh"], "fixture edit must change the script");
+  // record-previous.sh runs BEFORE pull, so its `ls` must carry --scope. Strip
+  // it: this reproduces the pre-#1037 unscoped pre-link call the guard forbids.
+  const broken = opts.scripts["record-previous.sh"].replace(/--scope "\$VERCEL_ORG_ID" /g, "");
+  assert.notEqual(broken, opts.scripts["record-previous.sh"], "fixture edit must change the script");
   const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, {
     ...opts,
-    scripts: { ...opts.scripts, "promote.sh": brokenPromote },
+    scripts: { ...opts.scripts, "record-previous.sh": broken },
   });
   assert.equal(ok, false);
   assert.ok(
-    failures.some((f) => f.startsWith("(6)") && /promote/.test(f)),
-    "expected a property-6 promote failure; got:\n" + failures.join("\n"),
+    failures.some((f) => f.startsWith("(6)") && /record-previous/.test(f)),
+    "expected a property-6 record-previous failure; got:\n" + failures.join("\n"),
   );
 });
 

@@ -181,15 +181,18 @@ test("promote.sh: an empty deployment URL fails WITH A MESSAGE", () => {
   assert.match(out, /::error title=No web deployment to promote::/);
 });
 
-test("promote.sh: carries --scope (team-token 404 guard) and promotes a real URL", () => {
-  // Record the args the stub is called with to assert --scope is passed.
-  const argStub = writeStub(
-    "vercel-args",
-    `echo "ARGS: $*"\nexit 0`,
-  );
+test("promote.sh: PULLS first (link-scoped), then promotes the real URL without --scope", () => {
+  // Record the args the stub is called with. promote.sh must establish the
+  // project link via `pull` (no user lookup) BEFORE promoting, and must NOT
+  // pass `--scope <team_id>` to promote (that re-enters the 404-prone
+  // account-load path the rehearsal exposed). The link from pull scopes it.
+  const argStub = writeStub("vercel-args", `echo "ARGS: $*"\nexit 0`);
   const { status, out } = runScript("promote.sh", argStub, {
     DEPLOYMENT_URL: "https://snapurl-new999.vercel.app",
   });
   assert.equal(status, 0);
-  assert.match(out, /ARGS: promote https:\/\/snapurl-new999\.vercel\.app --scope team_stub --token/);
+  const lines = out.split("\n").filter((l) => l.startsWith("ARGS: "));
+  assert.equal(lines[0], "ARGS: pull --yes --environment=production --token stub-token", "promote must pull first");
+  assert.match(lines[1], /^ARGS: promote https:\/\/snapurl-new999\.vercel\.app --token /, "promote second");
+  assert.doesNotMatch(out, /promote[^\n]*--scope/, "promote must NOT carry --scope (relies on the pull link)");
 });
