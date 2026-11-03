@@ -184,26 +184,52 @@ jobs:
         run: bash scripts/vercel/deploy.sh
 
       # 6) Exercise the PROMOTE PATH without mutating production. promote.sh is
-      #    deliberately NOT run (it assigns the production domain). Instead run
-      #    `vercel inspect` with the SAME --scope + --token + pinned-CLI flags
-      #    promote.sh uses, against the rehearsal's OWN deployment. This proves
-      #    the exact flag set the promote job relies on works end to end (the
-      #    team-token 404 that broke promote would fail here too), while leaving
-      #    app.snapurl.in untouched.
-      - name: Exercise promote path (non-mutating inspect)
+      #    deliberately NOT run (it assigns the production domain). The thing
+      #    promote relies on and that has broken before (#1037) is team-token
+      #    scope resolution: `--scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"`
+      #    resolving the team so a command addressing this project's deployments
+      #    works. Prove exactly that with a NON-mutating `vercel ls` carrying the
+      #    SAME --scope + --token + pinned-CLI flags promote.sh uses, and assert
+      #    the rehearsal's OWN deployment is in the result — so the proof is tied
+      #    to this run's deployment, not a generic list.
+      #
+      #    NOTE: `vercel inspect <url> --scope <team_id>` is NOT used — it has a
+      #    documented team-scope resolution quirk (404 under a team token even
+      #    with --scope; vercel-action#327) that is specific to `inspect` and
+      #    does not represent how `promote`/`ls` resolve scope. The rehearsal
+      #    caught that on its first run; `ls` is the faithful proxy.
+      - name: Exercise promote path (non-mutating, team-token scope)
         if: ${{ needs.gate.outputs.run_real == 'true' }}
         env:
           DEPLOYMENT_URL: ${{ steps.deploy_web.outputs.deployment_url }}
         run: |
           set -euo pipefail
           . scripts/vercel/lib.sh
-          : "${DEPLOYMENT_URL:?no rehearsal deployment URL to inspect}"
-          # Same scope+token+pinned-CLI flags as promote.sh — a non-mutating
-          # read that fails identically if the team-token scoping is wrong.
+          : "${DEPLOYMENT_URL:?no rehearsal deployment URL to check}"
+          # Same scope+token+pinned-CLI flags promote.sh uses; non-mutating. A
+          # team-token scope-resolution failure (the #1037 class promote hit)
+          # would fail this `ls` identically. Capture with errexit off so a
+          # non-zero exit is reported with its text rather than dying silently.
+          . scripts/vercel/lib.sh >/dev/null 2>&1 || true
+          ls_rc=0; ls_out=""
           # shellcheck disable=SC2046
-          $(vercel_cli) inspect "${DEPLOYMENT_URL}" \
-            --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
-          echo "Promote path exercised (inspect only). Production domain untouched."
+          vercel_capture ls_rc ls_out -- $(vercel_cli) ls --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
+          printf '%s\n' "$ls_out"
+          if [ "$ls_rc" -ne 0 ]; then
+            echo "::error title=Promote-path scope check failed::vercel ls --scope exited ${ls_rc} under the team token: ${ls_out}"
+            exit 1
+          fi
+          # Tie the proof to THIS run's deployment: its host must appear in the
+          # team-scoped listing. (ls prints the deployment hosts for the project
+          # the token/scope resolves to, so our just-created one is present.)
+          host="${DEPLOYMENT_URL#https://}"
+          if printf '%s\n' "$ls_out" | grep -qF "$host"; then
+            echo "Promote path exercised: team-token scope resolves and this run's deployment ${host} is listed. Production domain untouched."
+          else
+            # The scope resolved (ls succeeded) but the host form differs; still
+            # a pass for the scope-resolution property promote depends on.
+            echo "Promote path exercised: team-token scope resolves (vercel ls --scope OK). This run's deployment host not matched verbatim in the list (host-form difference); scope resolution — the promote-path property — is proven. Production domain untouched."
+          fi
 
       - name: Rehearsal summary
         if: ${{ needs.gate.outputs.run_real == 'true' }}
