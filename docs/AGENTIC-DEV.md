@@ -6,15 +6,22 @@ merge them. This page is the runbook.
 
 ## Where things run
 
+> **The QA lab is retired.** Its GitHub Actions workflow (`qa-lab.yml`) has been
+> removed from this repo; the scheduled agent-driven QA runs no longer execute.
+> The role prompts (`.kiro/prompts/qa.md`, `ux.md`, `security.md`) and the ops
+> repo's historical records are kept for reference, and any role can still be
+> run by hand (see "Running it" below). The sections below describe how the lab
+> operated while it was live.
+
 | Piece | Runs on | Holds |
 | --- | --- | --- |
 | **Factory** — manager, developers, reviewer, cloud | One small always-on Linux host (EC2 in ap-south-1), built from `.devcontainer/`, autopilot as a service | GitHub token for this repo and the ops repo |
-| **QA lab** — QA desktop/mobile, UX, security | `.github/workflows/qa-lab.yml` on GitHub-hosted runners (daily + on demand) | Kiro key and ops-repo token, in the `qa-lab` environment (only `main` may use it) |
+| **QA lab** (retired) — QA desktop/mobile, UX, security | Formerly a GitHub Actions workflow on GitHub-hosted runners (daily + on demand); the workflow has been removed | Kiro key and ops-repo token, in the `qa-lab` environment (only `main` may use it) |
 | **Records** | Private repo `DhananjayThomble/snapurl-ops` | `qa-runs/<date>/<run>/` findings, summaries, transcripts; adjudication; Factory infrastructure and power workflows |
 | **Evidence** | Private S3 bucket (ap-south-1), 30-day expiry | Screenshots, traces, videos |
 
-This repository is public, and so are its Actions logs. The QA lab never prints session
-output and never uploads workflow artifacts; everything goes to the ops repo or S3.
+This repository is public, and so are its Actions logs. While it ran, the QA lab never printed session
+output and never uploaded workflow artifacts; everything went to the ops repo or S3.
 
 ## The team
 
@@ -201,7 +208,8 @@ Reading the service log in IST — journald stores UTC but renders in whatever `
 TZ=Asia/Kolkata journalctl -u snapurl-autopilot -f
 ```
 
-The QA lab's `cron: "30 3 * * *"` is 09:00 IST; Actions cron cannot be expressed in anything but UTC.
+(The retired QA lab ran on `cron: "30 3 * * *"` = 09:00 IST; Actions cron cannot be expressed in
+anything but UTC, which is why the schedule was in UTC.)
 
 ## Daily digest
 
@@ -237,7 +245,7 @@ GitHub labels are the state machine (created by `scripts/agents/bootstrap-labels
                \-> agent:changes-requested --developer--> (back to review)
 decision / agent:blocked  → agents skip it until a human acts
 PR touching .github/workflows/ → needs-human (the maintainer merges it)
-QA lab → snapurl-ops findings --reviewer reproduces--> issue [qa:agent-confirmed]
+QA lab (retired) → snapurl-ops findings --reviewer reproduces--> issue [qa:agent-confirmed]
 ```
 
 The autopilot merges an approved PR only when:
@@ -277,15 +285,17 @@ cooldowns and the day's credit total, and a `git clean` in the repo would otherw
 How a failed run is classified, and the two circuit breakers that can pause the factory on their
 own, are described under [What the autopilot does when a run goes wrong](#what-the-autopilot-does-when-a-run-goes-wrong).
 
-QA lab: Actions → **QA lab** → Run workflow. `charters` takes e.g. `qa:mobile,security`; the
-repository variable `QA_LAB_CHARTERS` sets the scheduled default. Each session spends Kiro credits.
-S3 upload turns on when the repository variables `QA_S3_ROLE_ARN` and `QA_S3_BUCKET` are set.
+QA lab (retired): the scheduled/dispatch workflow has been removed, so there is no
+**Actions → QA lab → Run workflow** entry any more. The QA, UX and security charters still
+exist as role prompts and can be run by hand like any other role (below); each session spends
+Kiro credits.
 
 A single role can be run by hand:
 
 ```bash
 claude -p "Run your triage pass now." --agent snapurl-manager
 kiro-cli chat --no-interactive --trust-all-tools --agent snapurl-cloud "Run one cloud session now."
+kiro-cli chat --no-interactive --trust-all-tools --agent snapurl-qa "Run one QA desktop session now."
 ```
 
 ### Stopping it
@@ -302,7 +312,9 @@ Agents merge to `main` without a human. What stands in the way of a bad change:
    to be up to date.
 2. The reviewer reproduces the checks itself and pins the change it approved.
 3. Workflow changes always wait for the maintainer, because workflows can reach secrets.
-4. QA secrets live in an environment only `main` can use, and the QA lab never runs on pull requests.
+4. QA secrets live in the `qa-lab` environment that only `main` can use; while the QA lab ran it
+   never ran on pull requests, and with the workflow now removed nothing in this repo uses that
+   environment.
 5. Agents never hold AWS write credentials, never deploy, and test only local staging stacks.
 6. `gitleaks` runs on every agent branch before push; raw QA output never enters this repo.
 7. The kill switch above.

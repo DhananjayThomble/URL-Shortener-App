@@ -1137,7 +1137,7 @@ jobs:
 
       # The web app the suites drive is built ONCE here (QA_PREBUILT_WEB=1 then
       # tells each config's webServer to `next start` only, not rebuild). Same
-      # three NEXT_PUBLIC_* / build-guard env vars the qa-lab lane uses, so the
+      # three NEXT_PUBLIC_* / build-guard env vars the retired QA lab lane used, so the
       # baked bundle points at the staging API and not a localhost guard-reject.
       - name: Build packages
         run: pnpm build:packages

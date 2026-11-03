@@ -193,6 +193,17 @@ redirectOrigin: ""
 # actual ingress topology or rate limits key off the wrong IP.
 trustedProxyHops: 1
 
+# newAccountLinkWindowDays: how long a freshly-created account is treated as
+# "new" and held to the launch-abuse link caps (perHour/perDay). The API's own
+# default is 7 days (NEW_ACCOUNT_LINK_WINDOW_DAYS in apps/api/src/config/env.ts),
+# and LEAVING THIS BLANK keeps that production default — the ConfigMap key is
+# emitted ONLY when a value is set here, so production never has it set and the
+# 7-day default stands. Set it to "0" to disable the window entirely, which is
+# how the CI/test harnesses (docker-compose.yml, verify.yml) let a throwaway
+# account create many links without tripping the cap. Do NOT set "0" in
+# production.
+newAccountLinkWindowDays: ""
+
 mail:
   # "outbox" writes each message to a file instead of sending; "ses" uses SES.
   transport: outbox

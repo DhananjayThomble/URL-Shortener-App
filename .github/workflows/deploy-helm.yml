@@ -299,6 +299,7 @@ jobs:
             --set-string redis.url="redis://ci-redis.${NS}.svc:6379" \
             --set secrets.existingSecret=snapurl-secrets \
             --set throttle.limit="$THROTTLE_LIMIT_SMOKE" \
+            --set-string newAccountLinkWindowDays="0" \
             --set-string defaultDomain="$LINK_HOST" \
             --set-string redirectOrigin="http://$LINK_HOST" \
             --set-string webOrigin="http://localhost:3000" \

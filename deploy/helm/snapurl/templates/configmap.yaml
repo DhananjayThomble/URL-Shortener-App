@@ -20,6 +20,12 @@ data:
   DEFAULT_DOMAIN: {{ .Values.defaultDomain | quote }}
   REDIRECT_ORIGIN: {{ .Values.redirectOrigin | quote }}
   TRUSTED_PROXY_HOPS: {{ .Values.trustedProxyHops | quote }}
+  {{- if ne (toString .Values.newAccountLinkWindowDays) "" }}
+  # Launch-abuse new-account link window. Emitted ONLY when set (blank by
+  # default), so production keeps the API's own 7-day default (#1037). CI sets
+  # it to "0" to disable the cap for throwaway test accounts.
+  NEW_ACCOUNT_LINK_WINDOW_DAYS: {{ .Values.newAccountLinkWindowDays | quote }}
+  {{- end }}
   # CACHE_DRIVER is forced to "redis" whenever redis.url is set, so every API
   # replica shares one throttle counter (correct multi-replica rate limiting).
   # With no redis.url it falls back to the per-instance "memory" driver.

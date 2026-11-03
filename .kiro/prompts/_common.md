@@ -54,10 +54,12 @@ agents never take the same issue.
   file-write tool still resolves against this pinned checkout. Use an absolute
   path rooted at the worktree for every file tool call once one exists.
 
-## CI mode (QA lab workflow)
+## CI mode (retired QA lab workflow)
 
-When the environment variable `QA_CI=true` is set you are running inside the public
-`QA lab` GitHub Actions job:
+The QA lab GitHub Actions workflow has been retired and removed from the repo, so
+`QA_CI=true` is no longer set by any CI job. These conventions remain only for the
+by-hand case where you deliberately set `QA_CI=true` yourself. When `QA_CI=true` is set
+you are to behave as if running inside a public, write-restricted QA job:
 
 - Use `$QA_RUN_ID` as the run id and write only under `.qa-runs/$QA_RUN_ID/`.
 - The staging stack is already up and the web app is already built. Do not start or

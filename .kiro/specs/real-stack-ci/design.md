@@ -66,7 +66,7 @@
       - THROTTLE_LIMIT=100000 pnpm staging:up   # --build --wait; auto-migrates; see "Throttles"
       - pnpm build:packages
       - next build (NEXT_PUBLIC_USE_FIXTURES=false, NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1,
-                    SNAPURL_ALLOW_UNCONFIGURED_BUILD=true)    # same as qa-lab.yml:131-137
+                    SNAPURL_ALLOW_UNCONFIGURED_BUILD=true)    # same vars the (now-removed) QA lab used
       - Playwright chromium (cache keyed on resolved version, as the e2e job does)
       - if leg == jK:  QA_PREBUILT_WEB=1 pnpm --filter snapurl-e2e test:journeys -- --shard=K/N
       - if leg == aux: QA_PREBUILT_WEB=1 test:a11y, then test:dom-xss

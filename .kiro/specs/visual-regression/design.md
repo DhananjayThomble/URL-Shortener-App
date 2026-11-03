@@ -208,7 +208,7 @@ Notes:
   treats `success` and `skipped` as passing.
 - Uploading the report is consistent with the existing `e2e` job (`verify.yml:868-877`) and safe
   here *because* the lane is fixtures-only: no real data can appear in a diff image. The
-  no-artifact rule in `qa-lab.yml:5-12` exists for runs that drive real data; it does not apply.
+  no-artifact rule the (now-removed) QA lab workflow carried existed for runs that drive real data; it does not apply.
 - Keep the image tag and `e2e/package.json`'s `@playwright/test` version in lockstep. A Dependabot
   bump to one without the other silently invalidates every baseline. Worth a `scripts/` assertion
   or a comment at both sites.

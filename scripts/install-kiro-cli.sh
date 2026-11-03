@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Install kiro-cli for the QA-lab workflow, with a PINNED version and a
-# PINNED sha256 that is verified before any code from the archive runs.
+# Install kiro-cli with a PINNED version and a PINNED sha256 that is verified
+# before any code from the archive runs. (Originally written for the QA-lab
+# workflow, now retired; kept for running the QA/UX/security charters by hand.)
 #
-# Previously the workflow ran `curl -fsSL https://cli.kiro.dev/install | bash`,
+# Previously the install ran `curl -fsSL https://cli.kiro.dev/install | bash`,
 # which pipes remote content straight into a shell with no integrity check at
 # all (issue #631). This script instead:
 #   1. downloads a specific, version-pinned kiro-cli archive,
