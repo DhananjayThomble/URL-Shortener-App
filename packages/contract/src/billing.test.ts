@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   BILLING_INTERVALS,
+  BILLING_PROVIDER_ERROR_KINDS,
+  BILLING_PROVIDER_ERROR_REASONS,
   BillingInvoice,
   BillingInvoiceList,
+  BillingProviderErrorBody,
   CancelSubscriptionInput,
   ChangePlanInput,
   CheckoutSession,
+  defaultMessageForProviderErrorKind,
+  httpStatusForProviderError,
   INVOICE_STATUSES,
   PAID_PLAN_KEYS,
   PLAN_KEYS,
+  reasonForProviderErrorKind,
   StartCheckoutInput,
   SUBSCRIPTION_STATUSES,
   WorkspaceSubscription,
@@ -367,5 +373,131 @@ describe("CancelSubscriptionInput", () => {
 
   it("rejects a non-boolean atPeriodEnd", () => {
     expect(CancelSubscriptionInput.safeParse({ atPeriodEnd: "yes" }).success).toBe(false);
+  });
+});
+
+
+/* #1023 — the provider-error kind → (reason code, HTTP status, message) mapping.
+   This is the single place the "provider 4xx vs 5xx/timeout" decision becomes a
+   wire status, shared by the API and its tests, so these pin every branch:
+   the two kinds, both reason codes, the 409/422 choice for `rejected`, the
+   always-503 for `unavailable`, and that no body/message leaks provider text.
+   These are also the mutation-coverage guard for the new contract code. */
+describe("#1023 billing provider-error mapping", () => {
+  it("BILLING_PROVIDER_ERROR_KINDS is exactly rejected + unavailable, in order", () => {
+    expect(BILLING_PROVIDER_ERROR_KINDS).toEqual(["rejected", "unavailable"]);
+  });
+
+  it("BILLING_PROVIDER_ERROR_REASONS is exactly the two stable codes, in order", () => {
+    expect(BILLING_PROVIDER_ERROR_REASONS).toEqual(["provider_rejected", "provider_unavailable"]);
+  });
+
+  describe("reasonForProviderErrorKind", () => {
+    it("maps rejected -> provider_rejected", () => {
+      expect(reasonForProviderErrorKind("rejected")).toBe("provider_rejected");
+    });
+    it("maps unavailable -> provider_unavailable", () => {
+      expect(reasonForProviderErrorKind("unavailable")).toBe("provider_unavailable");
+    });
+    it("covers every kind with a distinct reason", () => {
+      const reasons = BILLING_PROVIDER_ERROR_KINDS.map(reasonForProviderErrorKind);
+      expect(new Set(reasons).size).toBe(BILLING_PROVIDER_ERROR_KINDS.length);
+      expect(reasons).toEqual(["provider_rejected", "provider_unavailable"]);
+    });
+  });
+
+  describe("httpStatusForProviderError", () => {
+    it("rejected defaults to 409", () => {
+      expect(httpStatusForProviderError("rejected")).toBe(409);
+    });
+    it("rejected becomes 422 when that is chosen", () => {
+      expect(httpStatusForProviderError("rejected", 422)).toBe(422);
+    });
+    it("rejected stays 409 when 409 is passed explicitly", () => {
+      expect(httpStatusForProviderError("rejected", 409)).toBe(409);
+    });
+    it("unavailable is always 503, regardless of the rejected-status arg", () => {
+      expect(httpStatusForProviderError("unavailable")).toBe(503);
+      expect(httpStatusForProviderError("unavailable", 422)).toBe(503);
+      expect(httpStatusForProviderError("unavailable", 409)).toBe(503);
+    });
+    it("never returns 500 for any kind", () => {
+      for (const kind of BILLING_PROVIDER_ERROR_KINDS) {
+        for (const rejected of [409, 422] as const) {
+          expect(httpStatusForProviderError(kind, rejected)).not.toBe(500);
+        }
+      }
+    });
+  });
+
+  describe("defaultMessageForProviderErrorKind", () => {
+    it("rejected explains a subscription-state problem, not a transient fault", () => {
+      const msg = defaultMessageForProviderErrorKind("rejected");
+      expect(msg).toMatch(/current state/i);
+      expect(msg).not.toMatch(/try again/i);
+    });
+    it("unavailable says nothing was changed", () => {
+      const msg = defaultMessageForProviderErrorKind("unavailable");
+      expect(msg).toMatch(/unavailable/i);
+      expect(msg).toMatch(/nothing was changed/i);
+    });
+    it("the two kinds give different messages", () => {
+      expect(defaultMessageForProviderErrorKind("rejected")).not.toBe(
+        defaultMessageForProviderErrorKind("unavailable"),
+      );
+    });
+  });
+
+  describe("BillingProviderErrorBody", () => {
+    it("accepts a well-formed rejected body (409 + provider_rejected)", () => {
+      const body = {
+        statusCode: 409,
+        error: "Conflict",
+        message: defaultMessageForProviderErrorKind("rejected"),
+        reason: "provider_rejected" as const,
+      };
+      expect(BillingProviderErrorBody.parse(body)).toEqual(body);
+    });
+
+    it("accepts a 422 rejected body and a 503 unavailable body", () => {
+      expect(
+        BillingProviderErrorBody.safeParse({
+          statusCode: 422,
+          error: "Unprocessable Entity",
+          message: "nope",
+          reason: "provider_rejected",
+        }).success,
+      ).toBe(true);
+      expect(
+        BillingProviderErrorBody.safeParse({
+          statusCode: 503,
+          error: "Service Unavailable",
+          message: defaultMessageForProviderErrorKind("unavailable"),
+          reason: "provider_unavailable",
+        }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a 500 status (the bug this issue fixes must not be representable)", () => {
+      expect(
+        BillingProviderErrorBody.safeParse({
+          statusCode: 500,
+          error: "Internal Server Error",
+          message: "The API is having trouble. Try again in a moment.",
+          reason: "provider_unavailable",
+        }).success,
+      ).toBe(false);
+    });
+
+    it("rejects an unknown reason code", () => {
+      expect(
+        BillingProviderErrorBody.safeParse({
+          statusCode: 503,
+          error: "Service Unavailable",
+          message: "x",
+          reason: "something_else",
+        }).success,
+      ).toBe(false);
+    });
   });
 });

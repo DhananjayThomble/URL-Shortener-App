@@ -10,6 +10,7 @@ import type {
 } from "@snapurl/contract";
 import { DB } from "../../database/database.module.js";
 import { BillingService } from "../../billing/billing.service.js";
+import { rethrowIfProviderError } from "../../billing/billing-provider-error.http.js";
 import type { AdminActor } from "../admin-management.service.js";
 import {
   ADMIN_BILLING_READER,
@@ -130,7 +131,19 @@ export class AdminBillingService {
    * (AdminRefundInput), so it is always present here.
    */
   async refund(paymentId: string, reason: string, actor: AdminActor): Promise<AdminRefundResult> {
-    const result = await this.billing.refundPayment(paymentId);
+    let result;
+    try {
+      result = await this.billing.refundPayment(paymentId);
+    } catch (err) {
+      // #1023 — a provider failure refunding at Razorpay becomes a 409/422
+      // (rejected) or 503 (unavailable) with a stable reason, never a 500. The
+      // payment row stays `captured` (BillingService flips it only after the
+      // provider refund resolves), so no money is marked returned when none was.
+      rethrowIfProviderError(err, {
+        rejectedMessage: "This payment can't be refunded right now because the payment provider refused it.",
+      });
+      throw err;
+    }
 
     switch (result.outcome) {
       case "not_found":

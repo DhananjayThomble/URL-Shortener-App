@@ -29,6 +29,7 @@ import { BillingService, NoActiveSubscriptionError, SamePlanError } from "./bill
 import { BillingDetailsService } from "./billing-details.service.js";
 import { BillingEnabledGuard } from "./billing-enabled.guard.js";
 import { PlanNotConfiguredError } from "./razorpay.provider.js";
+import { rethrowIfProviderError } from "./billing-provider-error.http.js";
 
 /* #988 — billing is the workspace OWNER's to manage. Enforced here, in the
  *  handler, NOT with @Roles("owner"): the global AuthGuard evaluates @Roles
@@ -157,6 +158,14 @@ export class BillingController {
         comment: input.comment ?? null,
       });
     } catch (err) {
+      // #1023 — a provider failure cancelling at Razorpay becomes a 409/422
+      // (rejected, e.g. "can't cancel when not Active") or a 503 (unavailable),
+      // never a generic 500. The local cancelAtPeriodEnd is NOT written: the
+      // service asks the provider first and only writes on success.
+      rethrowIfProviderError(err, {
+        rejectedMessage:
+          "This subscription can't be cancelled right now because of its current state at the payment provider.",
+      });
       if (err instanceof NoActiveSubscriptionError) throw new BadRequestException(err.message);
       throw err;
     }
@@ -177,6 +186,15 @@ export class BillingController {
     try {
       return await this.billing.changePlan(actor.workspaceId, input.planKey, input.interval);
     } catch (err) {
+      // #1023 — the issue's exact repro: a Razorpay 4xx changing the plan on a
+      // not-yet-Active subscription becomes a 409 (rejected) with an honest
+      // message + stable reason, and a provider outage a 503 — never a 500
+      // "try again". The pending plan change is NOT recorded: changePlan asks
+      // the provider first and writes pendingPlanKey only on success.
+      rethrowIfProviderError(err, {
+        rejectedMessage:
+          "This subscription can't be changed right now because its first payment isn't complete.",
+      });
       if (
         err instanceof PlanNotConfiguredError ||
         err instanceof SamePlanError ||
