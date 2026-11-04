@@ -62,11 +62,15 @@ function generateNonce(): string {
 export function GoogleButton({
   text = "continue_with",
   next,
+  onChallenge,
 }: {
   text?: "signin_with" | "signup_with" | "continue_with";
   /** #699 — the page's raw `?next=`; re-sanitised here so a signed-out
    *  invitee who picks Google still lands back on the invitation. */
   next?: string | null;
+  /** A 2FA account gets a challenge, not a session; the page shows the code
+   *  step. Held in memory by the caller only: never URL or storage. */
+  onChallenge: (challengeToken: string) => void;
 }) {
   const router = useRouter();
   const oauthSignIn = useOAuthSignIn();
@@ -96,7 +100,10 @@ export function GoogleButton({
           .then((result) => {
             // Same union, same narrowing as password login (useLogin):
             // a 2FA challenge is not yet a session.
-            if ("challenge" in result) return;
+            if ("challenge" in result) {
+              onChallenge(result.challengeToken);
+              return;
+            }
             router.push(signedInTarget(next));
           })
           .catch((err: unknown) => setError(err instanceof Error ? err.message : "Google sign-in failed. Try again."));

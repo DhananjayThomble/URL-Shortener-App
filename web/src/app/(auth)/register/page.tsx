@@ -3,11 +3,12 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { AuthShell, SessionCheck } from "@/components/auth/auth-shell";
 import { GoogleButton, hasGoogleAuth } from "@/components/auth/google-button";
+import { TwoFactorStep } from "@/components/auth/two-factor-step";
 import { Button, Field, Input } from "@/components/ui";
 import { plural } from "@/lib/plural";
 import { useRedirectIfSignedIn, useRegister } from "@/lib/api/hooks";
@@ -54,6 +55,8 @@ function RegisterForm() {
   const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(Schema) });
   // #777 — already signed in? Verify the session and move on to `next`.
   const { checking } = useRedirectIfSignedIn(nextParam);
+  // A returning 2FA user can press "Sign up with Google": show the code step.
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -72,11 +75,21 @@ function RegisterForm() {
     );
   }
 
+  if (challengeToken) {
+    return (
+      <TwoFactorStep
+        challengeToken={challengeToken}
+        next={signedInTarget(nextParam)}
+        onBack={() => setChallengeToken(null)}
+      />
+    );
+  }
+
   return (
     <AuthShell title="Start free" sub="No card. Links, QR codes and edits are never metered.">
       {hasGoogleAuth ? (
         <>
-          <GoogleButton text="signup_with" next={nextParam} />
+          <GoogleButton text="signup_with" next={nextParam} onChallenge={setChallengeToken} />
           <div className="flex items-center gap-3 my-4">
             <span className="h-px flex-1 bg-line" />
             <span className="text-[11.5px] text-ink-3">or</span>
