@@ -298,9 +298,9 @@ non-secret in a secret only makes it unreadable in logs when you need it.
 
 ### Secrets
 
-None are required. The smoke gate self-registers a throwaway user. Only if open
-registration is ever disabled in production do you add `smoke_email` /
-`smoke_password` and pass `secrets: inherit` to the smoke job.
+Set repository or environment secrets `SMOKE_EMAIL` and `SMOKE_PASSWORD`. The
+post-deploy smoke gate must log in with a pre-verified account in deployed
+mode.
 
 ## 5. First run
 

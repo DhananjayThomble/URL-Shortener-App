@@ -724,7 +724,7 @@ environment. All of these are optional and default to a local dev stack.
 | `API` | `http://localhost:3001/api/v1` | API base URL, including `/api/v1`. |
 | `RD` | `http://localhost:3002` | Redirect service base URL. |
 | `LINK_DOMAIN` | derived from `RD` | Domain new fixture links are created on. |
-| `SMOKE_EMAIL` / `SMOKE_PASSWORD` | unset | Optional; see below. |
+| `SMOKE_EMAIL` / `SMOKE_PASSWORD` | unset | Required for deployed smoke runs; see below. |
 
 `LINK_DOMAIN` is the one that has to be right. It **must equal the API's
 `DEFAULT_DOMAIN`**: on register the API seeds exactly one system domain equal
@@ -737,12 +737,10 @@ the domain byte-for-byte and does not strip the port. Deriving it from `RD`
 construction, as long as the deployment sets `DEFAULT_DOMAIN` to the redirect
 host. Set `LINK_DOMAIN` explicitly only when it cannot be derived that way.
 
-By default the script self-registers a unique throwaway user per run. When the
-deployed environment has open registration disabled, set `SMOKE_EMAIL` and
-`SMOKE_PASSWORD` to a pre-provisioned account instead; that account's workspace
-must own `LINK_DOMAIN`. The script creates its own fixture links and `DELETE`s
-every one of them on exit, even on failure, so it is safe to point at a real
-environment.
+In deployed mode the script should log in with `SMOKE_EMAIL` and
+`SMOKE_PASSWORD` for a pre-verified account whose workspace owns `LINK_DOMAIN`.
+Self-registering in deployed mode cannot mark the throwaway account verified
+because the database is not reachable from the smoke runner.
 
 ### Running it by hand against a deployed URL
 
@@ -752,8 +750,8 @@ RD=https://snap.example.com \
 bash scripts/smoke-redirect.sh
 ```
 
-Add `SMOKE_EMAIL=... SMOKE_PASSWORD=...` if registration is closed, and
-`LINK_DOMAIN=...` only if it does not derive correctly from `RD`.
+Set `SMOKE_EMAIL=... SMOKE_PASSWORD=...`, and set `LINK_DOMAIN=...` only if it
+does not derive correctly from `RD`.
 
 ### Deployed mode skips the DB-backed assertions
 
@@ -769,8 +767,8 @@ mode the always-run check that drives a real redirect and then polls
 ### The reusable hook a Phase 7 deploy job calls
 
 `.github/workflows/smoke-deployed.yml` wraps the script as a reusable workflow.
-It takes `redirect_base_url` and `api_base_url` (and an optional `link_domain`,
-plus optional `smoke_email` / `smoke_password` secrets), runs
+It takes `redirect_base_url` and `api_base_url` (plus optional `link_domain`
+and `smoke_email` / `smoke_password` secrets), runs
 `scripts/smoke-redirect.sh` against them, and fails the job when any assertion
 fails. An operator can trigger it by hand with `workflow_dispatch`.
 

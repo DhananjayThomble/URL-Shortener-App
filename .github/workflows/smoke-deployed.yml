@@ -49,9 +49,8 @@ on:
         required: false
         type: string
     secrets:
-      # Only needed when the deployed environment has open registration
-      # disabled. By default the script self-registers a throwaway user, so
-      # leave these unset. When set, the script logs in to this account instead.
+      # In deployed mode the script cannot reach the DB to mark a throwaway user
+      # as email-verified, so smoke should log in with a pre-verified account.
       smoke_email:
         required: false
       smoke_password:
