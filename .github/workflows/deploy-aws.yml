@@ -824,6 +824,9 @@ jobs:
     with:
       redirect_base_url: ${{ needs.deploy.outputs.redirect_url }}
       api_base_url: ${{ needs.deploy.outputs.api_url }}
+    secrets:
+      smoke_email: ${{ secrets.SMOKE_EMAIL }}
+      smoke_password: ${{ secrets.SMOKE_PASSWORD }}
 
   # ---------------------------------------------------------------------------
   # 6b. SMOKE OUTCOME — on failure, print the exact rollback commands.
