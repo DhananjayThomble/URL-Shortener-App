@@ -449,6 +449,15 @@ jobs:
       # VERCEL_ORG_ID / VERCEL_PROJECT_ID are repo variables. None is ever in
       # code. A missing one here stops the whole run before `deploy`, with a
       # message naming exactly what to set (see DEPLOYMENT.md for the commands).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      # FAIL FAST on missing Vercel credentials — before any build/upload work,
+      # as #1026 requires. Shared with the rehearsal via scripts/vercel/lib.sh
+      # (require_vercel_creds) so both fail identically. The checkout above must
+      # precede this so the script file exists; the credential check is still
+      # the first thing that can FAIL in this job (checkout/setup cannot).
       - name: Require Vercel credentials
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -456,19 +465,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
         run: |
           set -euo pipefail
-          missing=()
-          [ -n "${VERCEL_TOKEN}" ]      || missing+=("VERCEL_TOKEN (secret)")
-          [ -n "${VERCEL_ORG_ID}" ]     || missing+=("VERCEL_ORG_ID (variable)")
-          [ -n "${VERCEL_PROJECT_ID}" ] || missing+=("VERCEL_PROJECT_ID (variable)")
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error title=Missing Vercel credentials::${missing[*]} — set them in GitHub (see docs/DEPLOYMENT.md). Refusing to deploy the API against an un-shippable web build."
-            exit 1
-          fi
-          echo "Vercel credentials present."
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.git_ref || github.sha }}
+          . scripts/vercel/lib.sh
+          require_vercel_creds
 
       # The SAME commit the API deploys. The web build and the API deploy must
       # describe one ref, which is the invariant this whole issue restores.
@@ -498,27 +496,14 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-        run: |
-          set -uo pipefail
-          # This job has NOT run `vercel pull` yet (that is the next step), so
-          # there is no project link in .vercel/ to scope the CLI. The team-
-          # scoped VERCEL_TOKEN then fails the CLI's personal-account lookup
-          # with "User not found. (404)", so pass --scope "$VERCEL_ORG_ID"
-          # explicitly. Capture stderr rather than discarding it: a failed
-          # lookup must surface a reason, not silently record "<none found>"
-          # and leave the rollback runbook without a URL (#1037).
-          ls_out="$(pnpm dlx vercel@"${VERCEL_CLI_VERSION}" ls --prod \
-                    --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" 2>&1)"
-          ls_rc=$?
-          if [ "$ls_rc" -ne 0 ]; then
-            echo "::warning title=Could not list previous production deployment::vercel ls --prod exited ${ls_rc}: ${ls_out}"
-            prev=""
-          else
-            prev="$(printf '%s\n' "$ls_out" \
-                    | grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' | head -1 || true)"
-          fi
-          echo "previous_url=${prev}" >> "$GITHUB_OUTPUT"
-          echo "Previous production deployment: ${prev:-<none found>}"
+        # Shared with the rehearsal via scripts/vercel/record-previous.sh. The
+        # lookup goes through the Vercel REST API (Bearer + teamId), NOT the CLI
+        # — `vercel ls` 404s "User not found" with this token (the bug run
+        # 41673569635 swallowed). The script captures the HTTP code/body with
+        # errexit OFF and always exits 0, so a failed lookup warns with the real
+        # reason and continues instead of killing the deploy; on success it
+        # records a real previous production URL.
+        run: bash scripts/vercel/record-previous.sh
 
       # vercel pull writes the project settings for the production environment
       # into .vercel/ (project linkage comes from VERCEL_ORG_ID/PROJECT_ID), so
@@ -529,10 +514,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" pull --yes \
-            --environment=production --token "$VERCEL_TOKEN"
+        run: bash scripts/vercel/pull.sh
 
       # THE GATE. A web build that does not compile fails here, before the API
       # deploy. `vercel build --prod` runs the project's build (web/package.json
@@ -543,9 +525,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" build --prod --token "$VERCEL_TOKEN"
+        run: bash scripts/vercel/build.sh
 
       # Upload the PREBUILT output as a production deployment but DO NOT assign
       # the domain (`--skip-domain`): the build is now live at a unique URL,
@@ -558,23 +538,27 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        # Shared with the rehearsal via scripts/vercel/deploy.sh. The script
+        # fails WITH A MESSAGE if the CLI prints no deployment URL (a silent
+        # exit is one of the bug-class faults this change audits out) and sets
+        # the deployment_url output.
+        run: bash scripts/vercel/deploy.sh
+
+      - name: Web build upload summary
+        if: ${{ steps.deploy_web.outputs.deployment_url != '' }}
+        env:
+          NEW_URL: ${{ steps.deploy_web.outputs.deployment_url }}
+          PREV_URL: ${{ steps.previous.outputs.previous_url }}
         run: |
-          set -euo pipefail
-          url="$(pnpm dlx vercel@"${VERCEL_CLI_VERSION}" deploy --prebuilt --prod \
-                  --skip-domain --token "$VERCEL_TOKEN")"
-          if ! [[ "$url" =~ ^https://[A-Za-z0-9.-]+\.vercel\.app$ ]]; then
-            echo "::error title=Web deploy produced no URL::vercel deploy did not print a deployment URL. Output: $url"
-            exit 1
-          fi
-          echo "deployment_url=${url}" >> "$GITHUB_OUTPUT"
+          set -uo pipefail
           {
             echo "### Web build uploaded (not yet promoted)"
             echo
             echo "Built and uploaded commit \`$(git rev-parse HEAD)\` to a production"
             echo "deployment, domain NOT yet assigned:"
             echo
-            echo "- New build: ${url}"
-            echo "- Current production (unchanged until promote): ${{ steps.previous.outputs.previous_url || '—' }}"
+            echo "- New build: ${NEW_URL}"
+            echo "- Current production (unchanged until promote): ${PREV_URL:-—}"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -787,6 +771,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Checkout so the shared scripts/vercel/* files exist in this job (it runs
+      # them, like web-build does). Pin to the deployed ref, same as every other
+      # job, so the promote logic matches the code being deployed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.24.0
@@ -796,29 +787,25 @@ jobs:
         with:
           node-version: 22
 
-      # vercel promote assigns the production domain to the already-uploaded
-      # deployment. No rebuild, no re-upload — the exact artifact validated in
-      # web-build is what goes live.
-      - name: vercel promote <new build>
+      # Promote the already-uploaded deployment to production (assign the
+      # production domain). No rebuild, no re-upload — the exact artifact
+      # validated in web-build is what goes live.
+      - name: Promote web to production (REST)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           DEPLOYMENT_URL: ${{ needs.web-build.outputs.deployment_url }}
-        run: |
-          set -euo pipefail
-          if [ -z "${DEPLOYMENT_URL}" ]; then
-            echo "::error title=No web deployment to promote::web-build produced no deployment URL."
-            exit 1
-          fi
-          # This is a SEPARATE job from web-build, so it has NOT run
-          # `vercel pull` and carries no project link to scope the CLI from.
-          # Without --scope the team-scoped VERCEL_TOKEN fails the personal-
-          # account lookup with "User not found. (404)" (#1037), so pass the
-          # org scope explicitly.
-          pnpm dlx vercel@"${VERCEL_CLI_VERSION}" promote "${DEPLOYMENT_URL}" \
-            --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN"
-          echo "Promoted ${DEPLOYMENT_URL} to production."
+        # scripts/vercel/promote.sh uses the Vercel REST API (Bearer + teamId),
+        # NOT `vercel promote` — that CLI call 404s "User not found" with this
+        # token (prod run 41590226748) because it resolves scope through the
+        # authenticated user. The REST endpoints
+        # (GET /v13/deployments/<url> then POST /v10/projects/<proj>/promote/<id>)
+        # address the team/project directly. The script fails WITH A MESSAGE on
+        # an empty URL or any non-2xx. The rehearsal never runs this script (it
+        # mutates production); it exercises the same REST auth/endpoints
+        # non-mutatingly and FAILS if that path can't be proven.
+        run: bash scripts/vercel/promote.sh
 
   # ---------------------------------------------------------------------------
   # 6. SMOKE — the gate that decides whether this deploy actually worked.

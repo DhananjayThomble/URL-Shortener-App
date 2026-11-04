@@ -132,17 +132,28 @@ export function vercelCalls(blockText, jobName) {
   const calls = [];
   let sawPull = false;
   for (const raw of lines) {
+    // Ignore shell comment lines (a `#` as the first non-space char): the
+    // shared scripts document `pnpm dlx vercel@<version>` in comments, which
+    // are not executed calls.
+    const isComment = /^\s*#/.test(raw);
     // Ignore lines that are purely an echo of a command (the runbook text).
     const isEcho = /^\s*echo\s/.test(raw);
-    const invocation = /pnpm\s+dlx\s+vercel@/.test(raw);
-    if (isEcho || !invocation) continue;
-    // The subcommand is the first token after the pinned CLI token. In this
-    // codebase every call is `pnpm dlx vercel@"${VERCEL_CLI_VERSION}" <sub>`
-    // with the subcommand immediately after the version token and no leading
-    // global flags, so match it directly. The regex is deliberately
-    // linear-time: a single `\S+` for the version token, one or more spaces,
-    // then the subcommand word — no nested quantifiers that could backtrack.
-    const m = /vercel@\S+\s+([a-z][a-z-]*)/.exec(raw);
+    // Ignore the ONE line that DEFINES the pinned-CLI string rather than
+    // calling it: `printf 'pnpm dlx vercel@%s' ...` in scripts/vercel/lib.sh's
+    // vercel_cli helper. A real call USES the helper via `$(vercel_cli) <sub>`.
+    const isCliDefinition = /printf\s+['"]pnpm dlx vercel@/.test(raw);
+    // An executed invocation is either the literal pinned form
+    // `pnpm dlx vercel@...` (used in historical/inline workflows) OR the shared
+    // `$(vercel_cli) <sub>` form the step scripts use.
+    const literalInvocation = /pnpm\s+dlx\s+vercel@/.test(raw);
+    const helperInvocation = /\$\(\s*vercel_cli\s*\)/.test(raw);
+    if (isComment || isEcho || isCliDefinition || (!literalInvocation && !helperInvocation)) continue;
+    // The subcommand is the first token after the CLI token. For the literal
+    // form it follows `vercel@<version>`; for the helper form it follows
+    // `$(vercel_cli)`. Both are matched linear-time (a single `\S+`/group, then
+    // the subcommand word) with no nested quantifiers.
+    let m = /vercel@\S+\s+([a-z][a-z-]*)/.exec(raw);
+    if (!m) m = /\$\(\s*vercel_cli\s*\)\s+([a-z][a-z-]*)/.exec(raw);
     const subcommand = m ? m[1] : "(unknown)";
     const scoped = /--scope\b/.test(raw);
     const call = { job: jobName, subcommand, line: raw.trim(), scoped, afterPull: sawPull };
@@ -160,9 +171,18 @@ export function vercelCalls(blockText, jobName) {
  *
  * @param {string} workflowText    .github/workflows/deploy-aws.yml
  * @param {string} vercelJsonText  web/vercel.json
+ * @param {object} [opts]
+ * @param {Object<string,string>} [opts.scripts]  scripts/vercel/<name> -> text,
+ *        the shared step scripts. When provided, property 6 (scoping) reads
+ *        the EXECUTED Vercel calls from THESE files (the workflow now routes
+ *        every call through them) and property 7 (no divergence) is checked.
+ * @param {string} [opts.rehearsalText]  .github/workflows/rehearse-web-deploy.yml,
+ *        for property 7.
  */
-export function evaluateDeploySync(workflowText, vercelJsonText) {
+export function evaluateDeploySync(workflowText, vercelJsonText, opts = {}) {
   const failures = [];
+  const scripts = opts.scripts || null;
+  const rehearsalText = opts.rehearsalText ?? null;
 
   // ---- Property 1: vercel.json disables git production deploys for main. ----
   // "git": { "deploymentEnabled": { "main": false } }
@@ -234,14 +254,22 @@ export function evaluateDeploySync(workflowText, vercelJsonText) {
     if (missing.length) {
       failures.push(`(3) 'web-build' does not reference required Vercel credential(s): ${missing.join(", ")}.`);
     }
-    // A fail-fast guard: a step that exits non-zero when a credential is empty.
-    // Matched structurally: an `exit 1` guarded by an emptiness test on the
-    // credentials, in a step named like a requirement check.
+    // A fail-fast guard: a step that fails non-zero when a credential is empty.
+    // Since #1041 the check is the shared require_vercel_creds (scripts/vercel/
+    // lib.sh), so accept EITHER an inline `exit 1` in the step OR a call to
+    // require_vercel_creds whose lib definition actually fails (return 1). Both
+    // mean "the step fails fast on a missing value".
     const hasRequireStep = /name:\s*Require Vercel credentials/i.test(wb);
-    const hasExit = /exit 1/.test(wb);
-    if (!hasRequireStep || !hasExit) {
+    const inlineExit = /exit 1/.test(wb);
+    const callsSharedCheck = /require_vercel_creds/.test(wb);
+    const sharedCheckFailsFast =
+      callsSharedCheck && scripts && /require_vercel_creds\(\)\s*\{[\s\S]*?return 1[\s\S]*?\}/.test(scripts["lib.sh"] || "");
+    // When scripts are not provided (older callers), a call to the shared check
+    // is taken on faith; the inline path is unchanged.
+    const hasFailFast = inlineExit || sharedCheckFailsFast || (callsSharedCheck && !scripts);
+    if (!hasRequireStep || !hasFailFast) {
       failures.push(
-        "(3) 'web-build' has no fail-fast 'Require Vercel credentials' step that exits non-zero on a missing value.",
+        "(3) 'web-build' has no fail-fast 'Require Vercel credentials' step that fails non-zero on a missing value.",
       );
     }
     // And it must run before the API deploy: web-build precedes deploy (checked
@@ -284,17 +312,140 @@ export function evaluateDeploySync(workflowText, vercelJsonText) {
   // A team-scoped VERCEL_TOKEN fails the CLI's personal-account lookup with
   // "User not found. (404)" unless the call is scoped. A call is scoped when
   // it carries `--scope` on its command line OR a `vercel pull` ran earlier in
-  // the same job (pull writes the project link into .vercel/, which scopes
+  // the same scope (pull writes the project link into .vercel/, which scopes
   // every later call). `vercel pull` itself establishes the link and is the
-  // one call exempt from needing a prior pull. This is what broke the
-  // `promote` job (separate job, no pull) and silenced the `ls` lookup.
-  for (const [name, block] of jobEntries) {
-    for (const c of vercelCalls(block, name)) {
-      const ok = c.scoped || c.afterPull || c.subcommand === "pull";
-      if (!ok) {
+  // one call exempt from needing a prior pull.
+  //
+  // Since #1041 the EXECUTED Vercel calls live in the shared script files
+  // (scripts/vercel/*.sh), not inline in the workflow. When `opts.scripts` is
+  // given, scope is judged there — per file, since each script is run in its
+  // own job step and a `pull` in pull.sh does not scope a call in a different
+  // script. When it is NOT given (older callers), fall back to scanning the
+  // workflow jobs, so the property still means the same thing.
+  if (scripts) {
+    for (const [fname, text] of Object.entries(scripts)) {
+      // Each script is one logical "scope"; treat the file as the block and the
+      // file name as the location. A pull EARLIER IN THE SAME SCRIPT scopes
+      // later calls, but these scripts run one CLI call each, so in practice a
+      // non-pull script must carry --scope OR be build/deploy (which run in the
+      // same JOB as pull in the deploy). The deploy's job-level pull scoping is
+      // asserted structurally below in property 7; here we require that any
+      // call which is NOT build/deploy (the two that legitimately rely on a
+      // same-job prior pull) is --scope'd.
+      const sameJobAsPull = fname === "build.sh" || fname === "deploy.sh";
+      for (const c of vercelCalls(text, `scripts/vercel/${fname}`)) {
+        const ok = c.scoped || c.afterPull || c.subcommand === "pull" || sameJobAsPull;
+        if (!ok) {
+          failures.push(
+            `(6) Vercel CLI call \`${c.subcommand}\` in scripts/vercel/${fname} is neither --scope'd nor preceded by \`vercel pull\`; ` +
+              `a team-scoped VERCEL_TOKEN will fail its account lookup (404). Line: ${c.line}`,
+          );
+        }
+      }
+    }
+  } else {
+    for (const [name, block] of jobEntries) {
+      for (const c of vercelCalls(block, name)) {
+        const ok = c.scoped || c.afterPull || c.subcommand === "pull";
+        if (!ok) {
+          failures.push(
+            `(6) Vercel CLI call \`${c.subcommand}\` in job '${name}' is neither --scope'd nor preceded by \`vercel pull\` in the same job; ` +
+              `a team-scoped VERCEL_TOKEN will fail its account lookup (404). Line: ${c.line}`,
+          );
+        }
+      }
+    }
+  }
+
+  // ---- Property 7 (#1041): the deploy and the rehearsal share step CODE. ----
+  // The deploy must not inline `pnpm dlx vercel@...` in the workflow — every
+  // executed Vercel call must be routed through a shared scripts/vercel/*.sh
+  // file, so the rehearsal can run the SAME code. And the rehearsal workflow
+  // must exist and run those same scripts, so it cannot drift from the deploy.
+  // This is the test that "reds if the two diverge" (#1041 condition 5).
+  if (scripts || rehearsalText !== null) {
+    // 7a: no inline executed Vercel call remains in the deploy workflow.
+    for (const [name, block] of jobEntries) {
+      const inline = vercelCalls(block, name);
+      if (inline.length) {
         failures.push(
-          `(6) Vercel CLI call \`${c.subcommand}\` in job '${name}' is neither --scope'd nor preceded by \`vercel pull\` in the same job; ` +
-            `a team-scoped VERCEL_TOKEN will fail its account lookup (404). Line: ${c.line}`,
+          `(7) deploy-aws.yml job '${name}' still runs \`pnpm dlx vercel@...\` INLINE (${inline
+            .map((c) => c.subcommand)
+            .join(", ")}); route it through a shared scripts/vercel/*.sh so the rehearsal runs the same code.`,
+        );
+      }
+    }
+    // 7b: the deploy workflow invokes the shared scripts for the four runtime
+    // Vercel steps (record-previous, pull, build, deploy). promote is invoked
+    // by the deploy only (the rehearsal exercises its path non-mutatingly).
+    const requiredDeployScripts = [
+      "scripts/vercel/record-previous.sh",
+      "scripts/vercel/pull.sh",
+      "scripts/vercel/build.sh",
+      "scripts/vercel/deploy.sh",
+      "scripts/vercel/promote.sh",
+    ];
+    for (const s of requiredDeployScripts) {
+      if (!workflowText.includes(s)) {
+        failures.push(`(7) deploy-aws.yml does not invoke the shared step script '${s}'.`);
+      }
+    }
+    // 7c: the rehearsal must exist and run the SAME scripts the deploy runs for
+    // every executable Vercel step, so it genuinely rehearses them. It must NOT
+    // run promote.sh (that mutates production) — it exercises the promote path
+    // with a non-mutating inspect instead.
+    if (rehearsalText === null) {
+      failures.push("(7) the rehearsal workflow .github/workflows/rehearse-web-deploy.yml is missing.");
+    } else {
+      const mustRun = [
+        "scripts/vercel/record-previous.sh",
+        "scripts/vercel/pull.sh",
+        "scripts/vercel/build.sh",
+        "scripts/vercel/deploy.sh",
+      ];
+      for (const s of mustRun) {
+        if (!rehearsalText.includes(s)) {
+          failures.push(`(7) the rehearsal does not run the shared step script '${s}', so it would not rehearse that step.`);
+        }
+      }
+      if (/\bbash\s+scripts\/vercel\/promote\.sh\b/.test(rehearsalText)) {
+        failures.push(
+          "(7) the rehearsal runs scripts/vercel/promote.sh, which assigns the PRODUCTION domain; it must exercise the promote path non-mutatingly instead.",
+        );
+      }
+      // The rehearsal must also use the pinned CLI version, same as the deploy.
+      if (!/VERCEL_CLI_VERSION/.test(rehearsalText)) {
+        failures.push("(7) the rehearsal does not set VERCEL_CLI_VERSION; it must pin the same CLI the deploy uses.");
+      }
+    }
+  }
+
+  // ---- Property 8 (#1041 fail 1): no user-lookup CLI command in the scripts. -
+  // `vercel ls`, `vercel inspect` and `vercel promote` resolve scope through
+  // the authenticated USER, which this repo's token cannot resolve (404 "User
+  // not found" — proven in prod run 41590226748 and the rehearsal). The lookup
+  // and the promote MUST go through the REST API (Bearer + teamId), which does
+  // not do that lookup. Red if any shared script reintroduces one of those CLI
+  // subcommands as an executed call.
+  if (scripts) {
+    const forbidden = ["ls", "inspect", "promote"];
+    for (const [fname, text] of Object.entries(scripts)) {
+      for (const c of vercelCalls(text, `scripts/vercel/${fname}`)) {
+        if (forbidden.includes(c.subcommand)) {
+          failures.push(
+            `(8) scripts/vercel/${fname} runs \`vercel ${c.subcommand}\`, a user-lookup CLI command that 404s with this token; ` +
+              `use the REST API (Bearer + teamId) instead. Line: ${c.line}`,
+          );
+        }
+      }
+    }
+    // And the promote + lookup scripts must actually use the REST helpers.
+    const restUsers = { "record-previous.sh": "vercel_api_get", "promote.sh": "vercel_api_post" };
+    for (const [fname, fn] of Object.entries(restUsers)) {
+      const text = scripts[fname] || "";
+      if (!text.includes(fn)) {
+        failures.push(
+          `(8) scripts/vercel/${fname} does not call ${fn}; the ${fname === "promote.sh" ? "promote" : "previous-deployment lookup"} must go through the REST API, not the user-lookup CLI.`,
         );
       }
     }
@@ -306,9 +457,16 @@ export function evaluateDeploySync(workflowText, vercelJsonText) {
 // --- Injected effects: read the real files. ----------------------------------
 
 export function readRepoFiles(repoRoot) {
+  const scriptNames = ["lib.sh", "record-previous.sh", "pull.sh", "build.sh", "deploy.sh", "promote.sh"];
+  const scripts = {};
+  for (const n of scriptNames) {
+    scripts[n] = readFileSync(join(repoRoot, "scripts/vercel", n), "utf8");
+  }
   return {
     workflowText: readFileSync(join(repoRoot, ".github/workflows/deploy-aws.yml"), "utf8"),
     vercelJsonText: readFileSync(join(repoRoot, "web/vercel.json"), "utf8"),
+    scripts,
+    rehearsalText: readFileSync(join(repoRoot, ".github/workflows/rehearse-web-deploy.yml"), "utf8"),
   };
 }
 
@@ -317,8 +475,8 @@ export function readRepoFiles(repoRoot) {
 function main() {
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = join(here, "..");
-  const { workflowText, vercelJsonText } = readRepoFiles(repoRoot);
-  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText);
+  const { workflowText, vercelJsonText, scripts, rehearsalText } = readRepoFiles(repoRoot);
+  const { ok, failures } = evaluateDeploySync(workflowText, vercelJsonText, { scripts, rehearsalText });
   if (ok) {
     console.log("PASS deploy-sync-guard: web and API ship together (all 5 properties hold).");
     process.exit(0);

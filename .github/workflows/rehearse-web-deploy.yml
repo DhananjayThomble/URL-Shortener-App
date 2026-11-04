@@ -1,0 +1,398 @@
+# Rehearse the web deploy (#1041).
+#
+# WHY THIS EXISTS. deploy-aws.yml runs five Vercel CLI commands (ls, pull,
+# build, deploy, promote). The deploy-sync guard only reads the workflow TEXT,
+# so nothing EXECUTED those commands before a production dispatch — each prod
+# dispatch was the first real run of the next Vercel step, and three in a row
+# failed one step at a time (run 41673569635 died in `vercel ls` under bash -e).
+#
+# This workflow EXECUTES every Vercel CLI command the deploy uses, with the
+# REAL token/org/project, against a NON-PRODUCTION target, so a Vercel-step
+# failure surfaces HERE instead of on the next production deploy. It runs the
+# SAME script files (scripts/vercel/*.sh) the deploy runs — not a copy — so it
+# cannot drift; the deploy-sync guard reds if either stops using them.
+#
+# WHAT IT NEVER DOES. It touches no AWS, no production domain, and no alias. It
+# NEVER runs scripts/vercel/promote.sh (that assigns the production domain). It
+# exercises the promote PATH — the same scope+token+pinned-CLI flags promote
+# uses — with a NON-mutating `vercel inspect` against the rehearsal's own
+# deployment. Vercel is on Hobby (limited deployments), so this is dispatch-led
+# and the PR run is gated to one path.
+#
+# TOKEN SAFETY (#1041 condition 7). VERCEL_TOKEN is reachable only from a
+# non-fork, non-Dependabot run. A fork PR, a pull_request_target (not a trigger
+# here) and a Dependabot run SKIP the real work and finish GREEN — they never
+# see the secret and never red.
+
+name: Rehearse web deploy
+
+on:
+  # Operator-run, the primary path: keeps Hobby deployment usage low and lets a
+  # human pick the ref. This is what produces the recorded rehearsal run id.
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Commit/branch to rehearse. Blank = the dispatched ref."
+        required: false
+        type: string
+        default: ""
+      cleanup_hosts:
+        description: >-
+          Space-separated *.vercel.app hosts of PRIOR rehearsal deployments to
+          delete (one-off cleanup of builds earlier runs left behind). When set,
+          ONLY the cleanup job runs — the rehearsal itself is skipped. The
+          cleanup refuses to delete whatever the production alias points at.
+        required: false
+        type: string
+        default: ""
+  # Also on PRs that touch the deploy surface, so the rehearsal is exercised in
+  # review — but only on a non-fork, non-Dependabot PR (see the `gate` job),
+  # which is where the secret is reachable. A fork/Dependabot PR skips green.
+  pull_request:
+    paths:
+      - ".github/workflows/rehearse-web-deploy.yml"
+      - ".github/workflows/deploy-aws.yml"
+      - "scripts/vercel/**"
+      - "web/vercel.json"
+
+# No write permissions anywhere; this workflow changes nothing in the repo.
+permissions:
+  contents: read
+
+# One rehearsal at a time per ref — a rehearsal creates a real (non-promoted)
+# Vercel deployment, and overlapping ones waste Hobby quota.
+concurrency:
+  group: rehearse-web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The SAME pin as deploy-aws.yml. The shared scripts read this.
+  VERCEL_CLI_VERSION: "65.9.0"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # GATE — decide whether the real rehearsal may run.
+  # ---------------------------------------------------------------------------
+  # The real work needs VERCEL_TOKEN, which is unreachable from a fork PR or a
+  # Dependabot run. Rather than let those go red, this job decides up front and
+  # the rehearsal job keys off its output. A secret cannot be read in a job `if`
+  # expression, so token presence is detected in a step (where secrets ARE
+  # available) and exported as a NON-secret boolean output.
+  gate:
+    name: Can rehearse?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_real: ${{ steps.decide.outputs.run_real }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          # Reading the secret into env here is safe: this step emits only a
+          # boolean, never the value.
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          ACTOR: ${{ github.actor }}
+          CLEANUP_HOSTS: ${{ inputs.cleanup_hosts }}
+        run: |
+          set -euo pipefail
+          run_real=true
+          reason="ok"
+          if [ -z "${VERCEL_TOKEN}" ]; then
+            run_real=false; reason="no VERCEL_TOKEN (fork PR or secret unset)"
+          elif [ "${IS_FORK}" = "true" ]; then
+            run_real=false; reason="fork PR — secrets withheld"
+          elif [ "${ACTOR}" = "dependabot[bot]" ]; then
+            run_real=false; reason="Dependabot run — secrets withheld"
+          elif [ -n "${CLEANUP_HOSTS:-}" ]; then
+            run_real=false; reason="cleanup_hosts set — running the cleanup job only, not the rehearsal"
+          fi
+          echo "run_real=${run_real}" >> "$GITHUB_OUTPUT"
+          echo "Rehearsal real-run decision: ${run_real} (${reason})"
+          {
+            echo "### Rehearsal gate"
+            echo
+            echo "- Run real Vercel commands: \`${run_real}\` (${reason})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # REHEARSE — execute every Vercel CLI command the deploy uses, for real.
+  # ---------------------------------------------------------------------------
+  rehearse:
+    name: Execute Vercel steps (non-prod)
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      # A fork/Dependabot/no-token run stops here, GREEN. Every real step below
+      # is guarded on the same condition, so the job succeeds with nothing run.
+      - name: Skip note (secrets unavailable)
+        if: ${{ needs.gate.outputs.run_real != 'true' }}
+        run: |
+          echo "Rehearsal skipped: Vercel secrets are not available to this run (fork/Dependabot/unset)."
+          echo "This is expected and not a failure."
+
+      - name: Checkout
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      - name: Setup pnpm
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - name: Setup node
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: pnpm install --frozen-lockfile
+
+      # 1) THE SAME credential check the deploy runs (shared lib).
+      - name: Require Vercel credentials
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: |
+          set -euo pipefail
+          . scripts/vercel/lib.sh
+          require_vercel_creds
+
+      # 2) THE SAME previous-deployment lookup the deploy runs. This is the step
+      #    that failed in run 41673569635; running it here with the REAL token
+      #    is what captures the real `vercel ls` error text (if any) and proves
+      #    the warn-and-continue behaviour at runtime. It can never fail.
+      - name: Record previous production deployment (shared step)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/record-previous.sh
+
+      # 3) THE SAME pull the deploy runs — writes the project link into .vercel/.
+      - name: vercel pull (shared step)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/pull.sh
+
+      # 4) THE SAME build the deploy runs — produces .vercel/output, no deploy.
+      - name: vercel build (shared step)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/build.sh
+
+      # 5) THE SAME upload the deploy runs: a PREBUILT production deployment with
+      #    --skip-domain, so NO production domain/alias is assigned. This is a
+      #    real but non-promoted deployment at a unique *.vercel.app URL.
+      - name: vercel deploy --prebuilt --prod --skip-domain (shared step)
+        id: deploy_web
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        run: bash scripts/vercel/deploy.sh
+
+      # 6) Exercise the REAL promote mechanism NON-mutatingly. The production
+      #    promote (scripts/vercel/promote.sh) does, with Bearer token + teamId:
+      #      1. GET  /v13/deployments/{host}?teamId=   -> deployment id
+      #      2. POST /v10/projects/{projectId}/promote/{id}?teamId=
+      #    This step runs step 1 AND a read of the promote endpoint's own
+      #    project (GET /v9/projects/{projectId}?teamId=) — the exact auth and
+      #    endpoints the POST depends on — against THIS run's own deployment.
+      #    It assigns no domain (no POST). It FAILS (exit 1), never warns: if the
+      #    Bearer+teamId path the real promote needs cannot be proven here, the
+      #    real promote would fail too, and the next prod dispatch must not be
+      #    where that is discovered. (`vercel promote`/`ls`/`inspect` are NOT
+      #    used — they 404 "User not found" on this token's user lookup, which
+      #    the REST path bypasses; that is the whole point of the fix.)
+      - name: Exercise promote path (REST, same auth as the real promote)
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy_web.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          . scripts/vercel/lib.sh
+          : "${DEPLOYMENT_URL:?no rehearsal deployment URL to check}"
+          host="${DEPLOYMENT_URL#https://}"; host="${host%%/*}"
+          echo "Resolving deployment via the SAME REST call the real promote uses: GET /v13/deployments/${host}?teamId=…"
+
+          rc=0 body="" code=""
+          vercel_api_get rc body code -- "/v13/deployments/${host}?teamId=${VERCEL_ORG_ID}"
+          echo "GET /v13/deployments http=${code} rc=${rc}"
+          if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+            echo "::error title=Promote path NOT proven::the REST deployment lookup the real promote depends on failed (http=${code}): ${body}. The real promote would fail the same way — do not dispatch prod."
+            exit 1
+          fi
+          dep_id="$(json_field "$body" uid)"; [ -n "$dep_id" ] || dep_id="$(json_field "$body" id)"
+          if [ -z "$dep_id" ]; then
+            echo "::error title=Promote path NOT proven::no deployment id in the REST response: ${body}"
+            exit 1
+          fi
+          echo "Resolved deployment id: ${dep_id}"
+
+          # Read the promote endpoint's own project with the same auth, so the
+          # POST target is proven reachable. Still non-mutating (GET).
+          rc=0 body="" code=""
+          vercel_api_get rc body code -- "/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_ORG_ID}"
+          echo "GET /v9/projects/${VERCEL_PROJECT_ID} http=${code} rc=${rc}"
+          if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+            echo "::error title=Promote path NOT proven::the promote endpoint's project is not reachable with this token (http=${code}): ${body}. The real promote POST would fail — do not dispatch prod."
+            exit 1
+          fi
+          echo "Promote path PROVEN: Bearer token + teamId resolves this run's deployment (${dep_id}) and its project via the same REST endpoints the real promote POSTs to. No domain assigned."
+
+      # 7) CLEAN UP this run's own deployment (#1041 fail 2). The rehearsal's
+      #    `deploy --prebuilt --prod --skip-domain` creates a real, non-promoted
+      #    deployment that otherwise LINGERS as a target=production build — it
+      #    would pollute any newest-prod-build lookup and sit there promotable.
+      #    So delete it. always() so it runs even if an earlier step failed, and
+      #    it REFUSES to delete anything the production alias points at (it reads
+      #    targets.production.id and never deletes that), so it can only ever
+      #    remove a non-live rehearsal build.
+      - name: Clean up this run's rehearsal deployment
+        if: ${{ always() && needs.gate.outputs.run_real == 'true' }}
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy_web.outputs.deployment_url }}
+        run: |
+          set -uo pipefail
+          . scripts/vercel/lib.sh
+          if [ -z "${DEPLOYMENT_URL:-}" ]; then
+            echo "No rehearsal deployment was created (deploy step did not run) — nothing to clean up."
+            exit 0
+          fi
+          host="${DEPLOYMENT_URL#https://}"; host="${host%%/*}"
+
+          # Resolve this run's deployment id.
+          rc=0 body="" code=""
+          vercel_api_get rc body code -- "/v13/deployments/${host}?teamId=${VERCEL_ORG_ID}"
+          if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+            echo "::warning title=Cleanup skipped::could not resolve ${host} to delete (http=${code}): ${body}"
+            exit 0
+          fi
+          dep_id="$(json_field "$body" uid)"; [ -n "$dep_id" ] || dep_id="$(json_field "$body" id)"
+          if [ -z "$dep_id" ]; then
+            echo "::warning title=Cleanup skipped::no deployment id for ${host}: ${body}"
+            exit 0
+          fi
+
+          # SAFETY: never delete what the production ALIAS points at. Resolve
+          # the live deployment via the domain->alias chain (NOT
+          # targets.production.id, which can be an orphaned never-aliased build)
+          # and refuse if the candidate matches it.
+          live_id="$(live_production_deployment_id)"
+          if [ -n "$live_id" ] && [ "$live_id" = "$dep_id" ]; then
+            echo "::error title=Refusing to delete the live deployment::${dep_id} is what the production alias serves. Not deleting."
+            exit 1
+          fi
+
+          echo "Deleting rehearsal deployment ${dep_id} (${host}); live production target is ${live_id:-<unknown>}."
+          rc=0 dbody="" code=""
+          vercel_api_delete rc dbody code -- "/v13/deployments/${dep_id}?teamId=${VERCEL_ORG_ID}"
+          echo "DELETE /v13/deployments/${dep_id} http=${code} rc=${rc}"
+          if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+            echo "::warning title=Cleanup incomplete::could not delete ${dep_id} (http=${code}): ${dbody}. Delete it by hand so it does not linger as a promotable build."
+            exit 0
+          fi
+          echo "Deleted rehearsal deployment ${dep_id}. No promotable rehearsal build left behind."
+
+      - name: Rehearsal summary
+        if: ${{ needs.gate.outputs.run_real == 'true' }}
+        env:
+          URL: ${{ steps.deploy_web.outputs.deployment_url }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### Rehearsal executed every Vercel step for real"
+            echo
+            echo "- ls (REST) / pull / build / deploy(--skip-domain) / promote-path (REST) all ran with the real token."
+            echo "- Deployment created and then DELETED (no promotable rehearsal build left): \`${URL:-<none>}\`"
+            echo "- No AWS, no production domain, no alias was touched."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+  # ---------------------------------------------------------------------------
+  # CLEANUP-PRIOR — one-off removal of deployments earlier rehearsals left (#1041
+  # fail 2 condition 3). Runs ONLY on a workflow_dispatch that set cleanup_hosts
+  # (the gate turns run_real off then, so the rehearse job above is skipped).
+  # Deletes exactly the hosts given, and REFUSES to delete whatever the
+  # production alias currently points at.
+  # ---------------------------------------------------------------------------
+  cleanup-prior:
+    name: Clean up prior rehearsal deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.cleanup_hosts != '' }}
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      CLEANUP_HOSTS: ${{ inputs.cleanup_hosts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Delete the listed prior rehearsal deployments (refusing the live target)
+        run: |
+          set -uo pipefail
+          . scripts/vercel/lib.sh
+          : "${VERCEL_TOKEN:?}" "${VERCEL_ORG_ID:?}" "${VERCEL_PROJECT_ID:?}"
+
+          # The deployment the production ALIAS serves — never delete this,
+          # whatever is listed (resolved via domain->alias, not the possibly
+          # orphaned targets.production.id).
+          live_id="$(live_production_deployment_id)"
+          echo "Live production (alias target) deployment id: ${live_id:-<unknown>}"
+
+          deleted=() refused=() skipped=()
+          for host in ${CLEANUP_HOSTS}; do
+            host="${host#https://}"; host="${host%%/*}"
+            rc=0 body="" code=""
+            vercel_api_get rc body code -- "/v13/deployments/${host}?teamId=${VERCEL_ORG_ID}"
+            if [ "$rc" -ne 0 ] || ! api_ok "$code"; then
+              echo "skip ${host}: not resolvable (http=${code}) — may already be gone"
+              skipped+=("${host}")
+              continue
+            fi
+            dep_id="$(json_field "$body" uid)"; [ -n "$dep_id" ] || dep_id="$(json_field "$body" id)"
+            if [ -z "$dep_id" ]; then
+              echo "skip ${host}: no id in response"
+              skipped+=("${host}")
+              continue
+            fi
+            if [ -n "$live_id" ] && [ "$live_id" = "$dep_id" ]; then
+              echo "::error title=Refusing to delete the live deployment::${host} (${dep_id}) is the current production target."
+              refused+=("${host} (${dep_id})")
+              continue
+            fi
+            rc=0 dbody="" code=""
+            vercel_api_delete rc dbody code -- "/v13/deployments/${dep_id}?teamId=${VERCEL_ORG_ID}"
+            echo "DELETE ${host} (${dep_id}) http=${code} rc=${rc}"
+            if [ "$rc" -eq 0 ] && api_ok "$code"; then
+              deleted+=("${host} (${dep_id})")
+            else
+              echo "::warning title=Delete failed::${host} (${dep_id}) http=${code}: ${dbody}"
+              skipped+=("${host} (${dep_id})")
+            fi
+          done
+
+          echo "Deleted: ${deleted[*]:-<none>}"
+          echo "Refused (live): ${refused[*]:-<none>}"
+          echo "Skipped: ${skipped[*]:-<none>}"
+          {
+            echo "### Prior rehearsal deployment cleanup"
+            echo
+            echo "- Deleted: ${deleted[*]:-<none>}"
+            echo "- Refused (live alias target): ${refused[*]:-<none>}"
+            echo "- Skipped (already gone / failed): ${skipped[*]:-<none>}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Refusing to delete a live target is a hard failure (it means the
+          # caller listed the wrong host); a clean refusal list is fine.
+          if [ "${#refused[@]}" -gt 0 ]; then exit 1; fi
