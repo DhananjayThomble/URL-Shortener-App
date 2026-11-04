@@ -315,6 +315,13 @@ jobs:
       - name: Deploy web+API-together guard (#1026, #1041)
         run: node --test scripts/deploy-sync-guard.test.mjs
 
+      # #1050 — platform-admin allowlist wiring: the probe + deploy.sh with a
+      # stubbed `aws`/`npx`. Proves present => flag, missing => deploy without it
+      # (fail closed, warning), unreadable => abort before cdk deploy, and that
+      # the allowlist value never reaches stdout/stderr. Pure Node + bash.
+      - name: Platform-admin allowlist wiring (#1050)
+        run: node --test scripts/probe-platform-admins.test.mjs
+
       # #1041 — the shared Vercel step scripts (scripts/vercel/*.sh) that the
       # real deploy AND the rehearsal both run. This drives each script's
       # failure and success paths with a STUBBED `vercel` on PATH, proving the

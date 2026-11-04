@@ -194,14 +194,22 @@ export interface SnapUrlStackProps extends StackProps {
    *
    * Optional and spread-only-when-set, like {@link googleOAuthClientId}: unset
    * means an empty allowlist, i.e. NO platform admins, which is the safe
-   * default. The operator's source of truth is the SSM parameter
-   * `<prefix>/platform-admin-emails` (written by `infra/bin/put-parameters.sh`,
-   * optional there too); the deploy passes its value through here with
-   * `-c platformAdminEmails=<a@x.com,b@y.com>`. Not read via `config.get()`,
-   * which has no default and fails the deploy on a missing parameter — wrong
-   * for config that is meant to be optional.
+   * default. This literal form is for tests and ad-hoc local synths only; the
+   * deploy never passes an email through GitHub (the repo and its logs are
+   * public). See {@link platformAdminEmailsFromSsm}.
    */
   platformAdminEmails?: string;
+  /**
+   * #1050 — resolve the allowlist from SSM `<prefix>/platform-admin-emails` at
+   * deploy time, via CloudFormation (same mechanism as `config.get()`), so the
+   * emails never appear in the workflow, `cdk diff` output or the template.
+   * `infra/deploy.sh` and the plan job set this (`-c platformAdminEmailsFromSsm=true`)
+   * only after `infra/bin/probe-platform-admins.sh` confirmed the parameter
+   * exists: CloudFormation fails the entire deploy on an unresolvable
+   * parameter, so a missing one must be handled BEFORE synth (no flag = no
+   * admins, fail closed). An explicit {@link platformAdminEmails} wins.
+   */
+  platformAdminEmailsFromSsm?: boolean;
   /**
    * NAME of an operator-created Secrets Manager secret holding the Google
    * Safe Browsing API key, e.g. `snapurl/prod/google-safe-browsing-api-key`.
@@ -766,6 +774,9 @@ export class SnapUrlStack extends Stack {
        --------------------------------------------------------- */
 
     const config = new SnapUrlConfig(this, "Config", { prefix: props.configPrefix });
+    const platformAdminEmails =
+      props.platformAdminEmails ||
+      (props.platformAdminEmailsFromSsm ? config.getOptional("platform-admin-emails") : undefined);
 
     /* Nothing below is a literal. Ordinary settings come from Parameter Store
        and the two signing keys are generated into Secrets Manager, so this
@@ -1002,7 +1013,7 @@ export class SnapUrlStack extends Stack {
            (not empty) for env.ts to read it as "no admins" rather than parse an
            empty string. redirectFn and workerFn never serve /admin, so they
            never get this key. */
-        ...(props.platformAdminEmails ? { PLATFORM_ADMIN_EMAILS: props.platformAdminEmails } : {}),
+        ...(platformAdminEmails ? { PLATFORM_ADMIN_EMAILS: platformAdminEmails } : {}),
         /* Same spread-only-when-set rule. A name, not an ARN: GetSecretValue
            accepts either, and an operator-created secret's full ARN carries a
            random suffix the stack cannot know. Resolved at cold start by

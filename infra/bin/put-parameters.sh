@@ -39,12 +39,19 @@ MAIL_FROM="${5:-SnapURL <no-reply@snapurl.local>}"
 # platform admins. SSM String parameters cannot hold an empty string, so when
 # this is empty the parameter is simply not written — an absent parameter and
 # an empty list mean the same thing to the app (apps/api/src/config/env.ts).
-# The deploy reads this value and passes it as `-c platformAdminEmails=...`.
+# The deploy never reads this value into GitHub: CloudFormation resolves the
+# parameter at deploy time (-c platformAdminEmailsFromSsm=true). A change takes
+# effect on the NEXT deploy.
 PLATFORM_ADMIN_EMAILS="${6:-}"
 PREFIX="${PREFIX%/}"
 
 put() {
-  echo "  ${PREFIX}/$1 = $2"
+  # The allowlist is personal data: do not echo its value (shell history/logs).
+  if [[ "$1" == "platform-admin-emails" ]]; then
+    echo "  ${PREFIX}/$1 = <${#2} chars, not echoed>"
+  else
+    echo "  ${PREFIX}/$1 = $2"
+  fi
   aws ssm put-parameter --name "${PREFIX}/$1" --value "$2" --type String --overwrite >/dev/null
 }
 

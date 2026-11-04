@@ -326,6 +326,13 @@ jobs:
           [ -n "${SAFE_BROWSING_SECRET_NAME}" ] && ctx+=(-c "safeBrowsingSecretName=${SAFE_BROWSING_SECRET_NAME}")
           [ -n "${SENTRY_DSN_SECRET_NAME}" ] && ctx+=(-c "sentryDsnSecretName=${SENTRY_DSN_SECRET_NAME}")
           ctx+=(-c "deployedGitSha=${DEPLOYED_GIT_SHA}")
+          # #1050 — platform-admin allowlist, same probe as deploy.sh so the
+          # diff matches the apply. It reports only whether SSM
+          # ${CONFIG_PREFIX}/platform-admin-emails exists; CloudFormation
+          # resolves the value at deploy time, so no email is ever in this
+          # log, the diff or the summary. Unreadable => this step fails.
+          admins_state="$(bash ./bin/probe-platform-admins.sh "${CONFIG_PREFIX}")" || exit 1
+          [ "${admins_state}" = "present" ] && ctx+=(-c "platformAdminEmailsFromSsm=true")
           # #995 — tag error-tracking events with the deployed sha (bin also
           # falls back to deployedGitSha, so this is explicit, not new state).
           [ -n "${DEPLOYED_GIT_SHA}" ] && ctx+=(-c "sentryRelease=${DEPLOYED_GIT_SHA}")
