@@ -162,6 +162,22 @@ elif [ -n "${DATABASE_URL:-}" ]; then
   elif docker exec "$DB_CONTAINER" true >/dev/null 2>&1; then
     DB_AVAILABLE=1
   fi
+
+fi
+
+# Deployed smoke often runs with a pre-provisioned login where brand-new-account
+# create caps are still in force (commonly 10 links/hour). Compact mode keeps the
+# fixture burst under that cap so the run proves redirects instead of dying in
+# setup due to quota. It can be forced with SMOKE_COMPACT=1/0; by default it
+# auto-enables only for the deployed-login shape (no DB + login creds).
+if [ "${SMOKE_COMPACT:-}" = "1" ]; then
+  SMOKE_COMPACT=1
+elif [ "${SMOKE_COMPACT:-}" = "0" ]; then
+  SMOKE_COMPACT=0
+elif [ "$DB_AVAILABLE" -eq 0 ] && [ -n "${SMOKE_EMAIL:-}" ] && [ -n "${SMOKE_PASSWORD:-}" ]; then
+  SMOKE_COMPACT=1
+else
+  SMOKE_COMPACT=0
 fi
 
 # Can this runner CONTROL the viewer country? Country-based routing keys off the
@@ -286,12 +302,18 @@ mklink "{\"destination\":\"https://example.com/gone\",\"domain\":\"$LINK_DOMAIN\
 # sent to its public fallback WITHOUT the unlock page. Intended — the password
 # guards the live destination, not the owner-chosen fallback. See the "#802"
 # entry in docs/DECISIONS.md. Asserted in the "== gates ==" section below.
-mklink "{\"destination\":\"https://example.com/locked-gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-locked-expired\",\"password\":\"hunter2\",\"expiresAt\":\"$EXPIRES_SOON\",\"expiresTo\":\"https://example.com/locked-fallback\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
-mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  mklink "{\"destination\":\"https://example.com/locked-gone\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-locked-expired\",\"password\":\"hunter2\",\"expiresAt\":\"$EXPIRES_SOON\",\"expiresTo\":\"https://example.com/locked-fallback\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+  mklink "{\"destination\":\"https://example.com/soon\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"scheduledTo\":\"https://example.com/coming-soon\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+fi
 mklink "{\"destination\":\"https://example.com/soon2\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-scheduled-bare\",\"activatesAt\":\"2099-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
-mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  mklink "{\"destination\":\"https://example.com/already\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-activated\",\"activatesAt\":\"2020-01-01T00:00:00.000Z\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+fi
 mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-deep\",\"deepLink\":true,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}"
-mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-nodeep\",\"deepLink\":false,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  mklink "{\"destination\":\"https://www.youtube.com/watch?v=abc123\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-nodeep\",\"deepLink\":false,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"hideReferrer\":false,\"publicPreview\":true}"
+fi
 # Capture the geo link's id explicitly at creation time. The always-run
 # country-population poll below needs THIS link's id; deriving it from the last
 # CREATED_IDS entry would silently query the wrong link if the fixtures are ever
@@ -305,6 +327,7 @@ GEO_ID="$LAST_ID"
 # (e.g. a bad LINK_DOMAIN causing 400 domain-mismatch rejections), fail here at
 # the real problem instead of only via downstream redirect failures.
 EXPECTED_LINKS=13
+if [ "$SMOKE_COMPACT" -eq 1 ]; then EXPECTED_LINKS=9; fi
 if [ "${#CREATED_IDS[@]}" -eq "$EXPECTED_LINKS" ]; then
   ok "created $EXPECTED_LINKS links"
 else
@@ -357,17 +380,29 @@ echo "== gates =="
 WAIT_MS=$(EXPIRES_SOON_MS="$EXPIRES_SOON_MS" node -pe 'Math.max(0, Number(process.env.EXPIRES_SOON_MS) + 1000 - Date.now())')
 [ "$WAIT_MS" -gt 0 ] && sleep "$(node -pe "($WAIT_MS / 1000).toFixed(3)")"
 contains "expired link uses expiresTo (G5)" "example.com/moved" "$(loc "$RUN-expired")"
-contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "$RUN-scheduled")"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  contains "not-yet-live link uses scheduledTo" "example.com/coming-soon" "$(loc "$RUN-scheduled")"
+else
+  skip "not-yet-live link uses scheduledTo: compact mode"
+fi
 # 404 rather than 410: nothing is gone, it has not started. And no fallback
 # configured must not fall through to the destination.
 expect "not-yet-live link with no fallback is 404" "404|" "$(loc "$RUN-scheduled-bare")"
-expect "a past activation date is simply live" "302|https://example.com/already" "$(loc "$RUN-activated")"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  expect "a past activation date is simply live" "302|https://example.com/already" "$(loc "$RUN-activated")"
+else
+  skip "a past activation date is simply live: compact mode"
+fi
 contains "locked link is sent to unlock (G3)" "unlock=1" "$(loc "$RUN-locked")"
 # #802 (option 1): a password-protected link that is ALSO expired goes to its
 # public fallback WITHOUT the unlock page. The expiry gate runs before the
 # password gate in gateFor(), by design — the password guards the live
 # destination, not the owner-chosen fallback. See docs/DECISIONS.md "#802".
-contains "expired password link uses its fallback, no password (#802)" "example.com/locked-fallback" "$(loc "$RUN-locked-expired")"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  contains "expired password link uses its fallback, no password (#802)" "example.com/locked-fallback" "$(loc "$RUN-locked-expired")"
+else
+  skip "expired password link uses its fallback, no password (#802): compact mode"
+fi
 # The public, unauthenticated preview must not hand out what the password guards.
 LOCKED_PREVIEW=$(curl -s "$API/public/links/$RUN-locked/preview")
 contains "locked link's preview says it is protected" '"passwordProtected":true' "$LOCKED_PREVIEW"
@@ -420,6 +455,9 @@ echo "== immediate cache invalidation on delete/flag (#470, #426) =="
 # re-caches the stale entry for up to LINK_CACHE_TTL_SECONDS. On the AWS
 # profile the guarantee is therefore bounded staleness (drain lag plus at most
 # one TTL), not immediate; closing that gap is tracked separately.
+if [ "$SMOKE_COMPACT" -eq 1 ]; then
+  skip "cache invalidation fixtures: compact mode keeps fixture creates under deployed new-account cap"
+else
 mklink "{\"destination\":\"https://example.com/cachebust-delete\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-cb-del\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 CB_DEL_ID="$LAST_ID"
 mklink "{\"destination\":\"https://example.com/cachebust-flag\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-cb-flag\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
@@ -466,6 +504,7 @@ if [ -n "$CB_DEL_ID" ] && [ -n "$CB_FLAG_ID" ]; then
 else
   bad "cache-invalidation fixtures" "delete or flag target link was not created"
 fi
+fi
 
 echo
 echo "== deep linking =="
@@ -482,7 +521,11 @@ contains "the intent carries a web fallback"   "S.browser_fallback_url"   "$DEEP
 # there would surface "Cannot Open Page" whenever the app is absent.
 contains "iPhone gets the plain URL"    "https://www.youtube.com/watch" "$(loc "$RUN-deep" -H "$IPHONE")"
 contains "desktop gets the plain URL"   "https://www.youtube.com/watch" "$(loc "$RUN-deep")"
-contains "the flag off means untouched" "https://www.youtube.com/watch" "$(loc "$RUN-nodeep" -H "$ANDROID")"
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  contains "the flag off means untouched" "https://www.youtube.com/watch" "$(loc "$RUN-nodeep" -H "$ANDROID")"
+else
+  skip "the flag off means untouched: compact mode"
+fi
 # A host with no app must pass straight through even with the flag on.
 contains "an unknown host is untouched"  "example.com/plain" "$(loc "$RUN-plain" -H "$ANDROID")"
 
@@ -624,9 +667,14 @@ EXP_BARE_SOON_MS=$(node -pe 'Date.now() + 5000')
 EXP_BARE_SOON=$(EXP_BARE_SOON_MS="$EXP_BARE_SOON_MS" node -pe 'new Date(Number(process.env.EXP_BARE_SOON_MS)).toISOString()')
 mklink "{\"destination\":\"https://example.com/gone-bare\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-expired-bare\",\"expiresAt\":\"$EXP_BARE_SOON\",\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
 EXP_BARE_ID="$LAST_ID"
-mklink "{\"destination\":\"https://example.com/limited\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-limit\",\"clickLimit\":1,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
-LIMIT_ID="$LAST_ID"
-wait_for_projection "'$EXP_BARE_ID','$LIMIT_ID'" "error-page fixtures projected"
+LIMIT_ID=""
+if [ "$SMOKE_COMPACT" -eq 0 ]; then
+  mklink "{\"destination\":\"https://example.com/limited\",\"domain\":\"$LINK_DOMAIN\",\"slug\":\"$RUN-limit\",\"clickLimit\":1,\"tags\":[],\"redirectType\":\"302\",\"rules\":[],\"forwardQuery\":true,\"deepLink\":false,\"hideReferrer\":false,\"publicPreview\":true}"
+  LIMIT_ID="$LAST_ID"
+  wait_for_projection "'$EXP_BARE_ID','$LIMIT_ID'" "error-page fixtures projected"
+else
+  wait_for_projection "'$EXP_BARE_ID'" "error-page fixtures projected"
+fi
 
 # errpage <path> <accept|-> -> sets EP_STATUS, EP_TYPE, EP_CACHE, EP_VARY,
 # EP_CSP, EP_RETRY and EP_BODY. "-" sends curl's default Accept (*/*).
