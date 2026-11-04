@@ -497,6 +497,34 @@ target, so each deployment shows its own. A root (apex) domain can't hold a
 CNAME at many DNS providers; the page says to use an ALIAS, ANAME or
 "CNAME flattening" record with the same value, or a subdomain.
 
+### Platform admins (`/admin`)
+
+Optional. The admin panel is reachable only by users whose **verified** email is
+in the API Lambda's `PLATFORM_ADMIN_EMAILS` **and** who have 2FA on
+(`apps/api/src/admin/admin.service.ts`). With no allowlist there are no admins.
+
+The source of truth is one SSM String parameter, `<CONFIG_PREFIX>/platform-admin-emails`
+(`/snapurl/prod/platform-admin-emails` in production), holding comma-separated
+emails. `infra/bin/put-parameters.sh` writes it from its sixth argument, or you
+can create it yourself. Every `deploy-aws.yml` run (and `infra/deploy.sh`)
+applies it:
+
+- **Present:** CloudFormation resolves it at deploy time and sets
+  `PLATFORM_ADMIN_EMAILS` on the API Lambda only. The emails never pass through
+  GitHub, so they are not in the public Actions logs, `cdk diff` or the
+  template.
+- **Missing:** the deploy still succeeds, leaves `PLATFORM_ADMIN_EMAILS` unset
+  (no admins, fail closed) and prints a `::warning::`.
+- **Unreadable for any other reason** (AccessDenied, throttling, the lookup role
+  cannot be assumed): the deploy **fails** with the error code rather than
+  silently dropping the admins.
+
+**A change takes effect on the next deploy**, not on save: the value is read by
+CloudFormation during `deploy-aws.yml`, so after editing the parameter,
+re-dispatch the deploy. The check reads the parameter through the CDK bootstrap
+lookup role (`cdk-<qualifier>-lookup-role-*`) that the plan and deploy OIDC roles
+already may assume, so no extra IAM is needed.
+
 ### Google OAuth
 
 Optional — unset means `OAuthService.enabled('google')` is `false` and

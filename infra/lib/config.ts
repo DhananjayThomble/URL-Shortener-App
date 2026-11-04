@@ -86,6 +86,14 @@ export const CONFIG_KEYS = [
 
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
+/**
+ * Parameters that may legitimately be absent. They are NOT in CONFIG_KEYS
+ * because `get()` fails the deploy on a missing parameter. A caller must only
+ * read one after confirming it exists (see infra/bin/probe-platform-admins.sh),
+ * since CloudFormation fails the whole deploy on an unresolvable parameter.
+ */
+export type OptionalConfigKey = "platform-admin-emails";
+
 export interface SnapUrlConfigProps {
   /** Parameter Store prefix, e.g. `/snapurl/prod`. No trailing slash. */
   readonly prefix: string;
@@ -146,6 +154,16 @@ export class SnapUrlConfig extends Construct {
     );
     this.values.set(key, value);
     return value;
+  }
+
+  /**
+   * Read an optional parameter at deploy time, by CloudFormation. The value
+   * never passes through the synthesized template, CI logs or `cdk diff`: the
+   * template only carries a CloudFormation parameter that names the SSM path.
+   * Only call this once the parameter is known to exist.
+   */
+  getOptional(key: OptionalConfigKey): string {
+    return ssm.StringParameter.valueForStringParameter(Stack.of(this), `${this.prefix}/${key}`);
   }
 
   /** The full parameter path, for error messages and outputs. */

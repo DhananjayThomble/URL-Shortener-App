@@ -116,9 +116,14 @@ new SnapUrlStack(app, "SnapUrl", {
   /* #968 — optional platform-admin allowlist (comma-separated emails), set on
      the API Lambda as PLATFORM_ADMIN_EMAILS. Unset means no platform admins.
      The operator's source of truth is the SSM parameter
-     <prefix>/platform-admin-emails (put-parameters.sh); the deploy passes it
-     through with `-c platformAdminEmails=<a@x.com,b@y.com>`. */
+     <prefix>/platform-admin-emails (put-parameters.sh). The deploy never
+     carries the emails itself (public repo/logs): infra/deploy.sh and the plan
+     job pass `-c platformAdminEmailsFromSsm=true` when
+     infra/bin/probe-platform-admins.sh finds the parameter, and
+     CloudFormation resolves it at deploy time. `-c platformAdminEmails=...`
+     remains for ad-hoc local synths only. #1050 */
   platformAdminEmails: app.node.tryGetContext("platformAdminEmails"),
+  platformAdminEmailsFromSsm: String(app.node.tryGetContext("platformAdminEmailsFromSsm")) === "true",
   /* Optional: the NAME of a Secrets Manager secret holding the Google Safe
      Browsing API key, created by the operator beforehand. Unset leaves Safe
      Browsing off. Set with `-c safeBrowsingSecretName=<name>`. */

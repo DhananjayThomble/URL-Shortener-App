@@ -69,4 +69,36 @@ describe("SnapUrlStack — platform-admin allowlist (#968)", () => {
       expect(env("WorkerFn").PLATFORM_ADMIN_EMAILS).toBeUndefined();
     });
   });
+
+  describe("with platformAdminEmailsFromSsm (#1050)", () => {
+    let template: Template;
+    let env: (prefix: string) => Record<string, unknown>;
+
+    beforeAll(() => {
+      template = Template.fromStack(
+        new SnapUrlStack(new App(), "TestStackSsmAdmins", {
+          env: { account: "111111111111", region: "us-east-1" },
+          configPrefix: "/test/snapurl",
+          natStrategy: "instance",
+          natAmiIds: { "us-east-1": "ami-0123456789abcdef0" },
+          platformAdminEmailsFromSsm: true,
+        }),
+      );
+      env = envByPrefix(template);
+    }, 120_000);
+
+    it("resolves PLATFORM_ADMIN_EMAILS on ApiFn from SSM <prefix>/platform-admin-emails, via CloudFormation", () => {
+      const params = template.toJSON().Parameters as Record<string, { Type: string; Default: string }>;
+      const [logicalId] = Object.entries(params).find(
+        ([, p]) => p.Type === "AWS::SSM::Parameter::Value<String>" && p.Default === "/test/snapurl/platform-admin-emails",
+      )!;
+      expect(env("ApiFn").PLATFORM_ADMIN_EMAILS).toEqual({ Ref: logicalId });
+    });
+
+    it("stays API-only and never embeds an email in the template", () => {
+      expect(env("RedirectFn").PLATFORM_ADMIN_EMAILS).toBeUndefined();
+      expect(env("WorkerFn").PLATFORM_ADMIN_EMAILS).toBeUndefined();
+      expect(JSON.stringify(template.toJSON())).not.toMatch(/@example\.com/);
+    });
+  });
 });

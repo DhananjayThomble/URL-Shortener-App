@@ -52,10 +52,15 @@ ctx=(-c "account=$CDK_DEFAULT_ACCOUNT" -c "region=$CDK_DEFAULT_REGION" -c "natSt
 # error tracking off (no DSN resolves). The secret is a plain-string DSN held in
 # Secrets Manager (e.g. snapurl/prod/sentry-dsn), read by api/redirect/worker.
 [ -n "${SENTRY_DSN_SECRET_NAME:-}" ] && ctx+=(-c "sentryDsnSecretName=$SENTRY_DSN_SECRET_NAME")
-# #968 — platform-admin allowlist. Source of truth is the SSM parameter
-# <prefix>/platform-admin-emails; CI reads it into PLATFORM_ADMIN_EMAILS. Unset
-# means no admins, so like the flags above it is only appended when present.
-[ -n "${PLATFORM_ADMIN_EMAILS:-}" ] && ctx+=(-c "platformAdminEmails=$PLATFORM_ADMIN_EMAILS")
+# #968/#1050 — platform-admin allowlist. Source of truth is the SSM parameter
+# <prefix>/platform-admin-emails, resolved by CloudFormation at deploy time; the
+# emails never pass through this script, GitHub or the echo below (the repo and
+# its Actions logs are public). The probe only reports whether the parameter
+# exists: absent => no flag => no PLATFORM_ADMIN_EMAILS on the API (fail
+# closed, with a warning); unreadable for any other reason => hard stop, so a
+# permissions/throttling problem can never silently drop the admins.
+admins_state="$(bash ./bin/probe-platform-admins.sh "$CONFIG_PREFIX")" || fail "platform-admin allowlist probe failed (see message above)"
+[ "$admins_state" = "present" ] && ctx+=(-c "platformAdminEmailsFromSsm=true")
 
 echo "deploy.sh: cdk deploy ${ctx[*]}"
 npx cdk deploy --require-approval never "${ctx[@]}" "$@"
