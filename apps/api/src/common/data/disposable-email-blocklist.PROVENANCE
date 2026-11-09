@@ -9,10 +9,10 @@ Upstream:   disposable-email-domains/disposable-email-domains
             File: disposable_email_blocklist.conf
 
 Pinned commit (the exact snapshot vendored here — NEVER a moving ref):
-            fe48a3092fd7749893732f1c089730acccd78817
+            ba992a0b4c867db3ff39605696bb7de9fbb2e11f
 
-Pinned on:  2026-11-02   (upstream commit date 2026-11-02T06:45:14Z)
-Entry count at pin: 10123 upstream, 10123 vendored (see the generated module's VENDORED count; the raw
+Pinned on:  2026-11-09   (upstream commit date 2026-11-02T06:45:14Z)
+Entry count at pin: 10181 upstream, 10181 vendored upstream, 10123 vendored (see the generated module's VENDORED count; the raw
             .conf is kept byte-for-identical to upstream for a clean diff, so
             allow-listed domains are filtered out only when the .ts module is
             generated — see scripts/refresh-disposable-emails.mjs).
