@@ -24,7 +24,7 @@
     "lucide-react": "^0.469.0",
     "@sentry/nextjs": "^11.10.0",
     "@snapurl/telemetry": "workspace:*",
-    "next": "15.5.28",
+    "next": "15.5.29",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
